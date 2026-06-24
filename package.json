@@ -1,0 +1,133 @@
+{
+  "name": "postflowx",
+  "version": "2026.6.1",
+  "description": "PostFlowX — VFX Post Production Desktop App",
+  "main": "electron/main.js",
+  "author": "PostFlowX",
+  "private": true,
+  "_targets": "Two build targets share the same renderer source. See PROJECT_MAP.md.",
+  "scripts": {
+    "_test": "── TESTS ───────────────────────────────────────────",
+    "test:parsers": "node --test test/parsers/*.test.mjs",
+    "test:pipeline": "node --test test/pipeline/*.test.mjs",
+    "test:color": "node --test test/color/*.test.mjs",
+    "test:node": "node --test test/parsers/*.test.mjs test/pipeline/*.test.mjs test/color/*.test.mjs",
+    "test:js": "for f in tests-js/*.test.mjs; do echo \"• $f\"; node \"$f\" || exit 1; done",
+    "test": "npm run test:node && npm run test:js && (cd companion && python3 -m pytest -q) && (cd postflowx-adobe && npm test)",
+    "_dev": "── DEV ─────────────────────────────────────────────",
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dev:mac": "node build-renderer.js --target desktop && electron . --dev",
+    "watch": "node watch.js",
+    "watch:app": "node watch.js --app",
+    "watch:ext": "node watch.js --ext",
+    "_renderer": "── RENDERER BUILDS (run before packaging) ──────────",
+    "build:renderer": "node build-renderer.js --target desktop",
+    "build:renderer:extension": "node build-renderer.js --target extension",
+    "_extension": "── CHROME EXTENSION ────────────────────────────────",
+    "build:extension": "node build-renderer.js --target extension && echo 'Load dist/extension/ as unpacked extension in chrome://extensions'",
+    "_desktop": "── DESKTOP APP (macOS) ─────────────────────────────",
+    "build:avf": "bash -c 'set -e; swiftc electron/native/avf_bridge.swift -o electron/native/avf_bridge_arm64 -target arm64-apple-macos12.0 -framework AVFoundation -framework Foundation -framework CoreGraphics -framework ImageIO && swiftc electron/native/avf_bridge.swift -o electron/native/avf_bridge_x86 -target x86_64-apple-macos12.0 -framework AVFoundation -framework Foundation -framework CoreGraphics -framework ImageIO && lipo -create electron/native/avf_bridge_arm64 electron/native/avf_bridge_x86 -output electron/native/avf_bridge && rm electron/native/avf_bridge_arm64 electron/native/avf_bridge_x86 && chmod +x electron/native/avf_bridge && echo \"[avf_bridge] universal binary built\"'",
+    "build:avf:arm64": "swiftc electron/native/avf_bridge.swift -o electron/native/avf_bridge -target arm64-apple-macos12.0 -framework AVFoundation -framework Foundation -framework CoreGraphics -framework ImageIO && chmod +x electron/native/avf_bridge",
+    "build:native-engine": "bash -c 'set -e; cd electron/native/PFXNativeMediaEngine && swift build -c release --arch arm64 && swift build -c release --arch x86_64 && lipo -create .build/arm64-apple-macosx/release/PFXNativeMediaEngine .build/x86_64-apple-macosx/release/PFXNativeMediaEngine -output ../pfx_native_media_engine && chmod +x ../pfx_native_media_engine && echo \"[PFXNativeMediaEngine] universal binary built\"'",
+    "build:native-engine:arm64": "bash -c 'set -e; cd electron/native/PFXNativeMediaEngine && swift build -c release --arch arm64 && cp .build/arm64-apple-macosx/release/PFXNativeMediaEngine ../pfx_native_media_engine && chmod +x ../pfx_native_media_engine && echo \"[PFXNativeMediaEngine] arm64 binary built\"'",
+    "build:mac": "npm run build:avf && npm run build:native-engine && npm run build:renderer && electron-builder --mac",
+    "build:mac-dir": "npm run build:avf && npm run build:native-engine && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null -c.mac.notarize=false",
+    "dist:mac": "npm run build:avf && npm run build:native-engine && npm run build:renderer && electron-builder --mac --universal",
+    "dist:mac:unsigned": "npm run build:avf && npm run build:native-engine && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal -c.mac.identity=null -c.mac.notarize=false",
+    "pack": "npm run build:renderer && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.postflowx.app",
+    "productName": "PostFlowX",
+    "copyright": "Copyright © 2026 PostFlowX",
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "assets/icons/app_icon_512.png",
+      "darkModeSupport": true,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "notarize": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "PostFlowX uses the microphone for the Voice command feature.",
+        "NSAppleEventsUsageDescription": "PostFlowX controls DaVinci Resolve to decode and preview camera-original (OCF) frames."
+      }
+    },
+    "dmg": {
+      "title": "PostFlowX",
+      "contents": [
+        {
+          "x": 130,
+          "y": 200
+        },
+        {
+          "x": 410,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "asarUnpack": [
+      "electron/native/*.py",
+      "electron/native/avf_bridge",
+      "electron/native/pfx_native_media_engine",
+      "electron/native/**/*.node",
+      "node_modules/**/*.node"
+    ],
+    "files": [
+      "electron/**/*",
+      "dist/desktop/**/*",
+      "package.json",
+      "!**/*.DS_Store",
+      "!**/__pycache__/**"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*",
+          "!**/.DS_Store"
+        ]
+      },
+      {
+        "from": "companion",
+        "to": "companion",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/.DS_Store"
+        ]
+      },
+      {
+        "from": "authConfig.json",
+        "to": "authConfig.json",
+        "filter": [
+          "authConfig.json"
+        ]
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
+    "linkedom": "^0.18.12"
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-07T02:57:40.866711Z",
+  "profiles": {
+    "final_delivery": {
+      "label": "Final Delivery",
+      "requirements": [
+        "ELEMENTS_2D",
+        "BACKGROUND_PLATES",
+        "FINAL_MODELS",
+        "SCANNING_DATA",
+        "SELECTED_VFX_DELIVERABLES",
+        "VFX_SHOT_ASSET_STATUS_REPORT",
+        "VFX_SHOTS",
+        "GRAPHICS_TITLES_PROJECT",
+        "ORIGINAL_CAMERA_FILES_OCF",
+        "PRODUCTION_AUDIO",
+        "SHOW_LOGO",
+        "AUDIO_STEMS_20_NEARFIELD",
+        "PRINT_MASTER_20_NEARFIELD",
+        "AUDIO_STEMS_51_NEARFIELD",
+        "AUDIO_ME_51_NEARFIELD",
+        "PRINT_MASTER_51_NEARFIELD",
+        "PRINT_MASTER_ATMOS_NEARFIELD",
+        "MIXER_NOTES_LOCALIZED_MIX",
+        "SOUND_EDITORIAL_STAGE_PROJECT",
+        "COLOR_PIPELINE_TRANSFORMS",
+        "PICTURE_MASTERING_FRAMING_CHARTS",
+        "PRORES_422HQ_SDR_TURNOVER",
+        "FINAL_EDITORIAL_MEDIA",
+        "FINAL_EDITORIAL_PROJECT",
+        "LOCKED_CUT_EDITORIAL_TURNOVER",
+        "SCORE_MIXES_20",
+        "SCORE_STEMS",
+        "SONG_MIXES_STEMS",
+        "IMF_DV",
+        "IMF_DV_TEXTLESS",
+        "PICTURE_MASTERING_PROJECT",
+        "ON_SET_DATA",
+        "VFX_WRAP_REPORT",
+        "ORIGINAL_CAMERA_FILES_OCF_ALT_TAKES"
+      ]
+    },
+    "servicing_turnover_sdr": {
+      "label": "Servicing Turnover (SDR)",
+      "requirements": [
+        "PRORES_422HQ_SDR_TURNOVER",
+        "PRORES_422HQ_SDR_TEXTLESS_COMPLETE"
+      ]
+    },
+    "music_original_audio": {
+      "label": "Music / Original Audio",
+      "requirements": [
+        "SCORE_MIXES_20",
+        "SCORE_STEMS",
+        "SONG_MIXES_STEMS",
+        "PRODUCTION_AUDIO"
+      ]
+    },
+    "vfx_wrap": {
+      "label": "VFX Wrap",
+      "requirements": [
+        "FINAL_MODELS",
+        "BACKGROUND_PLATES",
+        "SCANNING_DATA",
+        "VFX_SHOTS",
+        "ELEMENTS_2D",
+        "ON_SET_DATA",
+        "VFX_WRAP_REPORT",
+        "SELECTED_VFX_DELIVERABLES",
+        "VFX_SHOT_ASSET_STATUS_REPORT"
+      ]
+    },
+    "archive_nam": {
+      "label": "Archive (NAM)",
+      "requirements": [
+        "NAM_TEXTLESS"
+      ]
+    },
+    "delivery_to_netflix": {
+      "label": "Delivery to Netflix (Content Hub)",
+      "requirements": [
+        "ELEMENTS_2D",
+        "BACKGROUND_PLATES",
+        "FINAL_MODELS",
+        "SCANNING_DATA",
+        "SELECTED_VFX_DELIVERABLES",
+        "VFX_SHOT_ASSET_STATUS_REPORT",
+        "VFX_SHOTS",
+        "GRAPHICS_TITLES_PROJECT",
+        "ORIGINAL_CAMERA_FILES_OCF",
+        "PRODUCTION_AUDIO",
+        "SHOW_LOGO",
+        "AUDIO_STEMS_20_NEARFIELD",
+        "PRINT_MASTER_20_NEARFIELD",
+        "AUDIO_STEMS_51_NEARFIELD",
+        "AUDIO_ME_51_NEARFIELD",
+        "PRINT_MASTER_51_NEARFIELD",
+        "PRINT_MASTER_ATMOS_NEARFIELD",
+        "MIXER_NOTES_LOCALIZED_MIX",
+        "SOUND_EDITORIAL_STAGE_PROJECT",
+        "COLOR_PIPELINE_TRANSFORMS",
+        "PICTURE_MASTERING_FRAMING_CHARTS",
+        "PRORES_422HQ_SDR_TURNOVER",
+        "FINAL_EDITORIAL_MEDIA",
+        "FINAL_EDITORIAL_PROJECT",
+        "LOCKED_CUT_EDITORIAL_TURNOVER",
+        "SCORE_MIXES_20",
+        "SCORE_STEMS",
+        "SONG_MIXES_STEMS",
+        "IMF_DV",
+        "IMF_DV_TEXTLESS",
+        "PICTURE_MASTERING_PROJECT",
+        "ON_SET_DATA",
+        "VFX_WRAP_REPORT",
+        "ORIGINAL_CAMERA_FILES_OCF_ALT_TAKES"
+      ]
+    }
+  }
+}

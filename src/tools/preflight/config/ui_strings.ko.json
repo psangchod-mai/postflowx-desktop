@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-03T18:43:38.403769+07:00",
+  "ui_language": {
+    "locale": "ko",
+    "statuses": {
+      "NOT_ADDED": "미추가",
+      "SCANNING": "검사 중",
+      "PASSED": "준비 완료",
+      "ISSUES": "이슈 있음",
+      "BLOCKED": "차단"
+    },
+    "severities": {
+      "BLOCKER": "차단",
+      "WARNING": "경고",
+      "FYI": "참고"
+    },
+    "buttons": {
+	      "add_files": "추가 ▾",
+	      "add_folder": "폴더 추가…",
+	      "add_files_item": "파일 추가…",
+      "select_folder": "폴더 선택",
+      "select_files": "파일 선택",
+      "run": "프리플라이트 실행",
+      "export_report": "리포트 내보내기",
+      "reset": "리셋",
+      "close": "닫기",
+      "confirm": "확인됨",
+      "view_fix": "보기 / 수정",
+      "assign": "할당"
+    },
+    "labels": {
+      "project": "프로젝트",
+      "profile": "프로필",
+      "language": "언어",
+      "ready": "준비",
+      "blockers": "차단",
+      "missing": "누락",
+      "warnings": "경고",
+      "files": "파일",
+      "assets": "에셋",
+      "scope": "범위",
+      "filters": "필터",
+      "history": "기록",
+      "limitations": "제한",
+      "all": "전체",
+      "clear": "해제",
+      "only": "이것만",
+      "search_placeholder": "검색: IMF / Audio / Logo…",
+      "pick_scope_hint": "왼쪽에서 범위를 고르고 파일/폴더를 추가한 뒤 실행하세요.",
+      "no_scope": "카테고리가 선택되지 않았습니다. 왼쪽 범위에서 선택하세요.",
+      "unassigned": "미할당 파일",
+      "unassigned_help": "자동 분류되지 않은 파일 — 올바른 카드에 할당하세요.",
+      "assign_all_unassigned_to": "미할당 전체를 다음으로:",
+      "assign_all": "전체 할당",
+      "choose_asset_first": "먼저 카드 선택이 필요합니다.",
+      "assigned_all_run_again": "할당 완료. 적용하려면 다시 실행하세요.",
+      "assigned_all_run_again_plural": "전체 할당 완료. 적용하려면 다시 실행하세요.",
+      "select_scope_first": "최소 1개 카테고리를 선택하세요.",
+      "manual_confirm_hint": "이 항목을 확인했을 때 사용합니다.",
+      "confirm_done": "확인됨",
+      "fix_now": "Fix",
+      "evidence_tab": "근거"
+    },
+    "issue_template": {
+      "what": "무슨 일이었나",
+      "why": "왜 중요한가",
+      "fix": "어떻게 고치나"
+    }
+  }
+}

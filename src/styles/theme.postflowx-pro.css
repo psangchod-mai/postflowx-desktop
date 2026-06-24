@@ -1,0 +1,276 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PostFlowX Pro — Design Token System
+   One accent. Semantic status. Muted surfaces. No neon.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Base surfaces ─────────────────────────────────────────────── */
+  --pfx-bg-app:       #08090c;
+  --pfx-bg-window:    #0b0c10;
+  --pfx-bg-panel:     #111217;
+  --pfx-bg-panel-2:   #15161c;
+  --pfx-bg-card:      #121318;
+  --pfx-bg-elevated:  #191a21;
+  --pfx-bg-viewer:    #050609;
+
+  /* ── Borders ───────────────────────────────────────────────────── */
+  --pfx-border-subtle:  rgba(255,255,255,0.06);
+  --pfx-border-default: rgba(255,255,255,0.10);
+  --pfx-border-strong:  rgba(255,255,255,0.16);
+
+  /* ── Text ──────────────────────────────────────────────────────── */
+  --pfx-text-primary:   rgba(255,255,255,0.88);
+  --pfx-text-secondary: rgba(255,255,255,0.62);
+  --pfx-text-tertiary:  rgba(255,255,255,0.42);
+  --pfx-text-disabled:  rgba(255,255,255,0.24);
+
+  /* ── Brand accent — active tab, selected button, focus ring ────── */
+  --pfx-accent:        #5aa7ff;
+  --pfx-accent-soft:   rgba(90,167,255,0.16);
+  --pfx-accent-border: rgba(90,167,255,0.38);
+
+  /* ── Semantic — success ────────────────────────────────────────── */
+  --pfx-success:        #4ccf7a;
+  --pfx-success-soft:   rgba(76,207,122,0.14);
+  --pfx-success-border: rgba(76,207,122,0.32);
+
+  /* ── Semantic — warning ────────────────────────────────────────── */
+  --pfx-warning:        #d6a33a;
+  --pfx-warning-soft:   rgba(214,163,58,0.14);
+  --pfx-warning-border: rgba(214,163,58,0.32);
+
+  /* ── Semantic — danger ─────────────────────────────────────────── */
+  --pfx-danger:        #ff5a6a;
+  --pfx-danger-soft:   rgba(255,90,106,0.14);
+  --pfx-danger-border: rgba(255,90,106,0.34);
+
+  /* ── Semantic — info ───────────────────────────────────────────── */
+  --pfx-info:        #7aa2c7;
+  --pfx-info-soft:   rgba(122,162,199,0.12);
+  --pfx-info-border: rgba(122,162,199,0.26);
+
+  /* ── Timeline lanes — muted until selected ─────────────────────── */
+  --pfx-lane-video:       #4f6fd6;
+  --pfx-lane-video-soft:  rgba(79,111,214,0.38);
+  --pfx-lane-audio:       #3a9d63;
+  --pfx-lane-audio-soft:  rgba(58,157,99,0.36);
+  --pfx-lane-metadata:    #6e7480;
+  --pfx-lane-selected:    #7fb2ff;
+
+  /* ── Buttons ───────────────────────────────────────────────────── */
+  --pfx-btn-bg:          rgba(255,255,255,0.055);
+  --pfx-btn-border:      rgba(255,255,255,0.10);
+  --pfx-btn-color:       rgba(255,255,255,0.62);
+
+  /* ── Effects ───────────────────────────────────────────────────── */
+  --pfx-glow-accent:  0 0 0 1px var(--pfx-accent-border);
+  --pfx-shadow-panel: 0 16px 40px rgba(0,0,0,0.34);
+}
+
+/* ── Semantic status pills ──────────────────────────────────────── */
+.pfx-status-ok {
+  background: var(--pfx-success-soft);
+  border: 1px solid var(--pfx-success-border);
+  color: var(--pfx-success, #4ccf7a);
+}
+.pfx-status-warn {
+  background: var(--pfx-warning-soft);
+  border: 1px solid var(--pfx-warning-border);
+  color: var(--pfx-warning, #d6a33a);
+}
+.pfx-status-error, .pfx-status-err {
+  background: var(--pfx-danger-soft);
+  border: 1px solid var(--pfx-danger-border);
+  color: var(--pfx-danger, #ff5a6a);
+}
+.pfx-status-info {
+  background: var(--pfx-info-soft);
+  border: 1px solid var(--pfx-info-border);
+  color: var(--pfx-info, #7aa2c7);
+}
+.pfx-status-neutral {
+  background: rgba(255,255,255,0.055);
+  border: 1px solid var(--pfx-border-default);
+  color: var(--pfx-text-secondary);
+}
+
+/* ── Button base classes ────────────────────────────────────────── */
+.pfx-btn {
+  background: var(--pfx-btn-bg);
+  border: 1px solid var(--pfx-btn-border);
+  color: var(--pfx-btn-color);
+  border-radius: 7px;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.pfx-btn:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
+}
+.pfx-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--pfx-accent-border);
+}
+.pfx-btn-primary {
+  background: var(--pfx-accent-soft);
+  border-color: var(--pfx-accent-border);
+  color: var(--pfx-text-primary);
+}
+.pfx-btn-primary:hover {
+  background: rgba(90,167,255,0.24);
+  border-color: rgba(90,167,255,0.55);
+}
+.pfx-btn-danger:hover {
+  background: rgba(255,90,106,0.22);
+  border-color: rgba(255,90,106,0.50);
+}
+.pfx-btn-success:hover {
+  background: rgba(76,207,122,0.22);
+  border-color: rgba(76,207,122,0.48);
+}
+.pfx-btn-warning:hover {
+  background: rgba(214,163,58,0.22);
+  border-color: rgba(214,163,58,0.48);
+}
+.pfx-btn-danger {
+  background: var(--pfx-danger-soft);
+  border-color: var(--pfx-danger-border);
+  color: #ffb8bf;
+}
+.pfx-btn-success {
+  background: var(--pfx-success-soft);
+  border-color: var(--pfx-success-border);
+  color: #b8f2ca;
+}
+.pfx-btn-warning {
+  background: var(--pfx-warning-soft);
+  border-color: var(--pfx-warning-border);
+  color: #f0d090;
+}
+
+/* ── IMF placeholder states ─────────────────────────────────────── */
+.imf-placeholder {
+  color: var(--pfx-text-tertiary);
+  background: radial-gradient(circle at center, rgba(255,255,255,0.035), transparent 55%);
+}
+.imf-placeholder-error {
+  color: #ffb8bf;
+  background: var(--pfx-danger-soft);
+  border: 1px solid var(--pfx-danger-border);
+}
+
+/* ── Timeline segment tokens ────────────────────────────────────── */
+.timeline-segment-video {
+  background: var(--pfx-lane-video-soft);
+  border: 1px solid rgba(127,178,255,0.34);
+}
+.timeline-segment-video.selected {
+  background: rgba(90,167,255,0.55);
+  border-color: rgba(150,200,255,0.9);
+  box-shadow: 0 0 0 1px rgba(90,167,255,0.24);
+}
+.timeline-segment-audio {
+  background: var(--pfx-lane-audio-soft);
+  border-color: rgba(76,207,122,0.28);
+}
+.timeline-segment-disabled {
+  background: rgba(255,255,255,0.045);
+  border-color: var(--pfx-border-subtle);
+  color: var(--pfx-text-disabled);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Pulls Prep 2.1 — Pro Finish  (DaVinci Resolve / Autodesk Flame grade)
+   Scoped to #main-prepmark (covers both the Scripted list and the
+   VFX Pull workspace). Additive only — typography, viewer chrome and
+   surface neutrality. No layout / flex / sizing changes, so it cannot
+   regress the existing structure and is fully reversible.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Precise tabular monospace for every timecode / frame / duration
+     readout. Pro NLEs read "exact" because digits never shift width and
+     the zero is slashed — tabular-nums + ss01 deliver both. */
+  --pfx-font-tc: "SF Mono", "JetBrains Mono", "Roboto Mono", "IBM Plex Mono",
+                 ui-monospace, "Menlo", "Consolas", monospace;
+}
+
+/* ── 1. Tabular-numeric timecode typography ───────────────────────── */
+#main-prepmark .pm-col-tc,
+#main-prepmark .pm-col-dur,
+#main-prepmark .pm-hud,
+#main-prepmark .pm-hud-tc-input,
+#main-prepmark .pm-vid-start-tc,
+#main-prepmark .pm-sync-offset,
+#main-prepmark .pm-insp-tc,
+#main-prepmark .pm-insp-clip,
+#main-prepmark .pm-insp-shot,
+#main-prepmark .pm-vid-qt-tc,
+#main-prepmark .pm-vfx-ws-scrub-tc,
+#main-prepmark .pm-vfx-verify-score-v,
+#main-prepmark [id^="pmHud"],
+#main-prepmark [id^="pmWsTc"] {
+  font-family: var(--pfx-font-tc);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1, "ss01" 1;
+  letter-spacing: 0.012em;
+}
+
+/* ── 2. Viewer chrome — crisp, minimal, neutral (no purple tint) ──── */
+#main-prepmark .pm-hud {
+  background: linear-gradient(180deg, rgba(5,6,9,0) 0%, var(--pfx-bg-viewer) 72%);
+  border-top: 1px solid var(--pfx-border-subtle);
+  padding: 4px 12px;
+  gap: 10px;
+}
+#main-prepmark .pm-vid-qt-tc {
+  background: rgba(5,6,9,0.62);
+  border: 1px solid var(--pfx-border-subtle);
+  border-radius: 5px;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  font-family: var(--pfx-font-tc);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ── 3. Surface neutrality — context bar + workspace bars ─────────── */
+/* Replaces the blue/purple-tinted ad-hoc fills with the muted neutral
+   surface ramp so the chrome reads like a grading suite, not a web app. */
+#main-prepmark .pm-ctx-bar {
+  background: var(--pfx-bg-panel);
+  border-bottom: 1px solid var(--pfx-border-subtle);
+}
+#main-prepmark .pfx-vfx-ws-topbar {
+  background: var(--pfx-bg-panel);
+  border-bottom: 1px solid var(--pfx-border-subtle);
+}
+#main-prepmark .pm-vfx-ws-right {
+  background: var(--pfx-bg-panel);
+  border-left: 1px solid var(--pfx-border-subtle);
+}
+
+/* ── 4. Pull-list polish — quiet header, precise row hover ────────── */
+#main-prepmark .pm-event-table thead th,
+#main-prepmark .pm-event-table .pm-th {
+  color: var(--pfx-text-tertiary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--pfx-border-subtle);
+}
+#main-prepmark .pm-row:hover {
+  background: rgba(255,255,255,0.028);
+}
+
+/* ── 5. VFX compare panes — true reference black + token frame ────── */
+#main-prepmark .pm-vfx-ws-vpane-img,
+#main-prepmark .pm-vfx-ws-viewer {
+  background: var(--pfx-bg-viewer);
+}
+#main-prepmark .pm-vfx-ws-vpane + .pm-vfx-ws-vpane {
+  border-left: 1px solid var(--pfx-border-default);
+}
+#main-prepmark .pm-vfx-ws-sheet-cell {
+  background: var(--pfx-bg-viewer);
+  border: 1px solid var(--pfx-border-subtle);
+}

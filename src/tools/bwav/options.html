@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>BWAV Inspector — Settings</title>
+  <link rel="stylesheet" href="options.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hdr">
+      <div class="h1">BWAV Inspector</div>
+      <div class="h2">Settings</div>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <label for="mode">Default mode</label>
+        <select id="mode">
+          <option value="backlot">Backlot</option>
+          <option value="dubbing">Dubbing/AD</option>
+          <option value="dme">DME Extraction</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>
+          <input type="checkbox" id="strictMode"/>
+          Strict label mode (only Dialog/Music/Effects/Narration)
+        </label>
+      </div>
+
+      <div class="row actions">
+        <button id="save">Save</button>
+        <span id="status">—</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="h3">Google Sheet logging</div>
+
+      <div class="row">
+        <label for="webhookUrl">Web App URL (/exec)</label>
+        <input id="webhookUrl" type="text" />
+        <div class="small">Preconfigured for shared rollout — most users don’t need to change this.</div>
+      </div>
+
+      <div class="row">
+        <label>
+          <input type="checkbox" id="logEnabled"/>
+          Enable logging (Open/Load/Export/Heartbeat)
+        </label>
+      </div>
+
+      <div class="row">
+        <label for="profileEmail">Profile email (fallback)</label>
+        <input id="profileEmail" type="text" placeholder="name@company.com" />
+        <div class="small">If Chrome identity is allowed, the extension will use it automatically.</div>
+      </div>
+
+      <div class="row">
+        <label for="clientId">Client ID</label>
+        <input id="clientId" type="text" readonly />
+      </div>
+
+      <div class="row actions">
+        <button id="btnPing" class="secondary">Ping</button>
+        <button id="btnFlush" class="secondary">Flush pending</button>
+        <button id="btnSync" class="secondary">Sync labels</button>
+        <span id="syncStatus">—</span>
+      </div>
+
+      <div class="small" id="logState">—</div>
+      <div class="small" id="syncState">—</div>
+    </section>
+
+    <section class="card">
+      <div class="small">
+        Tip: For GB-sized files where AXML is late in the file, extract <code>axml.xml</code> offline using a chunk extractor and validate that instead.
+      </div>
+    </section>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

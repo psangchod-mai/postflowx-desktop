@@ -1,0 +1,14 @@
+{
+  "source": "A035C002.mxf",
+  "sourceClass": "arri_logc4",
+  "mode": "hdr_review",
+  "acesVersion": "2.0",
+  "inputTransform": "ARRI_LOGC4",
+  "outputTransform": "HDR_REC2100_PQ",
+  "clipId": "A035C002",
+  "cdlEnabled": false,
+  "cdl": { "slope": [1, 1, 1], "offset": [0, 0, 0], "power": [1, 1, 1], "sat": 1 },
+  "lookStack": [
+    { "enabled": true, "kind": "clf", "label": "Show LUT v3", "file": "/luts/show_v3.clf", "transformId": null }
+  ]
+}

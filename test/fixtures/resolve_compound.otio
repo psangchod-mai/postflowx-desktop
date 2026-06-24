@@ -1,0 +1,62 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "name": "RESOLVE COMPOUND",
+  "global_start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 86400 },
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "name": "tracks",
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "V1",
+        "kind": "Video",
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.1",
+            "name": "PLAIN",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 0 },
+              "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 48 }
+            },
+            "media_reference": {
+              "OTIO_SCHEMA": "ExternalReference.1",
+              "target_url": "file:///media/A020C001.mov"
+            }
+          },
+          {
+            "OTIO_SCHEMA": "Stack.1",
+            "name": "COMPOUND_CLIP",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 0 },
+              "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 72 }
+            },
+            "children": [
+              {
+                "OTIO_SCHEMA": "Track.1",
+                "name": "V1",
+                "kind": "Video",
+                "children": [
+                  {
+                    "OTIO_SCHEMA": "Clip.1",
+                    "name": "NESTED_A021C001",
+                    "source_range": {
+                      "OTIO_SCHEMA": "TimeRange.1",
+                      "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 120 },
+                      "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 72 }
+                    },
+                    "media_reference": {
+                      "OTIO_SCHEMA": "ExternalReference.1",
+                      "target_url": "file:///media/A021C001.mov"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

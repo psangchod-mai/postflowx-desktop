@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "title": "โครงสร้าง/ความครบของ IMF",
+      "issue": {
+        "what": "โครงสร้าง IMF ไม่ครบหรือไฟล์อ้างอิงไม่สอดคล้องกัน",
+        "why": "IMF เป็นแพ็กเดียว—พังจุดเดียวอาจตีกลับทั้งแพ็ก",
+        "fix": "ตรวจ ASSETMAP/PKL/CPL และ MXF ให้ครบและตรงกัน แล้ว re-wrap/สร้างใหม่"
+      }
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "title": "ภาษา/metadata ไม่ตรง",
+      "issue": {
+        "what": "ภาษา/metadata ใน IMF ไม่ตรงกับที่ขอส่ง",
+        "why": "ไม่ตรงแล้วอาจถูกบล็อกทันที",
+        "fix": "ตั้ง language code ให้ถูก แล้วสร้าง IMF ใหม่/ส่งแทน"
+      }
+    },
+    "DV_METADATA_CMVERSION": {
+      "title": "ตรวจ Dolby Vision metadata",
+      "issue": {
+        "what": "Dolby Vision metadata ดูผิดปกติหรือไฟล์ DV XML หาย",
+        "why": "DV ผิดมักโดนขอส่งใหม่",
+        "fix": "เช็ก DV XML/CMVersion แล้ว export/re-wrap ใหม่"
+      }
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "title": "ไฟล์เสียงต้องเป็น PCM WAV/BWAV",
+      "issue": {
+        "what": "ไฟล์เสียงไม่ใช่ PCM WAV/BWAV (ไม่บีบอัด)",
+        "why": "ต้องเป็น WAV/BWAV เพื่อความเข้ากันและ QC",
+        "fix": "Export ใหม่เป็น PCM WAV/BWAV แล้ว Replace"
+      }
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "title": "Sample rate ต้อง 48kHz",
+      "issue": {
+        "what": "Sample rate ไม่ใช่ 48kHz",
+        "why": "Nearfield/Print มักกำหนด 48kHz",
+        "fix": "Export ใหม่ 48kHz PCM WAV/BWAV แล้ว Replace"
+      }
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "title": "เลย์เอาท์แชนเนลไม่ตรง",
+      "issue": {
+        "what": "จำนวน/เลย์เอาท์แชนเนลไม่ตรงที่คาด",
+        "why": "แชนเนลผิดกระทบ QC/งานต่อ",
+        "fix": "เช็ก routing/preset แล้ว export ใหม่"
+      }
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "title": "Embedded audio (ยืนยันด้วยมือ)",
+      "issue": {
+        "what": "เวอร์ชันนี้ยังเช็ก embedded audio อัตโนมัติไม่ได้",
+        "why": "ไม่มีเสียงฝังอาจทำให้ review/encode พัง",
+        "fix": "ยืนยันแล้วกด Confirm หรือ export ใหม่แล้ว Replace"
+      }
+    },
+    "MEDIA_VFR_WARNING": {
+      "title": "VFR (ยืนยันด้วยมือ)",
+      "issue": {
+        "what": "เวอร์ชันนี้ยังตรวจ VFR อัตโนมัติไม่ได้",
+        "why": "VFR ทำให้ซิงก์/QC มีปัญหา",
+        "fix": "ยืนยันว่าเป็น CFR หรือแปลง/Export ใหม่เป็น CFR"
+      }
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "title": "Container/codec (แจ้ง)",
+      "issue": {
+        "what": "การตรวจ codec/container ลึกๆ ต้องใช้เครื่องมือเสริม",
+        "why": "นี่เป็นสาเหตุโดนตีกลับบ่อย",
+        "fix": "แนะนำ export ตาม preset ที่ทีมอนุมัติ"
+      }
+    },
+    "PRORES_PROFILE_CHECK": {
+      "title": "ProRes 422 HQ (ยืนยันด้วยมือ)",
+      "issue": {
+        "what": "เวอร์ชันนี้ยังเช็ก ProRes profile อัตโนมัติไม่ได้",
+        "why": "Servicing ต้องเป็น ProRes 422 HQ",
+        "fix": "ยืนยันจาก preset/MediaInfo แล้วกด Confirm"
+      }
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "title": "Textless checklist (manual)",
+      "issue": {
+        "what": "ต้องยืนยันว่าเป็น Textless Complete",
+        "why": "Textless ต้องไม่มี burn-in/กราฟิกที่ไม่ควรอยู่",
+        "fix": "ติ๊กยืนยันตามข้อ และแนบหลักฐานถ้ามี"
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "ไม่มีซับ/ตัวหนังสือ burned-in"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "ไม่มี lower-third/กราฟิกที่ไม่ควรติดภาพ"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "ตรวจเปิดดูช่วงหัว-ท้ายแล้ว"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "title": "ต้องมี checksum.txt",
+      "issue": {
+        "what": "ไม่พบ checksum.txt",
+        "why": "งาน archive ต้องมี checksum ตรวจความถูกต้อง",
+        "fix": "สร้าง checksum.txt ที่โฟลเดอร์ sequence แล้วเพิ่มเข้ามา"
+      }
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "title": "พาธยาวเกิน",
+      "issue": {
+        "what": "พาธ/ชื่อไฟล์ยาวเกินแนะนำ",
+        "why": "อาจทำให้ย้าย/อัปโหลด/automation พัง",
+        "fix": "ย่อชื่อโฟลเดอร์/ไฟล์ให้สั้นลง"
+      }
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "title": "ตัวอักษรไม่ปลอดภัย",
+      "issue": {
+        "what": "ชื่อไฟล์/โฟลเดอร์มีตัวอักษรที่เสี่ยง",
+        "why": "อาจทำให้ ingest/automation พัง",
+        "fix": "เปลี่ยนชื่อใช้ a-z 0-9 _ -"
+      }
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "title": "ไม่แนะนำ ZIP",
+      "issue": {
+        "what": "พบไฟล์ ZIP",
+        "why": "บาง workflow งาน archive ไม่รับ/ไม่แนะนำ zip",
+        "fix": "ส่งเป็นโฟลเดอร์ sequence + checksum แทน"
+      }
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "title": "Global upscale (ยืนยันด้วยมือ)",
+      "issue": {
+        "what": "เวอร์ชันนี้ยังเช็ก upscale อัตโนมัติไม่ได้",
+        "why": "NAM ไม่ควร upscale ทั้งงานแค่เพื่อ UHD",
+        "fix": "ยืนยัน source resolution และแนบหลักฐาน/ข้อยกเว้นถ้าต้องการ"
+      }
+    },
+    "FILES_PRESENT": {
+      "title": "ไฟล์ยังไม่ครบ",
+      "issue": {
+        "what": "ยังใส่ไฟล์ไม่ครบ",
+        "why": "ไฟล์หายทำให้ QC/ส่งต่อไม่ได้",
+        "fix": "เพิ่มให้ครบแล้ว Run ใหม่"
+      }
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "title": "โครงสร้างไม่แยกช็อต",
+      "issue": {
+        "what": "โฟลเดอร์ไม่เป็นแบบแยกช็อต",
+        "why": "หาไฟล์/QC ยาก",
+        "fix": "จัดเป็น /SHOW/EP/SHOT/... แล้วส่งใหม่"
+      }
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "title": "เตือน ZIP",
+      "issue": {
+        "what": "พบ ZIP",
+        "why": "บางงาน VFX/Archive ไม่แนะนำ ZIP",
+        "fix": "แนะนำส่งเป็นโฟลเดอร์แทน"
+      }
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "title": "CPL อ้างถึงไฟล์ที่ไม่ถูกประกาศใน PKL/ASSETMAP",
+      "issue": {
+        "what": "CPL มี TrackFileId ที่ไม่อยู่ใน PKL และ/หรือ ASSETMAP",
+        "why": "IMF ingest/QC ต้องประกาศ MXF ทุกไฟล์ที่ CPL อ้างถึง หากหายมักทำให้แพ็กถูก reject หรือถูกขอส่งใหม่",
+        "fix": "Rebuild/export IMF ใหม่ หรือ regenerate PKL + ASSETMAP ให้ประกาศ MXF ทุกไฟล์ที่ CPL อ้างถึง (รวม IAB) และหลีกเลี่ยงการ copy MXF เข้าไปทีหลังโดยไม่อัปเดต PKL/ASSETMAP"
+      }
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "title": "ASSETMAP ชี้พาธไฟล์ไม่พบ",
+      "issue": {
+        "what": "ASSETMAP อ้างถึงไฟล์ที่ไม่มีอยู่ในแพ็ก",
+        "why": "ระบบ ingest/QC ใช้ ASSETMAP เพื่อหาไฟล์ หากพาธหาย/ผิดมักทำให้ส่งไม่ผ่านหรือถูกขอส่งใหม่",
+        "fix": "ตรวจให้ไฟล์ MXF/XML อยู่ครบในโฟลเดอร์ แล้ว regenerate ASSETMAP/PKL (re-export/repackage IMF)"
+      }
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "title": "PKL size ไม่ตรงกับไฟล์จริง",
+      "issue": {
+        "what": "มี asset ใน PKL ที่ไฟล์หาย หรือขนาดไม่ตรงกับไฟล์จริง",
+        "why": "PKL ใช้ตรวจความสมบูรณ์ของแพ็ก ขนาดไม่ตรงมักเกิดจากคัดลอกไม่ครบ/ไฟล์เสีย และอาจถูก reject",
+        "fix": "คัดลอก/Export ใหม่และ regenerate PKL/ASSETMAP หลีกเลี่ยงการแก้ไขหรือเพิ่มไฟล์หลังสร้าง PKL"
+      }
+    },
+    "IMF_UUID_FORMAT": {
+      "title": "UUID/Id ไม่ถูกต้อง",
+      "issue": {
+        "what": "มี Id ที่ไม่ใช่ UUID หรือซ้ำกันภายใน manifest",
+        "why": "IMF ใช้ UUID อ้างอิง asset หาก format ผิด/ซ้ำอาจทำให้ resolve ไม่ได้และส่งไม่ผ่าน",
+        "fix": "สร้าง IMF ใหม่ด้วยเครื่องมือที่ถูกต้อง และหลีกเลี่ยงการแก้ Id ด้วยมือ"
+      }
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "title": "PKL hash ไม่ตรงกับไฟล์จริง",
+      "issue": {
+        "what": "แฮชใน PKL ไม่ตรงกับเนื้อหาไฟล์จริง (หรือไม่สามารถตรวจได้)",
+        "why": "PKL ใช้ตรวจความสมบูรณ์ของแพ็ก แฮชไม่ตรงมักหมายถึงไฟล์เสีย/คัดลอกไม่ครบ และอาจถูก reject",
+        "fix": "คัดลอก/Export ใหม่และ regenerate PKL/ASSETMAP หลีกเลี่ยงการแก้ไขหรือเพิ่มไฟล์หลังสร้าง PKL"
+      }
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "title": "ASSETMAP ความยาวไฟล์ตรงกับไฟล์จริง",
+      "issue": {
+        "what": "Length ใน ASSETMAP ไม่ตรงกับขนาดไฟล์จริง หรือหาไฟล์ไม่เจอ",
+        "why": "Length ใช้ยืนยันความสมบูรณ์ของแพ็ก หากไม่ตรงอาจหมายถึงคัดลอกไม่ครบ/ไฟล์เสีย และเสี่ยง ingest/QC ล้มเหลว",
+        "fix": "คัดลอกไฟล์ใหม่ให้ครบ หรือ re-export/repackage เพื่อ regenerate ASSETMAP/PKL (หลีกเลี่ยงการแก้/คัดลอกไฟล์หลังสร้าง manifest)"
+      }
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "title": "ความถูกต้องของไทม์ไลน์ใน CPL (trim/ความยาวซิงก์)",
+      "issue": {
+        "what": "CPL มี resource trim ผิด (EntryPoint/SourceDuration เกิน IntrinsicDuration) หรือความยาวของ sequence ไม่ซิงก์กัน",
+        "why": "ทำให้ playback/merge/ingest/QC ผิดพลาดและอาจถูก reject",
+        "fix": "Re-export/repackage IMF ใหม่ ตรวจให้ track ทุกประเภทมีความยาวซิงก์กัน และหลีกเลี่ยงการแก้ค่า timing ใน CPL ด้วยมือ"
+      }
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "title": "CPL hash ตรงกับ PKL hash",
+      "issue": {
+        "what": "Hash ใน CPL ของ TrackFile บางรายการไม่ตรงกับ Hash ใน PKL (หรือข้อมูลแฮชไม่สอดคล้อง)",
+        "why": "มักเกิดจาก manifest เก่าหรือมีการสลับ/แก้ไฟล์ MXF หลังสร้าง PKL/CPL และอาจทำให้ IMF ingest/QC reject",
+        "fix": "Re-export/repackage IMF ใหม่ให้ regenerate CPL/PKL/ASSETMAP พร้อมกัน และหลีกเลี่ยงการ copy/replace MXF หลังสร้าง manifest"
+      }
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "title": "ASSETMAP ↔ PKL รายการไฟล์ไม่ตรงกัน",
+      "issue": {
+        "what": "ASSETMAP และ PKL ประกาศรายการ asset ไม่ตรงกัน (ยกเว้นไฟล์ PKL เอง)",
+        "why": "ASSETMAP/PKL คือ manifest หลักสำหรับ locate/validate asset หากไม่ตรงกันมักเป็นแพ็กไม่ครบหรือ manifest เก่า และเสี่ยง ingest/QC ล้มเหลว",
+        "fix": "Re-export/repackage IMF ใหม่ให้ regenerate ASSETMAP/PKL พร้อมกัน และหลีกเลี่ยงการ copy/replace asset หลังสร้าง manifest"
+      }
+    },
+    "IMF_MXF_SIGNATURE": {
+      "title": "ตรวจ MXF เบื้องต้น (signature/header)",
+      "issue": {
+        "what": "ไฟล์ MXF บางไฟล์ไม่เหมือน MXF ที่ถูกต้อง (header UL ผิด/ไฟล์เล็กผิดปกติ)",
+        "why": "MXF ที่เสียหรือไม่ถูกต้องอาจทำให้ IMF เล่น/รวม/รับเข้าไม่สำเร็จ และเสี่ยงโดน reject",
+        "fix": "คัดลอก/Export/Package ใหม่ให้ได้ MXF ที่ถูกต้อง และหลีกเลี่ยงการแทนไฟล์หลังสร้าง PKL/ASSETMAP"
+      }
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "title": "MXF Partition Pack (Header) / header metadata เบื้องต้น",
+      "issue": {
+        "what": "MXF บางไฟล์ไม่มี Header Partition Pack ที่ถูกต้อง หรือ HeaderByteCount ผิดปกติ",
+        "why": "Partition Pack / header metadata ผิดมักบ่งชี้ไฟล์เสียหรือไม่ conform และเสี่ยง ingest/QC ล้มเหลว",
+        "fix": "Re-export/re-wrap MXF track files ใหม่ และหลีกเลี่ยงการ copy/replace ไฟล์หลัง generate PKL/ASSETMAP"
+      }
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "title": "Essence Container Label ไม่ตรงกับ CPL (JPEG2000 / IAB)",
+      "issue": {
+        "what": "Essence Container Labels ใน MXF ไม่ตรงกับชนิดที่คาดจาก CPL (เช่น ImageSequence ควรเป็น JPEG2000, IABSequence ควรเป็น IAB)",
+        "why": "มักเป็นสัญญาณว่า mapping/export ผิดหรือ manifest ไม่ตรง และอาจทำให้ ingest/QC ไม่ผ่าน",
+        "fix": "ตรวจ preset/mapping ตอน export (ภาพ = JPEG2000, immersive = IAB ที่ถูกต้อง) แล้ว re-export/re-wrap ใหม่"
+      }
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "title": "โครงสร้าง CPL (Sequence/TrackId/EditRate)",
+      "issue": {
+        "what": "โครงสร้าง CPL ไม่ถูกต้องหรือไม่สอดคล้อง (Segment/Sequence/TrackId/Resource หาย, Id ซ้ำ, หรือ EditRate ไม่ตรง)",
+        "why": "อาจทำให้ IMF เล่น/รวม/รับเข้าไม่สำเร็จ และเสี่ยงโดน ingest/QC reject",
+        "fix": "Re-export/repackage IMF ใหม่ให้ regenerate CPL อย่างถูกต้อง (หลีกเลี่ยงการแก้ CPL XML ด้วยมือ) และตรวจให้ EditRate/timebase ตรงกันทุก resource"
+      }
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "title": "Composition Timecode ใน CPL",
+      "issue": {
+        "what": "CompositionTimecode หายหรือผิดปกติ (rate / start address)",
+        "why": "อาจทำให้ timecode/timeline mismatch ในระบบปลายทางและเสี่ยงโดนขอส่งใหม่",
+        "fix": "ตรวจ CompositionTimecode (rate/drop-frame/start) ให้ตรงกับ timeline ที่ต้องการ แล้ว re-export/repackage IMF หากจำเป็น"
+      }
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "title": "MXF metadata: ฟิลด์ descriptor ที่ต้องมี",
+      "issue": {
+        "what": "ไฟล์ MXF บางไฟล์ขาด metadata สำคัญ (เช่น StoredWidth/StoredHeight สำหรับภาพ, AudioSamplingRate/ChannelCount สำหรับเสียง) หรืออ่าน header metadata ไม่ได้",
+        "why": "descriptor metadata ขาด/ผิด เป็นสาเหตุโดนตีกลับ IMF บ่อย และทำให้ mapping/merge downstream ผิดพลาด",
+        "fix": "Re-wrap/Re-export MXF track files ให้เขียน descriptor metadata ถูกต้อง แล้วสร้าง PKL/ASSETMAP ใหม่ (หลีกเลี่ยงการแก้ MXF ด้วยมือ)"
+      }
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "title": "ความละเอียดภาพใน MXF ต้องสอดคล้องกัน (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "ไฟล์ภาพ MXF ใน IMF มี stored frame size (ความละเอียด) ไม่ตรงกัน",
+        "why": "ความละเอียดปะปนใน composition เดียวมักทำให้ ingest/QC ล้มเหลว และกระทบ conform/merge",
+        "fix": "Export/Re-wrap ไฟล์ภาพใหม่ให้ใช้ความละเอียดเดียวกันทั้งหมด แล้ว regenerate PKL/ASSETMAP"
+      }
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "title": "MXF เสียงต้องเป็น 48kHz",
+      "issue": {
+        "what": "ไฟล์เสียง MXF บางไฟล์ประกาศ AudioSamplingRate ไม่ใช่ 48kHz",
+        "why": "IMF audio โดยทั่วไปกำหนด 48kHz สำหรับส่งงาน — ไม่ตรงมักโดน reject",
+        "fix": "Export/Re-wrap track เสียงที่ 48kHz แล้ว rebuild IMF (regen PKL/ASSETMAP)"
+      }
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "title": "SampleRate ใน MXF ต้องตรงกับ EditRate ใน CPL",
+      "issue": {
+        "what": "descriptor SampleRate ใน MXF บางไฟล์ไม่ตรงกับ CPL Resource EditRate",
+        "why": "เวลา/ไทม์เบสผิดอาจทำให้ ingest/QC ล้มเหลว หรือเกิด drift ใน timeline",
+        "fix": "Re-wrap/Re-export track files ด้วย timebase ที่ถูกต้องให้ SampleRate ตรงกับ CPL EditRate แล้ว regenerate CPL/PKL/ASSETMAP"
+      }
+    }
+  }
+}

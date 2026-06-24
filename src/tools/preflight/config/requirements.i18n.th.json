@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:11.026560Z",
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "subtitle": "ตรวจความครบของ IMF + ภาษา/metadata ก่อนอัปโหลด"
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "subtitle": "ไฟล์กราฟิก/ไตเติล + โปรเจกต์ที่ใช้ทำ"
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "subtitle": "ไฟล์รีวิว/คัตสำหรับ QC"
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "subtitle": "โปรเจกต์ตัดต่อสุดท้าย + ไฟล์ลิงก์ที่จำเป็น"
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "subtitle": "nearfield 2.0 (48kHz, PCM WAV/BWAV)"
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "subtitle": "nearfield 5.1 (48kHz, PCM WAV/BWAV)"
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "subtitle": "โปรเจกต์เสียง/สเตจมิกซ์ + elements"
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "subtitle": "โปรเจกต์ DI/Conform ที่ใช้สร้าง master"
+    },
+    "SHOW_LOGO": {
+      "subtitle": "โลโก้โชว์เวอร์ชันสุดท้าย"
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "subtitle": "ไฟล์ transform/LUT/CTL/config ที่ใช้ใน pipeline"
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "subtitle": "ชาร์ตเฟรม/เซฟแอเรีย/ครอปอ้างอิง"
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "subtitle": "ไฟล์ servicing SDR แบบ ProRes 422 HQ"
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "subtitle": "Textless complete (manual checklist)"
+    },
+    "SCORE_MIXES_20": {
+      "subtitle": "ไฟล์มิกซ์สกอร์ 2.0"
+    },
+    "SCORE_STEMS": {
+      "subtitle": "สเต็มสกอร์"
+    },
+    "SONG_MIXES_STEMS": {
+      "subtitle": "เพลงต้นฉบับ (มิกซ์/สเต็ม)"
+    },
+    "PRODUCTION_AUDIO": {
+      "subtitle": "ไฟล์เสียงโปรดักชัน (ตาม template ทีม)"
+    },
+    "NAM_TEXTLESS": {
+      "subtitle": "Image sequence + checksum + naming (หลีกเลี่ยง zip)"
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "subtitle": "Print master nearfield 2.0 (48kHz, PCM WAV/BWAV)"
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "subtitle": "Print master nearfield 5.1 (48kHz, PCM WAV/BWAV)"
+    },
+    "FINAL_MODELS": {
+      "subtitle": "โมเดล final สำหรับ wrap (แยกตามช็อต/แอสเซ็ต)"
+    },
+    "BACKGROUND_PLATES": {
+      "subtitle": "แบ็กกราวด์เพลต (จัดตามช็อต)"
+    },
+    "SCANNING_DATA": {
+      "subtitle": "สแกน/เทรค/ไลดาร์ ฯลฯ (จัดตามช็อต)"
+    },
+    "VFX_SHOTS": {
+      "subtitle": "ช็อต VFX / deliverables (จัดตามช็อต)"
+    },
+    "ELEMENTS_2D": {
+      "subtitle": "องค์ประกอบ 2D (matte/paint/comps/refs)"
+    }
+  }
+}

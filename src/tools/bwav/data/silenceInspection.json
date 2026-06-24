@@ -1,0 +1,10 @@
+{
+  "allowedStartEndDropoutBufferSeconds": 60,
+  "minimumDurationForAnalysisSeconds": 600,
+  "allowedSurroundChannelSilencePercent": 99,
+  "allowedCenterChannelSilencePercent": 60,
+  "nearTotalSilence": 99,
+  "allowedLRChannelSilencePercent": 75,
+  "allowedAudioDropoutSeconds": 15,
+  "allowedLtRtChannelSilencePercent": 15
+}

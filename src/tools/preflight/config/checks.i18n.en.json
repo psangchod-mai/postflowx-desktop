@@ -1,0 +1,652 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "severity": "BLOCKER",
+      "title": "IMF package structure / integrity",
+      "issue": {
+        "what": "IMF package structure is incomplete or inconsistent.",
+        "why": "IMF is atomic — a broken track/metadata can cause the whole package to be rejected.",
+        "fix": "Ensure ASSETMAP/PKL/CPL and MXF assets are complete and consistent, then re-wrap/rebuild the IMF."
+      },
+      "module": "imf_parser",
+      "evidence_keys": [
+        "imf.has_assetmap",
+        "imf.has_pkl",
+        "imf.cpl_count",
+        "imf.mxf_count",
+        "imf.packing_list_ok"
+      ]
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "severity": "BLOCKER",
+      "title": "Language/metadata mismatch",
+      "issue": {
+        "what": "Language/metadata in the IMF does not match the delivery request.",
+        "why": "A mismatch can block delivery ingestion.",
+        "fix": "Set the correct language code and rebuild/re-wrap the IMF package."
+      },
+      "module": "imf_parser",
+      "evidence_keys": [
+        "imf.language_list",
+        "request.language_expected"
+      ]
+    },
+    "DV_METADATA_CMVERSION": {
+      "severity": "WARNING",
+      "title": "Dolby Vision metadata sanity (CMVersion/XML)",
+      "issue": {
+        "what": "Dolby Vision metadata looks abnormal or DV XML is missing.",
+        "why": "Incorrect DV metadata often triggers redelivery or a fix request.",
+        "fix": "Verify DV XML/CMVersion in mastering and export/re-wrap again."
+      },
+      "module": "dv_xml_parser",
+      "evidence_keys": [
+        "dv.xml_present",
+        "dv.cmversion",
+        "dv.profile"
+      ]
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "severity": "BLOCKER",
+      "title": "Audio must be PCM WAV/BWAV",
+      "issue": {
+        "what": "Audio is not uncompressed PCM WAV/BWAV.",
+        "why": "Delivery audio should be uncompressed WAV/BWAV for compatibility and QC.",
+        "fix": "Re-export as PCM WAV/BWAV and replace the file."
+      },
+      "module": "wav_parser",
+      "evidence_keys": [
+        "audio.codec",
+        "audio.format"
+      ]
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "severity": "BLOCKER",
+      "title": "Audio sample rate must be 48kHz",
+      "issue": {
+        "what": "Sample rate is not 48 kHz.",
+        "why": "Nearfield/print masters typically require 48 kHz.",
+        "fix": "Re-export at 48 kHz PCM WAV/BWAV and replace the file."
+      },
+      "module": "wav_parser",
+      "evidence_keys": [
+        "audio.sample_rate"
+      ]
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "severity": "WARNING",
+      "title": "Channel layout expected",
+      "issue": {
+        "what": "Channel count/layout does not match what’s expected.",
+        "why": "Wrong channel layout can break QC and downstream mixing.",
+        "fix": "Check routing/export preset and re-export."
+      },
+      "module": "wav_parser",
+      "evidence_keys": [
+        "audio.channels",
+        "requirement.expected.layout"
+      ]
+    },
+    "AUDIO_BIT_DEPTH_24": {
+      "severity": "BLOCKER",
+      "title": "Audio must be 24-bit",
+      "issue": {
+        "what": "Audio bit depth is not 24-bit.",
+        "why": "Netflix requires 24-bit PCM WAV/BWAV for nearfield and print master deliveries. 16-bit files will be rejected at ingest.",
+        "fix": "Re-export at 24-bit depth from your DAW/NLE and replace the file."
+      },
+      "module": "wav_parser",
+      "evidence_keys": [
+        "audio.bitsPerSample",
+        "audio.expected_bits"
+      ]
+    },
+    "AUDIO_STEM_DURATION_CONSISTENCY": {
+      "severity": "WARNING",
+      "title": "Stem durations are inconsistent",
+      "issue": {
+        "what": "Files in this stem set have different durations.",
+        "why": "All stems in a set must be exactly the same length. Mismatched durations cause sync drift during QC mixing.",
+        "fix": "Ensure all stem files come from the same session export. Re-export any file that is a different length."
+      },
+      "module": "wav_parser",
+      "evidence_keys": [
+        "audio.durations",
+        "audio.max_drift_sec"
+      ]
+    },
+    "AUDIO_DUPLICATE_FILENAMES": {
+      "severity": "WARNING",
+      "title": "Duplicate filenames in package",
+      "issue": {
+        "what": "Two or more files in this delivery package share the same filename.",
+        "why": "Duplicate names cause overwrite collisions during ingest and indicate likely copy/paste errors.",
+        "fix": "Rename duplicate files to uniquely identify each track/element."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "fs.duplicate_names"
+      ]
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "severity": "WARNING",
+      "title": "Embedded audio present",
+      "issue": {
+        "what": "Cannot auto-verify embedded audio in this build.",
+        "why": "Missing embedded audio can break review/encoding workflows.",
+        "fix": "Confirm audio is embedded, or re-export with embedded audio and replace the file."
+      },
+      "module": "manual_confirm",
+      "evidence_keys": []
+    },
+    "MEDIA_VFR_WARNING": {
+      "severity": "WARNING",
+      "title": "Variable frame rate warning",
+      "issue": {
+        "what": "Cannot auto-detect variable frame rate (VFR) in this build.",
+        "why": "VFR can cause sync and QC issues.",
+        "fix": "Confirm it is constant frame rate (CFR), or re-export/convert to CFR."
+      },
+      "module": "manual_confirm",
+      "evidence_keys": []
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "severity": "FYI",
+      "title": "Container/codec sanity",
+      "issue": {
+        "what": "Detailed codec/container validation requires external tools.",
+        "why": "This is a common source of delivery failures.",
+        "fix": "Export using the team’s approved preset."
+      },
+      "module": "info_only",
+      "evidence_keys": []
+    },
+    "PRORES_PROFILE_CHECK": {
+      "severity": "BLOCKER",
+      "title": "ProRes 422 HQ profile check",
+      "issue": {
+        "what": "MOV file is not ProRes 422 HQ.",
+        "why": "Servicing turnover must be ProRes 422 HQ (apch). Other ProRes tiers (LT, Proxy, 4444) are rejected at ingest.",
+        "fix": "Re-export using the ProRes 422 HQ preset and replace the file."
+      },
+      "module": "prores_parser",
+      "evidence_keys": [
+        "prores.bad_files",
+        "prores.bad_count",
+        "prores.checked_count"
+      ]
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "severity": "WARNING",
+      "title": "Textless checklist (manual)",
+      "module": "manual_check",
+      "issue": {
+        "what": "Please confirm this is Textless Complete.",
+        "why": "Textless deliverables must not include burned-in subtitles/unwanted graphics.",
+        "fix": "Tick the checklist items after verifying playback."
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "No burned-in subtitles/text"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "No unwanted lower-thirds/graphics"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "Checked head & tail playback"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "severity": "BLOCKER",
+      "title": "checksum.txt present",
+      "issue": {
+        "what": "checksum.txt is missing.",
+        "why": "Archive deliveries rely on checksums to verify integrity.",
+        "fix": "Generate checksum.txt for the sequence folder and add it to the package."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "nam.checksum_present"
+      ]
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "severity": "WARNING",
+      "title": "Path length limit",
+      "issue": {
+        "what": "File path length is longer than recommended.",
+        "why": "Overly long paths can break transfers and automated tools.",
+        "fix": "Shorten folder/file names to reduce the maximum path length."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "nam.max_path_length"
+      ]
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "severity": "WARNING",
+      "title": "Illegal characters in names",
+      "issue": {
+        "what": "Potentially illegal characters found in file/folder names.",
+        "why": "Some systems fail ingest when names contain special characters.",
+        "fix": "Rename using safe characters (a–z, 0–9, underscore, dash)."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "nam.illegal_names"
+      ]
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "severity": "FYI",
+      "title": "Avoid zipping NAM",
+      "issue": {
+        "what": "ZIP packaging detected (or likely).",
+        "why": "Some archive workflows prefer raw folders over ZIP.",
+        "fix": "Deliver as a folder-based sequence + checksum following the agreed structure."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "nam.zip_detected"
+      ]
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "severity": "WARNING",
+      "title": "Global upscale flag (UHD)",
+      "issue": {
+        "what": "Cannot auto-verify global upscale in this build.",
+        "why": "Archive masters should not be globally upscaled just to reach UHD.",
+        "fix": "Confirm the true source resolution and provide proof/exception if needed."
+      },
+      "module": "manual_confirm",
+      "evidence_keys": []
+    },
+    "FILES_PRESENT": {
+      "severity": "BLOCKER",
+      "title": "Required files present",
+      "issue": {
+        "what": "Required files have not been added.",
+        "why": "Missing files block downstream QC and handoff.",
+        "fix": "Add the missing files/folders and run preflight again."
+      },
+      "module": "presence",
+      "evidence_keys": []
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "severity": "WARNING",
+      "title": "Shot-based folder structure",
+      "issue": {
+        "what": "Folder structure does not look shot-based.",
+        "why": "Shot-based structure makes QC and retrieval faster.",
+        "fix": "Organize as /SHOW/EP/SHOT/... then deliver again."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "fs.structure_score"
+      ]
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "severity": "FYI",
+      "title": "Zip packaging warning",
+      "issue": {
+        "what": "ZIP file detected.",
+        "why": "Some VFX/archive paths discourage ZIP packaging.",
+        "fix": "Deliver using folders following the agreed structure."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "fs.zip_detected"
+      ]
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "severity": "BLOCKER",
+      "title": "CPL ↔ PKL/ASSETMAP manifest mismatch",
+      "issue": {
+        "what": "CPL references track files that are not declared in PKL and/or ASSETMAP.",
+        "why": "IMF ingest/QC expects every MXF referenced by the CPL to be declared in the manifest. Missing declarations commonly cause package rejection or redelivery.",
+        "fix": "Rebuild/re-export the IMF so PKL and ASSETMAP include every MXF referenced by the CPL (including IAB). Avoid copying MXFs into an IMP without regenerating PKL/ASSETMAP."
+      },
+      "module": "imf_cpl_manifest",
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.pkl_path",
+        "imf.cpl_path",
+        "imf.trackfile_total",
+        "imf.missing_count",
+        "imf.missing_assets"
+      ]
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "severity": "BLOCKER",
+      "title": "ASSETMAP paths resolve",
+      "issue": {
+        "what": "ASSETMAP references files that are missing from the package.",
+        "why": "IMF ingest/QC relies on ASSETMAP paths to locate assets. Missing paths commonly cause ingest failure or redelivery.",
+        "fix": "Ensure all referenced MXF/XML files exist in the IMP folder, then regenerate ASSETMAP/PKL by re-exporting/repackaging the IMF."
+      },
+      "module": "imf_assetmap_paths",
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.assetmap_total_assets",
+        "imf.assetmap_missing_count",
+        "imf.assetmap_missing_paths"
+      ]
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "severity": "BLOCKER",
+      "title": "PKL size matches actual files",
+      "issue": {
+        "what": "One or more assets declared in the PKL are missing or do not match the actual file size.",
+        "why": "PKL is used for package integrity. Size mismatches often indicate incomplete copy/corruption and can cause rejection.",
+        "fix": "Re-copy assets without interruption, or re-export/repackage to regenerate PKL/ASSETMAP. Avoid modifying/copying assets after PKL creation."
+      },
+      "module": "imf_pkl_size",
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.pkl_path",
+        "imf.pkl_total_assets",
+        "imf.pkl_missing_in_assetmap",
+        "imf.pkl_missing_files",
+        "imf.pkl_size_mismatches"
+      ]
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "severity": "BLOCKER",
+      "title": "ASSETMAP ↔ PKL asset list sync",
+      "issue": {
+        "what": "ASSETMAP and PKL do not declare the same set of assets (excluding the PKL file itself).",
+        "why": "ASSETMAP and PKL are the authoritative manifests for locating and validating assets. A mismatch usually indicates an incomplete/stale package and may cause ingest/QC failure.",
+        "fix": "Re-export/repackage the IMF so ASSETMAP and PKL are regenerated together. Avoid copying/replacing assets after manifest creation."
+      },
+      "module": "imf_assetmap_pkl_sync",
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.pkl_path",
+        "imf.assetmap_asset_count",
+        "imf.pkl_asset_count",
+        "imf.assetmap_pkl_asset_ids",
+        "imf.pkl_only_assets",
+        "imf.assetmap_only_assets"
+      ]
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "severity": "BLOCKER",
+      "title": "PKL hash matches actual files (SHA-1)",
+      "issue": {
+        "what": "One or more PKL hashes do not match the actual file contents (or cannot be verified).",
+        "why": "PKL hashes are used to validate package integrity. A hash mismatch often indicates corruption or a wrong/partial file and can cause rejection.",
+        "fix": "Re-copy assets without interruption or re-export/repackage to regenerate PKL/ASSETMAP. Avoid modifying/copying assets after PKL creation."
+      },
+      "module": "imf_pkl_hash",
+      "params": {
+        "chunk_size": 8388608,
+        "max_assets": 50
+      },
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.pkl_path",
+        "imf.pkl_hash_checked",
+        "imf.pkl_hash_missing_files",
+        "imf.pkl_hash_unsupported",
+        "imf.pkl_hash_mismatches"
+      ]
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "severity": "BLOCKER",
+      "title": "CPL hash matches PKL hash (manifest consistency)",
+      "issue": {
+        "what": "CPL Hash for one or more TrackFileIds does not match the corresponding PKL hash (or hashing metadata is inconsistent).",
+        "why": "CPL/PKL hash mismatches usually indicate a stale/edited manifest or swapped/corrupted assets and can trigger IMF ingest/QC rejection.",
+        "fix": "Re-export/repackage the IMF so CPL/PKL/ASSETMAP are regenerated together. Avoid copying/replacing MXF assets after manifest creation."
+      },
+      "module": "imf_cpl_pkl_hash",
+      "evidence_keys": [
+        "imf.cpl_path",
+        "imf.pkl_path",
+        "imf.cpl_hash_trackfile_count",
+        "imf.cpl_hash_internal_conflicts",
+        "imf.cpl_pkl_hash_mismatches",
+        "imf.cpl_pkl_missing_in_pkl",
+        "imf.cpl_pkl_missing_pkl_hash",
+        "imf.cpl_pkl_unsupported_algorithms",
+        "imf.cpl_pkl_missing_cpl_hash"
+      ]
+    },
+    "IMF_UUID_FORMAT": {
+      "severity": "BLOCKER",
+      "title": "UUID format / duplicate IDs",
+      "issue": {
+        "what": "One or more IMF IDs are not valid UUIDs or are duplicated inside a manifest.",
+        "why": "IMF uses UUIDs to reference assets. Invalid/duplicate IDs can break manifest resolution and ingest.",
+        "fix": "Re-export/repackage the IMF using a conforming tool. Avoid hand-editing IDs."
+      },
+      "module": "imf_uuid",
+      "evidence_keys": [
+        "imf.assetmap_invalid_ids",
+        "imf.assetmap_duplicate_ids",
+        "imf.pkl_invalid_ids",
+        "imf.pkl_duplicate_ids",
+        "imf.cpl_invalid_trackfile_ids"
+      ]
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "severity": "BLOCKER",
+      "title": "ASSETMAP length matches actual files",
+      "issue": {
+        "what": "One or more assets declared in ASSETMAP do not match the actual file size (Length) or cannot be resolved.",
+        "why": "ASSETMAP Length is part of package integrity. A mismatch often indicates an incomplete copy, corruption, or a stale manifest and can cause ingest/QC failure.",
+        "fix": "Re-copy assets without interruption, or re-export/repackage to regenerate ASSETMAP/PKL. Avoid modifying/copying assets after manifest creation."
+      },
+      "module": "imf_assetmap_length",
+      "evidence_keys": [
+        "imf.assetmap_path",
+        "imf.assetmap_total_assets",
+        "imf.assetmap_missing_files",
+        "imf.assetmap_length_mismatches"
+      ]
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "severity": "BLOCKER",
+      "title": "CPL timeline integrity (resource bounds / duration sync)",
+      "issue": {
+        "what": "CPL contains invalid resource trims (EntryPoint/SourceDuration out of bounds) and/or sequence durations are out of sync.",
+        "why": "Invalid CPL timing can break playback/merge and commonly triggers ingest/QC rejection.",
+        "fix": "Re-export/repackage the IMF and ensure all tracks are aligned in duration. Avoid hand-editing CPL timing values."
+      },
+      "module": "imf_cpl_timeline",
+      "evidence_keys": [
+        "imf.cpl_path",
+        "imf.cpl_segment_count",
+        "imf.cpl_resource_issues",
+        "imf.cpl_duration_mismatches"
+      ]
+    },
+    "IMF_MXF_SIGNATURE": {
+      "severity": "BLOCKER",
+      "title": "MXF signature / header sanity",
+      "issue": {
+        "what": "One or more MXF files do not appear to be valid MXF (bad header UL) or are unusually small.",
+        "why": "Invalid/corrupted MXF assets can break IMF playback/merge and commonly trigger ingest/QC rejection.",
+        "fix": "Re-copy/re-export/repackage the MXF assets. Avoid renaming or replacing MXF files after creating PKL/ASSETMAP."
+      },
+      "module": "imf_mxf_signature",
+      "params": {
+        "max_files": 200
+      },
+      "evidence_keys": [
+        "imf.mxf_checked",
+        "imf.mxf_bad_files"
+      ]
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "severity": "BLOCKER",
+      "title": "MXF partition pack sanity (Header Partition Pack)",
+      "issue": {
+        "what": "One or more MXF files are missing a valid Header Partition Pack or have invalid header byte count.",
+        "why": "Partition Pack / header metadata issues can indicate corruption or non-conformant MXF and may trigger ingest/QC rejection.",
+        "fix": "Re-export/re-wrap the MXF track files. Avoid copying/replacing MXF files after PKL/ASSETMAP generation."
+      },
+      "module": "imf_mxf_partition_pack",
+      "params": {
+        "max_files": 200
+      },
+      "evidence_keys": [
+        "imf.mxf_total_files",
+        "imf.mxf_partition_checked",
+        "imf.mxf_partition_errors",
+        "imf.mxf_partition_summary"
+      ]
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "severity": "WARNING",
+      "title": "MXF essence container label vs CPL sequence (JPEG2000 / IAB)",
+      "issue": {
+        "what": "Essence Container Labels in MXF do not match expected type for CPL sequences (e.g., ImageSequence expects JPEG2000, IABSequence expects IAB).",
+        "why": "A mismatch often indicates wrong essence mapping or a stale/incorrect export and can lead to ingest/QC failure.",
+        "fix": "Verify the MXF track file mapping/export settings (JPEG2000 for picture, correct IAB mapping for immersive audio), then re-wrap/re-export."
+      },
+      "module": "imf_mxf_essence_labels",
+      "params": {
+        "max_files": 200
+      },
+      "evidence_keys": [
+        "imf.cpl_path",
+        "imf.mxf_essence_label_checked",
+        "imf.mxf_essence_label_missing_files",
+        "imf.mxf_essence_label_mismatches",
+        "imf.mxf_essence_label_samples"
+      ]
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "severity": "BLOCKER",
+      "title": "CPL structural sanity (required sequences / TrackId / EditRate)",
+      "issue": {
+        "what": "CPL structure is invalid or inconsistent (missing Segment/Sequence/TrackId/Resource fields, duplicate IDs, or EditRate mismatch).",
+        "why": "Structural issues can break IMF playback/merge and commonly trigger ingest/QC rejection.",
+        "fix": "Re-export/repackage the IMF so the CPL is regenerated correctly (do not hand-edit CPL XML). Ensure EditRate/timebase is consistent across all resources."
+      },
+      "module": "imf_cpl_structural",
+      "evidence_keys": [
+        "imf.cpl_path",
+        "imf.cpl_root_edit_rate",
+        "imf.cpl_segment_count",
+        "imf.cpl_main_image_sequence_count",
+        "imf.cpl_structure_issues",
+        "imf.cpl_bad_resources",
+        "imf.cpl_editrate_mismatches",
+        "imf.cpl_duplicate_track_ids",
+        "imf.cpl_duplicate_sequence_ids"
+      ]
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "severity": "WARNING",
+      "title": "CPL composition timecode sanity",
+      "issue": {
+        "what": "CompositionTimecode is missing or looks abnormal (rate/start address).",
+        "why": "Incorrect composition timecode can cause timeline/TC mismatch in downstream systems and may lead to redelivery.",
+        "fix": "Verify CPL CompositionTimecode (rate/drop-frame/start address) matches the intended timeline and re-export/repackage the IMF if needed."
+      },
+      "module": "imf_cpl_timecode",
+      "evidence_keys": [
+        "imf.cpl_path",
+        "imf.cpl_timecode_drop_frame",
+        "imf.cpl_timecode_rate",
+        "imf.cpl_timecode_start",
+        "imf.cpl_timecode_issues"
+      ]
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "severity": "WARNING",
+      "title": "MXF header metadata: required descriptor fields",
+      "issue": {
+        "what": "One or more MXF track files are missing key descriptor metadata (e.g., StoredWidth/StoredHeight for picture, AudioSamplingRate/ChannelCount for audio) or header metadata could not be read.",
+        "why": "Missing/invalid descriptor metadata is a common cause of IMF ingest/QC rejection or downstream mapping errors.",
+        "fix": "Re-wrap/re-export the IMF MXF track files (do not hand-edit MXF). Ensure your IMF encoder writes correct MXF descriptor metadata, then regenerate PKL/ASSETMAP."
+      },
+      "module": "imf_mxf_descriptor_required",
+      "params": {
+        "max_files": 80,
+        "max_header_bytes": 4194304
+      },
+      "evidence_keys": [
+        "imf.mxf_descriptor_checked",
+        "imf.mxf_descriptor_missing_files",
+        "imf.mxf_descriptor_missing_fields",
+        "imf.mxf_descriptor_parse_errors",
+        "imf.mxf_descriptor_truncated_headers"
+      ]
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "severity": "BLOCKER",
+      "title": "MXF picture resolution consistency (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "Picture MXF track files in the IMF use inconsistent stored frame sizes (resolution).",
+        "why": "Mixed resolutions inside a single IMF composition often fail ingest/QC and can break downstream conform/merge.",
+        "fix": "Re-export/re-wrap picture track files so all ImageSequence track files use the same intended resolution, then regenerate PKL/ASSETMAP."
+      },
+      "module": "imf_mxf_picture_resolution",
+      "params": {
+        "max_files": 80,
+        "max_header_bytes": 4194304
+      },
+      "evidence_keys": [
+        "imf.mxf_picture_resolution_variants",
+        "imf.mxf_picture_resolution_samples"
+      ]
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "severity": "BLOCKER",
+      "title": "MXF audio sampling rate must be 48 kHz",
+      "issue": {
+        "what": "One or more audio MXF track files declare an AudioSamplingRate that is not 48 kHz.",
+        "why": "IMF audio is typically required to be 48 kHz for delivery; a mismatch is a frequent hard reject.",
+        "fix": "Re-export/re-wrap the audio track files at 48 kHz and rebuild the IMF package (regenerate PKL/ASSETMAP)."
+      },
+      "module": "imf_mxf_audio_samplerate",
+      "params": {
+        "max_files": 80,
+        "max_header_bytes": 4194304
+      },
+      "evidence_keys": [
+        "imf.mxf_audio_sample_rate_mismatches",
+        "imf.mxf_audio_sample_rate_missing"
+      ]
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "severity": "BLOCKER",
+      "title": "MXF descriptor SampleRate matches CPL EditRate",
+      "issue": {
+        "what": "One or more MXF track files declare a descriptor SampleRate that does not match the CPL Resource EditRate.",
+        "why": "A mismatch can indicate incorrect wrapping/timebase and may cause ingest/QC failure or timeline drift.",
+        "fix": "Re-wrap/re-export track files with the correct timebase (SampleRate) matching the intended CPL EditRate, then regenerate CPL/PKL/ASSETMAP."
+      },
+      "module": "imf_mxf_samplerate_match_cpl",
+      "params": {
+        "max_files": 80,
+        "max_header_bytes": 4194304
+      },
+      "evidence_keys": [
+        "imf.mxf_samplerate_mismatches",
+        "imf.mxf_samplerate_missing"
+      ]
+    },
+    "ZERO_BYTE_FILES": {
+      "severity": "BLOCKER",
+      "title": "Zero-byte files detected",
+      "issue": {
+        "what": "One or more files in this package have a size of 0 bytes.",
+        "why": "Zero-byte files indicate incomplete copies, failed exports, or corrupt deliverables. They will fail ingest and QC.",
+        "fix": "Re-copy or re-export the affected files. Verify the source files are not empty before re-uploading."
+      },
+      "module": "filesystem",
+      "evidence_keys": [
+        "fs.zero_byte_files",
+        "fs.zero_byte_count"
+      ]
+    }
+  }
+}

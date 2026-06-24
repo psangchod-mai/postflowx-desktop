@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Preflight Validator</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="brandIcon" src="../icons/icon48.png" alt="Preflight Validator"/>
+      <div class="brandText">
+        <div class="brandTitle">Preflight Validator</div>
+        <div class="brandSub">Netflix / IMF delivery · media QC</div>
+      </div>
+    </div>
+
+    <div class="topbarDivider"></div>
+
+    <div class="controls">
+      <div class="field">
+        <label for="projectName" id="lProject">Project</label>
+        <input id="projectName" placeholder="Show / EP / Version" />
+      </div>
+      <div class="field">
+        <label for="profileSelect" id="lProfile">Profile</label>
+        <select id="profileSelect"></select>
+      </div>
+      <div class="field pfx-type-field">
+        <label id="lType">Type</label>
+        <div class="pfx-type-toggle-wrap">
+          <span class="pfx-type-lbl pfx-type-lbl--on" id="pfxTypeLblStandalone">Standalone</span>
+          <label class="pfx-np-toggle">
+            <input type="checkbox" id="pfxTypeToggle" />
+            <span class="pfx-np-toggle-track"><span class="pfx-np-toggle-thumb"></span></span>
+          </label>
+          <span class="pfx-type-lbl" id="pfxTypeLblSeries">Series</span>
+          <input id="pfxEpCount" class="pfx-ep-count-input" type="number" min="1" max="999" value="18" title="Episode count" style="display:none" />
+        </div>
+      </div>
+      <button id="runBtn" class="btn primary">Run preflight</button>
+      <button id="exportBtn" class="btn">Export report</button>
+      <button id="resetBtn" class="btn ghost">Reset</button>
+    </div>
+  </header>
+
+  <!-- Delivery status strip (hidden until a run exists) -->
+  <div id="deliveryBar" class="deliveryBar" aria-hidden="true">
+    <div class="deliveryBarScore">
+      <span id="deliveryBarPct" class="deliveryBarPct">—</span>
+      <span class="deliveryBarScoreLabel">ready</span>
+    </div>
+    <div class="deliveryBarCenter">
+      <div id="deliveryBarTrack" class="deliveryBarTrack">
+        <div id="deliveryBarFill" class="deliveryBarFill"></div>
+      </div>
+      <div id="deliveryBarStats" class="deliveryBarStats">Run preflight to see delivery status</div>
+    </div>
+    <div id="deliveryBarChip" class="deliveryBarChip">NOT RUN</div>
+  </div>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <!-- Views as pill tabs -->
+      <div class="viewTabsWrap" id="viewTabsWrap">
+        <div id="viewsList" class="viewsList"></div>
+      </div>
+
+      <!-- KPI hero + grid -->
+      <div id="kpis" class="kpis"></div>
+
+      <div class="panel">
+        <div class="panelTitleRow">
+          <div class="panelTitle" id="tScope">Scope</div>
+          <div class="panelTitleActions">
+            <button id="scopeAllBtn" class="btn small" type="button">All</button>
+            <button id="scopeClearBtn" class="btn small" type="button">Clear</button>
+          </div>
+        </div>
+        <div id="catList" class="catList"></div>
+      </div>
+
+      <!-- Filters panel removed (Views already covers Blockers/Warn/Missing/Ready) -->
+
+      <div class="panel" id="epFilterPanel" style="display:none">
+        <div class="panelTitleRow">
+          <div class="panelTitle">Episode</div>
+        </div>
+        <div id="epList" class="epList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panelTitle" id="tHistory">History</div>
+        <div id="history" class="history"></div>
+      </div>
+
+      <div class="panel note">
+        <div class="panelTitle" id="tLimitations">Limitations</div>
+        <div class="small">
+          Some deep checks require external metadata tools (codec/ProRes profile, VFR detection, DV XML parsing). In this build they appear as “manual confirm” so the workflow can keep moving.
+        </div>
+      </div>
+    </aside>
+
+    <section class="content">
+      <div class="contentHeader">
+        <div class="contentTop">
+          <div class="contentTitles">
+            <div class="contentTitleRow">
+              <div class="contentTitle" id="tAssets">Assets</div>
+              <span class="countBadge" id="reqCount">0</span>
+            </div>
+            <div class="contentSub" id="contentSub">Select files/folders, then click Run preflight</div>
+
+            <!-- Bulk progress (import / scan) -->
+            <div id="progressBar" class="progressBar" aria-hidden="true" style="display:none">
+              <div class="progressInfo">
+                <div id="progressLabel" class="progressLabel">Working…</div>
+                <div id="progressMeta" class="progressMeta">0%</div>
+              </div>
+              <div class="progressTrack" aria-hidden="true">
+                <div id="progressFill" class="progressFill"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="contentTools">
+            <div class="searchWrap">
+              <span class="searchIcon" aria-hidden="true">⌕</span>
+              <input id="search" class="search topSearch" placeholder="Search: IMF / Audio / Logo…" />
+              <button id="searchClear" class="btn ghost iconBtn" title="Clear" aria-label="Clear search">✕</button>
+            </div>
+            <!-- Actions: pull out of dropdown into explicit icon buttons (Netflix-like) -->
+            <div class="actionsBar" aria-label="Actions">
+              <button id="actionImportFolder" class="btn small iconText" type="button" title="Bulk import folder (auto-assign)">
+                <svg class="actionIcon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+                </svg>
+                <span>Folder</span>
+              </button>
+              <button id="actionImportFiles" class="btn small iconText" type="button" title="Bulk import files (auto-assign)">
+                <svg class="actionIcon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <path d="M14 2v6h6"/>
+                </svg>
+                <span>Files</span>
+              </button>
+              <button id="actionClearFilters" class="btn small iconText ghost" type="button" title="Clear filters">
+                <svg class="actionIcon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 4h18l-7 8v6l-4 2v-8L3 4z"/>
+                  <path d="M16 16l4 4m0-4l-4 4"/>
+                </svg>
+                <span>Clear</span>
+              </button>
+              <!-- Toggle: Collapse / Expand (single red button) -->
+              <button id="actionCollapseAll" class="btn small iconText danger" type="button" title="Collapse all" data-mode="collapse">
+                <svg class="actionIcon iconCollapse" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 14l5-5 5 5"/>
+                  <path d="M7 19l5-5 5 5"/>
+                </svg>
+                <svg class="actionIcon iconExpand" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 10l5 5 5-5"/>
+                  <path d="M7 5l5 5 5-5"/>
+                </svg>
+                <span class="lblCollapse">Collapse</span>
+                <span class="lblExpand">Expand</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="assets" class="assets"></div>
+
+      <div class="panel unassigned">
+        <div class="panelTitle" id="tUnassigned">Unassigned files</div>
+        <div class="small" id="unassignedHelp">Files that could not be auto-assigned — assign them to the correct asset card.</div>
+        <div id="unassigned" class="unassignedList"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- hidden pickers -->
+  <input id="folderPicker" class="filePickerHidden" type="file" webkitdirectory directory multiple />
+  <input id="filePicker" class="filePickerHidden" type="file" multiple />
+
+  <!-- drawer -->
+  <div id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawerOverlay" id="drawerOverlay"></div>
+    <div class="drawerPanel">
+      <div class="drawerHead">
+        <div>
+          <div id="drawerTitle" class="drawerTitle">Asset</div>
+          <div id="drawerSub" class="drawerSub">—</div>
+        </div>
+        <button id="drawerClose" class="btn ghost">Close</button>
+      </div>
+      <div class="drawerTabs">
+        <button id="tabFix" class="tab active">Fix now</button>
+        <button id="tabEvidence" class="tab">Evidence</button>
+      </div>
+      <div id="drawerBody" class="drawerBody"></div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

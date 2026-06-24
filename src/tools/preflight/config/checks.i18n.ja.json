@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "title": "IMF 構造/整合性",
+      "issue": {
+        "what": "IMF の構造が不完全、または参照が不整合です。",
+        "why": "IMF は原子的で、問題があるとパッケージ全体が拒否される可能性があります。",
+        "fix": "ASSETMAP/PKL/CPL と MXF の整合性を確認し、再作成/再ラップしてください。"
+      }
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "title": "言語/メタデータ不一致",
+      "issue": {
+        "what": "IMF の言語/メタデータがリクエストと一致しません。",
+        "why": "不一致は ingest をブロックする可能性があります。",
+        "fix": "正しい言語コードで IMF を再作成/再ラップしてください。"
+      }
+    },
+    "DV_METADATA_CMVERSION": {
+      "title": "Dolby Vision メタデータ確認",
+      "issue": {
+        "what": "Dolby Vision のメタデータが不正/不足している可能性があります。",
+        "why": "DV メタデータ不備は再納品を招きやすいです。",
+        "fix": "DV XML/CMVersion を確認し、再出力/再ラップしてください。"
+      }
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "title": "音声は PCM WAV/BWAV",
+      "issue": {
+        "what": "音声が非圧縮 PCM WAV/BWAV ではありません。",
+        "why": "互換性/QC のため非圧縮が必要です。",
+        "fix": "PCM WAV/BWAV として再書き出しし差し替えてください。"
+      }
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "title": "サンプルレート 48kHz",
+      "issue": {
+        "what": "サンプルレートが 48kHz ではありません。",
+        "why": "Nearfield/Print では通常 48kHz が必要です。",
+        "fix": "48kHz PCM WAV/BWAV で再書き出しし差し替えてください。"
+      }
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "title": "チャンネル構成",
+      "issue": {
+        "what": "チャンネル数/レイアウトが想定と異なります。",
+        "why": "誤ったチャンネルは QC/合成に影響します。",
+        "fix": "ルーティング/プリセットを確認して再書き出ししてください。"
+      }
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "title": "埋め込み音声(手動)",
+      "issue": {
+        "what": "このビルドでは埋め込み音声を自動確認できません。",
+        "why": "音声がないとレビュー/エンコードが失敗します。",
+        "fix": "埋め込み済みを確認して確認済みにするか、再書き出しして差し替えてください。"
+      }
+    },
+    "MEDIA_VFR_WARNING": {
+      "title": "VFR 注意(手動)",
+      "issue": {
+        "what": "このビルドでは VFR を自動検出できません。",
+        "why": "VFR は同期/QC 問題の原因になります。",
+        "fix": "CFR であることを確認するか、CFR に再書き出ししてください。"
+      }
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "title": "コンテナ/コーデック(参考)",
+      "issue": {
+        "what": "詳細なコーデック/コンテナ検証は外部ツールが必要です。",
+        "why": "ここは納品失敗の原因になりがちです。",
+        "fix": "承認済みプリセットで書き出してください。"
+      }
+    },
+    "PRORES_PROFILE_CHECK": {
+      "title": "ProRes 422 HQ(手動)",
+      "issue": {
+        "what": "このビルドでは ProRes プロファイルを自動確認できません。",
+        "why": "Servicing は ProRes 422 HQ が必要です。",
+        "fix": "書き出しプリセット/MediaInfo で確認後、確認済みにしてください。"
+      }
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "title": "Textless checklist (manual)",
+      "issue": {
+        "what": "Textless Complete であることを確認してください。",
+        "why": "Textless は焼き込み字幕/不要なグラフィックがない必要があります。",
+        "fix": "チェック項目を確認し、必要なら証拠を添付してください。"
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "焼き込み字幕/テキストがない"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "不要なローワーサード/グラフィックがない"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "頭と尾を再生確認した"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "title": "checksum.txt 必須",
+      "issue": {
+        "what": "checksum.txt が見つかりません。",
+        "why": "アーカイブは整合性確認に checksum が必要です。",
+        "fix": "シーケンスフォルダに checksum.txt を生成して追加してください。"
+      }
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "title": "パス長",
+      "issue": {
+        "what": "パス/ファイル名が長すぎる可能性があります。",
+        "why": "転送/自動処理で失敗することがあります。",
+        "fix": "フォルダ/ファイル名を短くしてください。"
+      }
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "title": "禁止文字",
+      "issue": {
+        "what": "ファイル/フォルダ名に禁止文字が含まれている可能性があります。",
+        "why": "システムが読み込めない原因になります。",
+        "fix": "安全な文字(a-z,0-9,_,-)にリネームしてください。"
+      }
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "title": "ZIP 非推奨",
+      "issue": {
+        "what": "ZIP が検出されました。",
+        "why": "アーカイブではフォルダ構造のままが推奨される場合があります。",
+        "fix": "ZIP を避け、フォルダ+checksum で納品してください。"
+      }
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "title": "UHD アップスケール(手動)",
+      "issue": {
+        "what": "このビルドではアップスケールを自動判定できません。",
+        "why": "アーカイブは単純な全体アップスケールを避けるべきです。",
+        "fix": "ソース解像度を確認し、必要なら証拠/例外を添付してください。"
+      }
+    },
+    "FILES_PRESENT": {
+      "title": "必須ファイル",
+      "issue": {
+        "what": "必須ファイルが未追加です。",
+        "why": "欠落は QC/引き渡しをブロックします。",
+        "fix": "不足分を追加して再実行してください。"
+      }
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "title": "ショット構造",
+      "issue": {
+        "what": "フォルダ構造がショット単位に見えません。",
+        "why": "検索/QC が遅くなります。",
+        "fix": "/SHOW/EP/SHOT/... 構造に整理してください。"
+      }
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "title": "ZIP 注意",
+      "issue": {
+        "what": "ZIP が検出されました。",
+        "why": "VFX/Archive では ZIP を避ける場合があります。",
+        "fix": "可能ならフォルダ構造で納品してください。"
+      }
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "title": "CPL と PKL/ASSETMAP の不一致",
+      "issue": {
+        "what": "CPL が参照する TrackFile が PKL および/または ASSETMAP に宣言されていません。",
+        "why": "IMF の取り込み/QC では、CPL が参照するすべての MXF がマニフェストに宣言されている必要があります。欠落すると reject や再納品の原因になります。",
+        "fix": "IMF を再パッケージ/再書き出しし、PKL と ASSETMAP に CPL が参照するすべての MXF（IAB を含む）を含めてください。MXF を後から追加した場合は PKL/ASSETMAP を再生成してください。"
+      }
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "title": "ASSETMAP のパス解決",
+      "issue": {
+        "what": "ASSETMAP が参照するファイルがパッケージ内に存在しません",
+        "why": "Ingest/QC は ASSETMAP のパスでアセットを探索します。欠落や誤ったパスは失敗/再納品の原因になります。",
+        "fix": "参照されている MXF/XML がフォルダ内に存在することを確認し、IMF を再書き出しして ASSETMAP/PKL を再生成してください。"
+      }
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "title": "PKL のサイズ不一致",
+      "issue": {
+        "what": "PKL に宣言されたアセットが欠落している、または実ファイルサイズと一致しません",
+        "why": "PKL は整合性検証に使われます。サイズ不一致はコピー不完全/破損の可能性が高く、Reject の原因になります。",
+        "fix": "中断なく再コピーするか、再書き出し/再パッケージして PKL/ASSETMAP を再生成してください。PKL 作成後にファイルを変更しないでください。"
+      }
+    },
+    "IMF_UUID_FORMAT": {
+      "title": "UUID 形式／重複 ID",
+      "issue": {
+        "what": "UUID 形式でない ID、またはマニフェスト内で重複した ID があります",
+        "why": "IMF は UUID でアセット参照します。形式不正/重複は解決失敗や ingest エラーの原因になります。",
+        "fix": "準拠ツールで IMF を再生成してください。ID を手編集しないでください。"
+      }
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "title": "PKL のハッシュが実ファイルと一致しない",
+      "issue": {
+        "what": "PKL に記載されたハッシュが実ファイル内容と一致しません（または検証できません）。",
+        "why": "PKL ハッシュはパッケージ整合性の確認に使われます。不一致は破損や不完全コピーを示し、拒否/再納品の原因になります。",
+        "fix": "中断なく再コピーするか、再書き出し/再パッケージで PKL/ASSETMAP を再生成してください。PKL 作成後にファイルを変更しないでください。"
+      }
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "title": "ASSETMAP の Length が実ファイルサイズと一致",
+      "issue": {
+        "what": "ASSETMAP の Length が実ファイルサイズと一致しない、またはファイルが見つかりません。",
+        "why": "Length 不一致はコピー不完全/破損や古い manifest の可能性があり、ingest/QC 失敗の原因になります。",
+        "fix": "ファイルを再コピーするか、IMF を再書き出し/再パッケージして ASSETMAP/PKL を再生成してください。"
+      }
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "title": "CPL タイムライン整合性（範囲/長さ）",
+      "issue": {
+        "what": "CPL のリソース範囲が不正、または各 Sequence の長さが同期していません。",
+        "why": "再生/取り込み/QC に失敗し、リジェクトされる可能性があります。",
+        "fix": "IMF を再書き出し/再パッケージし、すべてのトラックの長さを揃えてください。手動編集は避けてください。"
+      }
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "title": "CPL のハッシュが PKL のハッシュと一致する",
+      "issue": {
+        "what": "CPL の TrackFileId のハッシュが対応する PKL ハッシュと一致しません（またはハッシュ情報が不整合）。",
+        "why": "不一致は古い/編集されたマニフェストや資産の差し替え・破損を示し、IMF の取り込み/QC で拒否される原因になります。",
+        "fix": "IMF を再書き出し/再パッケージし、CPL/PKL/ASSETMAP を同時に再生成してください。マニフェスト作成後に MXF を置き換えないでください。"
+      }
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "title": "ASSETMAP と PKL の資産リストが不一致",
+      "issue": {
+        "what": "ASSETMAP と PKL が宣言している資産の集合が一致しません（PKL ファイル自体は除外）。",
+        "why": "ASSETMAP/PKL は資産の場所と整合性を保証するマニフェストです。不一致は不完全/古いパッケージを示し、取り込み/QC 失敗の原因になります。",
+        "fix": "IMF を再書き出し/再パッケージして ASSETMAP/PKL を同時に再生成してください。マニフェスト作成後に資産を差し替えないでください。"
+      }
+    },
+    "IMF_MXF_SIGNATURE": {
+      "title": "MXF シグネチャ/ヘッダー確認",
+      "issue": {
+        "what": "一部の MXF が有効な MXF に見えません（ヘッダー UL 異常／サイズが小さすぎる）",
+        "why": "壊れた MXF は IMF の再生・取り込みに失敗し、QC でリジェクトされる可能性があります",
+        "fix": "MXF を再コピー／再書き出し／再パッケージし、PKL/ASSETMAP 作成後にファイルを差し替えないでください"
+      }
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "title": "MXF パーティションパック（Header）/ヘッダーメタデータの基本",
+      "issue": {
+        "what": "一部の MXF に有効な Header Partition Pack がない、または HeaderByteCount が不正の可能性があります。",
+        "why": "Partition Pack/ヘッダーメタデータの異常は破損または非準拠 MXF を示し、取り込み/QC 失敗の原因になります。",
+        "fix": "MXF トラックファイルを再書き出し/再ラップし、PKL/ASSETMAP 生成後にファイルを差し替えないでください。"
+      }
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "title": "Essence Container Label と CPL の不一致（JPEG2000 / IAB）",
+      "issue": {
+        "what": "MXF の Essence Container Label が CPL のシーケンス種別と一致しません（例：ImageSequence は JPEG2000、IABSequence は IAB を期待）。",
+        "why": "誤ったマッピング/書き出しやマニフェスト不整合の兆候で、取り込み/QC 失敗につながる可能性があります。",
+        "fix": "書き出し設定（映像=JPEG2000、イマーシブ=正しい IAB マッピング）を確認し、再書き出し/再ラップしてください。"
+      }
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "title": "CPL 構造チェック（Sequence/TrackId/EditRate）",
+      "issue": {
+        "what": "CPL 構造に不整合があります（Segment/Sequence/TrackId/Resource 欠落、ID 重複、または EditRate 不一致）。",
+        "why": "再生/マージ/取込に失敗し、IMF の QC でリジェクトされる原因になります。",
+        "fix": "IMF を再書き出し/再パッケージして CPL を正しく再生成してください（XML を手編集しない）。全リソースの EditRate/timebase を揃えてください。"
+      }
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "title": "CPL の CompositionTimecode",
+      "issue": {
+        "what": "CompositionTimecode が欠落、または Rate/Start が不正の可能性があります。",
+        "why": "下流システムで TC/タイムラインの不一致を引き起こし、再納品につながる場合があります。",
+        "fix": "CompositionTimecode（rate/drop-frame/start）が意図したタイムラインと一致しているか確認し、必要に応じて IMF を再書き出ししてください。"
+      }
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "title": "MXFメタデータ: 必須Descriptor項目",
+      "issue": {
+        "what": "一部のMXFトラックファイルで重要なDescriptorメタデータ（例: 画像のStoredWidth/StoredHeight、音声のAudioSamplingRate/ChannelCount）が欠落、またはヘッダーメタデータを読み取れません",
+        "why": "Descriptorメタデータの欠落/不整合はIMFのインジェスト/QCでのリジェクトや下流のマッピング不具合の原因になります",
+        "fix": "MXFトラックを正しい設定で再ラップ/再書き出しし、PKL/ASSETMAPを再生成してください（MXFを手編集しない）"
+      }
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "title": "MXF画像解像度の整合性 (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "IMF内の画像MXFトラックでstored frame size（解像度）が一致していません",
+        "why": "同一Composition内で解像度が混在するとインジェスト/QC失敗や下流のコンフォーム不具合になりやすいです",
+        "fix": "すべてのImageSequenceトラックが同一解像度になるよう再書き出し/再ラップし、PKL/ASSETMAPを再生成してください"
+      }
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "title": "MXF音声サンプルレートは48kHz",
+      "issue": {
+        "what": "一部の音声MXFトラックでAudioSamplingRateが48kHzではありません",
+        "why": "IMF納品では48kHzが要求されることが多く、不一致はハードリジェクトになりがちです",
+        "fix": "48kHzで音声トラックを再書き出し/再ラップし、IMFを再ビルド（PKL/ASSETMAP再生成）してください"
+      }
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "title": "MXFのSampleRateはCPLのEditRateと一致",
+      "issue": {
+        "what": "一部のMXFでDescriptor SampleRateがCPL Resource EditRateと一致しません",
+        "why": "タイムベース不一致はラップ不良の可能性があり、インジェスト/QC失敗やタイムラインのドリフトを招きます",
+        "fix": "正しいtimebaseで再ラップ/再書き出しし、SampleRateをCPL EditRateに合わせてからCPL/PKL/ASSETMAPを再生成してください"
+      }
+    }
+  }
+}

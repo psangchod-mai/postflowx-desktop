@@ -1,0 +1,5 @@
+{
+  "statisticalClippingErrorThreshold": 4000,
+  "maxClippedSegmentsToReportPerChannel": 3,
+  "repeatedClippingNearFullscaleThreshold": 0.95
+}

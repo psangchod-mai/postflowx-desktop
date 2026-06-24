@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BWAV Inspector</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+<div class="app compact">
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="assets/icon128.png" alt="BWAV Inspector logo" />
+        <div class="brand-text">
+          <div class="title">BWAV Inspector</div>
+          <div class="subtitle">ADM label & metadata checks</div>
+        </div>
+      </div>
+      <button id="btnSettings" class="icon-btn" title="Settings" aria-label="Settings">⚙︎</button>
+    </header>
+
+    <section class="panel compact-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <!-- Mode selector removed (fixed to Backlot internally) -->
+        </div>
+        <div class="toolbar-right">
+          <div class="status-inline" id="statusLine">Ready.</div>
+          <button class="btn ghost" id="btnClear">Clear</button>
+          <button class="btn" id="btnCopy">Copy JSON</button>
+          <button class="btn" id="btnPdf">Export PDF</button>
+          <button class="btn primary" id="btnExport">Export JSON</button>
+        </div>
+      </div>
+
+      <div class="filebar" id="dropzone" tabindex="0" role="button" aria-label="Choose BWAV or .atmosIR file">
+        <input id="fileInput" type="file" accept=".wav,.bwav,.bw64,.rf64,.atmosIR,.atmosir" hidden />
+        <div class="filebar-left">
+          <div class="file-ic" aria-hidden="true">⟡</div>
+          <div class="file-text">
+            <div class="file-title">Drop BWAV/BW64 here</div>
+            <div class="file-sub">or click to browse</div>
+          </div>
+        </div>
+        <div class="filebar-meta" id="fileMeta" hidden></div>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress"><div class="bar" id="progressBar" style="width:0%"></div></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+
+      <div class="cards kpi-row">
+        <div class="card">
+          <div class="card-k">ADM</div>
+          <div class="card-v" id="mAdm">—</div>
+          <div class="pill" id="pAdm">Waiting</div>
+        </div>
+        <div class="card">
+          <div class="card-k">CHNA</div>
+          <div class="card-v" id="mChna">—</div>
+          <div class="pill" id="pChna">Waiting</div>
+        </div>
+        <div class="card">
+          <div class="card-k">Format</div>
+          <div class="card-v" id="mFormat">—</div>
+          <div class="pill" id="pFormat">—</div>
+        </div>
+        <div class="card kpi-labels">
+          <div class="card-k">Labels</div>
+          <div class="card-v" id="mLabels">—</div>
+          <div class="pill" id="pLabels">Waiting</div>
+        </div>
+      </div>
+
+      <details class="details report-details" id="reportDetails">
+        <summary>Report details</summary>
+
+        <div class="scan-row">
+          <button class="btn" id="btnScanAudio">Run scan</button>
+          <select class="select" id="scanMode" aria-label="Scan mode">
+            <option value="quick" selected>Quick (fast)</option>
+            <option value="full">Full duration (slow)</option>
+          </select>
+          <button class="btn ghost" id="btnScanCancel" hidden>Cancel</button>
+          <div class="scan-note" id="scanNote">Quick scans start+end. Full scans entire duration (slow).</div>
+          <div class="scan-status" id="scanStatus">Not run</div>
+        </div>
+
+        
+        <div class="simple-summary" id="simpleSummary">
+          <div class="simple-head">
+            <div>
+              <div class="simple-title">Fix this first</div>
+              <div class="simple-sub">Red = must fix. Yellow = check. Green = OK.</div>
+            </div>
+            <div class="simple-badges">
+              <span class="badge sev-info" id="sumOverall">—</span>
+              <span class="badge sev-info" id="sumCounts">—</span>
+              <button class="btn tiny" id="sumToggle" hidden>Show all</button>
+            </div>
+          </div>
+
+          <div class="simple-list" id="sumList">
+            <div class="simple-empty">Run <b>Run audio scan (Quick)</b> to see audio issues.</div>
+          </div>
+        </div>
+
+        <details class="details tech-details">
+          <summary>Technical details (advanced)</summary>
+
+<div class="kv-grid kpi-grid">
+          <div class="kv"><div class="k">File</div><div class="v" id="rFile">—</div></div>
+          <div class="kv"><div class="k">PCM</div><div class="v" id="rPcm">—</div></div>
+          <div class="kv"><div class="k">Objects</div><div class="v" id="rObjects">—</div></div>
+          <div class="kv"><div class="k">Label scan</div><div class="v" id="rLabels">—</div></div>
+          <div class="kv"><div class="k">AXML location</div><div class="v" id="rAxmlWhere">—</div></div>
+          <div class="kv"><div class="k">AXML root</div><div class="v" id="rAxmlRoot">—</div></div>
+          <div class="kv"><div class="k">ADM stats</div><div class="v" id="rAdmStats">—</div></div>
+          <div class="kv"><div class="k">BXML/SXML</div><div class="v" id="rBxml">—</div></div>
+          <div class="kv"><div class="k">ds64</div><div class="v" id="rDs64">—</div></div>
+          <div class="kv"><div class="k">Chunks</div><div class="v" id="rChunks">—</div></div>
+
+          <div class="kv"><div class="k">Media format</div><div class="v" id="rMediaFormat">—</div></div>
+          <div class="kv"><div class="k">Sample peak</div><div class="v" id="rSamplePeak">—</div></div>
+          <div class="kv"><div class="k">True peak</div><div class="v" id="rTruePeak">—</div></div>
+          <div class="kv"><div class="k">Clipping</div><div class="v" id="rClipping">—</div></div>
+          <div class="kv"><div class="k">Digital hits</div><div class="v" id="rHits">—</div></div>
+          <div class="kv"><div class="k">Silence</div><div class="v" id="rSilence">—</div></div>
+        </div>
+
+        <div class="callout warn" id="rWarning" hidden></div>
+        <div class="callout bad" id="rError" hidden></div>
+
+        <details class="details kpi-json">
+          <summary>Raw JSON</summary>
+          <pre class="json" id="reportJson">{}</pre>
+        </details>
+
+        </details>
+      </details>
+    </section>
+
+    <section class="panel labels-panel">
+      <div class="labels-head">
+        <div>
+          <div class="section-title">Labels</div>
+          <div class="section-sub">Mapped group labels extracted from ADM (AXML).</div>
+        </div>
+        <div class="filters">
+          <input class="input" id="filterText" type="text" placeholder="Search labels…" />
+          <select class="select" id="filterStatus">
+            <option value="ALL">All</option>
+            <option value="PASS">PASS</option>
+            <option value="REJECT">REJECT</option>
+            <option value="WARN">WARN</option>
+          </select>
+          <select class="select" id="filterGroup">
+            <option value="ALL">All groups</option>
+            <option value="Dialogue">Dialogue</option>
+            <option value="Music">Music</option>
+            <option value="Effects">Effects</option>
+            <option value="Narration">Narration</option>
+            <option value="UNMAPPED">Unmapped</option>
+          </select>
+          <div class="count" id="labelsCount">—</div>
+        </div>
+      </div>
+
+      <div class="table-wrap table-big">
+        <table class="table" id="labelsTable" aria-label="Label results">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Raw label</th>
+              <th>Mapped</th>
+              <th>Source</th>
+              <th>Fix</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="empty"><td colspan="5">No file loaded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

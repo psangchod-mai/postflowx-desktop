@@ -1,0 +1,1825 @@
+/* ACES Look tab — al2 design system */
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --al-bg:               #0f1014;
+  --al-panel:            #161719;
+  --al-card:             #1d1f23;
+  --al-card-hover:       #22242a;
+  --al-border:           rgba(255,255,255,0.07);
+  --al-text-primary:     #e8e9ea;
+  --al-text-secondary:   #9a9da3;
+  --al-text-muted:       #565a61;
+  --al-accent:           #5a8de0;
+  --al-accent-dim:       rgba(90,141,224,0.15);
+  --al-success:          #4a9e6a;
+  --al-success-bg:       rgba(74,158,106,0.12);
+  --al-warn:             #c0922a;
+  --al-warn-bg:          rgba(192,146,42,0.12);
+  --al-danger:           #c04050;
+  --al-danger-bg:        rgba(192,64,80,0.12);
+}
+
+/* ── Root layout ───────────────────────────────────────────────────────────── */
+#main-aceslook {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 86px);
+  overflow: hidden;
+  background: var(--al-bg);
+  color: var(--al-text-primary);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+}
+
+/* ── Topbar ─────────────────────────────────────────────────────────────────── */
+.al2-topbar {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--al-border);
+  background: var(--al-panel);
+}
+
+/* ── Workflow mode segmented control ───────────────────────────────────────── */
+.al2-mode-seg {
+  display: flex;
+  gap: 1px;
+  background: rgba(0,0,0,0.3);
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.al2-mode-btn {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--al-text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.al2-mode-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--al-text-primary);
+}
+
+.al2-mode-btn.active {
+  background: var(--al-accent);
+  color: #fff;
+}
+
+/* ── Status rail ────────────────────────────────────────────────────────────── */
+.al2-status-rail {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 0;
+  border-bottom: 1px solid var(--al-border);
+  background: rgba(0,0,0,0.15);
+}
+
+.al2-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--al-text-muted);
+  padding: 0 8px;
+}
+
+.al2-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--al-text-muted);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.al2-step.ready .al2-step-dot  { background: var(--al-success); }
+.al2-step.warn  .al2-step-dot  { background: var(--al-warn); }
+.al2-step.error .al2-step-dot  { background: var(--al-danger); }
+.al2-step.ready                { color: var(--al-text-secondary); }
+.al2-step.warn                 { color: var(--al-warn); }
+.al2-step.error                { color: var(--al-danger); }
+
+.al2-step-connector {
+  flex: 1;
+  height: 1px;
+  background: var(--al-border);
+  min-width: 16px;
+  max-width: 32px;
+}
+
+/* ── Main workspace ─────────────────────────────────────────────────────────── */
+.al2-workspace {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Left rail ──────────────────────────────────────────────────────────────── */
+.al2-left-rail {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--al-panel);
+  border-right: 1px solid var(--al-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* rail itself does NOT scroll — inner sections area does */
+}
+
+/* Scrollable sections area */
+.al2-rail-sections {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.al2-rail-sections::-webkit-scrollbar { width: 4px; }
+.al2-rail-sections::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* Legacy scrollbar alias (in case old CSS targets .al2-left-rail) */
+.al2-left-rail::-webkit-scrollbar { width: 4px; }
+.al2-left-rail::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.al2-rail-section {
+  border-bottom: 1px solid var(--al-border);
+}
+
+.al2-rail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--al-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 0.12s;
+}
+
+.al2-rail-section-header:hover {
+  color: var(--al-text-secondary);
+}
+
+.al2-rail-chevron {
+  font-size: 9px;
+  opacity: 0.5;
+  transition: transform 0.15s;
+}
+
+.al2-rail-section.open .al2-rail-chevron {
+  transform: rotate(90deg);
+}
+
+.al2-rail-section-body {
+  display: none;
+  padding: 8px 10px;
+}
+
+.al2-rail-section.open .al2-rail-section-body {
+  display: block;
+}
+
+/* ── Source thumbnail ───────────────────────────────────────────────────────── */
+.al2-src-thumb {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--al-border);
+}
+
+.al2-src-thumb img,
+.al2-src-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.al2-src-name {
+  font-size: 11px;
+  color: var(--al-text-primary);
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.al2-src-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Badges ─────────────────────────────────────────────────────────────────── */
+.al2-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 1.5px 6px;
+  border-radius: 3px;
+}
+
+.al2-badge-class         { background: rgba(90,141,224,0.15);  color: var(--al-accent); }
+.al2-badge-conf-high     { background: var(--al-success-bg);   color: var(--al-success); }
+.al2-badge-conf-medium   { background: var(--al-warn-bg);      color: var(--al-warn); }
+.al2-badge-conf-low      { background: var(--al-danger-bg);    color: var(--al-danger); }
+.al2-badge-conf-auto     { background: rgba(255,255,255,0.07); color: var(--al-text-muted); }
+
+/* ── Drop zone ──────────────────────────────────────────────────────────────── */
+.al2-drop-zone {
+  border: 1px dashed rgba(255,255,255,0.15);
+  border-radius: 5px;
+  padding: 16px 8px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--al-text-muted);
+  font-size: 11px;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.al2-drop-zone:hover,
+.al2-drop-zone.over {
+  border-color: var(--al-accent);
+  color: var(--al-accent);
+}
+
+/* ── Preset list ────────────────────────────────────────────────────────────── */
+.al2-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.al2-preset-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--al-text-secondary);
+  font-size: 11px;
+  transition: background 0.1s;
+}
+
+.al2-preset-item:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--al-text-primary);
+}
+
+.al2-preset-item.active {
+  background: var(--al-accent-dim);
+  color: var(--al-accent);
+}
+
+.al2-preset-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── History / snapshots / versions ────────────────────────────────────────── */
+.al2-history-list,
+.al2-snapshot-list,
+.al2-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+}
+
+.al2-history-item,
+.al2-snapshot-item,
+.al2-version-item {
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--al-text-secondary);
+  font-size: 10.5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.1s;
+}
+
+.al2-history-item:hover,
+.al2-snapshot-item:hover,
+.al2-version-item:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--al-text-primary);
+}
+
+.al2-history-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.al2-history-time {
+  color: var(--al-text-muted);
+  font-size: 9.5px;
+  flex-shrink: 0;
+}
+
+.al2-snapshot-thumb {
+  width: 32px;
+  height: 18px;
+  border-radius: 2px;
+  object-fit: cover;
+  background: #000;
+  border: 1px solid var(--al-border);
+  flex-shrink: 0;
+}
+
+/* ── Viewer panel ───────────────────────────────────────────────────────────── */
+.al2-viewer-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #000;
+}
+
+/* ── Viewer toolbar ─────────────────────────────────────────────────────────── */
+.al2-viewer-toolbar {
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  background: rgba(0,0,0,0.4);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.al2-vtool-btn {
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--al-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.al2-vtool-btn:hover {
+  background: rgba(255,255,255,0.07);
+  color: var(--al-text-secondary);
+}
+
+.al2-vtool-btn.active {
+  background: rgba(90,141,224,0.2);
+  color: var(--al-accent);
+}
+
+.al2-vtool-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(255,255,255,0.1);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.al2-vtool-spacer { flex: 1; }
+
+/* ── Viewer wrap ────────────────────────────────────────────────────────────── */
+.al2-viewer-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#al-viewer {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.al2-viewer-overlay-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.al2-viewer-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f5c542;
+  background: rgba(0,0,0,0.65);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.al2-viewer-tc {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,0.6);
+  background: rgba(0,0,0,0.5);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 500;
+  font-family: 'SF Mono', 'Fira Mono', ui-monospace, monospace;
+  letter-spacing: 0.08em;
+}
+
+.al2-clip-warn-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255,60,60,0.12) 0,
+    rgba(255,60,60,0.12) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+  display: none;
+}
+
+.al2-clip-warn-overlay.visible { display: block; }
+
+/* ── Viewer meta strip ──────────────────────────────────────────────────────── */
+.al2-viewer-meta {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  background: rgba(0,0,0,0.3);
+  border-top: 1px solid rgba(255,255,255,0.05);
+  font-size: 10.5px;
+  color: var(--al-text-muted);
+}
+
+.al2-meta-name {
+  color: var(--al-text-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.al2-meta-zoom { font-variant-numeric: tabular-nums; }
+.al2-meta-sep  { color: rgba(255,255,255,0.15); }
+
+/* ── Inspector ──────────────────────────────────────────────────────────────── */
+.al2-inspector {
+  width: 300px;
+  flex-shrink: 0;
+  background: var(--al-panel);
+  border-left: 1px solid var(--al-border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.al2-inspector::-webkit-scrollbar { width: 4px; }
+.al2-inspector::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.al2-insp-section {
+  border-bottom: 1px solid var(--al-border);
+}
+
+.al2-insp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.al2-insp-header:hover {
+  background: rgba(255,255,255,0.02);
+}
+
+.al2-insp-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--al-text-muted);
+}
+
+.al2-insp-chevron {
+  font-size: 9px;
+  opacity: 0.4;
+  transition: transform 0.15s;
+}
+
+.al2-insp-section.open .al2-insp-chevron {
+  transform: rotate(90deg);
+}
+
+.al2-insp-body {
+  display: none;
+  padding: 0 12px 10px;
+}
+
+.al2-insp-section.open .al2-insp-body {
+  display: block;
+}
+
+
+/* ── Field rows (primary controls) ─────────────────────────────────────────── */
+.al2-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.al2-field-label {
+  width: 88px;
+  flex-shrink: 0;
+  color: var(--al-text-muted);
+  font-size: 11px;
+  cursor: ew-resize;
+  user-select: none;
+  transition: color 0.1s;
+}
+
+.al2-field-label:hover { color: var(--al-text-secondary); }
+
+.al2-field-range {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 1px;
+  outline: none;
+  cursor: pointer;
+}
+
+.al2-field-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--al-accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.4);
+}
+
+.al2-field-num {
+  width: 52px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--al-border);
+  border-radius: 3px;
+  color: var(--al-text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 5px;
+  text-align: right;
+  outline: none;
+}
+
+.al2-field-num:focus { border-color: var(--al-accent); }
+
+/* ── Input (IDT) section ────────────────────────────────────────────────────── */
+.al2-idt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.al2-select {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--al-border);
+  border-radius: 3px;
+  color: var(--al-text-primary);
+  font-size: 11px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.al2-select:focus { border-color: var(--al-accent); }
+
+.al2-conf-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* ── Toggle switch ──────────────────────────────────────────────────────────── */
+.al2-toggle {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.al2-toggle input { opacity: 0; width: 0; height: 0; }
+
+.al2-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(255,255,255,0.1);
+  border-radius: 8px;
+  transition: 0.2s;
+}
+
+.al2-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 2px;
+  bottom: 2px;
+  background: rgba(255,255,255,0.6);
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.al2-toggle input:checked + .al2-toggle-slider {
+  background: var(--al-accent);
+}
+
+.al2-toggle input:checked + .al2-toggle-slider:before {
+  transform: translateX(12px);
+  background: #fff;
+}
+
+/* ── CDL section ────────────────────────────────────────────────────────────── */
+.al2-cdl-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+
+.al2-cdl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.al2-cdl-label {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--al-text-muted);
+  cursor: ew-resize;
+  user-select: none;
+  transition: color 0.1s;
+}
+
+.al2-cdl-label:hover { color: var(--al-text-secondary); }
+
+.al2-cdl-inputs {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.al2-cdl-num {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--al-border);
+  border-radius: 3px;
+  color: var(--al-text-primary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 4px;
+  text-align: right;
+  outline: none;
+}
+
+.al2-cdl-num:focus { border-color: var(--al-accent); }
+.al2-cdl-disabled  { opacity: 0.35; pointer-events: none; }
+
+/* ── Look stack ─────────────────────────────────────────────────────────────── */
+.al2-ls-empty {
+  color: var(--al-text-muted);
+  font-size: 11px;
+  padding: 8px 0;
+  text-align: center;
+  font-style: italic;
+}
+
+.al2-ls-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  margin-bottom: 3px;
+  background: rgba(255,255,255,0.03);
+  cursor: default;
+  transition: background 0.1s;
+}
+
+.al2-ls-item:hover         { background: rgba(255,255,255,0.05); }
+.al2-ls-item--disabled     { opacity: 0.45; }
+
+.al2-ls-item.al2-ls-dragging  { opacity: 0.35; }
+.al2-ls-item.al2-ls-drag-over { border-color: var(--al-accent) !important; background: rgba(90,141,224,0.08) !important; }
+
+.al2-ls-drag {
+  cursor: grab;
+  color: var(--al-text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+  user-select: none;
+  transition: color 0.1s;
+}
+
+.al2-ls-drag:active { cursor: grabbing; }
+.al2-ls-drag:hover  { color: var(--al-text-secondary); }
+
+.al2-ls-kind {
+  display: inline-flex;
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.al2-ls-kind-cdl { background: rgba(90,141,224,0.2);  color: #7aaae8; }
+.al2-ls-kind-clf { background: rgba(100,180,100,0.2); color: #7dc97d; }
+.al2-ls-kind-lut { background: rgba(180,100,180,0.2); color: #c07dc0; }
+
+.al2-ls-name {
+  flex: 1;
+  font-size: 11px;
+  color: var(--al-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.al2-ls-enable {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  cursor: pointer;
+  accent-color: var(--al-accent);
+}
+
+.al2-ls-remove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--al-text-muted);
+  font-size: 13px;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.1s;
+}
+
+.al2-ls-remove:hover { color: var(--al-danger); }
+
+.al2-ls-add-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.al2-ls-add-btn {
+  flex: 1;
+  padding: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed rgba(255,255,255,0.12);
+  border-radius: 3px;
+  color: var(--al-text-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.al2-ls-add-btn:hover {
+  border-color: var(--al-accent);
+  color: var(--al-accent);
+  background: rgba(90,141,224,0.05);
+}
+
+/* ── View / output section ──────────────────────────────────────────────────── */
+.al2-view-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.al2-view-btn {
+  padding: 5px 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--al-border);
+  border-radius: 4px;
+  color: var(--al-text-secondary);
+  font-size: 10.5px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.al2-view-btn:hover {
+  background: rgba(255,255,255,0.07);
+  color: var(--al-text-primary);
+}
+
+.al2-view-btn.active {
+  background: rgba(90,141,224,0.15);
+  border-color: rgba(90,141,224,0.4);
+  color: var(--al-accent);
+}
+
+.al2-output-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--al-text-secondary);
+}
+
+/* ── Export section ─────────────────────────────────────────────────────────── */
+.al2-clip-row     { margin-bottom: 8px; }
+
+.al2-clip-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--al-text-muted);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.al2-clip-input {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--al-border);
+  border-radius: 3px;
+  color: var(--al-text-primary);
+  font-size: 11px;
+  padding: 4px 7px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.al2-clip-input:focus { border-color: var(--al-accent); }
+
+.al2-export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.al2-export-btn {
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--al-border);
+  border-radius: 4px;
+  color: var(--al-text-secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+
+.al2-export-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--al-text-primary);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.al2-export-btn.primary {
+  background: rgba(90,141,224,0.15);
+  border-color: rgba(90,141,224,0.35);
+  color: var(--al-accent);
+}
+
+.al2-export-btn.primary:hover {
+  background: rgba(90,141,224,0.25);
+}
+
+.al2-export-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.al2-export-result {
+  margin-top: 6px;
+  font-size: 10.5px;
+  padding: 4px 7px;
+  border-radius: 3px;
+  display: none;
+}
+
+.al2-export-result.ok  { display: block; background: var(--al-success-bg); color: var(--al-success); }
+.al2-export-result.err { display: block; background: var(--al-danger-bg);  color: var(--al-danger); }
+
+/* ── Scopes dock ────────────────────────────────────────────────────────────── */
+/* ── Scope rail (pinned to bottom of left rail) ─────────────────────────────── */
+.al2-scope-rail {
+  flex-shrink: 0;
+  background: var(--al-bg);
+  border-top: 1px solid var(--al-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.al2-scope-rail.collapsed .al2-scope-canvas-wrap,
+.al2-scope-rail.collapsed .al2-scope-stats {
+  display: none;
+}
+
+.al2-scope-rail-header {
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 8px 0 10px;
+  background: rgba(0,0,0,0.18);
+}
+
+.al2-scope-rail-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--al-text-muted);
+  margin-right: 4px;
+}
+
+/* H / W / P / V compact buttons */
+.al2-scope-mode-btns {
+  display: flex;
+  gap: 1px;
+}
+
+.al2-scope-mode-btn {
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--al-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.al2-scope-mode-btn:hover { color: var(--al-text-secondary); background: rgba(255,255,255,0.05); }
+.al2-scope-mode-btn.active {
+  color: var(--al-accent);
+  background: rgba(90,141,224,0.12);
+  border-color: rgba(90,141,224,0.3);
+}
+
+.al2-scope-cs-tag {
+  font-size: 9px;
+  color: var(--al-text-muted);
+  letter-spacing: 0.04em;
+  margin-left: auto;
+  margin-right: 2px;
+}
+
+.al2-scope-collapse-btn {
+  padding: 0 3px;
+  background: none;
+  border: none;
+  color: var(--al-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.1s;
+}
+.al2-scope-collapse-btn:hover { color: var(--al-text-secondary); }
+
+/* Canvas */
+.al2-scope-canvas-wrap {
+  height: 118px;
+  overflow: hidden;
+  padding: 3px 6px;
+}
+
+canvas#al2-scope-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 2px;
+  background: #06080a;
+}
+
+/* Stats row */
+.al2-scope-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 2px 8px 4px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+
+.al2-scope-stat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.al2-scope-ch-r { color: #de6060; font-weight: 700; font-size: 9px; }
+.al2-scope-ch-g { color: #56c46e; font-weight: 700; font-size: 9px; }
+.al2-scope-ch-b { color: #6490dc; font-weight: 700; font-size: 9px; }
+.al2-scope-ch-l { color: var(--al-text-muted); font-weight: 700; font-size: 9px; }
+
+.al2-scope-val {
+  color: var(--al-text-secondary);
+  font-size: 9.5px;
+  min-width: 26px;
+}
+
+.al2-scope-clip-tag {
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #ff3c3c;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border: 1px solid rgba(255,60,60,0.4);
+  border-radius: 2px;
+  background: rgba(255,60,60,0.12);
+  margin-left: auto;
+  animation: al2-clip-blink 0.8s steps(1) infinite;
+}
+@keyframes al2-clip-blink { 50% { opacity: 0.4; } }
+
+/* ── Validation footer ──────────────────────────────────────────────────────── */
+.al2-validation {
+  border-top: 1px solid var(--al-border);
+  background: rgba(0,0,0,0.2);
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.2s;
+}
+
+.al2-validation.has-issues {
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 6px 12px;
+}
+
+.al2-val-error {
+  color: var(--al-danger);
+  font-size: 10.5px;
+  display: flex;
+  gap: 5px;
+  padding: 1px 0;
+}
+
+.al2-val-warn {
+  color: var(--al-warn);
+  font-size: 10.5px;
+  display: flex;
+  gap: 5px;
+  padding: 1px 0;
+}
+
+/* ── Utility buttons ────────────────────────────────────────────────────────── */
+.al2-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--al-border);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  color: var(--al-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.al2-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--al-text-primary);
+}
+
+.al2-btn-accent {
+  background: rgba(90,141,224,0.15);
+  border-color: rgba(90,141,224,0.35);
+  color: var(--al-accent);
+}
+
+.al2-btn-accent:hover { background: rgba(90,141,224,0.25); }
+
+.al2-btn-xs {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.al2-btn-danger {
+  border-color: rgba(192,64,80,0.35);
+  color: var(--al-danger);
+}
+
+.al2-btn-danger:hover { background: var(--al-danger-bg); }
+
+/* ── Field notes ────────────────────────────────────────────────────────────── */
+.al2-note {
+  font-size: 10px;
+  color: var(--al-text-muted);
+  font-style: italic;
+  padding: 3px 0;
+}
+
+.al2-note code {
+  font-size: 9.5px;
+  background: rgba(0,0,0,0.3);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: #a0c4ff;
+  word-break: break-all;
+}
+
+/* ── Warning banner ─────────────────────────────────────────────────────────── */
+.al2-warn-banner {
+  background: var(--al-warn-bg);
+  border: 1px solid rgba(192,146,42,0.25);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 10.5px;
+  color: var(--al-warn);
+  margin: 4px 0;
+}
+
+/* ── Working space / output rows in view section ────────────────────────────── */
+.al2-out-select-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.al2-out-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--al-text-muted);
+}
+
+/* ── Modal (for PresetSaveModal) ────────────────────────────────────────────── */
+.al-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.al-modal {
+  background: #1a1b1f;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  width: 360px;
+  max-width: 90vw;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+}
+
+.al-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.al-modal-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.al-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+.al-modal-err { color: var(--al-danger); font-size: 11px; }
+
+.al-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  color: var(--al-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.al-btn:hover { background: rgba(255,255,255,0.09); }
+.al-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.al-btn--primary { background: rgba(90,141,224,0.2); border-color: rgba(90,141,224,0.4); color: var(--al-accent); }
+.al-btn--primary:hover:not(:disabled) { background: rgba(90,141,224,0.3); }
+.al-btn--xs  { padding: 3px 7px; font-size: 11px; }
+.al-btn--icon { padding: 3px 6px; font-size: 12px; border: none; background: transparent; color: #666; }
+.al-btn--icon:hover { color: var(--al-text-primary); background: rgba(255,255,255,0.07); }
+
+.al-label {
+  font-size: 11px;
+  color: var(--al-text-muted);
+  margin-bottom: 2px;
+}
+
+.al-input {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--al-border);
+  border-radius: 4px;
+  color: var(--al-text-primary);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.al-input:focus { border-color: var(--al-accent); }
+
+.al-field-note {
+  font-size: 11px;
+  color: var(--al-text-muted);
+  font-style: italic;
+}
+
+/* ── OCF proxy shimmer ──────────────────────────────────────────────────────── */
+.al-proxy-shimmer {
+  background: linear-gradient(90deg, #1e1e3a 0%, #6366f1 40%, #818cf8 60%, #1e1e3a 100%);
+  background-size: 200% 100%;
+  animation: alProxyShimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes alProxyShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ── Timecode overlay ───────────────────────────────────────────────────────── */
+.al-tc-display {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'SF Mono', 'Fira Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  color: rgba(220,220,240,0.85);
+  background: rgba(0,0,0,0.52);
+  padding: 2px 10px;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 4;
+  white-space: nowrap;
+}
+
+/* ── Look-stack drag handle (legacy class kept for LookStackCard.js) ─────────── */
+.al-ls-drag-handle {
+  color: var(--al-text-muted);
+  cursor: grab;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px 0 0;
+  flex-shrink: 0;
+  user-select: none;
+  transition: color 0.12s;
+}
+
+.al-ls-drag-handle:hover { color: var(--al-text-secondary); }
+.al-ls-item.al-ls-dragging  { opacity: 0.35; }
+.al-ls-item.al-ls-drag-over {
+  border-color: var(--al-accent) !important;
+  background: rgba(90,141,224,0.08) !important;
+}
+
+/* ── Empty state text ───────────────────────────────────────────────────────── */
+.al2-empty {
+  color: var(--al-text-muted);
+  font-size: 11px;
+  text-align: center;
+  padding: 10px 0;
+  font-style: italic;
+}
+
+/* ── Section row helpers ────────────────────────────────────────────────────── */
+.al2-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+  gap: 6px;
+}
+
+.al2-row-label {
+  font-size: 11px;
+  color: var(--al-text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Proxy overlay (viewer inner) ───────────────────────────────────────────── */
+#al2-proxy-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+/* ── Smart section header indicators ────────────────────────────────────────── */
+.al2-hdr-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: transparent; border: 1px solid rgba(255,255,255,0.2);
+  flex-shrink: 0; display: inline-block; margin-right: 4px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.al2-hdr-dot--ready   { background: var(--al-success);  border-color: var(--al-success); }
+.al2-hdr-dot--warn    { background: var(--al-warn);     border-color: var(--al-warn); }
+.al2-hdr-dot--accent  { background: var(--al-accent);   border-color: var(--al-accent); }
+.al2-hdr-dot--muted   { background: var(--al-text-muted); border-color: var(--al-text-muted); }
+
+.al2-hdr-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.03em;
+  background: rgba(255,255,255,0.08); color: var(--al-text-muted);
+  padding: 1px 5px; border-radius: 8px; margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rail count badges */
+.al2-rail-badge {
+  font-size: 9px; font-weight: 700;
+  background: rgba(255,255,255,0.08); color: var(--al-text-muted);
+  padding: 1px 5px; border-radius: 8px; margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inspector header flex fix to accommodate badges */
+.al2-insp-header { gap: 4px; }
+.al2-rail-section-header { gap: 4px; }
+
+/* Subtle CDL label when modified */
+.al2-cdl-modified-label {
+  font-size: 9.5px; color: var(--al-accent); opacity: 0.8;
+  font-style: italic;
+}
+
+/* Smart look stack pipeline flow indicator */
+.al2-ls-pipeline-head {
+  font-size: 9px; color: var(--al-text-muted); text-align: center;
+  padding: 4px 0 2px; letter-spacing: 0.05em; text-transform: uppercase;
+}
+
+/* Section auto-open animation */
+.al2-insp-body {
+  animation: al2FadeIn 0.12s ease;
+}
+@keyframes al2FadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Pro adjustment controls ─────────────────────────────────────────────────── */
+
+/* Slider track wrapper — positions center mark */
+.al2-field-track-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Pro range slider — wider track, polished thumb */
+.al2-field-range--pro {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  flex: 1;
+}
+.al2-field-range--pro::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(90,141,224,0.8);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.1s;
+}
+.al2-field-range--pro:hover::-webkit-slider-thumb,
+.al2-field-range--pro:focus::-webkit-slider-thumb {
+  border-color: var(--al-accent);
+  transform: scale(1.15);
+}
+.al2-field-range--pro::-webkit-slider-runnable-track { border-radius: 2px; }
+
+/* Bipolar center tick */
+.al2-field-center-mark {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  width: 1px; height: 8px;
+  background: rgba(255,255,255,0.25);
+  pointer-events: none;
+}
+
+/* Hover-reveal reset button */
+.al2-field-reset {
+  width: 18px; height: 18px;
+  border: none; background: transparent;
+  color: var(--al-text-muted);
+  font-size: 11px; cursor: pointer;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.12s;
+}
+.al2-field-row:hover .al2-field-reset { opacity: 0.5; }
+.al2-field-reset:hover { color: var(--al-accent) !important; opacity: 1 !important; }
+
+/* Tighter field row for Basic */
+.al2-field-row {
+  gap: 6px;
+  padding: 3px 0;
+}
+.al2-field-label {
+  width: 76px;
+}
+.al2-field-num {
+  width: 44px;
+}
+
+/* ── CDL pro layout ──────────────────────────────────────────────────────────── */
+
+/* RGB channel header */
+.al2-cdl-ch-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--al-border);
+  margin-bottom: 4px;
+}
+.al2-cdl-ch-label {
+  flex: 1;
+  text-align: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.al2-cdl-ch-r { color: rgba(220,100,100,0.9); }
+.al2-cdl-ch-g { color: rgba(90,200,100,0.9); }
+.al2-cdl-ch-b { color: rgba(90,140,230,0.9); }
+.al2-cdl-ch-rst-ph { width: 18px; flex-shrink: 0; }
+
+/* CDL row — label + 3 channel inputs + reset */
+.al2-cdl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 0;
+}
+.al2-cdl-label {
+  width: 48px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--al-text-muted);
+  cursor: ew-resize;
+  user-select: none;
+}
+.al2-cdl-label:hover { color: var(--al-text-secondary); }
+
+.al2-cdl-num {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--al-border);
+  border-radius: 3px;
+  color: var(--al-text-primary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 3px;
+  text-align: right;
+  outline: none;
+  transition: border-color 0.12s;
+}
+.al2-cdl-num:focus { border-color: var(--al-accent); }
+/* Channel color tints on focused/hover state */
+.al2-cdl-num.al2-cdl-ch-r:focus { border-color: rgba(220,100,100,0.7); }
+.al2-cdl-num.al2-cdl-ch-g:focus { border-color: rgba(90,200,100,0.7); }
+.al2-cdl-num.al2-cdl-ch-b:focus { border-color: rgba(90,140,230,0.7); }
+
+/* Per-row reset button */
+.al2-cdl-rst {
+  width: 18px; height: 18px;
+  border: none; background: transparent;
+  color: var(--al-text-muted); font-size: 11px;
+  cursor: pointer; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; opacity: 0;
+  transition: opacity 0.15s, color 0.12s;
+}
+.al2-cdl-row:hover .al2-cdl-rst,
+.al2-cdl-sat-row:hover .al2-cdl-rst { opacity: 0.5; }
+.al2-cdl-rst:hover { color: var(--al-accent) !important; opacity: 1 !important; }
+
+/* Saturation row */
+.al2-cdl-sat-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--al-border);
+  margin-top: 4px;
+}
+
+/* Disabled CDL state */
+.al2-cdl-disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* ── Inline source picker (toolbar) ─────────────────────────────────────────── */
+.al2-src-picker {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.al2-src-drop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  border: 1px dashed rgba(255,255,255,0.12);
+  border-radius: 5px;
+  padding: 0 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  overflow: hidden;
+}
+.al2-src-drop:hover,
+.al2-src-drop--over {
+  border-color: var(--al-accent);
+  background: var(--al-accent-dim);
+}
+.al2-src-drop--loaded {
+  border-style: solid;
+  border-color: rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+}
+
+.al2-src-drop-icon {
+  font-size: 10px;
+  color: var(--al-text-muted);
+  flex-shrink: 0;
+}
+.al2-src-drop--loaded .al2-src-drop-icon {
+  color: var(--al-success);
+  font-size: 8px;
+}
+
+.al2-src-drop-label {
+  font-size: 11px;
+  color: var(--al-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  letter-spacing: 0.01em;
+}
+.al2-src-drop:hover .al2-src-drop-label { color: var(--al-text-secondary); }
+
+.al2-src-drop-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--al-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.al2-src-clear-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--al-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.12s;
+}
+.al2-src-clear-btn:hover { color: var(--al-danger); }
+
+/* ── Re-link state ────────────────────────────────────────────────────────────── */
+.al2-src-drop--relink {
+  border-color: rgba(192,146,42,0.4) !important;
+  background: rgba(192,146,42,0.06) !important;
+}
+.al2-src-drop--relink:hover {
+  border-color: var(--al-warn) !important;
+  background: rgba(192,146,42,0.12) !important;
+}
+.al2-src-drop--relink .al2-src-drop-icon {
+  color: var(--al-warn);
+  content: '↺';
+}
+
+/* ── Re-link overlay (viewer center) ────────────────────────────────────────── */
+.al2-relink-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.al2-relink-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--al-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: 4px;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+}
+.al2-relink-dismiss:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.08);
+}
+
+.al2-relink-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 36px;
+  background: rgba(22,23,25,0.95);
+  border: 1px solid rgba(192,146,42,0.35);
+  border-radius: 10px;
+  max-width: 360px;
+  text-align: center;
+}
+
+.al2-relink-icon {
+  font-size: 24px;
+  color: var(--al-warn);
+  line-height: 1;
+}
+
+.al2-relink-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--al-text-primary);
+  letter-spacing: 0.01em;
+}
+
+.al2-relink-name {
+  font-size: 11px;
+  color: var(--al-warn);
+  font-weight: 500;
+  word-break: break-all;
+  max-width: 280px;
+  background: rgba(192,146,42,0.1);
+  padding: 3px 10px;
+  border-radius: 4px;
+}
+
+.al2-relink-hint {
+  font-size: 11px;
+  color: var(--al-text-muted);
+  line-height: 1.5;
+}
+
+.al2-relink-btn {
+  margin-top: 4px;
+  padding: 7px 20px;
+  background: rgba(192,146,42,0.15);
+  border: 1px solid rgba(192,146,42,0.45);
+  border-radius: 5px;
+  color: var(--al-warn);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  letter-spacing: 0.02em;
+}
+.al2-relink-btn:hover {
+  background: rgba(192,146,42,0.28);
+  border-color: var(--al-warn);
+  color: #e8b340;
+}

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PostFlowX</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="panel">
+
+    <!-- Header -->
+    <header class="panel-header">
+      <div class="brand">
+        <span class="brand-name">PostFlowX</span>
+        <span class="brand-version">v1</span>
+      </div>
+      <div class="status-row">
+        <span id="status-dot" class="status-dot status-dot--disconnected"></span>
+        <span id="status-text" class="status-text">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- Project / Sequence -->
+    <section class="section section--meta">
+      <div class="meta-row">
+        <span class="meta-label">Project</span>
+        <span id="project-name" class="meta-value">—</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Sequence</span>
+        <span id="sequence-name" class="meta-value">—</span>
+      </div>
+    </section>
+
+    <!-- Sync controls -->
+    <section class="section section--controls">
+      <div class="controls-row">
+        <button id="btn-sync-now" class="btn btn--primary">Sync Now</button>
+      </div>
+      <div class="controls-row">
+        <button id="btn-set-baseline" class="btn">Set Baseline</button>
+        <button id="btn-clear-baseline" class="btn btn--danger">Clear Baseline</button>
+      </div>
+      <div class="baseline-status-row">
+        <span id="baseline-status" class="baseline-status">No baseline</span>
+      </div>
+    </section>
+
+    <!-- Changed clips -->
+    <section class="section section--list">
+      <h3 class="section-title">Changed Clips</h3>
+      <div id="changed-clips-list" class="list-container">
+        <div class="empty-state">No changes</div>
+      </div>
+    </section>
+
+    <!-- Affected pulls -->
+    <section class="section section--list">
+      <h3 class="section-title">Affected Pulls</h3>
+      <div id="affected-pulls-list" class="list-container">
+        <div class="empty-state">No affected pulls</div>
+      </div>
+    </section>
+
+    <!-- Marker actions -->
+    <section class="section section--actions">
+      <h3 class="section-title">Markers</h3>
+      <div class="controls-row">
+        <button id="btn-add-issue-marker" class="btn btn--marker">Add Issue Marker</button>
+        <button id="btn-add-repull-marker" class="btn btn--marker btn--repull">Add Repull Marker</button>
+      </div>
+    </section>
+
+    <!-- Sync log -->
+    <section class="section section--log">
+      <h3 class="section-title">Sync Log</h3>
+      <div id="sync-log" class="log-container"></div>
+    </section>
+
+  </div>
+
+  <script src="bundle.js" type="module"></script>
+</body>
+</html>

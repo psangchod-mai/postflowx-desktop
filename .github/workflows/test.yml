@@ -1,0 +1,25 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  timeline-parsers:
+    name: Timeline parsers + pipeline (Node 20)
+    runs-on: ubuntu-latest
+    env:
+      # Skip Electron's binary download — these tests are pure Node and never
+      # launch the app, so the binary isn't needed (keeps CI fast).
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # The timeline-parser contract + pipeline + router suite this CI guards.
+      - run: npm run test:node
+      # Node-only unit suites under tests-js/ (vfx pull helpers etc.).
+      - run: npm run test:js

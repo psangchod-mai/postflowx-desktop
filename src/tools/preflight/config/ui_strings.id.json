@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-03T18:43:38.403769+07:00",
+  "ui_language": {
+    "locale": "id",
+    "statuses": {
+      "NOT_ADDED": "Belum ditambahkan",
+      "SCANNING": "Memeriksa",
+      "PASSED": "Siap",
+      "ISSUES": "Ada isu",
+      "BLOCKED": "Terblokir"
+    },
+    "severities": {
+      "BLOCKER": "Terblokir",
+      "WARNING": "Peringatan",
+      "FYI": "Info"
+    },
+    "buttons": {
+	      "add_files": "Tambah ▾",
+	      "add_folder": "Tambah folder…",
+	      "add_files_item": "Tambah file…",
+      "select_folder": "Pilih folder",
+      "select_files": "Pilih file",
+      "run": "Jalankan preflight",
+      "export_report": "Ekspor laporan",
+      "reset": "Reset",
+      "close": "Tutup",
+      "confirm": "Terkonfirmasi",
+      "view_fix": "Lihat / Perbaiki",
+      "assign": "Assign"
+    },
+    "labels": {
+      "project": "Proyek",
+      "profile": "Profil",
+      "language": "Bahasa",
+      "ready": "Siap",
+      "blockers": "Blokir",
+      "missing": "Kurang",
+      "warnings": "Peringatan",
+      "files": "File",
+      "assets": "Aset",
+      "scope": "Cakupan",
+      "filters": "Filter",
+      "history": "Riwayat",
+      "limitations": "Keterbatasan",
+      "all": "Semua",
+      "clear": "Hapus",
+      "only": "Hanya ini",
+      "search_placeholder": "Cari: IMF / Audio / Logo…",
+      "pick_scope_hint": "Pilih cakupan, tambahkan file/folder, lalu jalankan preflight.",
+      "no_scope": "Belum memilih kategori. Pilih di panel Cakupan (kiri).",
+      "unassigned": "File belum ditetapkan",
+      "unassigned_help": "File yang tidak bisa di-auto-assign — assign ke kartu aset yang benar.",
+      "assign_all_unassigned_to": "Assign semua unassigned ke:",
+      "assign_all": "Assign semua",
+      "choose_asset_first": "Pilih kartu aset dulu.",
+      "assigned_all_run_again": "Assigned. Jalankan preflight lagi untuk menerapkan.",
+      "assigned_all_run_again_plural": "Semua sudah di-assign. Jalankan preflight lagi untuk menerapkan.",
+      "select_scope_first": "Pilih minimal satu kategori.",
+      "manual_confirm_hint": "Gunakan setelah Anda memverifikasi check ini terpenuhi.",
+      "confirm_done": "Terkonfirmasi",
+      "fix_now": "Perbaiki",
+      "evidence_tab": "Bukti"
+    },
+    "issue_template": {
+      "what": "Apa yang terjadi",
+      "why": "Kenapa penting",
+      "fix": "Cara memperbaiki"
+    }
+  }
+}

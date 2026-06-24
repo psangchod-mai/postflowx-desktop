@@ -1,0 +1,6 @@
+Write-Host "PostFlowX Companion Windows installer scaffold"
+Write-Host "TODO:"
+Write-Host "  1. copy companion binary into Program Files"
+Write-Host "  2. register native messaging host in HKCU/HKLM"
+Write-Host "  3. patch allowed_origins with the real extension ID"
+Write-Host "  4. sign installer and binaries in release builds"

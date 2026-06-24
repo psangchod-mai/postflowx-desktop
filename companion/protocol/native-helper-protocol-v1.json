@@ -1,0 +1,145 @@
+{
+  "name": "PostFlowX Native Helper Protocol",
+  "version": "1.0.0",
+  "transport": "chrome-native-messaging",
+  "requestEnvelope": {
+    "type": "object",
+    "required": ["id", "cmd", "payload"],
+    "properties": {
+      "id": { "type": "string" },
+      "cmd": { "type": "string" },
+      "payload": { "type": "object" }
+    }
+  },
+  "responseEnvelope": {
+    "type": "object",
+    "required": ["id", "ok"],
+    "properties": {
+      "id": { "type": "string" },
+      "ok": { "type": "boolean" },
+      "result": { "type": "object" },
+      "error": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "eventEnvelope": {
+    "type": "object",
+    "required": ["event", "data"],
+    "properties": {
+      "event": { "type": "string" },
+      "data": { "type": "object" }
+    }
+  },
+  "timecodeSources": ["embedded", "derived", "synthetic", "unknown"],
+  "commands": {
+    "openFile": {
+      "payload": {
+        "path": "string"
+      }
+    },
+    "getTimecodeInfo": {
+      "payload": {
+        "assetId": "string"
+      }
+    },
+    "getCurrentTimecode": {
+      "payload": {
+        "assetId": "string"
+      }
+    },
+    "seekTimecode": {
+      "payload": {
+        "assetId": "string",
+        "timecode": "string",
+        "mode": "exact|fast"
+      }
+    },
+    "seekFrame": {
+      "payload": {
+        "assetId": "string",
+        "frameIndex": "number"
+      }
+    },
+    "stepFrame": {
+      "payload": {
+        "assetId": "string",
+        "delta": "number"
+      }
+    },
+    "play": {
+      "payload": {
+        "assetId": "string"
+      }
+    },
+    "pause": {
+      "payload": {
+        "assetId": "string"
+      }
+    },
+    "grabThumbnailAtTimecode": {
+      "payload": {
+        "assetId": "string",
+        "timecode": "string",
+        "width": "number",
+        "height": "number",
+        "format": "jpg|png",
+        "mode": "fast|exact"
+      }
+    },
+    "grabThumbnailAtPlayhead": {
+      "payload": {
+        "assetId": "string",
+        "width": "number",
+        "height": "number",
+        "format": "jpg|png"
+      }
+    },
+    "grabThumbnailStrip": {
+      "payload": {
+        "assetId": "string",
+        "startTimecode": "string",
+        "endTimecode": "string",
+        "count": "number",
+        "width": "number",
+        "height": "number",
+        "format": "jpg|png",
+        "mode": "fast|exact"
+      }
+    },
+    "timecodeToFrame": {
+      "payload": {
+        "assetId": "string",
+        "timecode": "string"
+      }
+    },
+    "frameToTimecode": {
+      "payload": {
+        "assetId": "string",
+        "frameIndex": "number"
+      }
+    }
+  },
+  "events": [
+    "assetOpened",
+    "playheadChanged",
+    "playbackStateChanged",
+    "thumbnailReady"
+  ],
+  "errors": [
+    "NO_ACTIVE_ASSET",
+    "ASSET_NOT_FOUND",
+    "UNSUPPORTED_FORMAT",
+    "TIMECODE_NOT_AVAILABLE",
+    "INVALID_TIMECODE",
+    "INVALID_FRAME_INDEX",
+    "THUMBNAIL_GENERATION_FAILED",
+    "SEEK_FAILED",
+    "PLAYBACK_FAILED",
+    "INTERNAL_ERROR"
+  ]
+}

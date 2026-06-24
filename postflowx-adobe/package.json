@@ -1,0 +1,19 @@
+{
+  "name": "postflowx-adobe",
+  "version": "1.0.0",
+  "description": "PostFlowX UXP panel plugin for Adobe Premiere Pro",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "build:watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {}
+}

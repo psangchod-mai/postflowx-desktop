@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-17T16:30:00Z",
+  "ui_language": {
+    "locale": "fil",
+    "statuses": {
+      "NOT_ADDED": "Hindi nadagdag",
+      "SCANNING": "Nagsi-scan",
+      "PASSED": "Handa",
+      "ISSUES": "May isyu",
+      "BLOCKED": "Na-block"
+    },
+    "severities": {
+      "BLOCKER": "Na-block",
+      "WARNING": "Babala",
+      "FYI": "FYI"
+    },
+    "buttons": {
+      "add_files": "Magdagdag ▾",
+      "add_folder": "Magdagdag ng folder…",
+      "add_files_item": "Magdagdag ng files…",
+      "replace_files": "Palitan",
+      "run": "Patakbuhin ang preflight",
+      "fix_guide": "Gabay sa pag-ayos",
+      "evidence": "Ebidensiya",
+      "export_report": "I-export ang ulat",
+      "new_run": "Bagong run",
+      "select_folder": "Pumili ng folder",
+      "select_files": "Pumili ng files",
+      "clear": "I-clear",
+      "open_app": "Buksan ang Preflight Validator",
+      "close": "Isara",
+      "confirm": "Kumpirmahin",
+      "reset": "I-reset",
+      "view_fix": "Tingnan / Ayusin",
+      "assign": "I-assign"
+    },
+    "labels": {
+      "ready_to_deliver": "Handa nang i-deliver",
+      "blockers": "Mga blocker",
+      "missing": "Kulang",
+      "search_placeholder": "Maghanap: IMF / Audio / Logo…",
+      "filter_blockers": "Mga blocker",
+      "filter_missing": "Kulang",
+      "filter_warnings": "Babala",
+      "unassigned": "Mga file na hindi na-assign",
+      "assign_to": "I-assign sa",
+      "project": "Proyekto",
+      "profile": "Delivery List",
+      "history": "Kasaysayan",
+      "limitations": "Mga limitasyon",
+      "language": "Wika",
+      "ready": "Handa",
+      "warnings": "Mga babala",
+      "files": "Mga file",
+      "assets": "Mga asset",
+      "scope": "Saklaw",
+      "filters": "Mga filter",
+      "all": "Lahat",
+      "clear": "I-clear",
+      "only": "Tanging",
+      "pick_scope_hint": "Piliin ang saklaw (kaliwa), magdagdag ng files/folders, pagkatapos ay i-click ang Run preflight.",
+      "no_scope": "Walang napiling category. Gamitin ang Scope panel (kaliwa) para piliin ang gusto mong i-check para sa vendor na ito.",
+      "unassigned_help": "Mga file na hindi awtomatikong na-assign — i-assign ang mga ito sa tamang asset card.",
+      "assign_all_unassigned_to": "I-assign lahat ng unassigned sa:",
+      "assign_all": "I-assign lahat",
+      "choose_asset_first": "Pumili muna ng asset card.",
+      "assigned_all_run_again": "Na-assign. Patakbuhin muli ang preflight para ma-apply.",
+      "assigned_all_run_again_plural": "Na-assign lahat. Patakbuhin muli ang preflight para ma-apply.",
+      "select_scope_first": "Pumili ng kahit isang category na iche-check (left sidebar).",
+      "manual_confirm_hint": "Gamitin ito kapag napatunayan mong pasado ang check na ito.",
+      "confirm_done": "Nakumpirma",
+      "fix_now": "Ayusin ngayon",
+      "evidence_tab": "Ebidensiya",
+      "views": "Mga view"
+    },
+    "issue_template": {
+      "what": "Ano ang nangyari",
+      "why": "Bakit ito mahalaga",
+      "fix": "Paano ayusin"
+    }
+  }
+}

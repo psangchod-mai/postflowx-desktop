@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p25" frameDuration="1/25s" width="1920" height="1080"/>
+    <asset id="r2" name="A001C001" start="90000/25s" duration="100/25s" hasVideo="1" format="r1">
+      <media-rep kind="original-media" src="file:///media/A001C001.mov"/>
+      <metadata>
+        <md key="com.apple.proapps.studio.metadataReel" value="A001"/>
+      </metadata>
+    </asset>
+    <asset id="r3" name="A002C002" start="50000/25s" duration="75/25s" hasVideo="1" format="r1">
+      <media-rep kind="original-media" src="file:///media/A002C002.mov"/>
+      <metadata>
+        <md key="com.apple.proapps.studio.metadataReel" value="A002"/>
+      </metadata>
+    </asset>
+  </resources>
+  <library>
+    <event name="Ev1">
+      <project name="FCPX BASIC">
+        <sequence format="r1" duration="175/25s" tcStart="90000/25s" tcFormat="NDF">
+          <spine>
+            <asset-clip ref="r2" name="shot_010" offset="0s" duration="100/25s" start="90000/25s" tcFormat="NDF"/>
+            <asset-clip ref="r3" name="shot_020" offset="100/25s" duration="75/25s" start="50000/25s" tcFormat="NDF"/>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

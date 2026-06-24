@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-03T18:43:38.403769+07:00",
+  "ui_language": {
+    "locale": "ja",
+    "statuses": {
+      "NOT_ADDED": "未追加",
+      "SCANNING": "解析中",
+      "PASSED": "準備完了",
+      "ISSUES": "要確認",
+      "BLOCKED": "ブロック"
+    },
+    "severities": {
+      "BLOCKER": "ブロック",
+      "WARNING": "警告",
+      "FYI": "参考"
+    },
+    "buttons": {
+	      "add_files": "追加 ▾",
+	      "add_folder": "フォルダ追加…",
+	      "add_files_item": "ファイル追加…",
+      "select_folder": "フォルダ選択",
+      "select_files": "ファイル選択",
+      "run": "事前チェック実行",
+      "export_report": "レポート出力",
+      "reset": "リセット",
+      "close": "閉じる",
+      "confirm": "確認済みにする",
+      "view_fix": "表示 / 修正",
+      "assign": "割り当て"
+    },
+    "labels": {
+      "project": "プロジェクト",
+      "profile": "プロファイル",
+      "language": "言語",
+      "ready": "準備完了",
+      "blockers": "ブロック",
+      "missing": "不足",
+      "warnings": "警告",
+      "files": "ファイル",
+      "assets": "アセット",
+      "scope": "スコープ",
+      "filters": "フィルター",
+      "history": "履歴",
+      "limitations": "注意",
+      "all": "すべて",
+      "clear": "解除",
+      "only": "これだけ",
+      "search_placeholder": "検索: IMF / Audio / Logo…",
+      "pick_scope_hint": "左でスコープを選択し、ファイル/フォルダを追加してから実行してください。",
+      "no_scope": "カテゴリが未選択です。左のスコープで確認したい項目を選択してください。",
+      "unassigned": "未割り当てファイル",
+      "unassigned_help": "自動割り当てできなかったファイル — 正しいカードに割り当ててください。",
+      "assign_all_unassigned_to": "未割り当てを一括で割り当て:",
+      "assign_all": "一括割り当て",
+      "choose_asset_first": "先にカードを選択してください。",
+      "assigned_all_run_again": "割り当てました。適用するには再度実行してください。",
+      "assigned_all_run_again_plural": "一括割り当てしました。適用するには再度実行してください。",
+      "select_scope_first": "少なくとも1つのカテゴリを選択してください。",
+      "manual_confirm_hint": "確認できたら使用します。",
+      "confirm_done": "確認済み",
+      "fix_now": "修正",
+      "evidence_tab": "証跡"
+    },
+    "issue_template": {
+      "what": "何が起きたか",
+      "why": "なぜ重要か",
+      "fix": "どう直すか"
+    }
+  }
+}

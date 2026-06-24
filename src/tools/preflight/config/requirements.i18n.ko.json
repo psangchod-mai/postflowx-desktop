@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:11.028163Z",
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "subtitle": "업로드 전 IMF 무결성과 언어/메타데이터를 확인합니다."
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "subtitle": "그래픽/타이틀 산출물과 제작 프로젝트 파일."
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "subtitle": "QC용 최종 리뷰/컷 미디어."
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "subtitle": "최종 편집 프로젝트 및 필요한 링크 자산."
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 스템(48kHz, PCM WAV/BWAV)."
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 스템(48kHz, PCM WAV/BWAV)."
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "subtitle": "사운드 에디토리얼/스테이지 믹스 프로젝트 및 요소."
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "subtitle": "DI/Conform 마스터링 프로젝트."
+    },
+    "SHOW_LOGO": {
+      "subtitle": "최종 쇼 로고."
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "subtitle": "파이프라인 트랜스폼(LUT/CTL/설정)."
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "subtitle": "프레이밍/세이프에어리어 참조 차트."
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "subtitle": "Servicing용 ProRes 422 HQ(SDR)."
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "subtitle": "Textless Complete(수동 체크리스트)."
+    },
+    "SCORE_MIXES_20": {
+      "subtitle": "작곡가 제공 스코어 믹스 2.0."
+    },
+    "SCORE_STEMS": {
+      "subtitle": "작곡가 제공 스코어 스템."
+    },
+    "SONG_MIXES_STEMS": {
+      "subtitle": "오리지널 곡 믹스/스템."
+    },
+    "PRODUCTION_AUDIO": {
+      "subtitle": "프로덕션 오디오(팀 템플릿 기준)."
+    },
+    "NAM_TEXTLESS": {
+      "subtitle": "시퀀스 + checksum + 네이밍(ZIP 지양)."
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 프린트 마스터(48kHz, PCM WAV/BWAV)."
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 프린트 마스터(48kHz, PCM WAV/BWAV)."
+    },
+    "FINAL_MODELS": {
+      "subtitle": "VFX 랩용 최종 모델(샷/자산 구조)."
+    },
+    "BACKGROUND_PLATES": {
+      "subtitle": "백그라운드 플레이트(샷 구조)."
+    },
+    "SCANNING_DATA": {
+      "subtitle": "스캔/트래킹/LiDAR(샷 구조)."
+    },
+    "VFX_SHOTS": {
+      "subtitle": "VFX 샷 산출물(샷 구조)."
+    },
+    "ELEMENTS_2D": {
+      "subtitle": "2D 요소(매트/페인트/컴프/레퍼런스)."
+    }
+  }
+}

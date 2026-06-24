@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "title": "IMF 패키지 구조/무결성",
+      "issue": {
+        "what": "IMF 구조가 불완전하거나 참조가 일치하지 않습니다.",
+        "why": "IMF는 원자적이어서 문제가 있으면 전체 패키지가 거부될 수 있습니다.",
+        "fix": "ASSETMAP/PKL/CPL 및 MXF 일치 여부를 확인 후 재생성/리랩하세요."
+      }
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "title": "언어/메타데이터 불일치",
+      "issue": {
+        "what": "IMF 언어/메타데이터가 요청과 일치하지 않습니다.",
+        "why": "불일치는 인제스트를 차단할 수 있습니다.",
+        "fix": "올바른 언어 코드로 IMF를 재생성/리랩하세요."
+      }
+    },
+    "DV_METADATA_CMVERSION": {
+      "title": "Dolby Vision 메타데이터 확인",
+      "issue": {
+        "what": "Dolby Vision 메타데이터가 비정상/누락된 것으로 보입니다.",
+        "why": "DV 메타데이터 오류는 재납품 요청으로 이어질 수 있습니다.",
+        "fix": "DV XML/CMVersion을 확인 후 재출력/리랩하세요."
+      }
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "title": "오디오는 PCM WAV/BWAV",
+      "issue": {
+        "what": "오디오가 비압축 PCM WAV/BWAV가 아닙니다.",
+        "why": "호환성/QC를 위해 비압축 WAV/BWAV가 필요합니다.",
+        "fix": "PCM WAV/BWAV로 다시 출력 후 교체하세요."
+      }
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "title": "샘플레이트 48kHz",
+      "issue": {
+        "what": "샘플레이트가 48kHz가 아닙니다.",
+        "why": "Nearfield/Print는 보통 48kHz가 필요합니다.",
+        "fix": "48kHz PCM WAV/BWAV로 재출력 후 교체하세요."
+      }
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "title": "채널 레이아웃",
+      "issue": {
+        "what": "채널 수/레이아웃이 예상과 다릅니다.",
+        "why": "잘못된 채널은 QC/다운스트림에 영향을 줍니다.",
+        "fix": "라우팅/프리셋을 확인하고 재출력하세요."
+      }
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "title": "임베디드 오디오(수동)",
+      "issue": {
+        "what": "이 빌드에서는 임베디드 오디오를 자동 확인할 수 없습니다.",
+        "why": "오디오가 없으면 리뷰/인코딩이 실패할 수 있습니다.",
+        "fix": "임베디드 여부를 확인 후 확인 처리하거나 재출력해 교체하세요."
+      }
+    },
+    "MEDIA_VFR_WARNING": {
+      "title": "VFR 경고(수동)",
+      "issue": {
+        "what": "이 빌드에서는 VFR 자동 감지가 불가합니다.",
+        "why": "VFR은 싱크/QC 문제를 유발할 수 있습니다.",
+        "fix": "CFR인지 확인하거나 CFR로 재출력/변환하세요."
+      }
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "title": "컨테이너/코덱(정보)",
+      "issue": {
+        "what": "세부 코덱/컨테이너 검증은 외부 도구가 필요합니다.",
+        "why": "이는 납품 실패의 흔한 원인입니다.",
+        "fix": "승인된 프리셋으로 출력하세요."
+      }
+    },
+    "PRORES_PROFILE_CHECK": {
+      "title": "ProRes 422 HQ(수동)",
+      "issue": {
+        "what": "이 빌드에서는 ProRes 프로파일 자동 확인이 불가합니다.",
+        "why": "Servicing은 ProRes 422 HQ가 필요합니다.",
+        "fix": "프리셋/MediaInfo로 확인 후 확인 처리하세요."
+      }
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "title": "Textless checklist (manual)",
+      "issue": {
+        "what": "Textless Complete인지 확인이 필요합니다.",
+        "why": "Textless는 번인 자막/원치 않는 그래픽이 없어야 합니다.",
+        "fix": "체크리스트를 확인하고 필요 시 증빙을 첨부하세요."
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "번인 자막/텍스트 없음"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "원치 않는 그래픽/로워서드 없음"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "앞/뒤 구간 재생 확인"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "title": "checksum.txt 필요",
+      "issue": {
+        "what": "checksum.txt를 찾을 수 없습니다.",
+        "why": "아카이브는 무결성 확인을 위해 checksum이 필요합니다.",
+        "fix": "시퀀스 폴더에 checksum.txt를 생성해 추가하세요."
+      }
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "title": "경로 길이",
+      "issue": {
+        "what": "경로/파일명이 너무 길 수 있습니다.",
+        "why": "전송/자동화 도구에서 실패할 수 있습니다.",
+        "fix": "폴더/파일명을 줄이세요."
+      }
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "title": "잘못된 문자",
+      "issue": {
+        "what": "파일/폴더명에 문제 문자가 포함될 수 있습니다.",
+        "why": "일부 시스템에서 인제스트 실패 원인이 됩니다.",
+        "fix": "안전한 문자(a-z,0-9,_,-)로 이름을 변경하세요."
+      }
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "title": "ZIP 비권장",
+      "issue": {
+        "what": "ZIP 파일이 감지되었습니다.",
+        "why": "아카이브는 폴더 구조 그대로를 선호할 수 있습니다.",
+        "fix": "ZIP 대신 폴더+checksum로 납품하세요."
+      }
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "title": "업스케일(UHD)(수동)",
+      "issue": {
+        "what": "이 빌드에서는 업스케일을 자동 판정할 수 없습니다.",
+        "why": "아카이브는 전체 업스케일을 피해야 합니다.",
+        "fix": "소스 해상도를 확인하고 필요 시 증빙/예외를 첨부하세요."
+      }
+    },
+    "FILES_PRESENT": {
+      "title": "필수 파일",
+      "issue": {
+        "what": "필수 파일이 추가되지 않았습니다.",
+        "why": "누락은 QC/인계를 막습니다.",
+        "fix": "누락 파일을 추가하고 다시 실행하세요."
+      }
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "title": "샷 기반 구조",
+      "issue": {
+        "what": "폴더 구조가 샷 단위로 보이지 않습니다.",
+        "why": "검색/QC가 느려집니다.",
+        "fix": "/SHOW/EP/SHOT/... 구조로 정리하세요."
+      }
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "title": "ZIP 경고",
+      "issue": {
+        "what": "ZIP가 감지되었습니다.",
+        "why": "VFX/Archive에서는 ZIP을 피하는 경우가 있습니다.",
+        "fix": "가능하면 폴더 구조로 납품하세요."
+      }
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "title": "CPL ↔ PKL/ASSETMAP 불일치",
+      "issue": {
+        "what": "CPL에서 참조한 TrackFile이 PKL 및/또는 ASSETMAP에 선언되어 있지 않습니다.",
+        "why": "IMF 인제스트/QC는 CPL이 참조하는 모든 MXF가 매니페스트에 선언되어 있어야 합니다. 누락되면 거절 또는 재전달이 발생할 수 있습니다.",
+        "fix": "IMF를 재패키징/재출력하여 PKL과 ASSETMAP에 CPL이 참조하는 모든 MXF(IAB 포함)를 포함하세요. MXF를 나중에 복사했다면 PKL/ASSETMAP을 다시 생성해야 합니다."
+      }
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "title": "ASSETMAP 경로 확인",
+      "issue": {
+        "what": "ASSETMAP이 참조하는 파일이 패키지에 없습니다",
+        "why": "Ingest/QC는 ASSETMAP 경로로 자산을 찾습니다. 경로 누락/오류는 실패 또는 재납품을 유발합니다.",
+        "fix": "참조된 MXF/XML이 폴더에 모두 있는지 확인한 뒤 IMF를 다시 내보내 ASSETMAP/PKL을 재생성하세요."
+      }
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "title": "PKL 크기 불일치",
+      "issue": {
+        "what": "PKL에 선언된 자산이 누락되었거나 실제 파일 크기와 일치하지 않습니다",
+        "why": "PKL은 패키지 무결성 검증에 사용됩니다. 크기 불일치는 불완전 복사/손상 가능성이 높아 Reject 원인이 됩니다.",
+        "fix": "파일을 다시 복사하거나 IMF를 재출력/재패키징하여 PKL/ASSETMAP을 재생성하세요. PKL 생성 후 파일을 변경하지 마세요."
+      }
+    },
+    "IMF_UUID_FORMAT": {
+      "title": "UUID 형식/중복 ID",
+      "issue": {
+        "what": "UUID 형식이 아닌 ID 또는 매니페스트 내 중복 ID가 있습니다",
+        "why": "IMF는 UUID로 자산을 참조합니다. 형식 오류/중복은 해석 실패 및 ingest 오류를 유발할 수 있습니다.",
+        "fix": "규격에 맞는 도구로 IMF를 다시 생성하세요. ID를 수동으로 수정하지 마세요."
+      }
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "title": "PKL 해시가 실제 파일과 일치하지 않음",
+      "issue": {
+        "what": "PKL에 기록된 해시가 실제 파일 내용과 일치하지 않습니다(또는 검증할 수 없음).",
+        "why": "PKL 해시는 패키지 무결성 검증에 사용됩니다. 불일치는 손상/불완전 복사/잘못된 파일로 인해 리젝 또는 재전달 요청이 발생할 수 있습니다.",
+        "fix": "중단 없이 다시 복사하거나 IMF를 재출력/재패키징하여 PKL/ASSETMAP을 재생성하세요. PKL 생성 후 파일을 수정하지 마세요."
+      }
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "title": "ASSETMAP Length가 실제 파일 크기와 일치",
+      "issue": {
+        "what": "ASSETMAP Length가 실제 파일 크기와 일치하지 않거나 파일을 찾을 수 없습니다.",
+        "why": "Length 불일치는 복사 누락/손상 또는 오래된 manifest 가능성이 있어 ingest/QC 실패로 이어질 수 있습니다.",
+        "fix": "파일을 다시 복사하거나 IMF를 재출력/재패키징하여 ASSETMAP/PKL을 재생성하세요."
+      }
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "title": "CPL 타임라인 무결성(구간/길이)",
+      "issue": {
+        "what": "CPL 리소스 구간이 잘못되었거나 각 시퀀스 길이가 서로 동기화되지 않습니다.",
+        "why": "재생/ingest/QC 오류로 인해 거절될 수 있습니다.",
+        "fix": "IMF를 재출력/재패키징하고 모든 트랙 길이를 맞추세요. CPL 수동 편집은 피하세요."
+      }
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "title": "CPL 해시가 PKL 해시와 일치",
+      "issue": {
+        "what": "CPL의 TrackFileId 해시가 해당 PKL 해시와 일치하지 않습니다(또는 해시 메타데이터가 불일치).",
+        "why": "불일치는 오래된/수정된 매니페스트 또는 자산 교체·손상을 의미하며 IMF ingest/QC 거절로 이어질 수 있습니다.",
+        "fix": "IMF를 다시 내보내기/재패키징하여 CPL/PKL/ASSETMAP을 함께 재생성하세요. 매니페스트 생성 후 MXF를 교체하지 마세요."
+      }
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "title": "ASSETMAP ↔ PKL 자산 목록 불일치",
+      "issue": {
+        "what": "ASSETMAP과 PKL이 선언한 자산 집합이 일치하지 않습니다(PKL 파일 자체는 제외).",
+        "why": "ASSETMAP/PKL은 자산 위치와 무결성을 검증하는 핵심 매니페스트입니다. 불일치는 불완전/오래된 패키지를 의미하며 ingest/QC 실패로 이어질 수 있습니다.",
+        "fix": "IMF를 재출력/재패키징하여 ASSETMAP/PKL을 함께 재생성하세요. 매니페스트 생성 후 자산을 교체하지 마세요."
+      }
+    },
+    "IMF_MXF_SIGNATURE": {
+      "title": "MXF 시그니처/헤더 확인",
+      "issue": {
+        "what": "일부 MXF 파일이 유효한 MXF처럼 보이지 않습니다(헤더 UL 오류/파일 크기 비정상)",
+        "why": "손상된 MXF는 IMF 재생/병합/인제스트 실패로 이어져 QC에서 거절될 수 있습니다",
+        "fix": "MXF를 다시 복사/재출력/재패키징하고 PKL/ASSETMAP 생성 후 파일을 교체하지 마세요"
+      }
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "title": "MXF 파티션 팩(Header) / 헤더 메타데이터 기본",
+      "issue": {
+        "what": "일부 MXF에 유효한 Header Partition Pack이 없거나 HeaderByteCount가 비정상일 수 있습니다.",
+        "why": "Partition Pack/헤더 메타데이터 이상은 손상 또는 비규격 MXF를 의미하며 ingest/QC 실패로 이어질 수 있습니다.",
+        "fix": "MXF 트랙 파일을 재출력/리랩하고 PKL/ASSETMAP 생성 후 파일을 교체하지 마세요."
+      }
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "title": "Essence Container Label ↔ CPL 불일치(JPEG2000 / IAB)",
+      "issue": {
+        "what": "MXF의 Essence Container Label이 CPL 시퀀스 유형과 일치하지 않습니다(예: ImageSequence는 JPEG2000, IABSequence는 IAB 기대).",
+        "why": "잘못된 매핑/출력 또는 매니페스트 불일치의 신호이며 ingest/QC 실패로 이어질 수 있습니다.",
+        "fix": "출력 설정(영상=JPEG2000, 이머시브=올바른 IAB 매핑)을 확인한 뒤 재출력/리랩하세요."
+      }
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "title": "CPL 구조 검사(Sequence/TrackId/EditRate)",
+      "issue": {
+        "what": "CPL 구조가 유효하지 않거나 불일치합니다(필수 필드 누락/ID 중복/EditRate 불일치).",
+        "why": "IMF 재생/병합/인제스트 실패 및 QC 리젝의 흔한 원인입니다.",
+        "fix": "IMF를 재출력/재패키징하여 CPL을 올바르게 재생성하세요(XML 수동 편집 금지). 모든 리소스의 EditRate/timebase를 일치시키세요."
+      }
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "title": "CPL CompositionTimecode",
+      "issue": {
+        "what": "CompositionTimecode가 없거나(rate/start) 비정상일 수 있습니다.",
+        "why": "다운스트림에서 타임코드/타임라인 불일치를 유발해 재납품이 필요할 수 있습니다.",
+        "fix": "CompositionTimecode(rate/drop-frame/start)가 의도한 타임라인과 일치하는지 확인하고 필요 시 IMF를 재출력/재패키징하세요."
+      }
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "title": "MXF 메타데이터: 필수 디스크립터 항목",
+      "issue": {
+        "what": "일부 MXF 트랙 파일에 핵심 디스크립터 메타데이터(예: 영상 StoredWidth/StoredHeight, 오디오 AudioSamplingRate/ChannelCount)가 없거나 헤더 메타데이터를 읽지 못했습니다",
+        "why": "디스크립터 메타데이터 누락/오류는 IMF 인제스트/QC 반려 및 후공정 매핑 오류의 주요 원인입니다",
+        "fix": "올바른 설정으로 MXF 트랙을 재랩/재출력하고 PKL/ASSETMAP을 다시 생성하세요(수동으로 MXF 편집 금지)"
+      }
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "title": "MXF 영상 해상도 일관성 (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "IMF 내 영상 MXF 트랙의 stored frame size(해상도)가 서로 다릅니다",
+        "why": "한 composition에 해상도가 섞이면 ingest/QC 실패 및 후공정 컨폼/머지 문제가 발생할 수 있습니다",
+        "fix": "모든 ImageSequence 트랙이 동일 해상도가 되도록 재출력/재랩하고 PKL/ASSETMAP을 다시 생성하세요"
+      }
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "title": "MXF 오디오 샘플레이트 48kHz",
+      "issue": {
+        "what": "일부 오디오 MXF 트랙의 AudioSamplingRate가 48kHz가 아닙니다",
+        "why": "IMF 딜리버리는 보통 48kHz가 요구되며, 불일치는 즉시 반려될 수 있습니다",
+        "fix": "오디오 트랙을 48kHz로 재출력/재랩하고 IMF를 다시 빌드(PKL/ASSETMAP 재생성)하세요"
+      }
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "title": "MXF SampleRate = CPL EditRate",
+      "issue": {
+        "what": "일부 MXF의 디스크립터 SampleRate가 CPL Resource EditRate와 일치하지 않습니다",
+        "why": "타임베이스 불일치는 잘못된 랩핑/설정의 신호이며 ingest/QC 실패 또는 타임라인 드리프트를 유발할 수 있습니다",
+        "fix": "올바른 timebase로 재랩/재출력하여 SampleRate를 CPL EditRate와 맞춘 뒤 CPL/PKL/ASSETMAP을 재생성하세요"
+      }
+    }
+  }
+}

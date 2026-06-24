@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 5,
+  "id": "com.postflowx.premiere.panel",
+  "name": "PostFlowX",
+  "version": "1.0.0",
+  "description": "PostFlowX 2-way sync for Adobe Premiere Pro",
+  "host": [
+    {
+      "app": "PPRO",
+      "minVersion": "24.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "postflowx.panel",
+      "label": {
+        "default": "PostFlowX"
+      },
+      "minimumSize": { "width": 320, "height": 480 },
+      "preferredSize": { "width": 400, "height": 700 },
+      "maximumSize": { "width": 800, "height": 1200 },
+      "main": "dist/panel/index.html"
+    }
+  ],
+  "requiredPermissions": {
+    "localFileSystem": "request",
+    "network": {
+      "domains": ["localhost", "127.0.0.1"]
+    }
+  }
+}

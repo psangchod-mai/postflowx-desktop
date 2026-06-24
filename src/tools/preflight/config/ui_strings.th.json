@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-03T18:43:38.403769+07:00",
+  "ui_language": {
+    "locale": "th",
+    "statuses": {
+      "NOT_ADDED": "ยังไม่ได้ใส่",
+      "SCANNING": "กำลังตรวจ",
+      "PASSED": "พร้อมส่ง",
+      "ISSUES": "มีจุดเสี่ยง",
+      "BLOCKED": "ส่งไม่ได้"
+    },
+    "severities": {
+      "BLOCKER": "ส่งไม่ได้",
+      "WARNING": "เตือน",
+      "FYI": "แจ้ง"
+    },
+	    "buttons": {
+	      "add_files": "เพิ่ม ▾",
+	      "add_folder": "เพิ่มโฟลเดอร์…",
+	      "add_files_item": "เพิ่มไฟล์…",
+	      "select_folder": "เลือกโฟลเดอร์",
+      "select_files": "เลือกไฟล์",
+      "run": "เริ่มตรวจ",
+      "export_report": "ออกรายงาน",
+      "reset": "รีเซ็ต",
+      "close": "ปิด",
+      "confirm": "ยืนยันแล้ว",
+      "view_fix": "ดู / แก้ไข",
+      "assign": "Assign"
+    },
+    "labels": {
+      "project": "โปรเจกต์",
+      "profile": "โปรไฟล์",
+      "language": "ภาษา",
+      "ready": "พร้อมส่ง",
+      "blockers": "บล็อกเกอร์",
+      "missing": "ขาดไฟล์",
+      "warnings": "เตือน",
+      "files": "ไฟล์",
+      "assets": "รายการตรวจ",
+      "scope": "ขอบเขต",
+      "filters": "ตัวกรอง",
+      "history": "ประวัติ",
+      "limitations": "หมายเหตุ",
+      "all": "ทั้งหมด",
+      "clear": "ล้าง",
+      "only": "เฉพาะนี้",
+      "search_placeholder": "ค้นหา: IMF / Audio / Logo…",
+      "pick_scope_hint": "เลือกขอบเขต (ซ้าย) แล้วเพิ่มไฟล์/โฟลเดอร์ จากนั้นกด เริ่มตรวจ",
+      "no_scope": "ยังไม่ได้เลือกหมวด ให้เลือกที่ “ขอบเขต” ด้านซ้ายก่อน เพื่อเช็คตาม vendor นี้",
+      "unassigned": "ไฟล์ที่ยังไม่ได้จัดหมวด",
+      "unassigned_help": "ไฟล์ที่จัดหมวดไม่ได้อัตโนมัติ — เลือกหมวดที่ถูกต้องให้ไฟล์",
+      "assign_all_unassigned_to": "Assign ทั้งหมดไปที่:",
+      "assign_all": "Assign ทั้งหมด",
+      "choose_asset_first": "เลือกหมวดก่อน",
+      "assigned_all_run_again": "Assign แล้ว กด Run อีกครั้งเพื่อใช้งาน",
+      "assigned_all_run_again_plural": "Assign ทั้งหมดแล้ว กด Run อีกครั้งเพื่อใช้งาน",
+      "select_scope_first": "เลือกอย่างน้อย 1 หมวดก่อน (ซ้าย)",
+      "manual_confirm_hint": "ใช้เมื่อคุณยืนยันแล้วว่าไฟล์ผ่านข้อนี้",
+      "confirm_done": "ยืนยันแล้ว",
+      "fix_now": "วิธีแก้",
+      "evidence_tab": "รายละเอียด"
+    },
+    "issue_template": {
+      "what": "เกิดอะไรขึ้น",
+      "why": "ทำไมสำคัญ",
+      "fix": "แก้ยังไง"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+Heading
+FIELD_DELIM	TABS
+VIDEO_FORMAT	1080
+FPS	24
+
+Column
+Name	Tape	Start	End	Source File
+
+Data
+shot_010	A001	01:00:00:00	01:00:04:00	A001C001.mov
+shot_020	A002	02:00:00:00	02:00:03:12	A002C001.mov

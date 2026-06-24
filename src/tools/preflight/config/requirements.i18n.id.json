@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:11.025566Z",
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "subtitle": "Verifikasi integritas IMF + bahasa/metadata sebelum upload."
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "subtitle": "Aset grafis/title dan file project yang digunakan."
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "subtitle": "Media review/cut final untuk QC."
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "subtitle": "Project editorial final dan aset link yang dibutuhkan."
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "subtitle": "Stems nearfield 2.0 (48 kHz, PCM WAV/BWAV)."
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "subtitle": "Stems nearfield 5.1 (48 kHz, PCM WAV/BWAV)."
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "subtitle": "Project sound editorial/stage mix dan elements."
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "subtitle": "File project mastering DI/Conform."
+    },
+    "SHOW_LOGO": {
+      "subtitle": "Logo show final."
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "subtitle": "File transform pipeline (LUT/CTL/config)."
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "subtitle": "Chart referensi framing/safe-area."
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "subtitle": "Servicing turnover ProRes 422 HQ (SDR)."
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "subtitle": "Textless complete (checklist manual)."
+    },
+    "SCORE_MIXES_20": {
+      "subtitle": "Mix score 2.0 dari composer."
+    },
+    "SCORE_STEMS": {
+      "subtitle": "Stems score dari composer."
+    },
+    "SONG_MIXES_STEMS": {
+      "subtitle": "Mix & stems lagu original."
+    },
+    "PRODUCTION_AUDIO": {
+      "subtitle": "Audio produksi original (sesuai template)."
+    },
+    "NAM_TEXTLESS": {
+      "subtitle": "Sequence + checksum + naming (hindari ZIP)."
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "subtitle": "Print master nearfield 2.0 (48 kHz, PCM WAV/BWAV)."
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "subtitle": "Print master nearfield 5.1 (48 kHz, PCM WAV/BWAV)."
+    },
+    "FINAL_MODELS": {
+      "subtitle": "Model final untuk VFX wrap (struktur shot/asset)."
+    },
+    "BACKGROUND_PLATES": {
+      "subtitle": "Background plates (struktur shot)."
+    },
+    "SCANNING_DATA": {
+      "subtitle": "Data scanning/tracking/LiDAR (struktur shot)."
+    },
+    "VFX_SHOTS": {
+      "subtitle": "Shot VFX/deliverables (struktur shot)."
+    },
+    "ELEMENTS_2D": {
+      "subtitle": "Elemen 2D (matte/paint/comp/refs)."
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "minBitRate": 192,
+  "extraSupportedChannelMappings": [
+    10
+  ],
+  "allowedCodecs": [
+    "LPCM"
+  ],
+  "allowedPCMBitDepth": [
+    16,
+    24
+  ],
+  "allowedTrackLayout": [],
+  "extraSupportedLanguageCodes": [],
+  "floatingPointAllowed": false,
+  "allowedSampleRate": [
+    48000
+  ],
+  "allowedChannelCount": [
+    2,
+    6,
+    8
+  ]
+}

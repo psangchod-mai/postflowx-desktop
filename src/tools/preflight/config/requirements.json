@@ -1,0 +1,1003 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00Z",
+  "status_policy": {
+    "blocker": "BLOCKED",
+    "warning": "ISSUES",
+    "fyi_only": "PASSED"
+  },
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "matchers": {
+    "IMF_DV_TEXTLESS": {
+      "type": "folder_signature",
+      "confidence": 0.95,
+      "must_contain_any": [
+        "ASSETMAP",
+        "PKL",
+        ".cpl.xml",
+        ".mxf"
+      ]
+    },
+    "NAM_TEXTLESS": {
+      "type": "folder_signature",
+      "confidence": 0.9,
+      "must_contain_any": [
+        ".exr",
+        ".dpx",
+        "checksum.txt"
+      ]
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "type": "file_ext",
+      "confidence": 0.7,
+      "exts": [
+        "mov",
+        "mp4",
+        "mxf"
+      ]
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "type": "file_ext",
+      "confidence": 0.6,
+      "exts": [
+        "mov"
+      ]
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "type": "file_ext",
+      "confidence": 0.6,
+      "exts": [
+        "mov"
+      ]
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.6,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Nearfield 2.0 stems"
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.6,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Nearfield 5.1 stems"
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.55,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Nearfield 2.0 print master"
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.55,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Nearfield 5.1 print master"
+    },
+    "ORIGINAL_CAMERA_FILES_OCF": {
+      "type": "folder_signature",
+      "confidence": 0.8,
+      "must_contain_any": [
+        ".ari",
+        ".r3d",
+        ".braw",
+        ".crm",
+        ".dng",
+        ".mxf"
+      ]
+    },
+    "LOCKED_CUT_EDITORIAL_TURNOVER": {
+      "type": "file_ext",
+      "confidence": 0.6,
+      "exts": [
+        "aaf",
+        "edl",
+        "otio",
+        "xml"
+      ],
+      "hint": "Locked cut / turnover files"
+    },
+    "AUDIO_ME_51_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.55,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Nearfield 5.1 M&E"
+    },
+    "PRINT_MASTER_ATMOS_NEARFIELD": {
+      "type": "file_ext",
+      "confidence": 0.5,
+      "exts": [
+        "wav",
+        "bwf"
+      ],
+      "hint": "Atmos nearfield print master"
+    },
+    "MIXER_NOTES_LOCALIZED_MIX": {
+      "type": "file_ext",
+      "confidence": 0.5,
+      "exts": [
+        "pdf",
+        "docx",
+        "txt",
+        "md"
+      ],
+      "hint": "Mixer notes"
+    },
+    "SELECTED_VFX_DELIVERABLES": {
+      "type": "file_ext",
+      "confidence": 0.5,
+      "exts": [
+        "xlsx",
+        "csv",
+        "pdf",
+        "txt"
+      ],
+      "hint": "Selected VFX deliverables"
+    },
+    "VFX_SHOT_ASSET_STATUS_REPORT": {
+      "type": "file_ext",
+      "confidence": 0.5,
+      "exts": [
+        "xlsx",
+        "csv",
+        "pdf"
+      ],
+      "hint": "VFX status report"
+    }
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "category": "PICTURE_MASTERING",
+      "title": "IMF (Dolby Vision): Textless",
+      "subtitle": "Verify IMF package integrity + language/metadata before upload.",
+      "accepted": {
+        "kind": [
+          "folder"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "IMF_STRUCTURE_INTEGRITY",
+        "IMF_MXF_SIGNATURE",
+        "IMF_MXF_PARTITION_PACK_SANITY",
+        "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS",
+        "IMF_MXF_SAMPLERATE_MATCH_CPL",
+        "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY",
+        "IMF_MXF_AUDIO_SAMPLERATE_48K",
+        "IMF_MXF_ESSENCE_CONTAINER_LABELS",
+        "IMF_UUID_FORMAT",
+        "IMF_ASSETMAP_PATHS_RESOLVE",
+        "IMF_ASSETMAP_LENGTH_MATCH",
+        "IMF_PKL_SIZE_MATCH",
+        "IMF_ASSETMAP_PKL_SYNC",
+        "IMF_PKL_HASH_MATCH",
+        "IMF_CPL_PKL_HASH_MATCH",
+        "IMF_CPL_MANIFEST_MISMATCH",
+        "IMF_CPL_STRUCTURAL_SANITY",
+        "IMF_CPL_TIMELINE_INTEGRITY",
+        "IMF_CPL_TIMECODE_SANITY",
+        "IMF_LANGUAGE_CODE_MATCH",
+        "DV_METADATA_CMVERSION"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "category": "SOURCE_MATERIALS",
+      "title": "Graphics, Titles & Applicable Project Files",
+      "subtitle": "Graphics/titles assets and the project files used to create them.",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "psd",
+          "ai",
+          "aep",
+          "prproj",
+          "drp",
+          "nk",
+          "exr",
+          "png",
+          "svg",
+          "pdf",
+          "ttf",
+          "otf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Titles and Graphics"
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "category": "EDITORIAL_LIBRARY",
+      "title": "Final Editorial Media",
+      "subtitle": "Final review/cut media for QC.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "mov",
+          "mp4",
+          "mxf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "MEDIA_EMBEDDED_AUDIO",
+        "MEDIA_VFR_WARNING",
+        "MEDIA_CONTAINER_CODEC_SANITY"
+      ],
+      "group": "Editorial Projects"
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "category": "EDITORIAL_LIBRARY",
+      "title": "Final Editorial Project",
+      "subtitle": "Final editorial project and required linked assets.",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "prproj",
+          "aep",
+          "drp",
+          "avb",
+          "aaf",
+          "xml"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Editorial Projects"
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "title": "2.0 Near Field Audio Stems",
+      "subtitle": "nearfield 2.0 (48kHz, PCM WAV/BWAV)",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "expected": {
+        "layout": "stereo"
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_CHANNEL_LAYOUT_EXPECTED",
+        "AUDIO_STEM_DURATION_CONSISTENCY",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Near Field Stems"
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "title": "5.1 Near Field Audio Stems",
+      "subtitle": "nearfield 5.1 (48kHz, PCM WAV/BWAV)",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "expected": {
+        "layout": "5.1"
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_CHANNEL_LAYOUT_EXPECTED",
+        "AUDIO_STEM_DURATION_CONSISTENCY",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Near Field Stems"
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "category": "SOUND_MASTERING",
+      "title": "Sound Editorial Elements and Stage Mix Project Files",
+      "subtitle": "Sound editorial/stage mix projects and elements.",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "ptx",
+          "sesx",
+          "xml",
+          "aaf",
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Sound Elements"
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "category": "PICTURE_MASTERING",
+      "title": "Picture Mastering Project Files",
+      "subtitle": "DI/Conform mastering project files.",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "drp",
+          "fcpxml",
+          "xml",
+          "edl",
+          "otio"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "SHOW_LOGO": {
+      "category": "SOURCE_MATERIALS",
+      "title": "Show Logo",
+      "subtitle": "Final show logo deliverable.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "png",
+          "svg",
+          "ai",
+          "psd"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Titles and Graphics"
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "category": "PICTURE_MASTERING",
+      "title": "Color Pipeline or Associated Transform Files",
+      "subtitle": "Pipeline transform files (LUT/CTL/config).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "cube",
+          "ctl",
+          "cc",
+          "json",
+          "txt"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "category": "PICTURE_MASTERING",
+      "title": "Picture Mastering Framing Charts",
+      "subtitle": "Framing/safe-area reference charts.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "pdf",
+          "png",
+          "jpg",
+          "jpeg"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "category": "PICTURE_MASTERING",
+      "title": "ProRes 422 HQ Servicing Turnover (SDR)",
+      "subtitle": "Servicing turnover in ProRes 422 HQ (SDR).",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "mov"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "PRORES_PROFILE_CHECK",
+        "MEDIA_EMBEDDED_AUDIO"
+      ],
+      "group": "Servicing Elements"
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "category": "PICTURE_MASTERING",
+      "title": "ProRes 422 HQ Servicing Turnover (SDR): Textless Complete",
+      "subtitle": "Textless complete servicing turnover (manual checklist).",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "mov"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "PRORES_PROFILE_CHECK",
+        "TEXTLESS_MANUAL_CHECKLIST"
+      ],
+      "group": "Servicing Elements"
+    },
+    "SCORE_MIXES_20": {
+      "category": "MUSIC",
+      "title": "2.0 Original Score Mixes from Composer(s)",
+      "subtitle": "Original score mixes (2.0).",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Original Score"
+    },
+    "SCORE_STEMS": {
+      "category": "MUSIC",
+      "title": "Original Score Stems from Composer(s)",
+      "subtitle": "Original score stems.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Original Score"
+    },
+    "SONG_MIXES_STEMS": {
+      "category": "MUSIC",
+      "title": "Original Song Mixes and Stems",
+      "subtitle": "Original songs — mixes & stems.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Original Songs"
+    },
+    "PRODUCTION_AUDIO": {
+      "category": "SOURCE_MATERIALS",
+      "title": "Original Production Audio",
+      "subtitle": "Original production audio (per template).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "Original Camera Files and Production Audio"
+    },
+    "NAM_TEXTLESS": {
+      "category": "PICTURE_MASTERING",
+      "title": "Non-Graded Archival Master: Textless",
+      "subtitle": "Non-graded archival master sequence + checksum + naming (avoid ZIP).",
+      "accepted": {
+        "kind": [
+          "folder"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "NAM_CHECKSUM_PRESENT",
+        "NAM_PATH_LENGTH_LIMIT",
+        "NAM_ILLEGAL_CHARS",
+        "NAM_NO_ZIP_WARNING",
+        "NAM_GLOBAL_UPSCALE_FLAG"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "title": "2.0 Near Field Print Master",
+      "subtitle": "Print master nearfield 2.0 (48kHz, PCM WAV/BWAV)",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "expected": {
+        "layout": "stereo"
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_CHANNEL_LAYOUT_EXPECTED",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Near Field Print Masters"
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "title": "5.1 Near Field Print Master",
+      "subtitle": "Print master nearfield 5.1 (48kHz, PCM WAV/BWAV)",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "expected": {
+        "layout": "5.1"
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_CHANNEL_LAYOUT_EXPECTED",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ],
+      "group": "Near Field Print Masters"
+    },
+    "FINAL_MODELS": {
+      "category": "VISUAL_EFFECTS",
+      "title": "Final Models",
+      "subtitle": "Final models for VFX wrap (shot/asset structured).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "BACKGROUND_PLATES": {
+      "category": "VISUAL_EFFECTS",
+      "title": "Background Plates",
+      "subtitle": "Background plates (shot-structured).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "exr",
+          "dpx",
+          "mov",
+          "png",
+          "jpg",
+          "jpeg"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "SCANNING_DATA": {
+      "category": "VISUAL_EFFECTS",
+      "title": "Scanning Data",
+      "subtitle": "Scanning/tracking/LiDAR data (shot-structured).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "VFX_SHOTS": {
+      "category": "VISUAL_EFFECTS",
+      "title": "VFX Shots",
+      "subtitle": "VFX shots/deliverables (shot-structured).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "exr",
+          "dpx",
+          "mov",
+          "mxf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "ELEMENTS_2D": {
+      "category": "VISUAL_EFFECTS",
+      "title": "2D Elements",
+      "subtitle": "2D elements (mattes/paint/comps/refs).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "exr",
+          "png",
+          "psd",
+          "ai",
+          "tif",
+          "tiff",
+          "jpg",
+          "jpeg"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "ORIGINAL_CAMERA_FILES_OCF": {
+      "category": "SOURCE_MATERIALS",
+      "group": "Original Camera Files and Production Audio",
+      "title": "Original Camera Files (OCF)",
+      "subtitle": "Original camera media as delivered by production.",
+      "accepted": {
+        "kind": [
+          "folder"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    },
+    "LOCKED_CUT_EDITORIAL_TURNOVER": {
+      "category": "EDITORIAL_LIBRARY",
+      "group": "Editorial Cuts",
+      "title": "Locked Cut - Editorial Turnover",
+      "subtitle": "Locked picture cut / turnover package (AAFs/EDLs/XML/OTIO).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "aaf",
+          "edl",
+          "xml",
+          "otio",
+          "fcpxml",
+          "prproj",
+          "drp",
+          "pdf",
+          "txt"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    },
+    "AUDIO_ME_51_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "group": "Near Field M&Es and Additional",
+      "title": "5.1 Near Field M&E",
+      "subtitle": "nearfield 5.1 M&E (48kHz, PCM WAV/BWAV)",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "expected": {
+        "layout": "5.1"
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_CHANNEL_LAYOUT_EXPECTED",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ]
+    },
+    "PRINT_MASTER_ATMOS_NEARFIELD": {
+      "category": "SOUND_MASTERING",
+      "group": "Near Field Print Masters",
+      "title": "Atmos Near Field Print Master",
+      "subtitle": "Atmos nearfield print master (48kHz WAV/BWAV/ADM as required).",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "wav",
+          "bwf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "AUDIO_PCM_WAV_ONLY",
+        "AUDIO_SAMPLE_RATE_48K",
+        "AUDIO_BIT_DEPTH_24",
+        "AUDIO_DUPLICATE_FILENAMES"
+      ]
+    },
+    "MIXER_NOTES_LOCALIZED_MIX": {
+      "category": "SOUND_MASTERING",
+      "group": "Sound Elements",
+      "title": "Mixer Notes for Localized Mix",
+      "subtitle": "Mixer notes / instructions for localized mix.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "pdf",
+          "doc",
+          "docx",
+          "txt",
+          "rtf",
+          "md"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    },
+    "SELECTED_VFX_DELIVERABLES": {
+      "category": "VISUAL_EFFECTS",
+      "group": "VFX Materials",
+      "title": "Selected VFX Deliverables",
+      "subtitle": "Selected VFX deliverables list/package (as requested in Content Hub).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ],
+        "exts": [
+          "xlsx",
+          "csv",
+          "pdf",
+          "txt"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    },
+    "VFX_SHOT_ASSET_STATUS_REPORT": {
+      "category": "VISUAL_EFFECTS",
+      "group": "VFX Materials",
+      "title": "VFX Shot and Asset Status Report",
+      "subtitle": "Status report for VFX shots/assets.",
+      "accepted": {
+        "kind": [
+          "file"
+        ],
+        "exts": [
+          "xlsx",
+          "csv",
+          "pdf"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    },
+    "IMF_DV": {
+      "category": "PICTURE_MASTERING",
+      "title": "IMF (Dolby Vision)",
+      "subtitle": "Verify IMF package integrity + language/metadata before upload.",
+      "accepted": {
+        "kind": [
+          "folder"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "IMF_STRUCTURE_INTEGRITY",
+        "IMF_MXF_SIGNATURE",
+        "IMF_MXF_PARTITION_PACK_SANITY",
+        "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS",
+        "IMF_MXF_SAMPLERATE_MATCH_CPL",
+        "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY",
+        "IMF_MXF_AUDIO_SAMPLERATE_48K",
+        "IMF_MXF_ESSENCE_CONTAINER_LABELS",
+        "IMF_UUID_FORMAT",
+        "IMF_ASSETMAP_PATHS_RESOLVE",
+        "IMF_ASSETMAP_LENGTH_MATCH",
+        "IMF_PKL_SIZE_MATCH",
+        "IMF_ASSETMAP_PKL_SYNC",
+        "IMF_PKL_HASH_MATCH",
+        "IMF_CPL_PKL_HASH_MATCH",
+        "IMF_CPL_MANIFEST_MISMATCH",
+        "IMF_CPL_STRUCTURAL_SANITY",
+        "IMF_CPL_TIMELINE_INTEGRITY",
+        "IMF_CPL_TIMECODE_SANITY",
+        "IMF_LANGUAGE_CODE_MATCH",
+        "DV_METADATA_CMVERSION"
+      ],
+      "group": "Picture Mastering & Archival Elements"
+    },
+    "ON_SET_DATA": {
+      "category": "VISUAL_EFFECTS",
+      "title": "On-Set Data",
+      "subtitle": "On-set reference (lens grids, camera reports, HDRI, witness/ref).",
+      "accepted": {
+        "kind": [
+          "folder",
+          "file"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT",
+        "FOLDER_STRUCTURE_SHOT_BASED",
+        "ZIP_NOT_RECOMMENDED"
+      ],
+      "group": "VFX Materials"
+    },
+    "VFX_WRAP_REPORT": {
+      "category": "VISUAL_EFFECTS",
+      "title": "VFX Wrap Report",
+      "subtitle": "Wrap report / final VFX turnover summary (PDF/XLSX/CSV).",
+      "accepted": {
+        "kind": [
+          "file",
+          "folder"
+        ],
+        "exts": [
+          "pdf",
+          "xlsx",
+          "csv",
+          "txt"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ],
+      "group": "VFX Materials"
+    },
+    "ORIGINAL_CAMERA_FILES_OCF_ALT_TAKES": {
+      "category": "SOURCE_MATERIALS",
+      "group": "Original Camera Files and Production Audio",
+      "title": "Original Camera Files (OCF): Alt Takes and Pickups",
+      "subtitle": "Alt takes / pickups original camera media.",
+      "accepted": {
+        "kind": [
+          "folder"
+        ]
+      },
+      "checks": [
+        "ZERO_BYTE_FILES",
+        "FILES_PRESENT"
+      ]
+    }
+  }
+}

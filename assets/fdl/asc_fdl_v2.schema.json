@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ASC Framing Decision List (FDL) v2.0",
+  "type": "object",
+  "required": ["uuid", "version", "framing_intents", "contexts"],
+  "properties": {
+    "uuid": { "type": "string", "minLength": 1 },
+    "version": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": { "major": { "type": "integer" }, "minor": { "type": "integer" } }
+    },
+    "fdl_creator": { "type": "string" },
+    "default_framing_intent": { "type": ["string", "null"] },
+    "framing_intents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "aspect_ratio"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string" },
+          "aspect_ratio": {
+            "type": "object",
+            "required": ["width", "height"],
+            "properties": { "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 } }
+          },
+          "protection": { "type": "number", "minimum": 0, "maximum": 0.49 }
+        }
+      }
+    },
+    "contexts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["canvases"],
+        "properties": {
+          "label": { "type": "string" },
+          "context_creator": { "type": "string" },
+          "canvases": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "dimensions", "framing_decisions"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "label": { "type": "string" },
+                "source_canvas_id": { "type": "string" },
+                "dimensions": { "$ref": "#/$defs/dimensions" },
+                "effective_dimensions": { "$ref": "#/$defs/dimensions" },
+                "effective_anchor_point": { "$ref": "#/$defs/point" },
+                "anamorphic_squeeze": { "type": "number", "exclusiveMinimum": 0 },
+                "framing_decisions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "framing_intent_id", "dimensions", "anchor_point"],
+                    "properties": {
+                      "id": { "type": "string", "minLength": 1 },
+                      "label": { "type": "string" },
+                      "framing_intent_id": { "type": "string" },
+                      "dimensions": { "$ref": "#/$defs/dimensions" },
+                      "anchor_point": { "$ref": "#/$defs/point" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dimensions": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": { "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 } }
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    }
+  }
+}

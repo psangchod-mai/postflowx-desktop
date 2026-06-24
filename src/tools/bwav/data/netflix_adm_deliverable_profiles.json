@@ -1,0 +1,41 @@
+{
+  "SecondaryAudio_ProductTrailers_Supplementals": {
+    "required_groups": [
+      "Dubbed Dialogue",
+      "M&E"
+    ],
+    "notes": "5.1/ADM secondary audio deliverable: require bed separation between Dubbed Dialogue and M&E."
+  },
+  "VO_Lector_PrintmasterAsOV": {
+    "required_groups": [
+      "Narration",
+      "M&E"
+    ],
+    "notes": "VO/Lector: if Printmaster used as OV source, label Narration + Printmaster as M&E."
+  },
+  "VO_Lector_DMEAsOV": {
+    "required_groups": [
+      "Narration",
+      "Dialogue",
+      "Music",
+      "Effects"
+    ],
+    "notes": "VO/Lector: if DME files used as OV source, label Narration + OV Dialogue/Music/Effects."
+  },
+  "AudioDescription_PrintmasterAsOV": {
+    "required_groups": [
+      "Audio Description",
+      "M&E"
+    ],
+    "notes": "AD: label Audio Description + M&E."
+  },
+  "AudioDescription_DMEAsOV": {
+    "required_groups": [
+      "Audio Description",
+      "Dialogue",
+      "Music",
+      "Effects"
+    ],
+    "notes": "AD: if DME files used as OV source, label Audio Description + OV Dialogue/Music/Effects."
+  }
+}

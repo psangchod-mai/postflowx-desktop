@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "title": "IMF 套件結構/一致性",
+      "issue": {
+        "what": "IMF 結構不完整或參照不一致。",
+        "why": "IMF 是整包處理，任一軌/中繼資料出錯可能導致整包被拒。",
+        "fix": "確認 ASSETMAP/PKL/CPL 與 MXF 一致後重新封裝/重建。"
+      }
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "title": "語言/中繼資料不符",
+      "issue": {
+        "what": "IMF 的語言/中繼資料與需求不符。",
+        "why": "不符可能直接阻擋接收。",
+        "fix": "修正語言代碼後重建/重新封裝 IMF。"
+      }
+    },
+    "DV_METADATA_CMVERSION": {
+      "title": "Dolby Vision 中繼資料確認",
+      "issue": {
+        "what": "Dolby Vision 中繼資料可能異常或缺失。",
+        "why": "DV 中繼資料錯誤常導致要求重交。",
+        "fix": "確認 DV XML/CMVersion 後重新輸出/封裝。"
+      }
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "title": "音訊需為 PCM WAV/BWAV",
+      "issue": {
+        "what": "音訊不是未壓縮 PCM WAV/BWAV。",
+        "why": "為相容性與 QC，需使用未壓縮 WAV/BWAV。",
+        "fix": "以 PCM WAV/BWAV 重新輸出並替換。"
+      }
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "title": "取樣率需為 48kHz",
+      "issue": {
+        "what": "取樣率不是 48kHz。",
+        "why": "Nearfield/Print 通常要求 48kHz。",
+        "fix": "以 48kHz PCM WAV/BWAV 重新輸出並替換。"
+      }
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "title": "聲道配置",
+      "issue": {
+        "what": "聲道數/配置與預期不符。",
+        "why": "錯誤的聲道會影響 QC/下游處理。",
+        "fix": "確認 routing/輸出預設後重新輸出。"
+      }
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "title": "內嵌音訊（手動）",
+      "issue": {
+        "what": "此版本無法自動驗證是否有內嵌音訊。",
+        "why": "缺少內嵌音訊可能導致審片/轉檔失敗。",
+        "fix": "確認後標記已確認，或重新輸出含內嵌音訊的檔案並替換。"
+      }
+    },
+    "MEDIA_VFR_WARNING": {
+      "title": "VFR 警告（手動）",
+      "issue": {
+        "what": "此版本無法自動偵測 VFR。",
+        "why": "VFR 可能造成同步/QC 問題。",
+        "fix": "確認為 CFR，或轉換/重新輸出為 CFR。"
+      }
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "title": "容器/編碼（提示）",
+      "issue": {
+        "what": "詳細容器/編碼驗證需外部工具。",
+        "why": "這是常見退件原因之一。",
+        "fix": "請使用核准的輸出預設。"
+      }
+    },
+    "PRORES_PROFILE_CHECK": {
+      "title": "ProRes 422 HQ（手動）",
+      "issue": {
+        "what": "此版本無法自動驗證 ProRes Profile。",
+        "why": "Servicing 需符合 ProRes 422 HQ。",
+        "fix": "用輸出預設/MediaInfo 確認後標記已確認。"
+      }
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "title": "Textless checklist (manual)",
+      "issue": {
+        "what": "請確認這是 Textless Complete。",
+        "why": "Textless 不可包含燒錄字幕/不需要的圖形。",
+        "fix": "勾選清單，必要時附上證明。"
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "無燒錄字幕/文字"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "無不需要的 lower-third/圖形"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "已確認片頭/片尾播放"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "title": "需要 checksum.txt",
+      "issue": {
+        "what": "找不到 checksum.txt。",
+        "why": "封存交付需要 checksum 驗證完整性。",
+        "fix": "為序列資料夾產生 checksum.txt 並加入。"
+      }
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "title": "路徑長度",
+      "issue": {
+        "what": "路徑/檔名可能過長。",
+        "why": "可能導致傳輸/自動化工具失敗。",
+        "fix": "縮短資料夾/檔名。"
+      }
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "title": "非法字元",
+      "issue": {
+        "what": "檔名/資料夾名可能含有不支援字元。",
+        "why": "可能導致系統讀取/匯入失敗。",
+        "fix": "改用安全字元(a-z,0-9,_,-)。"
+      }
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "title": "不建議 ZIP",
+      "issue": {
+        "what": "偵測到 ZIP。",
+        "why": "封存流程可能偏好直接資料夾結構。",
+        "fix": "避免 ZIP，以資料夾+checksum 交付。"
+      }
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "title": "全域升頻（手動）",
+      "issue": {
+        "what": "此版本無法自動判斷是否全域升頻。",
+        "why": "封存母帶不應僅為 UHD 而全域升頻。",
+        "fix": "確認來源解析度，必要時附上證明/例外。"
+      }
+    },
+    "FILES_PRESENT": {
+      "title": "必需檔案",
+      "issue": {
+        "what": "必需檔案尚未加入。",
+        "why": "缺少會阻擋 QC/交付。",
+        "fix": "補齊後再執行。"
+      }
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "title": "Shot 結構",
+      "issue": {
+        "what": "資料夾結構看起來不是按 shot 分類。",
+        "why": "會讓查找/QC 變慢。",
+        "fix": "整理成 /SHOW/EP/SHOT/... 結構。"
+      }
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "title": "ZIP 提示",
+      "issue": {
+        "what": "偵測到 ZIP。",
+        "why": "VFX/Archive 流程可能不建議 ZIP。",
+        "fix": "盡量以資料夾結構交付。"
+      }
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "title": "CPL 與 PKL/ASSETMAP 清單不一致",
+      "issue": {
+        "what": "CPL 參照的 TrackFile 未列在 PKL 及/或 ASSETMAP 中。",
+        "why": "IMF 進件/QC 需要 PKL/ASSETMAP 宣告 CPL 參照的所有 MXF。缺漏常導致退件或要求重送。",
+        "fix": "重新封裝/重新輸出 IMF，讓 PKL 與 ASSETMAP 包含 CPL 參照的所有 MXF（含 IAB）。若是後來才拷貝 MXF，必須重新產生 PKL/ASSETMAP。"
+      }
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "title": "ASSETMAP 路徑無法解析",
+      "issue": {
+        "what": "ASSETMAP 參照的檔案不在封包內",
+        "why": "Ingest/QC 會依 ASSETMAP 路徑尋找資產。路徑缺漏/錯誤常導致匯入失敗或要求重交。",
+        "fix": "確認所有被參照的 MXF/XML 都存在於資料夾中，並重新輸出/重新封裝以重建 ASSETMAP/PKL。"
+      }
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "title": "PKL 大小不一致",
+      "issue": {
+        "what": "PKL 宣告的資產缺失，或實際檔案大小與 PKL 不一致",
+        "why": "PKL 用於封包完整性驗證。大小不一致通常代表拷貝不完整/檔案損壞，可能造成 Reject。",
+        "fix": "重新拷貝檔案或重新輸出/重新封裝以重建 PKL/ASSETMAP。避免在產生 PKL 後再變更檔案。"
+      }
+    },
+    "IMF_UUID_FORMAT": {
+      "title": "UUID 格式／重複 ID",
+      "issue": {
+        "what": "存在非 UUID 格式的 ID，或在同一份清單中出現重複 ID",
+        "why": "IMF 以 UUID 參照資產。格式錯誤/重複可能造成解析失敗與匯入錯誤。",
+        "fix": "使用符合規範的工具重新產生 IMF，避免手動修改 ID。"
+      }
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "title": "PKL 雜湊與實際檔案不一致",
+      "issue": {
+        "what": "PKL 中的雜湊值與實際檔案內容不一致（或無法驗證）。",
+        "why": "PKL 雜湊用於驗證封裝完整性。不一致通常代表檔案損毀或複製不完整，可能導致退件/要求重送。",
+        "fix": "請重新複製或重新輸出/重新封裝以重新生成 PKL/ASSETMAP。避免在建立 PKL 後再修改或新增檔案。"
+      }
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "title": "ASSETMAP Length 與實際檔案大小一致",
+      "issue": {
+        "what": "ASSETMAP 的 Length 與實際檔案大小不一致，或找不到檔案。",
+        "why": "Length 不一致通常代表拷貝不完整/檔案損壞或 manifest 過期，可能導致 ingest/QC 失敗。",
+        "fix": "重新拷貝檔案或重新輸出/打包 IMF 以重新產生 ASSETMAP/PKL，避免在產生 manifest 後修改/拷貝檔案。"
+      }
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "title": "CPL 時間線一致性（範圍/長度）",
+      "issue": {
+        "what": "CPL 的 Resource 範圍不正確，或各 Sequence 長度不同步。",
+        "why": "可能造成播放/ingest/QC 失敗並被退件。",
+        "fix": "重新輸出/打包 IMF，確保所有 tracks 長度一致，避免手動修改 CPL 的 timing。"
+      }
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "title": "CPL 雜湊與 PKL 雜湊一致",
+      "issue": {
+        "what": "CPL 中某些 TrackFileId 的 Hash 與對應的 PKL Hash 不一致（或雜湊資訊不一致）。",
+        "why": "不一致通常代表清單已過期/被修改，或資產被替換/損毀，可能導致 IMF ingest/QC 被退回。",
+        "fix": "重新匯出/重新打包 IMF，讓 CPL/PKL/ASSETMAP 同步重新產生；避免在產生 manifest 後再替換 MXF。"
+      }
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "title": "ASSETMAP ↔ PKL 資產清單不同步",
+      "issue": {
+        "what": "ASSETMAP 與 PKL 宣告的資產集合不一致（排除 PKL 檔案本身）。",
+        "why": "ASSETMAP/PKL 是定位與驗證資產的核心清單；不一致通常代表套件不完整或清單過期，可能導致 ingest/QC 失敗。",
+        "fix": "重新匯出/重新打包 IMF，讓 ASSETMAP/PKL 同步重新產生；避免在產生 manifest 後再替換資產。"
+      }
+    },
+    "IMF_MXF_SIGNATURE": {
+      "title": "MXF 簽章/標頭檢查",
+      "issue": {
+        "what": "部分 MXF 檔案看起來不是有效的 MXF（標頭 UL 異常／檔案過小）",
+        "why": "無效或損壞的 MXF 可能導致 IMF 播放/合併/上傳檢核失敗並被退件",
+        "fix": "重新複製/重新輸出/重新打包 MXF，並避免在產生 PKL/ASSETMAP 後替換檔案"
+      }
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "title": "MXF Partition Pack（Header）/標頭中繼資料基礎",
+      "issue": {
+        "what": "部分 MXF 缺少有效的 Header Partition Pack，或 HeaderByteCount 異常。",
+        "why": "Partition Pack/標頭中繼資料異常通常代表檔案損壞或不符合規範，可能導致 ingest/QC 失敗。",
+        "fix": "重新輸出/重新封裝 MXF track files，並避免在產生 PKL/ASSETMAP 後再替換檔案。"
+      }
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "title": "Essence Container Label 與 CPL 不一致（JPEG2000 / IAB）",
+      "issue": {
+        "what": "MXF 的 Essence Container Label 與 CPL 的序列類型不一致（例如 ImageSequence 應為 JPEG2000、IABSequence 應為 IAB）。",
+        "why": "常見原因是輸出/映射設定錯誤或 manifest 不同步，可能導致 ingest/QC 不通過。",
+        "fix": "確認匯出設定（影像=JPEG2000、沉浸式=正確 IAB 映射），再重新輸出/封裝。"
+      }
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "title": "CPL 結構檢查（Sequence/TrackId/EditRate）",
+      "issue": {
+        "what": "CPL 結構不正確或不一致（缺少必要欄位/ID 重複/或 EditRate 不一致）。",
+        "why": "可能導致 IMF 播放/合併/匯入失敗，並觸發 QC 退件。",
+        "fix": "重新輸出/重新封裝 IMF 以正確再生成 CPL（不要手動修改 XML）。確保所有資源的 EditRate/timebase 一致。"
+      }
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "title": "CPL CompositionTimecode",
+      "issue": {
+        "what": "CompositionTimecode 缺失或看起來異常（rate/start address）。",
+        "why": "可能造成下游系統 Timecode/Timeline 不一致並需要重交。",
+        "fix": "確認 CompositionTimecode（rate/drop-frame/start）與預期時間線一致，必要時重新輸出/封裝 IMF。"
+      }
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "title": "MXF 中繼資料：必備 Descriptor 欄位",
+      "issue": {
+        "what": "部分 MXF Track File 缺少關鍵 Descriptor 中繼資料（例如：影像的 StoredWidth/StoredHeight、聲音的 AudioSamplingRate/ChannelCount），或無法讀取 Header Metadata",
+        "why": "Descriptor 中繼資料缺失/異常是 IMF Ingest/QC 常見退件原因，且可能導致下游 mapping/merge 錯誤",
+        "fix": "請重新 wrap/輸出 MXF Track Files 並確保寫入正確的 Descriptor Metadata，之後重新生成 PKL/ASSETMAP（避免手動修改 MXF）"
+      }
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "title": "MXF 影像解析度一致性 (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "IMF 內的影像 MXF Track Files 使用了不一致的 stored frame size（解析度）",
+        "why": "同一 composition 混用解析度常造成 ingest/QC 失敗，並影響下游 conform/merge",
+        "fix": "請重新輸出/重新 wrap 影像 track files，確保所有 ImageSequence 使用相同解析度，然後重新生成 PKL/ASSETMAP"
+      }
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "title": "MXF 聲音取樣率必須為 48kHz",
+      "issue": {
+        "what": "部分聲音 MXF Track Files 的 AudioSamplingRate 不是 48kHz",
+        "why": "IMF 交付通常要求 48kHz，取樣率不符常被直接退件",
+        "fix": "請以 48kHz 重新輸出/重新 wrap 聲音 track files，並重建 IMF（重新生成 PKL/ASSETMAP）"
+      }
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "title": "MXF SampleRate 必須與 CPL EditRate 一致",
+      "issue": {
+        "what": "部分 MXF Track Files 的 descriptor SampleRate 與 CPL Resource EditRate 不一致",
+        "why": "timebase 不一致可能代表 wrapping 設定錯誤，會造成 ingest/QC 失敗或時間軸 drift",
+        "fix": "請用正確 timebase 重新 wrap/輸出，讓 SampleRate 與 CPL EditRate 一致，並重新生成 CPL/PKL/ASSETMAP"
+      }
+    }
+  }
+}

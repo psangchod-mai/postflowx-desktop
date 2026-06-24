@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p24" frameDuration="1/24s" width="1920" height="1080"/>
+    <format id="r2" name="FFVideoFormat1080p30" frameDuration="1/30s" width="1920" height="1080"/>
+    <asset id="a1" name="A024C001" start="86400/24s" duration="96/24s" hasVideo="1" format="r1">
+      <media-rep kind="original-media" src="file:///media/A024C001.mov"/>
+    </asset>
+    <asset id="a2" name="A030C001" start="54000/30s" duration="90/30s" hasVideo="1" format="r2">
+      <media-rep kind="original-media" src="file:///media/A030C001.mov"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="Ev1">
+      <project name="MIXED RATE">
+        <sequence format="r1" duration="186/24s" tcStart="86400/24s" tcFormat="NDF">
+          <spine>
+            <asset-clip ref="a1" name="clip_24" offset="0s" duration="96/24s" start="86400/24s" format="r1" tcFormat="NDF"/>
+            <asset-clip ref="a2" name="clip_30" offset="96/24s" duration="90/30s" start="54000/30s" format="r2" tcFormat="NDF"/>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

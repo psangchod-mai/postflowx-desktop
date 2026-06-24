@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+  <title>VisionScope QC</title>
+</head>
+<body>
+  <div class="container">
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="icons/icon48.png" alt="VisionScope QC" />
+        <div>
+          <h1>VisionScope QC</h1>
+          <p class="sub">Offline validator for Dolby Vision metadata sidecars (XML/JSON/TXT)</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="btnSettings" title="Settings">Settings</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="left">
+        <section id="dropZone" class="drop">
+          <p><strong>Drag & drop</strong> a Dolby Vision metadata file to QC</p>
+          <p class="hint">Supports: .xml, .json, .txt</p>
+          <input id="fileInput" type="file" accept=".xml,.json,.txt,application/xml,application/json,text/plain" />
+        </section>
+
+        <section id="settings" class="panel hidden">
+          <div class="row space">
+            <h2>QC Settings</h2>
+            <button id="btnClose" title="Close">✕</button>
+          </div>
+          <div class="grid">
+            <label>Expected active width
+              <input id="activeW" type="number" min="1" placeholder="e.g. 3840">
+            </label>
+            <label>Expected active height
+              <input id="activeH" type="number" min="1" placeholder="e.g. 2160">
+            </label>
+            <label>AR tolerance
+              <input id="arTol" type="number" step="0.0001" min="0" value="0.005">
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnSave">Save</button>
+          </div>
+          <p class="hint">If expected active width/height is empty, the tool will try to infer dimensions from metadata (heuristic).</p>
+        </section>
+
+        <section id="summary" class="panel hidden"></section>
+
+        <footer class="foot">
+          <span id="fileName"></span>
+        </footer>
+      </section>
+
+      <section class="right">
+        <section id="results" class="panel hidden">
+          <div class="row space">
+            <h2>Findings</h2>
+            <div class="row">
+              <button id="btnExport">Export JSON</button>
+              <button id="btnClear">Clear</button>
+            </div>
+          </div>
+          <ul id="list" class="list"></ul>
+        </section>
+
+        <section id="emptyState" class="panel">
+          <h2>How it works</h2>
+          <ol class="steps">
+            <li>Drop a metadata file (XML / JSON / TXT).</li>
+            <li>Review the rule-based findings.</li>
+            <li>Export a JSON report to attach to QC logs.</li>
+          </ol>
+          <p class="hint">Tip: For precise Aspect Ratio checks, enter the expected active width/height in Settings.</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

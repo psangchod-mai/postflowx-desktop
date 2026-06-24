@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-09T00:00:00+07:00",
+  "check_library": {
+    "IMF_STRUCTURE_INTEGRITY": {
+      "title": "Struktur/integritas paket IMF",
+      "issue": {
+        "what": "Struktur IMF tidak lengkap atau referensinya tidak konsisten.",
+        "why": "IMF bersifat atomik—kesalahan track/metadata dapat menolak seluruh paket.",
+        "fix": "Pastikan ASSETMAP/PKL/CPL dan MXF lengkap & konsisten, lalu re-wrap/rebuild."
+      }
+    },
+    "IMF_LANGUAGE_CODE_MATCH": {
+      "title": "Mismatch bahasa/metadata",
+      "issue": {
+        "what": "Bahasa/metadata pada IMF tidak sesuai permintaan.",
+        "why": "Mismatch dapat memblokir ingestion.",
+        "fix": "Set language code yang benar lalu rebuild/re-wrap IMF."
+      }
+    },
+    "DV_METADATA_CMVERSION": {
+      "title": "Validasi metadata Dolby Vision",
+      "issue": {
+        "what": "Metadata Dolby Vision tampak tidak normal atau hilang.",
+        "why": "Metadata DV yang salah sering memicu permintaan redelivery.",
+        "fix": "Verifikasi DV XML/CMVersion lalu export/re-wrap ulang."
+      }
+    },
+    "AUDIO_PCM_WAV_ONLY": {
+      "title": "Audio harus PCM WAV/BWAV",
+      "issue": {
+        "what": "Audio bukan PCM WAV/BWAV tanpa kompresi.",
+        "why": "Diperlukan WAV/BWAV tanpa kompresi untuk kompatibilitas dan QC.",
+        "fix": "Ekspor ulang sebagai PCM WAV/BWAV lalu replace."
+      }
+    },
+    "AUDIO_SAMPLE_RATE_48K": {
+      "title": "Sample rate 48 kHz",
+      "issue": {
+        "what": "Sample rate bukan 48 kHz.",
+        "why": "Nearfield/print master umumnya membutuhkan 48 kHz.",
+        "fix": "Ekspor ulang 48 kHz PCM WAV/BWAV lalu replace."
+      }
+    },
+    "AUDIO_CHANNEL_LAYOUT_EXPECTED": {
+      "title": "Layout channel",
+      "issue": {
+        "what": "Jumlah/layout channel tidak sesuai harapan.",
+        "why": "Channel yang salah memengaruhi QC dan proses downstream.",
+        "fix": "Cek routing/preset export lalu ekspor ulang."
+      }
+    },
+    "MEDIA_EMBEDDED_AUDIO": {
+      "title": "Audio embedded (manual)",
+      "issue": {
+        "what": "Build ini tidak bisa memverifikasi embedded audio secara otomatis.",
+        "why": "Tanpa embedded audio, review/encoding bisa gagal.",
+        "fix": "Konfirmasi audio embedded lalu tandai, atau ekspor ulang dan replace."
+      }
+    },
+    "MEDIA_VFR_WARNING": {
+      "title": "Peringatan VFR (manual)",
+      "issue": {
+        "what": "Build ini tidak bisa mendeteksi VFR otomatis.",
+        "why": "VFR dapat menyebabkan masalah sync/QC.",
+        "fix": "Konfirmasi CFR atau ekspor/konversi ke CFR."
+      }
+    },
+    "MEDIA_CONTAINER_CODEC_SANITY": {
+      "title": "Container/codec (info)",
+      "issue": {
+        "what": "Validasi codec/container detail butuh tool eksternal.",
+        "why": "Ini sumber masalah delivery yang umum.",
+        "fix": "Ekspor dengan preset yang disetujui tim."
+      }
+    },
+    "PRORES_PROFILE_CHECK": {
+      "title": "ProRes 422 HQ (manual)",
+      "issue": {
+        "what": "Build ini tidak bisa memverifikasi profil ProRes otomatis.",
+        "why": "Servicing harus ProRes 422 HQ.",
+        "fix": "Konfirmasi via preset/MediaInfo lalu tandai confirmed."
+      }
+    },
+    "TEXTLESS_MANUAL_CHECKLIST": {
+      "title": "Textless checklist (manual)",
+      "issue": {
+        "what": "Mohon konfirmasi bahwa ini Textless Complete.",
+        "why": "Textless tidak boleh memiliki subtitle burned-in/grafis yang tidak perlu.",
+        "fix": "Centang checklist dan lampirkan bukti jika perlu."
+      },
+      "checklist": [
+        {
+          "id": "no_burned_in_subs",
+          "label": "Tidak ada subtitle/teks burned-in"
+        },
+        {
+          "id": "no_unwanted_graphics",
+          "label": "Tidak ada lower-third/grafis yang tidak diinginkan"
+        },
+        {
+          "id": "verify_head_tail",
+          "label": "Sudah cek playback head & tail"
+        }
+      ]
+    },
+    "NAM_CHECKSUM_PRESENT": {
+      "title": "checksum.txt wajib",
+      "issue": {
+        "what": "checksum.txt tidak ditemukan.",
+        "why": "Archive membutuhkan checksum untuk verifikasi integritas.",
+        "fix": "Buat checksum.txt untuk folder sequence lalu tambahkan."
+      }
+    },
+    "NAM_PATH_LENGTH_LIMIT": {
+      "title": "Panjang path",
+      "issue": {
+        "what": "Path/nama file terlalu panjang.",
+        "why": "Dapat gagal saat transfer/otomasi.",
+        "fix": "Pendekkan nama folder/file."
+      }
+    },
+    "NAM_ILLEGAL_CHARS": {
+      "title": "Karakter ilegal",
+      "issue": {
+        "what": "Nama file/folder berisi karakter yang berisiko.",
+        "why": "Dapat menyebabkan ingest gagal.",
+        "fix": "Rename pakai karakter aman (a-z,0-9,_,-)."
+      }
+    },
+    "NAM_NO_ZIP_WARNING": {
+      "title": "ZIP tidak disarankan",
+      "issue": {
+        "what": "ZIP terdeteksi.",
+        "why": "Beberapa alur archive lebih suka struktur folder.",
+        "fix": "Hindari ZIP, kirim folder+checksum."
+      }
+    },
+    "NAM_GLOBAL_UPSCALE_FLAG": {
+      "title": "Upscale global (manual)",
+      "issue": {
+        "what": "Build ini tidak bisa mendeteksi upscale otomatis.",
+        "why": "Archive master sebaiknya tidak di-upscale global hanya untuk UHD.",
+        "fix": "Konfirmasi resolusi sumber, lampirkan bukti/pengecualian bila perlu."
+      }
+    },
+    "FILES_PRESENT": {
+      "title": "File wajib",
+      "issue": {
+        "what": "File wajib belum ditambahkan.",
+        "why": "File kurang akan menghambat QC/serah-terima.",
+        "fix": "Tambahkan lalu jalankan lagi."
+      }
+    },
+    "FOLDER_STRUCTURE_SHOT_BASED": {
+      "title": "Struktur berbasis shot",
+      "issue": {
+        "what": "Struktur folder tidak terlihat berbasis shot.",
+        "why": "Membuat pencarian/QC lebih lambat.",
+        "fix": "Susun sebagai /SHOW/EP/SHOT/... ."
+      }
+    },
+    "ZIP_NOT_RECOMMENDED": {
+      "title": "Peringatan ZIP",
+      "issue": {
+        "what": "ZIP terdeteksi.",
+        "why": "Beberapa jalur VFX/Archive tidak menyarankan ZIP.",
+        "fix": "Kirim struktur folder bila memungkinkan."
+      }
+    },
+    "IMF_CPL_MANIFEST_MISMATCH": {
+      "title": "Ketidaksesuaian CPL ↔ PKL/ASSETMAP",
+      "issue": {
+        "what": "CPL mereferensikan TrackFile yang tidak tercantum di PKL dan/atau ASSETMAP.",
+        "why": "IMF ingest/QC mengharuskan semua MXF yang direferensikan CPL dideklarasikan di manifest. Kekurangan deklarasi sering menyebabkan reject atau redelivery.",
+        "fix": "Bangun ulang/ekspor ulang IMF agar PKL dan ASSETMAP mencantumkan semua MXF yang direferensikan CPL (termasuk IAB). Jika MXF ditambahkan belakangan, regenerate PKL/ASSETMAP."
+      }
+    },
+    "IMF_ASSETMAP_PATHS_RESOLVE": {
+      "title": "Path ASSETMAP tidak ditemukan",
+      "issue": {
+        "what": "ASSETMAP mereferensikan file yang tidak ada di paket",
+        "why": "Ingest/QC mencari aset berdasarkan path di ASSETMAP. Path yang hilang/salah sering menyebabkan gagal ingest atau redelivery.",
+        "fix": "Pastikan semua MXF/XML yang direferensikan ada di folder, lalu ekspor/kemas ulang untuk membangun ulang ASSETMAP/PKL."
+      }
+    },
+    "IMF_PKL_SIZE_MATCH": {
+      "title": "Ukuran PKL tidak cocok",
+      "issue": {
+        "what": "Aset yang dideklarasikan di PKL hilang atau ukuran file tidak cocok dengan PKL",
+        "why": "PKL digunakan untuk verifikasi integritas paket. Ukuran tidak cocok sering berarti copy tidak lengkap/korup dan bisa menyebabkan reject.",
+        "fix": "Salin ulang aset tanpa terputus, atau ekspor/kemas ulang untuk regenerasi PKL/ASSETMAP. Hindari mengubah file setelah PKL dibuat."
+      }
+    },
+    "IMF_UUID_FORMAT": {
+      "title": "Format UUID / ID duplikat",
+      "issue": {
+        "what": "Ada ID yang bukan format UUID atau ID duplikat di dalam manifest",
+        "why": "IMF menggunakan UUID untuk mereferensikan aset. ID tidak valid/duplikat dapat membuat resolusi manifest gagal dan ingest error.",
+        "fix": "Buat ulang IMF dengan tool yang sesuai standar. Hindari mengedit ID secara manual."
+      }
+    },
+    "IMF_PKL_HASH_MATCH": {
+      "title": "Hash PKL tidak cocok dengan file sebenarnya",
+      "issue": {
+        "what": "Hash yang tercantum di PKL tidak cocok dengan isi file sebenarnya (atau tidak dapat diverifikasi).",
+        "why": "Hash PKL digunakan untuk memeriksa integritas paket. Ketidaksesuaian sering menandakan file korup/terpotong/salah dan bisa menyebabkan penolakan atau permintaan redelivery.",
+        "fix": "Salin ulang tanpa terputus atau ekspor/packaging ulang untuk menghasilkan PKL/ASSETMAP baru. Hindari mengubah/menambah file setelah PKL dibuat."
+      }
+    },
+    "IMF_ASSETMAP_LENGTH_MATCH": {
+      "title": "Length ASSETMAP sesuai ukuran file",
+      "issue": {
+        "what": "Length di ASSETMAP tidak sesuai dengan ukuran file sebenarnya atau file tidak ditemukan.",
+        "why": "Perbedaan Length sering menandakan salinan tidak lengkap/korup atau manifest sudah tidak sinkron dan dapat menyebabkan gagal ingest/QC.",
+        "fix": "Salin ulang file atau ekspor/kemas ulang IMF untuk membuat ulang ASSETMAP/PKL. Hindari mengubah/menyalin file setelah manifest dibuat."
+      }
+    },
+    "IMF_CPL_TIMELINE_INTEGRITY": {
+      "title": "Integritas timeline CPL (range/durasi)",
+      "issue": {
+        "what": "Range resource di CPL tidak valid atau durasi antar sequence tidak sinkron.",
+        "why": "Dapat menyebabkan kegagalan playback/ingest/QC dan berisiko ditolak.",
+        "fix": "Ekspor/kemas ulang IMF, pastikan semua track berdurasi sinkron, dan hindari edit CPL secara manual."
+      }
+    },
+    "IMF_CPL_PKL_HASH_MATCH": {
+      "title": "Hash CPL cocok dengan hash PKL",
+      "issue": {
+        "what": "Hash CPL untuk satu atau lebih TrackFileId tidak cocok dengan hash PKL yang sesuai (atau metadata hash tidak konsisten).",
+        "why": "Ketidakcocokan hash biasanya menandakan manifest usang/diubah atau aset tertukar/korup dan dapat menyebabkan penolakan ingest/QC IMF.",
+        "fix": "Ekspor ulang/kemas ulang IMF agar CPL/PKL/ASSETMAP diregenerasi bersama. Hindari menyalin/mengganti MXF setelah manifest dibuat."
+      }
+    },
+    "IMF_ASSETMAP_PKL_SYNC": {
+      "title": "Daftar aset ASSETMAP ↔ PKL tidak sinkron",
+      "issue": {
+        "what": "ASSETMAP dan PKL tidak mendeklarasikan set aset yang sama (kecuali file PKL itu sendiri).",
+        "why": "ASSETMAP/PKL adalah manifest utama untuk menemukan dan memvalidasi aset. Ketidaksinkronan biasanya menandakan paket tidak lengkap/usang dan dapat menyebabkan kegagalan ingest/QC.",
+        "fix": "Ekspor ulang/kemas ulang IMF agar ASSETMAP/PKL diregenerasi bersama. Hindari menyalin/mengganti aset setelah manifest dibuat."
+      }
+    },
+    "IMF_MXF_SIGNATURE": {
+      "title": "Cek signature/header MXF",
+      "issue": {
+        "what": "Satu atau lebih file MXF tidak terlihat seperti MXF yang valid (UL header salah / ukuran terlalu kecil).",
+        "why": "MXF yang rusak/tidak valid bisa membuat IMF gagal diputar/di-merge dan berujung penolakan QC.",
+        "fix": "Salin ulang/ekspor ulang/paket ulang MXF, dan hindari mengganti file setelah PKL/ASSETMAP dibuat."
+      }
+    },
+    "IMF_MXF_PARTITION_PACK_SANITY": {
+      "title": "Sanity Partition Pack MXF (Header) / metadata header",
+      "issue": {
+        "what": "Sebagian MXF tidak memiliki Header Partition Pack yang valid atau HeaderByteCount tidak normal.",
+        "why": "Masalah Partition Pack/metadata header sering menandakan file korup atau tidak conform, dan dapat menyebabkan ingest/QC gagal.",
+        "fix": "Ekspor ulang/re-wrap track file MXF dan hindari menyalin/mengganti file setelah PKL/ASSETMAP dibuat."
+      }
+    },
+    "IMF_MXF_ESSENCE_CONTAINER_LABELS": {
+      "title": "Label Essence Container tidak cocok dengan CPL (JPEG2000 / IAB)",
+      "issue": {
+        "what": "Label Essence Container pada MXF tidak sesuai dengan tipe sequence di CPL (mis. ImageSequence mengharapkan JPEG2000, IABSequence mengharapkan IAB).",
+        "why": "Sering menandakan mapping/ekspor yang salah atau manifest tidak sinkron, dan bisa menyebabkan ingest/QC gagal.",
+        "fix": "Periksa preset/mapping saat ekspor (video=JPEG2000, immersive=IAB yang benar), lalu ekspor ulang/re-wrap."
+      }
+    },
+    "IMF_CPL_STRUCTURAL_SANITY": {
+      "title": "Pemeriksaan struktur CPL (Sequence/TrackId/EditRate)",
+      "issue": {
+        "what": "Struktur CPL tidak valid atau tidak konsisten (field wajib hilang/ID duplikat/atau EditRate tidak cocok).",
+        "why": "Dapat menyebabkan kegagalan playback/merge/ingest IMF dan sering memicu penolakan QC.",
+        "fix": "Ekspor ulang/kemas ulang IMF agar CPL dibuat ulang dengan benar (jangan edit XML manual). Pastikan EditRate/timebase konsisten di semua resource."
+      }
+    },
+    "IMF_CPL_TIMECODE_SANITY": {
+      "title": "CompositionTimecode pada CPL",
+      "issue": {
+        "what": "CompositionTimecode hilang atau terlihat tidak normal (rate/start address).",
+        "why": "Bisa memicu mismatch timecode/timeline di sistem downstream dan berujung redelivery.",
+        "fix": "Verifikasi CompositionTimecode (rate/drop-frame/start) sesuai timeline yang dimaksud, lalu ekspor ulang/kemas ulang IMF bila perlu."
+      }
+    },
+    "IMF_MXF_DESCRIPTOR_REQUIRED_FIELDS": {
+      "title": "Metadata MXF: field descriptor wajib",
+      "issue": {
+        "what": "Beberapa file track MXF kehilangan metadata descriptor penting (mis. StoredWidth/StoredHeight untuk gambar, AudioSamplingRate/ChannelCount untuk audio) atau header metadata tidak dapat dibaca",
+        "why": "Metadata descriptor yang hilang/tidak valid sering menyebabkan penolakan ingest/QC IMF dan error mapping di downstream",
+        "fix": "Re-wrap/Re-export file track MXF dengan setting yang benar agar descriptor metadata terisi, lalu regenerate PKL/ASSETMAP (hindari mengedit MXF manual)"
+      }
+    },
+    "IMF_MXF_PICTURE_RESOLUTION_CONSISTENCY": {
+      "title": "Konsistensi resolusi gambar MXF (StoredWidth/StoredHeight)",
+      "issue": {
+        "what": "File track gambar MXF dalam IMF memiliki stored frame size (resolusi) yang tidak konsisten",
+        "why": "Campuran resolusi dalam satu composition sering gagal ingest/QC dan mengganggu conform/merge",
+        "fix": "Re-export/Re-wrap track gambar agar semua ImageSequence menggunakan resolusi yang sama, lalu regenerate PKL/ASSETMAP"
+      }
+    },
+    "IMF_MXF_AUDIO_SAMPLERATE_48K": {
+      "title": "Sample rate audio MXF harus 48 kHz",
+      "issue": {
+        "what": "Beberapa track audio MXF mendeklarasikan AudioSamplingRate bukan 48 kHz",
+        "why": "Pengiriman IMF biasanya mensyaratkan 48 kHz; mismatch sering menjadi hard reject",
+        "fix": "Re-export/Re-wrap track audio pada 48 kHz lalu rebuild IMF (regenerate PKL/ASSETMAP)"
+      }
+    },
+    "IMF_MXF_SAMPLERATE_MATCH_CPL": {
+      "title": "SampleRate MXF harus cocok dengan EditRate CPL",
+      "issue": {
+        "what": "Descriptor SampleRate pada beberapa track MXF tidak cocok dengan CPL Resource EditRate",
+        "why": "Mismatch timebase dapat menyebabkan gagal ingest/QC atau drift timeline",
+        "fix": "Re-wrap/Re-export track dengan timebase yang benar agar SampleRate cocok dengan EditRate CPL, lalu regenerate CPL/PKL/ASSETMAP"
+      }
+    }
+  }
+}

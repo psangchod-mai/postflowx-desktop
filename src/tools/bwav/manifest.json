@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "bwav-inspector",
+  "version": "0.2.3",
+  "description": "Inspect BWAV/BW64 files with embedded ADM, and Dolby Atmos Renderer .atmosIR configs. Validate group labels and renderer settings.",
+  "action": {
+    "default_title": "BWAV Inspector"
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  },
+  "options_page": "options.html",
+  "permissions": [
+    "alarms",
+    "identity",
+    "storage",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ]
+}

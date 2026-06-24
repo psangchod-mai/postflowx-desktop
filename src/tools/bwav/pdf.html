@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BWAV Inspector — PDF Report</title>
+  <link rel="stylesheet" href="pdf.css" />
+</head>
+<body>
+  <div class="top">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="t">BWAV Inspector</div>
+        <div class="s">Printable report (Save as PDF)</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="btnPrint">Print / Save PDF</button>
+      <button class="btn" id="btnRefresh">Reload data</button>
+    </div>
+  </div>
+
+  <div class="wrap" id="root">
+    <div class="card">
+      <div class="k">Status</div>
+      <div class="v">Loading…</div>
+      <div class="small">If this stays stuck, go back to the extension page and click Export PDF again.</div>
+    </div>
+  </div>
+
+  <script src="pdf.js"></script>
+</body>
+</html>

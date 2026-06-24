@@ -1,0 +1,20 @@
+name: color-conformance
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  aces-amf-clf-fdl:
+    name: ACES 2.0 / AMF / CLF / FDL conformance (Node 20)
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:color

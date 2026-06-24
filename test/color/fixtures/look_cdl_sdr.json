@@ -1,0 +1,12 @@
+{
+  "source": "A001C001.mov",
+  "sourceClass": "arri_logc3",
+  "mode": "sdr_delivery",
+  "acesVersion": "2.0",
+  "inputTransform": "ARRI_LOGC3",
+  "outputTransform": "SDR_REC709",
+  "clipId": "A001C001",
+  "cdlEnabled": true,
+  "cdl": { "slope": [1.02, 1.0, 0.98], "offset": [0.0, 0.0, 0.01], "power": [1.0, 1.0, 1.0], "sat": 1.05 },
+  "lookStack": []
+}

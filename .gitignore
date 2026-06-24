@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Auth config — never commit credentials or dev bypass settings
+authConfig.json
+electron/authConfig.local.json
+
+# Native build artifacts (Swift build cache — regenerable, machine-specific)
+.build/
+electron/native/**/.build/
+
+# Built installer / packaging output
+companion/output/
+*.pkg

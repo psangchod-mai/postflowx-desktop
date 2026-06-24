@@ -1,0 +1,11 @@
+{
+  "maxSamplePeakDBFS": -2,
+  "targetLevelGatedLoudnessToleranceLU": 2,
+  "targetLevelGatedLoudnessLUFS": -24,
+  "targetSpeechGatedLoudnessLUFS": -27,
+  "targetSpeechGatedLoudnessToleranceLU": 2,
+  "treatViolationsAsErrors": false,
+  "minTotalDurationSecondsForSpeechGating": 400,
+  "minSpeechPercentageForSpeechGating": 15,
+  "maxTruePeakDBFS": 0
+}

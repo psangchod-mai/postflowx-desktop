@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BWAV Inspector — Inspector</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<div class="app compact">
+    <!-- Combined single-row header: brand + mode + actions -->
+    <header class="topbar">
+      <!-- Brand: logo + title + format caps -->
+      <div class="brand">
+        <img class="logo" src="assets/icon128.png" alt="BWAV Inspector logo" />
+        <div class="brand-inline">
+          <span class="title">BWAV Inspector</span>
+          <div class="bwav-caps">
+            <span class="bwav-cap bwav-cap--fmt" title="Broadcast WAV / ADM BWF (RIFF/RF64/BW64)">BWAV / ADM</span>
+            <span class="bwav-cap bwav-cap--fmt" title="MXF OP-Atom containing ADM XML (e.g. Dolby Atmos IMF IAB)">MXF</span>
+            <span class="bwav-cap bwav-cap--fmt" title=".atmosIR rendered IR file from Dolby Atmos Renderer">AtmosIR</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="topbar-div"></div>
+
+      <!-- Mode selector + guide -->
+      <div class="bwav-mode-tabs" role="tablist" aria-label="Validation mode">
+        <button class="bwav-mode-tab active" data-mode="backlot" role="tab" type="button" title="Full ADM label QC — all 4 groups">Backlot</button>
+        <button class="bwav-mode-tab" data-mode="dme" role="tab" type="button" title="DME Extraction — Dialogue · Music · Effects required">DME</button>
+        <button class="bwav-mode-tab" data-mode="me" role="tab" type="button" title="M&amp;E — Music &amp; Effects only; Dialogue flagged as optional">M&amp;E</button>
+      </div>
+      <div class="bwav-mode-guide" id="modeGuide"></div>
+
+      <!-- Actions -->
+      <div class="topbar-actions">
+        <div class="status-inline" id="statusLine" data-i18n="status.ready">Ready.</div>
+        <button class="btn ghost" id="btnClear" data-i18n="btn.clear">Clear</button>
+        <button class="btn" id="btnPdf" data-i18n="btn.exportPdf">
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v2h10v-2"/><path d="M7 2v7M4.5 6.5L7 9l2.5-2.5"/></svg>
+          Export PDF
+        </button>
+      </div>
+    </header>
+
+    <!-- Top: file load + KPI summary -->
+    <section class="panel compact-panel">
+
+      <div class="filebar" id="dropzone" tabindex="0" role="button" aria-label="Choose BWAV, .atmosIR or .mxf file">
+        <input id="fileInput" type="file" accept=".wav,.bwav,.bw64,.rf64,.atmosIR,.atmosir,.mxf,.MXF" hidden />
+        <div class="filebar-left">
+          <div class="file-ic" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="9" height="12" rx="1.5"/><path d="M11 1l3 3v10a1 1 0 01-1 1H6"/><path d="M11 1v3h3"/><path d="M5 7h4M5 9.5h3"/></svg>
+          </div>
+          <div class="file-text">
+            <div class="file-title" data-i18n="file.dropTitle">Drop BWAV / BW64 / MXF / AtmosIR here</div>
+            <div class="file-sub" data-i18n="file.dropHint">or click to browse — .wav .bwav .bw64 .rf64 .mxf .atmosIR</div>
+          </div>
+        </div>
+        <div class="filebar-meta" id="fileMeta" hidden></div>
+      </div>
+
+      <div class="callout bad" id="loadError" hidden></div>
+
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress"><div class="bar" id="progressBar" style="width:0%"></div></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+
+      <div class="cards kpi-row" id="kpiRow">
+        <button class="card kpi-card kpi-total" id="kpiTotal" type="button" data-filter="ALL" aria-label="Show all labels">
+          <div class="card-k">Labels</div>
+          <div class="card-v" id="mTotal">—</div>
+          <div class="pill" id="pOverall">Waiting</div>
+        </button>
+
+        <button class="card kpi-card kpi-reject" id="kpiReject" type="button" data-filter="REJECT" aria-label="Filter REJECT labels">
+          <div class="card-k">Reject</div>
+          <div class="card-v" id="mReject">—</div>
+          <div class="pill" id="pReject">—</div>
+        </button>
+
+        <button class="card kpi-card kpi-warn" id="kpiWarn" type="button" data-filter="WARN" aria-label="Filter WARN labels">
+          <div class="card-k">Warn</div>
+          <div class="card-v" id="mWarn">—</div>
+          <div class="pill" id="pWarn">—</div>
+        </button>
+
+        <button class="card kpi-card kpi-pass" id="kpiPass" type="button" data-filter="PASS" aria-label="Filter PASS labels">
+          <div class="card-k">Pass</div>
+          <div class="card-v" id="mPass">—</div>
+          <div class="pill" id="pPass">—</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Labels -->
+    <section class="panel" id="labelsPanel">
+      <div class="labels-panel">
+        <div class="labels-head">
+          <div>
+            <div class="section-title" data-i18n="labels.title">Labels</div>
+            <div class="section-sub" data-i18n="labels.sub">Mapped group labels extracted from ADM (AXML).</div>
+          </div>
+          <div class="filters">
+            <input class="input" id="filterText" type="text" placeholder="Search labels…" data-i18n-placeholder="labels.search" />
+            <select class="select" id="filterStatus">
+              <option value="ALL" data-i18n="labels.filter.all">All</option>
+              <option value="PASS">PASS</option>
+              <option value="REJECT">REJECT</option>
+              <option value="WARN">WARN</option>
+            </select>
+            <select class="select" id="filterGroup">
+              <option value="ALL" data-i18n="labels.filter.allGroups">All groups</option>
+              <option value="Dialogue">Dialogue</option>
+              <option value="Music">Music</option>
+              <option value="Effects">Effects</option>
+              <option value="Narration">Narration</option>
+              <option value="UNMAPPED">Unmapped</option>
+            </select>
+            <div class="count" id="labelsCount">—</div>
+          </div>
+        </div>
+
+        <div class="table-wrap table-big">
+          <table class="table" id="labelsTable" aria-label="Label results">
+            <thead>
+              <tr>
+                <th data-i18n="labels.th.status">Status</th>
+                <th data-i18n="labels.th.raw">Raw label</th>
+                <th data-i18n="labels.th.mapped">Mapped</th>
+                <th data-i18n="labels.th.source">Source</th>
+                <th data-i18n="labels.th.fix">Fix</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="empty"><td colspan="5" data-i18n="labels.empty.noFile">No file loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Hidden JSON cache for Copy/Export (label-only report) -->
+  <pre id="reportJson" hidden>{}</pre>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!--
+    YouTube Error 153 fix:
+    YouTube requires an HTTP Referer for embedded players.
+    This wrapper page must be hosted on HTTPS (or localhost for testing)
+    so the browser can send a valid HTTP Referer.
+
+    Official docs also recommend strict-origin-when-cross-origin.
+  -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+  <title>PostFlowX Fun box • YouTube</title>
+  <style>
+    :root{
+      --bg:#07090f;
+      --panel:#0c1017;
+      --line:rgba(255,255,255,.10);
+      --text:#e9edf8;
+      --muted:#aab4cf;
+      --cyan:#57d7ff;
+      --red:#ff5c73;
+      --glow:0 0 0 1px rgba(87,215,255,.22), 0 10px 30px rgba(0,0,0,.45);
+    }
+    html, body { height: 100%; margin: 0; background: #000; color: var(--text); font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .wrap { position: fixed; inset: 0; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+    .gate {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      background: radial-gradient(circle at top, rgba(87,215,255,.10), transparent 36%), var(--bg);
+      padding: 18px;
+      box-sizing: border-box;
+    }
+    .card {
+      width: min(720px, 100%);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--glow);
+      padding: 18px 18px 16px;
+      box-sizing: border-box;
+    }
+    .title { font-size: 18px; font-weight: 700; margin: 0 0 10px; }
+    .sub { color: var(--muted); margin: 0 0 14px; }
+    .pillrow { display:flex; flex-wrap:wrap; gap:8px; margin: 0 0 14px; }
+    .pill {
+      display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.11); background: rgba(255,255,255,.04); color: var(--text);
+      font-size:12px;
+    }
+    .pill b { color: var(--cyan); }
+    .warn { color: #ffd7dd; }
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px; word-break: break-all; white-space: pre-wrap;
+      color: #d8e4ff; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 12px; padding: 12px;
+      margin: 10px 0 0;
+    }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top: 14px; }
+    .btn {
+      appearance:none; border:1px solid rgba(255,255,255,.10); border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+      color: var(--text); padding: 10px 14px; text-decoration:none; font-weight:600;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    .btn.primary { border-color: rgba(87,215,255,.35); box-shadow: 0 0 0 1px rgba(87,215,255,.18), inset 0 1px 0 rgba(255,255,255,.08); }
+    .small { font-size: 12px; color: var(--muted); margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="app"></div>
+
+  <script>
+    const app = document.getElementById('app');
+
+    const DEFAULT_LIST = 'UUf3sh2XnZG2P5h4HvrEUuOA';
+    const DEFAULT_CHANNEL = 'https://www.youtube.com/@NetflixMusic';
+    const CHANNEL_MAP = new Map([
+      ['https://www.youtube.com/@netflixmusic', DEFAULT_LIST],
+      ['https://youtube.com/@netflixmusic', DEFAULT_LIST],
+      ['http://www.youtube.com/@netflixmusic', DEFAULT_LIST],
+      ['http://youtube.com/@netflixmusic', DEFAULT_LIST],
+      ['@netflixmusic', DEFAULT_LIST],
+      ['netflixmusic', DEFAULT_LIST],
+      ['ucf3sh2xnzg2p5h4hvreuoa', DEFAULT_LIST],
+    ]);
+
+    const params = new URLSearchParams(location.search);
+    const rawSource = (params.get('source') || params.get('channelUrl') || params.get('channel') || DEFAULT_CHANNEL).trim();
+    const rawList = (params.get('list') || '').trim();
+    const v = (params.get('v') || '').trim();
+
+    const normalizeKey = (value) => String(value || '').trim().toLowerCase().replace(/\/$/, '');
+
+    const extractPlaylistFromSource = (value) => {
+      const source = String(value || '').trim();
+      if (!source) return '';
+      try {
+        const url = new URL(source);
+        const list = (url.searchParams.get('list') || '').trim();
+        if (list) return list;
+        return CHANNEL_MAP.get(normalizeKey(source)) || '';
+      } catch {
+        return CHANNEL_MAP.get(normalizeKey(source)) || '';
+      }
+    };
+
+    const list = rawList || extractPlaylistFromSource(rawSource) || DEFAULT_LIST;
+
+    const isLocalHttp = () => {
+      const host = location.hostname;
+      return location.protocol === 'http:' && (host === 'localhost' || host === '127.0.0.1');
+    };
+
+    const isSupportedWrapperOrigin = () => location.protocol === 'https:' || isLocalHttp();
+
+    const wrapperOrigin = location.origin;
+    const wrapperPage = location.origin + location.pathname;
+
+    const renderGate = () => {
+      app.innerHTML = `
+        <div class="gate">
+          <div class="card">
+            <div class="title">Fun box hosted wrapper required</div>
+            <p class="sub">YouTube blocks embedded playback with <b>Error 153</b> when the player request does not include a valid <b>HTTP Referer</b>. This page needs to be hosted on <b>HTTPS</b> so the browser can send that header correctly.</p>
+            <div class="pillrow">
+              <div class="pill"><b>Wrapper URL</b><span class="warn">${location.href}</span></div>
+              <div class="pill"><b>Source</b><span>${rawSource}</span></div>
+              <div class="pill"><b>Playlist</b><span>${list}</span></div>
+            </div>
+            <div class="actions">
+              <a class="btn primary" href="${rawSource}" target="_blank" rel="noopener">Open Netflix Music ↗</a>
+            </div>
+            <div class="small">Host this file on GitHub Pages, Cloudflare Pages, or any HTTPS server, then paste that public URL back into PostFlowX Fun box Config.</div>
+            <div class="code">Current wrapper origin: ${wrapperOrigin}\nExpected: https://YOUR-DOMAIN/.../pfx-funbox-youtube.html</div>
+          </div>
+        </div>`;
+    };
+
+    const mountPlayer = () => {
+      const iframe = document.createElement('iframe');
+      iframe.id = 'yt';
+      iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+
+      const common = new URLSearchParams({
+        autoplay: '1',
+        playsinline: '1',
+        controls: '1',
+        rel: '0',
+        modestbranding: '1',
+        enablejsapi: '1',
+        origin: wrapperOrigin,
+        widget_referrer: wrapperPage,
+      });
+
+      let src = '';
+      if (v) {
+        src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(v)}?${common.toString()}&list=${encodeURIComponent(list)}`;
+      } else {
+        src = `https://www.youtube-nocookie.com/embed/videoseries?${common.toString()}&list=${encodeURIComponent(list)}`;
+      }
+
+      iframe.src = src;
+      app.replaceChildren(iframe);
+    };
+
+    if (!isSupportedWrapperOrigin()) {
+      renderGate();
+    } else {
+      mountPlayer();
+    }
+  </script>
+</body>
+</html>

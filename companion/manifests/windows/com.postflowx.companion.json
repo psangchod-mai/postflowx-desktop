@@ -1,0 +1,10 @@
+{
+  "name": "com.postflowx.companion",
+  "description": "PostFlowX Companion (scaffold)",
+  "path": "C:\\Program Files\\PostFlowX Companion\\postflowx-companion.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_EXTENSION_ID/"
+  ]
+}
+

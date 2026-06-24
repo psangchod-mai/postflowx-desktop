@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "byCamKey": {
+    "A": "Sony",
+    "B": "Sony",
+    "C": "Sony",
+    "D": "DJI",
+    "E": "Canon",
+    "F": "Blackmagic",
+    "G": "RED",
+    "H": "ARRI"
+  },
+  "patterns": [
+    {
+      "name": "DJI",
+      "re": "^DJI_\\d{4}",
+      "flags": "i"
+    },
+    {
+      "name": "DJI",
+      "re": "^DJI_\\d{14}_\\d{4}_",
+      "flags": "i"
+    },
+    {
+      "name": "Sony",
+      "re": "^C\\d{4}\\.",
+      "flags": "i"
+    },
+    {
+      "name": "Sony",
+      "re": "^[A-Z]\\d{3}C\\d{3}_\\d{6}[A-Z0-9]{2}\\.",
+      "flags": "i"
+    },
+    {
+      "name": "Canon",
+      "re": "^(IMG|MVI)_\\d{4}\\.",
+      "flags": "i"
+    },
+    {
+      "name": "RED",
+      "re": "\\.(r3d|rdc)$",
+      "flags": "i"
+    },
+    {
+      "name": "Blackmagic",
+      "re": "\\.(braw)$",
+      "flags": "i"
+    },
+    {
+      "name": "ARRI",
+      "re": "\\.(ari)$",
+      "flags": "i"
+    },
+    {
+      "name": "Phantom",
+      "re": "^imag\\d{4,}",
+      "flags": "i"
+    }
+  ],
+  "storageBaseMBpsByMake": {
+    "Sony": 125,
+    "DJI": 85,
+    "Canon": 125,
+    "Blackmagic": 135,
+    "RED": 280,
+    "ARRI": 180,
+    "Phantom": 220,
+    "Apple": 120
+  },
+  "storageBaseMBpsByKey": {
+    "A": 125,
+    "B": 125,
+    "C": 125,
+    "D": 85,
+    "E": 125,
+    "F": 135,
+    "G": 280,
+    "H": 180
+  },
+  "formatMetaByKey": {}
+}

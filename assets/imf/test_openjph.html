@@ -1,0 +1,27 @@
+<!doctype html><html><body><pre id='out'>loading</pre>
+<script>
+function show(obj){ document.getElementById('out').textContent=JSON.stringify(obj,null,2); }
+const prev = window.Module;
+const s=document.createElement('script');
+s.src='./openjphjs.js';
+s.onload=async()=>{
+  const exp=window.Module;
+  window.Module=prev;
+  const info={typeofExp:typeof exp, keys: exp? Object.keys(exp).slice(0,200):null};
+  try{
+    if(exp && exp.ready && typeof exp.ready.then==='function'){
+      await exp.ready;
+      info.ready=true;
+      info.keysAfter=Object.keys(exp).slice(0,200);
+      info.proto=Object.getOwnPropertyNames(Object.getPrototypeOf(exp)).slice(0,200);
+      info.hasHT=!!exp.HTJ2KDecoder;
+      if(exp.HTJ2KDecoder){
+        info.htProto=Object.getOwnPropertyNames(exp.HTJ2KDecoder.prototype);
+      }
+    }
+  }catch(e){ info.err=String(e); }
+  show(info);
+};
+s.onerror=e=>show({load:'error', e:String(e)});
+document.head.appendChild(s);
+</script></body></html>

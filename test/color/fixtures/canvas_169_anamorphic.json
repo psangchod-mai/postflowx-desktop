@@ -1,0 +1,9 @@
+{
+  "uuid": "fdl-fixture-0001",
+  "fdlCreator": "PostFlowX",
+  "canvas": { "id": "cnv0", "label": "DCI 4K Full", "width": 4096, "height": 2160, "anamorphicSqueeze": 1 },
+  "framingIntents": [
+    { "id": "scope_239", "label": "2.39:1 Scope", "aspectWidth": 239, "aspectHeight": 100, "protection": 0 },
+    { "id": "hd_169",    "label": "16:9 HD",      "aspectWidth": 16,  "aspectHeight": 9,   "protection": 0 }
+  ]
+}

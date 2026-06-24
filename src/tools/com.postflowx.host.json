@@ -1,0 +1,9 @@
+{
+  "name": "com.postflowx.host",
+  "description": "PostFlowX Native Host — ProRes transcoding proxy via ffmpeg",
+  "path": "/usr/local/lib/postflowx/pfx_host.py",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://lifjecamealanhekhkadmoebkfhimdai/"
+  ]
+}

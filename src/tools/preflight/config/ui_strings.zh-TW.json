@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-03T18:43:38.403769+07:00",
+  "ui_language": {
+    "locale": "zh-TW",
+    "statuses": {
+      "NOT_ADDED": "未加入",
+      "SCANNING": "檢查中",
+      "PASSED": "可交付",
+      "ISSUES": "有問題",
+      "BLOCKED": "被阻擋"
+    },
+    "severities": {
+      "BLOCKER": "阻擋",
+      "WARNING": "警告",
+      "FYI": "提示"
+    },
+    "buttons": {
+	      "add_files": "新增 ▾",
+	      "add_folder": "新增資料夾…",
+	      "add_files_item": "新增檔案…",
+      "select_folder": "選擇資料夾",
+      "select_files": "選擇檔案",
+      "run": "執行預檢",
+      "export_report": "匯出報告",
+      "reset": "重設",
+      "close": "關閉",
+      "confirm": "已確認",
+      "view_fix": "查看 / 修正",
+      "assign": "指派"
+    },
+    "labels": {
+      "project": "專案",
+      "profile": "設定檔",
+      "language": "語言",
+      "ready": "可交付",
+      "blockers": "阻擋",
+      "missing": "缺少",
+      "warnings": "警告",
+      "files": "檔案",
+      "assets": "資產",
+      "scope": "範圍",
+      "filters": "篩選",
+      "history": "歷史",
+      "limitations": "限制",
+      "all": "全部",
+      "clear": "清除",
+      "only": "只選此項",
+      "search_placeholder": "搜尋: IMF / Audio / Logo…",
+      "pick_scope_hint": "先選擇範圍，再加入檔案/資料夾，最後執行預檢。",
+      "no_scope": "尚未選擇類別。請在左側「範圍」先選擇。",
+      "unassigned": "未分配檔案",
+      "unassigned_help": "無法自動分配的檔案 — 請分配到正確的卡片。",
+      "assign_all_unassigned_to": "將所有未分配指派到:",
+      "assign_all": "全部指派",
+      "choose_asset_first": "請先選擇卡片。",
+      "assigned_all_run_again": "已指派。請重新執行以套用。",
+      "assigned_all_run_again_plural": "已全部指派。請重新執行以套用。",
+      "select_scope_first": "請先選擇至少一個類別。",
+      "manual_confirm_hint": "確認此項符合後再使用。",
+      "confirm_done": "已確認",
+      "fix_now": "修正",
+      "evidence_tab": "證據"
+    },
+    "issue_template": {
+      "what": "發生什麼事",
+      "why": "為什麼重要",
+      "fix": "如何修正"
+    }
+  }
+}

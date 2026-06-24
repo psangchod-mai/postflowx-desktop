@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:11.027422Z",
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "subtitle": "上傳前確認 IMF 完整性與語言/中繼資料。"
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "subtitle": "圖形/標題成果與製作專案檔。"
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "subtitle": "QC 用最終審片/剪輯媒體。"
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "subtitle": "最終剪輯專案與必要連結資產。"
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 stems（48kHz，PCM WAV/BWAV）。"
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 stems（48kHz，PCM WAV/BWAV）。"
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "subtitle": "聲音剪輯/棚內混音專案與元素。"
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "subtitle": "DI/Conform 調光母帶專案檔。"
+    },
+    "SHOW_LOGO": {
+      "subtitle": "最終節目 Logo。"
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "subtitle": "色彩 pipeline 轉換檔（LUT/CTL/設定）。"
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "subtitle": "Framing/安全框參考圖。"
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "subtitle": "Servicing 用 ProRes 422 HQ（SDR）。"
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "subtitle": "Textless Complete（手動清單）。"
+    },
+    "SCORE_MIXES_20": {
+      "subtitle": "作曲家提供 2.0 配樂混音。"
+    },
+    "SCORE_STEMS": {
+      "subtitle": "作曲家提供配樂 stems。"
+    },
+    "SONG_MIXES_STEMS": {
+      "subtitle": "原創歌曲 mixes/stems。"
+    },
+    "PRODUCTION_AUDIO": {
+      "subtitle": "原始製作錄音（依團隊模板）。"
+    },
+    "NAM_TEXTLESS": {
+      "subtitle": "序列 + checksum + 命名（避免 ZIP）。"
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 print master（48kHz，PCM WAV/BWAV）。"
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 print master（48kHz，PCM WAV/BWAV）。"
+    },
+    "FINAL_MODELS": {
+      "subtitle": "VFX wrap 最終模型（shot/asset 結構）。"
+    },
+    "BACKGROUND_PLATES": {
+      "subtitle": "背景 plates（shot 結構）。"
+    },
+    "SCANNING_DATA": {
+      "subtitle": "掃描/追蹤/LiDAR（shot 結構）。"
+    },
+    "VFX_SHOTS": {
+      "subtitle": "VFX shots 交付物（shot 結構）。"
+    },
+    "ELEMENTS_2D": {
+      "subtitle": "2D 元素（matte/paint/comp/refs）。"
+    }
+  }
+}

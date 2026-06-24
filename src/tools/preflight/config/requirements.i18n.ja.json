@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:10.982421Z",
+  "categories": {
+    "EDITORIAL_LIBRARY": "Editorial Library",
+    "MUSIC": "Music",
+    "PICTURE_MASTERING": "Picture Mastering",
+    "SOUND_MASTERING": "Sound Mastering",
+    "SOURCE_MATERIALS": "Source Materials",
+    "VISUAL_EFFECTS": "Visual Effects"
+  },
+  "requirements": {
+    "IMF_DV_TEXTLESS": {
+      "subtitle": "アップロード前に IMF の整合性と言語/メタデータを確認します。"
+    },
+    "GRAPHICS_TITLES_PROJECT": {
+      "subtitle": "グラフィック/タイトルの成果物と制作プロジェクト。"
+    },
+    "FINAL_EDITORIAL_MEDIA": {
+      "subtitle": "QC 用の最終レビュー/カット素材。"
+    },
+    "FINAL_EDITORIAL_PROJECT": {
+      "subtitle": "最終編集プロジェクトと必要なリンク資産。"
+    },
+    "AUDIO_STEMS_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 ステム（48kHz、PCM WAV/BWAV）。"
+    },
+    "AUDIO_STEMS_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 ステム（48kHz、PCM WAV/BWAV）。"
+    },
+    "SOUND_EDITORIAL_STAGE_PROJECT": {
+      "subtitle": "音声編集/ステージミックスのプロジェクトと要素。"
+    },
+    "PICTURE_MASTERING_PROJECT": {
+      "subtitle": "DI/Conform のマスタリングプロジェクト。"
+    },
+    "SHOW_LOGO": {
+      "subtitle": "最終版の番組ロゴ。"
+    },
+    "COLOR_PIPELINE_TRANSFORMS": {
+      "subtitle": "パイプライン変換（LUT/CTL/設定）。"
+    },
+    "PICTURE_MASTERING_FRAMING_CHARTS": {
+      "subtitle": "フレーミング/セーフエリア参照チャート。"
+    },
+    "PRORES_422HQ_SDR_TURNOVER": {
+      "subtitle": "Servicing 用の ProRes 422 HQ（SDR）。"
+    },
+    "PRORES_422HQ_SDR_TEXTLESS_COMPLETE": {
+      "subtitle": "Textless Complete（手動チェックリスト）。"
+    },
+    "SCORE_MIXES_20": {
+      "subtitle": "作曲家からのスコアミックス 2.0。"
+    },
+    "SCORE_STEMS": {
+      "subtitle": "作曲家からのスコアステム。"
+    },
+    "SONG_MIXES_STEMS": {
+      "subtitle": "オリジナル曲のミックス/ステム。"
+    },
+    "PRODUCTION_AUDIO": {
+      "subtitle": "プロダクション音声（テンプレートに従う）。"
+    },
+    "NAM_TEXTLESS": {
+      "subtitle": "シーケンス + checksum + 命名（ZIP は避ける）。"
+    },
+    "PRINT_MASTER_20_NEARFIELD": {
+      "subtitle": "Nearfield 2.0 プリントマスター（48kHz、PCM WAV/BWAV）。"
+    },
+    "PRINT_MASTER_51_NEARFIELD": {
+      "subtitle": "Nearfield 5.1 プリントマスター（48kHz、PCM WAV/BWAV）。"
+    },
+    "FINAL_MODELS": {
+      "subtitle": "VFX ラップ用の最終モデル（ショット/資産構造）。"
+    },
+    "BACKGROUND_PLATES": {
+      "subtitle": "背景プレート（ショット構造）。"
+    },
+    "SCANNING_DATA": {
+      "subtitle": "スキャン/トラッキング/LiDAR（ショット構造）。"
+    },
+    "VFX_SHOTS": {
+      "subtitle": "VFX ショット成果物（ショット構造）。"
+    },
+    "ELEMENTS_2D": {
+      "subtitle": "2D 要素（マット/ペイント/コンプ/参照）。"
+    }
+  }
+}

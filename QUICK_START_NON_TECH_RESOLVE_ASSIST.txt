@@ -1,0 +1,36 @@
+PostFlowX Resolve Engine - Easy Setup
+=====================================
+
+For normal IMF Validation, you do NOT need DaVinci Resolve.
+Use PostFlowX first. Resolve-assisted checks are optional.
+
+Mac easy install:
+1. Unzip this PostFlowX folder.
+2. Double-click: Install_PostFlowX_Helper.command
+3. Wait until it says: Installation complete.
+4. Chrome will open chrome://extensions.
+5. Click Reload on PostFlowX.
+6. Go to Settings > Resolve Engine.
+7. Click: Check Setup.
+
+Recommended mode for non-technical users:
+- Click: Use Simple Mode.
+- Leave Resolve-assisted checks disabled unless you specifically need automatic Resolve jobs.
+
+If you see "Helper is too old" or "Unknown action":
+- Run Install_PostFlowX_Helper.command again.
+- Reload PostFlowX in chrome://extensions.
+- Open Settings > Resolve Engine and click Check Setup.
+
+If you see "Resolve not found":
+- That is OK for standard IMF Validation.
+- Install DaVinci Resolve only if you need optional Resolve-assisted decode/conform checks.
+
+If you see "Scripting not available":
+- Use Simple Mode.
+- Background Resolve automation needs Resolve scripting support on the workstation.
+
+Important:
+- Do not use Terminal commands unless you want to.
+- The installer is designed to be double-clicked.
+- The Helper is installed only for your macOS user account. No admin password is required.

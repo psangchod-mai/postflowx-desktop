@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>VisionScope QC</title>
+</head>
+<body>
+  <header>
+    <h1>VisionScope QC</h1>
+    <button id="btnSettings" title="ตั้งค่า">⚙️</button>
+  </header>
+
+  <section id="dropZone" class="drop">
+    <p><strong>ลากไฟล์มาวาง</strong> หรือเลือกไฟล์ Dolby Vision metadata เพื่อ QC</p>
+    <p class="hint">รองรับ: .xml, .json, .txt</p>
+    <input id="fileInput" type="file" accept=".xml,.json,.txt,application/xml,application/json,text/plain" />
+  </section>
+
+  <section id="settings" class="panel hidden">
+    <h2>ตั้งค่าการตรวจ</h2>
+    <div class="grid">
+      <label>Active width <input id="activeW" type="number" min="1" placeholder="เช่น 3840"></label>
+      <label>Active height <input id="activeH" type="number" min="1" placeholder="เช่น 2160"></label>
+      <label>AR tolerance <input id="arTol" type="number" step="0.0001" min="0" value="0.005"></label>
+    </div>
+    <div class="row">
+      <button id="btnSave">บันทึก</button>
+      <button id="btnClose">ปิด</button>
+    </div>
+    <p class="hint">ถ้าไม่กรอก active width/height ระบบจะทำ heuristic จาก metadata เอง</p>
+  </section>
+
+  <section id="summary" class="panel hidden"></section>
+
+  <section id="results" class="panel hidden">
+    <div class="row space">
+      <h2>ผลตรวจ</h2>
+      <div>
+        <button id="btnExport">Export JSON</button>
+        <button id="btnClear">ล้าง</button>
+      </div>
+    </div>
+    <ul id="list"></ul>
+  </section>
+
+  <footer>
+    <span id="fileName"></span>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

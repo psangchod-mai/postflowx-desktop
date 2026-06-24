@@ -1,0 +1,48 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "name": "EQUIV",
+  "global_start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 86400 },
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "name": "tracks",
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "name": "V1",
+        "kind": "Video",
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.1",
+            "name": "A001C001",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 86400 },
+              "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 96 }
+            },
+            "media_reference": { "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file:///media/A001C001.mov" }
+          },
+          {
+            "OTIO_SCHEMA": "Clip.1",
+            "name": "B002C002",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 172800 },
+              "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 48 }
+            },
+            "media_reference": { "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file:///media/B002C002.mov" }
+          },
+          {
+            "OTIO_SCHEMA": "Clip.1",
+            "name": "C003C003",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 259200 },
+              "duration": { "OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": 72 }
+            },
+            "media_reference": { "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file:///media/C003C003.mov" }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<aces:acesMetadataFile version="2.0" xmlns:aces="urn:ampas:aces:amf:v2.0">
+  <aces:amfInfo>
+    <aces:description>A001C001 | ARRI LogC3 (EI800) → Rec.709 (SDR)</aces:description>
+    <aces:uuid>urn:uuid:11111111-2222-4333-8444-555555555555</aces:uuid>
+  </aces:amfInfo>
+  <aces:clipId>
+    <aces:clipName>A001C001</aces:clipName>
+  </aces:clipId>
+  <aces:pipeline>
+    <aces:pipelineInfo>
+      <aces:uuid>urn:uuid:66666666-7777-4888-8999-aaaaaaaaaaaa</aces:uuid>
+      <aces:systemVersion>
+        <aces:majorVersion>2</aces:majorVersion>
+        <aces:minorVersion>0</aces:minorVersion>
+        <aces:patchVersion>0</aces:patchVersion>
+      </aces:systemVersion>
+    </aces:pipelineInfo>
+    <aces:inputTransform applied="false">
+      <aces:description>ARRI LogC3 (EI800)</aces:description>
+      <aces:transformId>urn:ampas:aces:transformId:v2.0:IDT.ARRI.Alexa-v3-logC3-EI800.a1.v2</aces:transformId>
+    </aces:inputTransform>
+    <aces:lookTransform applied="false">
+      <aces:description>ASC CDL</aces:description>
+      <aces:transformId>urn:ampas:aces:transformId:v1.4:LMT.Academy.ASC_CDL.a1.v1</aces:transformId>
+      <aces:ASC_CDL>
+        <aces:SOPNode>
+          <aces:Slope>1.02 1.0 0.98</aces:Slope>
+          <aces:Offset>0.0 0.0 0.01</aces:Offset>
+          <aces:Power>1.0 1.0 1.0</aces:Power>
+        </aces:SOPNode>
+        <aces:SatNode>
+          <aces:Saturation>1.05</aces:Saturation>
+        </aces:SatNode>
+      </aces:ASC_CDL>
+    </aces:lookTransform>
+    <aces:outputTransform applied="false">
+      <aces:description>Rec.709 (SDR)</aces:description>
+      <aces:transformId>urn:ampas:aces:transformId:v2.0:ODT.Academy.Rec709_100nits_dim.a1.v1</aces:transformId>
+    </aces:outputTransform>
+  </aces:pipeline>
+</aces:acesMetadataFile>

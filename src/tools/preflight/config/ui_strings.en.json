@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-06T11:31:27.848604Z",
+  "ui_language": {
+    "locale": "en",
+    "statuses": {
+      "NOT_ADDED": "Not added",
+      "SCANNING": "Scanning",
+      "PASSED": "Ready",
+      "ISSUES": "Has issues",
+      "BLOCKED": "Blocked"
+    },
+    "severities": {
+      "BLOCKER": "Blocked",
+      "WARNING": "Warning",
+      "FYI": "FYI"
+    },
+    "buttons": {
+      "add_files": "Add ▾",
+      "add_folder": "Add folder…",
+      "add_files_item": "Add files…",
+      "replace_files": "Replace",
+      "run": "Run preflight",
+      "fix_guide": "Fix guide",
+      "evidence": "Evidence",
+      "export_report": "Export report",
+      "new_run": "New run",
+      "select_folder": "Select folder",
+      "select_files": "Select files",
+      "clear": "Clear",
+      "open_app": "Open Preflight Validator",
+      "close": "Close",
+      "confirm": "Confirm",
+      "reset": "Reset",
+      "view_fix": "View / Fix",
+      "assign": "Assign"
+    },
+    "labels": {
+      "ready_to_deliver": "Ready to deliver",
+      "blockers": "Blockers",
+      "missing": "Missing",
+      "search_placeholder": "Search: IMF / Audio / Logo…",
+      "filter_blockers": "Blockers",
+      "filter_missing": "Missing",
+      "filter_warnings": "Warnings",
+      "unassigned": "Unassigned files",
+      "assign_to": "Assign to",
+      "project": "Project",
+      "profile": "Delivery List",
+      "history": "History",
+      "limitations": "Limitations",
+      "language": "Language",
+      "ready": "Ready",
+      "warnings": "Warnings",
+      "files": "Files",
+      "assets": "Assets",
+      "scope": "Scope",
+      "filters": "Filters",
+      "all": "All",
+      "clear": "Clear",
+      "only": "Only",
+      "pick_scope_hint": "Pick scope (left), add files/folders, then click Run preflight.",
+      "no_scope": "No categories selected. Use the Scope panel (left) to choose what you want to check for this vendor.",
+      "unassigned_help": "Files that could not be auto-assigned — assign them to the correct asset card.",
+      "assign_all_unassigned_to": "Assign all unassigned to:",
+      "assign_all": "Assign all",
+      "choose_asset_first": "Choose an asset card first.",
+      "assigned_all_run_again": "Assigned. Run preflight again to apply.",
+      "assigned_all_run_again_plural": "Assigned all. Run preflight again to apply.",
+      "select_scope_first": "Select at least one category to check (left sidebar).",
+      "manual_confirm_hint": "Use when you have verified this check is satisfied.",
+      "confirm_done": "Confirmed",
+      "fix_now": "Fix now",
+      "evidence_tab": "Evidence"
+    },
+    "issue_template": {
+      "what": "What happened",
+      "why": "Why it matters",
+      "fix": "How to fix"
+    }
+  }
+}

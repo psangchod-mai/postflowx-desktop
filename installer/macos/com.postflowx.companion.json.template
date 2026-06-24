@@ -1,0 +1,9 @@
+{
+  "name": "com.postflowx.companion",
+  "description": "PostFlowX Companion Native Helper",
+  "path": "REPLACE_WITH_WRAPPER_PATH",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_EXTENSION_ID/"
+  ]
+}

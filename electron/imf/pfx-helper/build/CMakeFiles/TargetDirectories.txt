@@ -1,0 +1,7 @@
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/pfx_helper.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/edit_cache.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/rebuild_cache.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/list_install_components.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/install.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/install/local.dir
+/Users/psangchod/Documents/PostFlowX_2.5/PostFlowX_Desktop/electron/imf/pfx-helper/build/CMakeFiles/install/strip.dir
