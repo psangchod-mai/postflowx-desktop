@@ -12,11 +12,28 @@ import { matchMarkersToTimelineClips, buildClipsFromEvents } from './modules/mar
 import { buildEDLFiles } from './modules/edl_export.js';
 import { buildOTIOJSON } from './modules/otio_export.js';
 import { buildShotsListXlsxV5Bytes } from './modules/amf_convert.js';
-import { nativeHelperPing, nativePickMediaFile, nativeOpenFile, nativeGrabThumbnailAtTimecode, nativeBuildMediaProxy, sharedMediaOpen, sharedMediaGetFrame, sharedMediaClose, nativeOcrImage, nativeOcrCapabilities, nativeResolveStartEngine, nativeResolveStartBackground } from './modules/native_helper_client.js';
+import { nativeHelperPing, nativePickMediaFile, nativeOpenFile, nativeGrabThumbnailAtTimecode, nativeBuildMediaProxy, sharedMediaOpen, sharedMediaGetFrame, sharedMediaClose, nativeOcrImage, nativeOcrCapabilities, nativeResolveStartEngine, nativeResolveStartBackground, nativeResolveCheckReady, nativeResolveEngineStatus } from './modules/native_helper_client.js';
 import { attachPlayableVideo, releasePlayableVideo, PLAYABLE_STATUS } from './core/playableMedia.js';
 import { withTimeout, isTimeout } from './modules/mediaDecode.js';
 import { tokenizeCompanionUrl, companionAuthHeaders } from './modules/companionAuth.js';
 import { isFpsMismatch } from './modules/fpsMatch.js';
+import { buildOcfErrorPaneHtml, buildOcfStripCellHtml, buildOcfEngineRequiredHtml } from './features/vfxPull/ocfErrorPane.js';
+import { classifyBackendStatus } from './features/vfxPull/backendStatusBadge.js';
+
+// Compact JSON for diagnostics. The Electron main process mirrors the renderer
+// console to logs/renderer.log via the `console-message` event, which delivers a
+// PRE-FORMATTED string — object args collapse to "[object Object]" there. Embed
+// the payload in the message string so the real stage/error survives in the log.
+function _pmJ(o) { try { return JSON.stringify(o); } catch { return String(o); } }
+
+// HTML-escape for any file-derived / error-message string interpolated into
+// innerHTML. macOS filenames can contain <>"'&, so an OCF path or companion
+// error echoed into markup is a DOM-XSS vector (elevated by the unconfined
+// pfx:readFile/writeFile IPC). Use this for every untrusted interpolation.
+function _escHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 // Authenticated fetch for companion HTTP frame/thumbnail URLs. A token-gated
 // companion 403s un-authenticated requests; several preview frame grabs used a
@@ -222,6 +239,11 @@ function _pmSeekVideoAbsFrame(absF, { navTarget = null, syncNow = false } = {}) 
   // Boundary seeks can decode the previous frame, which shows up most often on
   // the first clip where "previous" means the video's absolute frame 0.
   const targetFrameInVideo = absF - _pmVidZero();
+  // When a ProRes/QuickTime clip is playing through the native-AV canvas engine,
+  // the hidden <video> (whose currentTime we set below) can't repaint the canvas
+  // overlay — so drive the engine to the sought frame directly. Without this the
+  // canvas stays on frame 0 and reads black after any relayout (e.g. project load).
+  try { pmVideo._pfxNativeEngine?.seekFrame?.(Math.max(0, targetFrameInVideo)); } catch {}
   const biasedMediaTime = Math.max(0, (targetFrameInVideo + 0.5) * _pmFrameClock.playDen / _pmFrameClock.playNum);
   const dur = Number(pmVideo.duration);
   const maxMediaTime = (Number.isFinite(dur) && dur > 0)
@@ -1025,6 +1047,7 @@ function _pmUpdateBurninCanvas(evIdx) {
 let pmVideo, pmEventBody, pmEventEmpty, pmTlWrap;
 let _pmBrowseVideoFn = null; // set in initPrepMark, used by _pmTryRestoreVideo
 let pmScrub, pmPlayBtn, pmPrevFrameBtn, pmNextFrameBtn, pmAddMarkerBtn, pmMarkerColorBtn, pmMarkerColorSwatch, pmMarkerColorMenu;
+let pmPrevEventBtn, pmNextEventBtn;
 let pmHudRecTc, pmHudSrcTc, pmHudFrame, pmClipBanner, pmVidQtTcOverlay;
 let pmHudBurninTc, pmHudTcOffset, pmHudTcWarn;
 let pmCtxProject, pmCtxFps, pmCtxEvents, pmCtxMarkers, pmCtxLinked;
@@ -1695,6 +1718,8 @@ export function initPrepMark() {
   pmPlayBtn         = $('pmPlayBtn');
   pmPrevFrameBtn    = $('pmPrevFrameBtn');
   pmNextFrameBtn    = $('pmNextFrameBtn');
+  pmPrevEventBtn    = $('pmPrevEventBtn');
+  pmNextEventBtn    = $('pmNextEventBtn');
   pmAddMarkerBtn       = $('pmAddMarkerBtn');
   pmMarkerColorBtn     = $('pmMarkerColorBtn');
   pmMarkerColorSwatch  = $('pmMarkerColorSwatch');
@@ -12386,42 +12411,59 @@ function _pmInjectOcfRelinkCss() {
   const style = document.createElement('style');
   style.id = 'pmOcfRelinkCss';
   style.textContent = `
+    /* Professional, restrained OCF toolbar: one accent (Smart Link), neutral
+       ghost buttons for the rest, muted status pill. */
     #pmOcfSmartLinkBtn.pm-ocf-smartlink-quick {
-      align-items: center; justify-content: center; gap: 5px;
-      min-width: 130px; height: 28px; margin-left: 6px;
-      border: none;
-      background: linear-gradient(180deg,#7c5cff,#5b3df0); color: #fff;
-      border-radius: 7px; font-size: 11px; font-weight: 800;
+      align-items: center; justify-content: center; gap: 6px;
+      min-width: 128px; height: 28px; margin-left: 6px;
+      border: 1px solid #3c52b8;
+      background: #34459c; color: #eef1ff;
+      border-radius: 6px; font-size: 11px; font-weight: 600;
       cursor: pointer; white-space: nowrap; z-index: 20;
-      vertical-align: middle; letter-spacing: .3px;
-      box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 2px 8px rgba(91,61,240,.4);
+      vertical-align: middle; letter-spacing: .2px;
+      transition: background .12s ease, border-color .12s ease;
     }
-    #pmOcfSmartLinkBtn.pm-ocf-smartlink-quick:hover { filter: brightness(1.1); }
+    #pmOcfSmartLinkBtn.pm-ocf-smartlink-quick:hover { background: #3e51b8; border-color: #4a61cf; }
+    #pmOcfLinkLibraryBtn.pm-ocf-linklibrary-quick,
     #pmOcfRelinkQuickBtn.pm-ocf-relink-quick {
-      align-items: center; justify-content: center; gap: 5px;
-      min-width: 100px; height: 28px; margin-left: 6px;
-      border: 1.5px solid #b45cff;
-      background: rgba(140,60,255,.42); color: #fff;
-      border-radius: 7px; font-size: 11px; font-weight: 800;
+      align-items: center; justify-content: center; gap: 6px;
+      min-width: 104px; height: 28px; margin-left: 6px;
+      border: 1px solid #34354a;
+      background: #20212b; color: #c2c4d4;
+      border-radius: 6px; font-size: 11px; font-weight: 600;
       cursor: pointer; white-space: nowrap; z-index: 20;
-      vertical-align: middle;
-      letter-spacing: .3px;
-      text-shadow: 0 0 8px rgba(200,140,255,.7);
-      box-shadow: 0 0 0 1px rgba(180,92,255,.25), inset 0 1px 0 rgba(255,255,255,.1);
+      vertical-align: middle; letter-spacing: .2px; text-shadow: none;
+      transition: background .12s ease, border-color .12s ease;
     }
+    #pmOcfLinkLibraryBtn.pm-ocf-linklibrary-quick:hover,
     #pmOcfRelinkQuickBtn.pm-ocf-relink-quick:hover {
-      background: rgba(160,80,255,.62); border-color: #d080ff;
-      box-shadow: 0 0 8px rgba(180,80,255,.5), inset 0 1px 0 rgba(255,255,255,.15);
+      background: #2a2b38; border-color: #45465e; color: #e2e3ef;
     }
     #pmOcfSummary.pm-ocf-summary {
       align-items: center;
-      height: 28px; padding: 0 12px; margin-left: 5px;
-      border: 1.5px solid rgba(113,255,151,.7); border-radius: 7px;
-      font-size: 11px; font-weight: 700; color: #c8ffe0;
-      background: rgba(47,220,100,.22); white-space: nowrap; z-index: 20;
+      height: 28px; padding: 0 11px; margin-left: 6px;
+      border: 1px solid #2c2e3e; border-radius: 6px;
+      font-size: 11px; font-weight: 600; color: #aeb6c4;
+      background: #181922; white-space: nowrap; z-index: 20;
       vertical-align: middle;
-      box-shadow: 0 0 6px rgba(80,255,140,.2);
     }
+    /* Sprint 4: per-shot link-source tags in the workspace shot list. */
+    .pfx-vfx-src {
+      display: inline-block; margin-left: 5px; padding: 0 5px;
+      border-radius: 4px; font-size: 9px; font-weight: 800;
+      letter-spacing: .4px; line-height: 15px; vertical-align: middle;
+    }
+    .pfx-vfx-ocf-rawcta {
+      display: block; width: 100%; margin-top: 6px; padding: 7px 10px;
+      border: 1px solid #3c52b8; background: #2a3578; color: #e6ebff;
+      border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+      letter-spacing: .2px; transition: background .12s ease;
+    }
+    .pfx-vfx-ocf-rawcta:hover { background: #34459c; }
+    .pfx-vfx-ocf-rawcta:disabled { background: #23242f; border-color: #34354a; color: #8a8c9c; cursor: default; }
+    .pfx-vfx-src-lib { color: #ffd79a; background: rgba(255,170,60,.18); border: 1px solid rgba(255,170,60,.5); }
+    .pfx-vfx-src-tc  { color: #bfe8ff; background: rgba(74,163,255,.16); border: 1px solid rgba(74,163,255,.5); }
+    .pfx-vfx-src-man { color: #e0c8ff; background: rgba(170,110,255,.16); border: 1px solid rgba(170,110,255,.5); }
   `;
   document.head.appendChild(style);
 }
@@ -12447,6 +12489,25 @@ function _pmWireOcfRelinkBtn() {
       } else {
         console.warn('[PFX OCF] _pmSmartLinkOcf not available yet');
         alert('Smart Link OCF: open the VFX Pull panel first (click "VFX Pull"), then try again.');
+      }
+    });
+  }
+
+  // Link from Library — DB-powered linking against the scanned media library
+  // (vfxPullPanel exposes _pmLinkFromLibrary). Sprint 4.
+  const libBtn = document.getElementById('pmOcfLinkLibraryBtn');
+  if (libBtn && libBtn.dataset.wired !== '1') {
+    libBtn.dataset.wired = '1';
+    libBtn.addEventListener('click', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      console.log('[PFX OCF] Link from Library clicked');
+      const fn = window._pmLinkFromLibrary
+        || (typeof _pmLinkFromLibrary !== 'undefined' ? _pmLinkFromLibrary : null);
+      if (typeof fn === 'function') {
+        await fn();
+      } else {
+        console.warn('[PFX OCF] _pmLinkFromLibrary not available yet');
+        alert('Link from Library: open the VFX Pull panel first (click "VFX Pull"), then try again.');
       }
     });
   }
@@ -12534,7 +12595,7 @@ function _pmWireOcfDropZone() {
         return;
       }
       console.error('[PFX OCF] Drop zone relink error:', err);
-      if (label) label.innerHTML = `Error: ${err?.message || err} · <button id="pfxVfxOcfPickBtn" class="pfx-vfx-ocf-pick-btn">Retry…</button>`;
+      if (label) label.innerHTML = `Error: ${_escHtml(err?.message || err)} · <button id="pfxVfxOcfPickBtn" class="pfx-vfx-ocf-pick-btn">Retry…</button>`;
       _pmWireOcfDropZone();
     }
   }
@@ -12621,9 +12682,11 @@ function _pmUpdateQsButtons() {
   // ── OCF relink toolbar — only visible in VFX Pull mode ───────────────────────
   const _isVfxPull = !!_pmLocalQs.vfxmarker;
   const _ocfSmart  = document.getElementById('pmOcfSmartLinkBtn');
+  const _ocfLib    = document.getElementById('pmOcfLinkLibraryBtn');
   const _ocfBtn    = document.getElementById('pmOcfRelinkQuickBtn');
   const _ocfSum    = document.getElementById('pmOcfSummary');
   if (_ocfSmart) _ocfSmart.style.display = _isVfxPull ? 'inline-flex' : 'none';
+  if (_ocfLib) _ocfLib.style.display = _isVfxPull ? 'inline-flex' : 'none';
   if (_ocfBtn) _ocfBtn.style.display = _isVfxPull ? 'inline-flex' : 'none';
   if (_ocfSum) _ocfSum.style.display = _isVfxPull ? 'inline-flex' : 'none';
 
@@ -12656,6 +12719,9 @@ function _pmApplyVfxWorkspace(on) {
   if (on) {
     _pmVfxWorkspacePopulateShotList();
     _pmWireOcfDropZone();
+    // Sprint 4: if this project was last linked from the media library, silently
+    // restore those links (the matcher repopulates the list when it finishes).
+    try { window._pmVfxRestoreLibraryLinks?.(); } catch {}
   }
 }
 
@@ -12720,13 +12786,24 @@ function _pmVfxWorkspacePopulateShotList() {
     else if (isLinked)  verifyCell = `<span class="pfx-vfx-badge-ok">LINKED</span>`;
     else                verifyCell = `<span class="pfx-vfx-badge-nil">—</span>`;
 
+    // Sprint 4: link-source tag — LIB (library, filename/reel — confirm TC) vs
+    // TC (folder scan, timecode-exact) vs MAN (manual). Only when linked.
+    if (isLinked) {
+      if (ocfState.source === 'library')
+        verifyCell += ` <span class="pfx-vfx-src pfx-vfx-src-lib" title="Linked from media library by filename/reel — confirm timecode before final pull">LIB</span>`;
+      else if (ocfState.source === 'tc')
+        verifyCell += ` <span class="pfx-vfx-src pfx-vfx-src-tc" title="Timecode-exact match from a scanned OCF folder">TC</span>`;
+      else if (ocfState.source === 'manual')
+        verifyCell += ` <span class="pfx-vfx-src pfx-vfx-src-man" title="Manually linked">MAN</span>`;
+    }
+
     const approvedCell = isApproved
       ? `<span class="pfx-vfx-badge-ok">&#10003;</span>`
       : `<span class="pfx-vfx-badge-nil">—</span>`;
 
     const rowCls = 'pfx-vfx-shot-row' + (isActive ? ' is-selected' : '');
     return `<tr class="${rowCls}" data-ei="${i}">
-      <td class="pfx-vfx-shot-name">${displayShot}</td>
+      <td class="pfx-vfx-shot-name" title="${displayShot}">${displayShot}</td>
       <td>${verifyCell}</td>
       <td class="pfx-vfx-shot-score">${score}</td>
       <td>${approvedCell}</td>
@@ -12763,23 +12840,40 @@ function _pmVfxWorkspaceUpdatePullReady(approved, pending, failed) {
 // Falls back to marker's own ocfPath/_linked properties.
 // Returns { sourcePath, status, tcIn } where status is 'linked'|'review'|'unlinked'.
 function _pmResolveVfxOcfState(ev, mk0) {
+  // Sprint 4: classify a resolved link as library (filename/reel, no container
+  // TC) / manual / TC-exact. Falls back to the global "this batch came from the
+  // media library" flag when the matched candidate object isn't in reach.
+  const globalLib = !!(window._pmIsOcfFromLibrary && window._pmIsOcfFromLibrary());
+  const _deriveSource = (sp, ocf, isManual) => {
+    if (!sp) return '';
+    if (isManual) return 'manual';                 // explicit user pick wins
+    const o = ocf || {};
+    if (o._fromLibrary || o.metadataSource === 'library') return 'library';
+    if (o.tcKnown === false) return 'library';     // no container TC → filename match
+    if (!o.path && globalLib) return 'library';     // legacy/marker path, batch is library
+    return globalLib ? 'library' : 'tc';
+  };
+
   // Marker-owned legacy link takes priority.
   if (mk0?.ocfPath) {
-    return { sourcePath: mk0.ocfPath, status: 'linked', tcIn: ev?.srcIn || mk0.srcIn || '' };
+    return { sourcePath: mk0.ocfPath, status: 'linked', tcIn: ev?.srcIn || mk0.srcIn || '',
+             source: _deriveSource(mk0.ocfPath, null, !!mk0._manualLink) };
   }
 
   const normRows = window._pmGetVfxNormRows?.();
   if (!normRows?.length || !ev) {
     // vfxPull not initialised yet — fall back to _linked flag
-    return { sourcePath: '', status: mk0?._linked ? 'review' : 'unlinked', tcIn: ev?.srcIn || '' };
+    return { sourcePath: '', status: mk0?._linked ? 'review' : 'unlinked', tcIn: ev?.srcIn || '', source: '' };
   }
 
   const evRecIn = ev.recIn || '';
   const evReel  = ev.reel  || ev.clipName || '';
   const evSrcIn = ev.srcIn || '';
+  const evShot  = String(mk0?.shotName || ev.shotName || ev._pmShot || '').trim();
 
   // Match normalisedRow to this event — recIn is the most reliable unique key.
-  // Secondary key: reel + srcIn (handles events without recIn populated).
+  // Secondary keys: reel + srcIn, then shot name (handles events whose recIn
+  // wasn't populated, e.g. library-seeded matches).
   let matched = null;
   for (const r of normRows) {
     const re = r.event || {};
@@ -12792,9 +12886,22 @@ function _pmResolveVfxOcfState(ev, mk0) {
       if (rowReel === evReel && (re.srcIn || '') === evSrcIn) { matched = r; break; }
     }
   }
+  if (!matched && evShot) {
+    for (const r of normRows) {
+      const rowShot = String(r.shotName || r.clipName || '').trim();
+      if (rowShot && rowShot === evShot) { matched = r; break; }
+    }
+  }
+  if (!matched && evReel) {     // last resort: reel-only (multi-take rolls)
+    for (const r of normRows) {
+      const re = r.event || {};
+      const rowReel = re.reel || re.clipName || '';
+      if (rowReel && rowReel === evReel && (r.sourcePath || '')) { matched = r; break; }
+    }
+  }
 
   if (!matched) {
-    return { sourcePath: '', status: mk0?._linked ? 'review' : 'unlinked', tcIn: evSrcIn };
+    return { sourcePath: '', status: mk0?._linked ? 'review' : 'unlinked', tcIn: evSrcIn, source: '' };
   }
 
   const sp     = matched.sourcePath || '';
@@ -12803,6 +12910,8 @@ function _pmResolveVfxOcfState(ev, mk0) {
     ? (mst === 'SAFE' ? 'linked' : 'review')
     : 'unlinked';
   const tcIn   = matched.tcIn || evSrcIn;
+  // Sprint 4: per-shot link provenance.
+  const source = _deriveSource(sp, matched.ocf, !!matched.match?._manualLink);
 
   console.log('[VFX Pull] build shot', {
     shotName:  mk0?.shotName || ev.reel || '',
@@ -12814,12 +12923,42 @@ function _pmResolveVfxOcfState(ev, mk0) {
     matchStatus: mst,
   });
 
-  return { sourcePath: sp, status, tcIn };
+  return { sourcePath: sp, status, tcIn, source };
+}
+
+function _pmVfxOcfSourceTcAt(ev, fallbackOcf = null, recordFrame = null) {
+  const fps = _pmFps || 24;
+  if (recordFrame != null && ev?.srcIn && ev?.recIn) {
+    try {
+      return sourceTcAtRecord({
+        srcIn: ev.srcIn,
+        recIn: ev.recIn,
+        recordFrame,
+        sourceFps: ev.fps || fps,
+        timelineFps: fps,
+      });
+    } catch (_) {}
+  }
+  return ev?.srcIn || fallbackOcf?.tcIn || '';
 }
 
 let _pmVfxActiveStripAbort  = null; // cancellation token for in-flight strip gen
 let _pmVfxCurrentShotEv    = null; // last selected VFX shot event (for Resolve auto-trigger)
 let _pmVfxCurrentShotMk0   = null; // last selected VFX shot mk0
+
+// Sprint 4: bridge for the media-library search box (mounted in the workspace) to
+// link a chosen file to the currently selected shot via vfxPullPanel.
+window._pmGetSelectedVfxShotKey = () => {
+  const ev = _pmVfxCurrentShotEv, mk0 = _pmVfxCurrentShotMk0;
+  if (!ev) return null;
+  return {
+    recIn:    ev.recIn || '',
+    reel:     ev.reel  || ev.clipName || '',
+    srcIn:    ev.srcIn || '',
+    shotName: String(mk0?.shotName || ev.shotName || ev._pmShot || '').trim(),
+  };
+};
+window._pmRefreshVfxWorkspaceList = () => { try { _pmVfxWorkspacePopulateShotList(); } catch {} };
 
 // When Resolve connects AFTER a shot has been selected, auto-trigger OCF preview generation.
 // Fires whenever project_setup.js broadcasts pfx:resolve-status with state:'connected'.
@@ -12828,9 +12967,9 @@ document.addEventListener('pfx:resolve-status', (e) => {
   if (!_pmVfxCurrentShotEv) return;
   const ocf = _pmResolveVfxOcfState(_pmVfxCurrentShotEv, _pmVfxCurrentShotMk0);
   if (ocf.status === 'unlinked' || !ocf.sourcePath) return;
-  console.log('[VFX Pull Resolve State] Resolve connected — auto-triggering OCF preview', {
+  console.log('[VFX Pull Resolve State] Resolve connected — auto-triggering OCF preview ' + _pmJ({
     resolveStatus: e.detail, ocfPath: ocf.sourcePath,
-  });
+  }));
   // Flush any cached "Resolve not available" result so the re-request actually hits Resolve.
   window._ocfStillCache?.forEach((_, k) => {
     if (k.startsWith(ocf.sourcePath + '|')) window._ocfStillCache.delete(k);
@@ -12905,18 +13044,29 @@ function _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0) {
 
   // Import / Preview / Decoder statuses — driven by the last preview result stored on mk0.
   const prevResult = mk0?._ocfPreviewResult;
+  // Normalized backend-quality state (Dev Brief P0#4): READY / PREVIEW_ONLY /
+  // METADATA_ONLY / SDK_MISSING / UNAVAILABLE — so a missing-SDK or proxy frame
+  // is never mistaken for a final-quality decode.
+  const setBackend = (r) => {
+    if (!isLinked || !r) { set('pfxVfxVfBackendVal', '—'); return; }
+    const c = classifyBackendStatus(r);
+    set('pfxVfxVfBackendVal', c.label, `pfx-vfx-vf-${c.tone}`);
+  };
   if (!isLinked) {
     set('pfxVfxVfImportStatusVal',  '—');
     set('pfxVfxVfPreviewStatusVal', '—');
     set('pfxVfxVfDecoderVal',       '—');
+    setBackend(null);
   } else if (!prevResult) {
     set('pfxVfxVfImportStatusVal',  'Unknown');
     set('pfxVfxVfPreviewStatusVal', 'Pending', 'pfx-vfx-vf-pending');
     set('pfxVfxVfDecoderVal',       '—');
+    set('pfxVfxVfBackendVal',       'Pending', 'pfx-vfx-vf-pending');
   } else if (prevResult.ok) {
     set('pfxVfxVfImportStatusVal',  'OK',      'pfx-vfx-vf-ok');
     set('pfxVfxVfPreviewStatusVal', 'Ready',   'pfx-vfx-vf-ok');
     set('pfxVfxVfDecoderVal', prevResult.decoder || 'Resolve Engine', 'pfx-vfx-vf-ok');
+    setBackend(prevResult);
   } else {
     const stg = prevResult.stage || 'unknown';
     set('pfxVfxVfImportStatusVal',
@@ -12924,6 +13074,7 @@ function _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0) {
         stg === 'import_media' ? 'pfx-vfx-vf-warn' : '');
     set('pfxVfxVfPreviewStatusVal', `Failed (${stg})`, 'pfx-vfx-vf-warn');
     set('pfxVfxVfDecoderVal',       prevResult.decoder || 'Resolve Engine', 'pfx-vfx-vf-warn');
+    setBackend(prevResult);
   }
 
   const fps = _pmFps || 24;
@@ -12986,7 +13137,10 @@ function _pmOcfRawLabel(p) {
     case 'ari': case 'arx':  return 'ARRIRAW';
     case 'braw':             return 'Blackmagic RAW';
     case 'crm':              return 'Canon Cinema RAW Light';
-    case 'mxf':              return 'Sony X-OCN / camera RAW';
+    // .mxf reaches this message ONLY when AVFoundation + FFmpeg both failed to
+    // decode it — i.e. it's a sensor-RAW MXF (ARRIRAW or Sony X-OCN), not a
+    // decodable ProRes/XAVC MXF (those preview fine without Resolve).
+    case 'mxf':              return 'RAW MXF (ARRIRAW / X-OCN)';
     case 'dng':              return 'CinemaDNG RAW';
     default:                 return 'camera RAW';
   }
@@ -12999,26 +13153,100 @@ function _pmOcfIsRawExt(p) {
 // Launch DaVinci Resolve (if needed) and wait until the engine reports connected.
 // onProgress(msg) is called with human-readable status. Returns true when connected.
 let _pmResolveConnectPromise = null;
-async function _pmEnsureResolveConnected(onProgress, timeoutMs = 60000) {
+// Fires the background Resolve launch automatically the first time a RAW OCF
+// preview needs it, so the user doesn't have to click "Connect Resolve". Reset
+// when a manual attempt is made so a later auto-attempt can still fire.
+let _pmAutoResolveTried = false;
+let _pmResolveConnectLastError = '';
+// Cooldown so a burst of preview calls (the 7-frame strip + the big pane) doesn't
+// fire a NEW background launch every time Resolve is briefly un-scriptable (e.g.
+// it just went "Inactive" / is mid-startup). Re-launching a still-loading Resolve
+// is what produced the "always loop open resolve" churn (a fresh Untitled project
+// per attempt). After ONE launch we wait the cooldown out by polling instead.
+let _pmResolveLaunchCooldownUntil = 0;
+const _PM_RESOLVE_LAUNCH_COOLDOWN_MS = 45000;
+function _pmResolveStatusData(res) {
+  return res?.data || res?.result || res || {};
+}
+function _pmResolveStatusConnected(res) {
+  const d = _pmResolveStatusData(res);
+  return d.connected === true || d.apiAvailable === true || d.state === 'connected';
+}
+function _pmPublishResolveConnected(res) {
+  const d = _pmResolveStatusData(res);
+  const status = {
+    ...(window.PFX_RESOLVE_STATUS || {}),
+    state: 'connected',
+    label: 'Resolve: Connected',
+    sub: d.currentProject
+      ? `Connected — ${d.currentProject}`
+      : 'Connected — Resolve scripting API ready',
+    version: d.version || d.resolveVersion || window.PFX_RESOLVE_STATUS?.version || '',
+    currentProject: d.currentProject || window.PFX_RESOLVE_STATUS?.currentProject || '',
+    at: Date.now(),
+  };
+  try { window.PFX_RESOLVE_STATUS = status; } catch {}
+  try { document.dispatchEvent(new CustomEvent('pfx:resolve-status', { detail: status })); } catch {}
+  // Connected → clear the launch cooldown so a genuine future disconnect can
+  // relaunch immediately (the cooldown only exists to stop relaunch churn while
+  // Resolve is mid-startup).
+  _pmResolveLaunchCooldownUntil = 0;
+  return true;
+}
+async function _pmEnsureResolveConnected(onProgress, timeoutMs = 150000) {
+  if (onProgress && typeof onProgress === 'object') {
+    timeoutMs = Number(onProgress.timeoutMs || onProgress.timeout || timeoutMs) || timeoutMs;
+    onProgress = typeof onProgress.onProgress === 'function' ? onProgress.onProgress : null;
+  }
+  if (typeof onProgress !== 'function') onProgress = null;
   if (window._pmVfxPullResolveConnected?.()) return true;
   // Re-entrancy guard: concurrent callers (e.g. OCF + QT panes) must share ONE
   // launch+poll, not each spawn a separate Resolve start.
   if (_pmResolveConnectPromise) return _pmResolveConnectPromise;
   _pmResolveConnectPromise = (async () => {
-    onProgress?.('Launching DaVinci Resolve in the background…');
-    // Prefer the hidden/background launch (open -gj / -nogui) so Resolve doesn't
-    // steal focus; fall back to the foreground start if the helper lacks it.
+    _pmResolveConnectLastError = '';
     try {
-      if (typeof nativeResolveStartBackground === 'function') await nativeResolveStartBackground({});
-      else await nativeResolveStartEngine({});
-    } catch (_) {
-      try { await nativeResolveStartEngine({}); } catch (__) {}
+      const ready0 = await nativeResolveCheckReady?.();
+      if (_pmResolveStatusConnected(ready0)) return _pmPublishResolveConnected(ready0);
+      const d0 = _pmResolveStatusData(ready0);
+      _pmResolveConnectLastError = d0.error || d0.userMessage || '';
+    } catch (_) {}
+    // Only fire a launch if we're outside the cooldown. Within it, Resolve was
+    // launched recently and is likely still loading — poll, don't relaunch.
+    const _withinCooldown = Date.now() < _pmResolveLaunchCooldownUntil;
+    if (_withinCooldown) {
+      onProgress?.('Waiting for DaVinci Resolve to finish starting…');
+    } else {
+      onProgress?.('Launching DaVinci Resolve in the background…');
+      _pmResolveLaunchCooldownUntil = Date.now() + _PM_RESOLVE_LAUNCH_COOLDOWN_MS;
+      // Prefer the hidden/background launch (open -gj / -nogui) so Resolve doesn't
+      // steal focus; fall back to the foreground start if the helper lacks it.
+      try {
+        if (typeof nativeResolveStartBackground === 'function') {
+          await nativeResolveStartBackground({ waitForReady: false, timeoutSeconds: 10 });
+        } else {
+          await nativeResolveStartEngine({ timeoutSeconds: 10 });
+        }
+      } catch (_) {
+        try { await nativeResolveStartEngine({ timeoutSeconds: 10 }); } catch (__) {}
+      }
     }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 2000));
       if (window._pmVfxPullResolveConnected?.()) return true;
-      onProgress?.('Connecting to Resolve…');
+      let ready = null;
+      try { ready = await nativeResolveCheckReady?.(); } catch (_) {}
+      if (!_pmResolveStatusConnected(ready)) {
+        try { ready = await nativeResolveEngineStatus?.(); } catch (_) {}
+      }
+      if (_pmResolveStatusConnected(ready)) return _pmPublishResolveConnected(ready);
+      const d = _pmResolveStatusData(ready);
+      _pmResolveConnectLastError = d.error || d.userMessage || _pmResolveConnectLastError;
+      onProgress?.(d.running ? 'Waiting for Resolve scripting API…' : 'Connecting to Resolve…');
+      if (d.running && /scripting api unavailable|external scripting/i.test(String(_pmResolveConnectLastError || ''))) {
+        return false;
+      }
     }
     return !!(window._pmVfxPullResolveConnected?.());
   })();
@@ -13028,6 +13256,10 @@ async function _pmEnsureResolveConnected(onProgress, timeoutMs = 60000) {
     _pmResolveConnectPromise = null;   // allow a fresh attempt next time
   }
 }
+// Shared so the VFX-Pull review wizard (vfxPullPanel) can auto-connect Resolve
+// for RAW OCF previews without re-implementing the launch+poll logic.
+window._pmEnsureResolveConnected = _pmEnsureResolveConnected;
+window._pmResolveConnectLastError = () => _pmResolveConnectLastError;
 
 // Diagnostic: direct single-frame Resolve extraction, bypassing the 3-tier cache.
 // Shows exact stage on failure. Used by the "Test Resolve Still" button in the viewer error state.
@@ -13164,10 +13396,15 @@ async function _pmRunResolveStillDiagnostic(ev, mk0, slot) {
   }
 }
 
+let _pmOcfPaneGen = 0;   // bumped each render; guards stale async OCF results
 function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
   const wrap        = document.getElementById('pfxVfxViewerWrap');
   const placeholder = document.getElementById('pfxVfxViewerPlaceholder');
   if (!wrap) return;
+  // Generation token: any OCF decode kicked off in this render is only allowed to
+  // paint the shared viewer if no newer render (e.g. the user switched shots) has
+  // started since. Prevents a slow previous-shot frame landing on the current one.
+  const _paneGen = ++_pmOcfPaneGen;
 
   const ocf             = _pmResolveVfxOcfState(ev, mk0);
   const isLinked        = ocf.status !== 'unlinked';
@@ -13229,15 +13466,15 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
 
     // Async OCF fetch — only when the OCF slot is visible and not yet filled.
     if (isLinked && ocf.sourcePath && !ocfDataUrl && (activeMode === 'ocf' || activeMode === 'sidebyside')) {
-      const tcStr = ocf.tcIn || ev?.srcIn || '';
+      const tcStr = _pmVfxOcfSourceTcAt(ev, ocf);
       console.log('[VFX Pull Resolve State]', {
         resolveStatus: window.PFX_RESOLVE_STATUS,
         resolveConnected,
       });
-      console.log('[VFX Pull Preview Request]', {
+      console.log('[VFX Pull Preview Request] ' + _pmJ({
         shotId: ev?.id, shotName: ev?.name || ev?.clipName,
         ocfPath: ocf.sourcePath, sourceTc: tcStr, resolveConnected,
-      });
+      }));
       // Mark preview as loading so the verify panel shows "Pending" not stale data.
       if (mk0) mk0._ocfPreviewResult = null;
       _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0);
@@ -13245,10 +13482,13 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
       window._pmGetOcfStillPreview?.({ ocfPath: ocf.sourcePath, sourceTc: tcStr,
                                         resolveConnected, width: 960 })
         .then(r => {
-          console.log('[VFX Pull Preview Result]', {
+          // Bail if the user moved to another shot while this decode was in flight —
+          // otherwise this (now-stale) frame would overwrite the current viewer.
+          if (_paneGen !== _pmOcfPaneGen) return;
+          console.log('[VFX Pull Preview Result] ' + _pmJ({
             ok: !!r.dataUrl, decoder: r.decoder, stage: r.stage,
             imageUrl: r.dataUrl ? '[dataUrl present]' : null, error: r.error,
-          });
+          }));
 
           // Always store result so verify panel reflects actual preview outcome.
           if (mk0) mk0._ocfPreviewResult = {
@@ -13272,22 +13512,42 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
               const rawLabel = _pmOcfRawLabel(ocf.sourcePath);
               const isRaw    = _pmOcfIsRawExt(ocf.sourcePath);
               slot.className = 'pfx-vfx-viewer-no-ocf pfx-vfx-ocf-engine-required';
-              slot.innerHTML =
-                `<span class="pfx-vfx-ocf-engine-msg">✓ This shot is linked correctly.<br>
-                   <b>${rawLabel}</b> can't be previewed by FFmpeg — DaVinci Resolve decodes it.</span>
-                 <div class="pfx-vfx-ocf-engine-actions">
-                   <button class="pfx-vfx-ocf-btn" data-ocf-action="start-resolve">⚡ Connect Resolve &amp; preview</button>
-                   <button class="pfx-vfx-ocf-btn" data-ocf-action="retry">Retry</button>
-                   ${isRaw ? '' : '<button class="pfx-vfx-ocf-btn pfx-vfx-ocf-btn-minor" data-ocf-action="use-ffmpeg">Try FFmpeg anyway</button>'}
-                 </div>
-                 <span class="pfx-vfx-ocf-engine-hint">You can still approve and export this shot without a preview.</span>`;
+              slot.innerHTML = buildOcfEngineRequiredHtml({ rawLabel, isRaw });
               const startBtn = slot.querySelector('[data-ocf-action="start-resolve"]');
+
+              // Auto-launch Resolve in the BACKGROUND the first time a RAW shot
+              // needs it — no click required. The button stays as a manual retry.
+              if (!_pmAutoResolveTried && typeof _pmEnsureResolveConnected === 'function'
+                  && _pmOcfIsRawExt(ocf.sourcePath)) {
+                _pmAutoResolveTried = true;
+                const msgAuto = slot.querySelector('.pfx-vfx-ocf-engine-msg');
+                if (msgAuto) msgAuto.innerHTML = '⏳ Starting DaVinci Resolve in the background to decode this RAW frame…';
+                if (startBtn) startBtn.disabled = true;
+                _pmEnsureResolveConnected((m) => { if (msgAuto) msgAuto.textContent = m; })
+                  .then(ok => {
+                    if (ok) {
+                      window._ocfStillCache?.forEach((_, k) => { if (k.startsWith(ocf.sourcePath + '|')) window._ocfStillCache.delete(k); });
+                      _pmVfxWorkspaceShowQtRefFrame(ev, mk0);
+                    } else {
+                      _pmAutoResolveTried = false;   // re-arm so a later shot can retry
+                      if (msgAuto) {
+                        const err = _pmResolveConnectLastError || 'Resolve did not expose its scripting API yet.';
+                        msgAuto.innerHTML = `DaVinci Resolve opened, but PostFlowX cannot control it yet.<br><span class="pfx-vfx-ocf-err-detail">${err}</span>`;
+                      }
+                      if (startBtn) startBtn.disabled = false;
+                    }
+                  })
+                  .catch(() => { _pmAutoResolveTried = false; if (startBtn) startBtn.disabled = false; });
+              }
+
               startBtn?.addEventListener('click', async () => {
+                _pmAutoResolveTried = true;
                 startBtn.disabled = true;
                 const msgEl = slot.querySelector('.pfx-vfx-ocf-engine-msg');
                 const ok = await _pmEnsureResolveConnected((m) => { if (msgEl) msgEl.textContent = m; });
                 if (!ok) {
-                  if (msgEl) msgEl.innerHTML = `Resolve didn't connect. Open DaVinci Resolve, load this project, then click Retry.`;
+                  const err = _pmResolveConnectLastError || 'Open DaVinci Resolve, load this project, then click Retry.';
+                  if (msgEl) msgEl.innerHTML = `Resolve is running, but PostFlowX cannot control it yet.<br><span class="pfx-vfx-ocf-err-detail">${err}</span>`;
                   startBtn.disabled = false;
                   return;
                 }
@@ -13309,24 +13569,14 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
           } else {
             // All tiers failed. Resolve was known-connected — extraction path has a real problem.
             _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0);
-            console.warn('[VFX Pull] OCF preview failed — all decoders exhausted:', {
+            console.warn('[VFX Pull] OCF preview failed — all decoders exhausted: ' + _pmJ({
               ocfPath: r.ocfPath, sourceTc: r.sourceTc,
               decoder: r.decoder, stage: r.stage, error: r.error,
-            });
+            }));
             const slot = viewer.querySelector(`#${ocfSlotId}`);
             if (slot) {
               slot.className = 'pfx-vfx-viewer-no-ocf pfx-vfx-ocf-err';
-              const stageMsg = r.stage ? ` Stage: ${r.stage}.` : '';
-              const errDetail = resolveConnected
-                ? `Resolve Engine is connected but extraction failed.${stageMsg} Use [Test Resolve Still] to diagnose.`
-                : 'Check console for details.';
-              slot.innerHTML = `OCF linked, but preview frame cannot be decoded.
-                 <span class="pfx-vfx-ocf-err-detail">${errDetail}</span>
-                 <div class="pfx-vfx-ocf-engine-actions">
-                   ${resolveConnected ? '<button class="pfx-vfx-ocf-btn pfx-vfx-ocf-btn-diag" data-ocf-action="test-resolve">Test Resolve Still</button>' : ''}
-                   <button class="pfx-vfx-ocf-btn" data-ocf-action="retry">Retry Preview</button>
-                   <button class="pfx-vfx-ocf-btn pfx-vfx-ocf-btn-minor" data-ocf-action="use-ffmpeg">Use FFmpeg Fallback</button>
-                 </div>`;
+              slot.innerHTML = buildOcfErrorPaneHtml({ stage: r.stage, resolveConnected });
               slot.querySelector('[data-ocf-action="test-resolve"]')?.addEventListener('click', () => {
                 _pmRunResolveStillDiagnostic(ev, mk0, slot);
               });
@@ -13349,28 +13599,42 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
   };
 
   if (!canCapture) {
-    // The <video> element can't decode this codec (ProRes / camera RAW). Extract
-    // the QT-ref frame natively (AVFoundation → Resolve) — opens all QuickTime
-    // codecs without a proxy. _renderViewer still fetches the OCF side internally.
+    // The <video> element can't decode this codec (ProRes / camera RAW) or no
+    // editorial proxy is loaded (Resolve-imported timeline). Extract the QT-ref
+    // frame natively; fall back to the SAME robust path the review wizard uses
+    // (_pmGetQtRefStill → AVFoundation/Resolve/source), so the workspace viewer
+    // isn't left blank. _renderViewer still fetches the OCF side internally.
     const qtPath = _pmQtSourcePath(ev, ocf);
     const _fps   = _pmFps || 24;
     // Frame of the shot's In within the loaded reference movie (timeline-relative).
     const qtFrame = (ev?.recIn ? tcToFrames(ev.recIn, _fps) : _pmVidZero()) - _pmVidZero();
     const qtTc    = ev?.srcIn || ocf?.tcIn || '00:00:00:00';   // RAW-fallback hint
+
+    // Last-resort QT via the wizard's proven path; then thumb; then placeholder.
+    const _wizardQt = () => {
+      if (typeof window._pmGetQtRefStill === 'function') {
+        return window._pmGetQtRefStill(ev, { width: 1280 }).catch(() => '');
+      }
+      return Promise.resolve('');
+    };
+    const _finishQt = (d) => {
+      if (d) { _renderViewer(d, null); return; }
+      _wizardQt().then(w => {
+        if (w) { _renderViewer(w, null); return; }
+        _renderViewer(mk0?.thumb || '', null);
+        if (!mk0?.thumb && !isLinked && placeholder) {
+          const span = placeholder.querySelector('span');
+          if (span) span.textContent = 'No QT Ref loaded — use Import to add a reference video';
+          placeholder.style.display = '';
+        }
+      });
+    };
+
     if (qtPath) {
-      _pmNativeQtStill(qtPath, qtFrame, qtTc, 1280)
-        .then(d => _renderViewer(d || mk0?.thumb || '', null))
-        .catch(() => _renderViewer(mk0?.thumb || '', null));
+      _pmNativeQtStill(qtPath, qtFrame, qtTc, 1280).then(_finishQt).catch(() => _finishQt(''));
       return;
     }
-    _renderViewer(mk0?.thumb || '', null);
-    if (!mk0?.thumb && !isLinked) {
-      if (placeholder) {
-        const span = placeholder.querySelector('span');
-        if (span) span.textContent = 'No QT Ref loaded — use Import to add a reference video';
-        placeholder.style.display = '';
-      }
-    }
+    _finishQt('');   // no proxy path → wizard QT path → thumb → placeholder
     return;
   }
 
@@ -13475,6 +13739,8 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
   const token = { cancelled: false };
   if (_pmVfxActiveStripAbort) _pmVfxActiveStripAbort.cancelled = true;
   _pmVfxActiveStripAbort = token;
+  // Pre-warm generation: bump so any background prefetch for a previous shot aborts.
+  const _prefetchGen = ++_pmOcfPrefetchGen;
 
   const qtContainer  = document.getElementById('pfxVfxStripQtFrames');
   const ocfContainer = document.getElementById('pfxVfxStripOcfFrames');
@@ -13609,15 +13875,71 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
     const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, fps) : 0;
     (async () => {
       const ocfCells = ocfContainer.querySelectorAll('.pfx-vfx-strip-frame');
+      // Library OCF carries no container timecode → editorial-TC seeking is
+      // unmapped (lands out of range). Preview by file-relative frame position
+      // instead (0→100% of the file) so a representative frame always shows —
+      // no Resolve, no companion, just AVFoundation by frame index.
+      const libraryNoTc = ocf.source === 'library';
+      let fileFrames = 0;
+      if (libraryNoTc && window.pfxPlatform?.media?.getInfo) {
+        try {
+          const info = await window.pfxPlatform.media.getInfo({ path: ocf.sourcePath });
+          fileFrames = Number(info?.frameCount ?? info?.data?.frameCount ?? 0) || 0;
+        } catch {}
+      }
+      const useFrames = libraryNoTc && fileFrames > 1;
+      let rawNeedsResolve = false;
+
+      // ── Batch fast-path (perf): when Resolve is connected, render the whole
+      // HdlSt→HdlEnd range ONCE and extract all 7 positions from it instead of 7
+      // separate Resolve renders (scripts/features/vfxPull/ocfBatchPlan.js). Falls
+      // through to the per-frame loop below for any position the batch didn't return.
+      const filledByBatch = new Array(POSITIONS.length).fill(false);
+      if (resolveConnected && typeof window._pmVfxResolveStillBatch === 'function') {
+        try {
+          const picks = POSITIONS.map(pos => {
+            const off = pos.absF - recInF;
+            const srcF = Math.max(0, srcInF + off);
+            const ratio2 = POSITIONS.length > 1 ? POSITIONS.indexOf(pos) / (POSITIONS.length - 1) : 0;
+            return useFrames
+              ? { label: pos.label, frame: Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio2))) }
+              : { label: pos.label, sourceTc: framesToTC(srcF, fps) };
+          });
+          const br = await window._pmVfxResolveStillBatch(ocf.sourcePath, picks, { width: 320 })
+            .catch(() => null);
+          if (token.cancelled) return;
+          const frames = (br?.data ?? br)?.frames || [];
+          if (frames.length) {
+            const byLabel = new Map(frames.map(f => [f.label, f]));
+            for (let i = 0; i < POSITIONS.length; i++) {
+              const hit = byLabel.get(POSITIONS[i].label);
+              const cell = ocfCells[i];
+              if (!hit?.dataUrl || !cell) continue;
+              cell.classList.remove('pfx-vfx-strip-frame-loading');
+              cell.innerHTML = `<img class="pfx-vfx-strip-img" src="${hit.dataUrl}" alt="${POSITIONS[i].label}">
+                <span class="pfx-vfx-strip-lbl">${POSITIONS[i].label}</span>
+                <span class="pfx-vfx-strip-decoder-badge">Resolve Engine</span>`;
+              filledByBatch[i] = true;
+            }
+          }
+        } catch (_) { /* fall through to per-frame */ }
+      }
+
       for (let idx = 0; idx < POSITIONS.length; idx++) {
+        if (filledByBatch[idx]) continue;
         if (token.cancelled) return;
-        const pos     = POSITIONS[idx];
-        const offsetF = pos.absF - recInF;
-        const srcF    = Math.max(0, srcInF + offsetF);
-        const srcTc   = framesToTC(srcF, fps);
-        const r = await window._pmGetOcfStillPreview({
-          ocfPath: ocf.sourcePath, sourceTc: srcTc, width: 320, height: 180, resolveConnected,
-        }).catch(e => ({ dataUrl: null, error: e?.message || String(e), decoder: 'Unsupported',
+        const pos      = POSITIONS[idx];
+        const offsetF  = pos.absF - recInF;
+        const srcF     = Math.max(0, srcInF + offsetF);
+        const srcTc    = framesToTC(srcF, fps);
+        const ratio    = POSITIONS.length > 1 ? idx / (POSITIONS.length - 1) : 0;
+        const fileFrame = useFrames
+          ? Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio))) : -1;
+        const r = await window._pmGetOcfStillPreview(
+          useFrames
+            ? { ocfPath: ocf.sourcePath, sourceFrame: fileFrame, width: 320, height: 180, resolveConnected }
+            : { ocfPath: ocf.sourcePath, sourceTc: srcTc, width: 320, height: 180, resolveConnected }
+        ).catch(e => ({ dataUrl: null, error: e?.message || String(e), decoder: 'Unsupported',
                          extractor: 'none', backend: '', requiresResolve: false, resolveAvailable: true,
                          ocfPath: ocf.sourcePath, sourceTc: srcTc }));
         if (token.cancelled) return;
@@ -13632,21 +13954,143 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
           cell.innerHTML = `<img class="pfx-vfx-strip-img" src="${r.dataUrl}" alt="${pos.label}">
             <span class="pfx-vfx-strip-lbl">${pos.label}</span>${stripBadge}`;
         } else if (r.requiresResolve && !r.resolveAvailable && !resolveConnected) {
-          cell.title = `${_pmOcfRawLabel(ocf.sourcePath)} — DaVinci Resolve is required to preview this camera file. The shot is still linked correctly.`;
+          rawNeedsResolve = true;
+          cell.title = `${_pmOcfRawLabel(ocf.sourcePath)} — sensor-RAW, no open decoder. Click below to launch DaVinci Resolve and preview. The link is correct; pull/export is unaffected.`;
           cell.innerHTML = `<span class="pfx-vfx-strip-lbl">${pos.label}</span>
-            <span class="pfx-vfx-strip-err">Needs Resolve</span>`;
+            <span class="pfx-vfx-strip-err" title="${_pmOcfRawLabel(ocf.sourcePath)} preview needs Resolve / ARRI tools — link is fine">RAW</span>`;
         } else {
-          const stageLabel = r.stage && r.stage !== 'unknown' ? r.stage : 'decode error';
-          console.warn('[VFX Pull] OCF strip frame decode failed', {
+          console.warn('[VFX Pull] OCF strip frame decode failed ' + _pmJ({
             label: pos.label, ocfPath: r.ocfPath, sourceTc: r.sourceTc,
             sourceFrame: srcF, extractor: r.extractor, stage: r.stage, error: r.error,
-          });
+          }));
           cell.title = `OCF preview failed at stage: ${r.stage || 'unknown'}\n${r.error || ''}`;
-          cell.innerHTML = `<span class="pfx-vfx-strip-lbl">${pos.label}</span>
-            <span class="pfx-vfx-strip-err" title="${r.error || ''}">${stageLabel}</span>`;
+          cell.innerHTML = buildOcfStripCellHtml({ label: pos.label, stage: r.stage, error: r.error });
         }
       }
+      // Sensor-RAW (ARRIRAW/X-OCN/R3D) has no open decoder — but Resolve does.
+      // Offer a one-click launch so the user isn't dead-ended at "needs Resolve".
+      if (rawNeedsResolve && !token.cancelled) {
+        let bar = ocfContainer.parentElement?.querySelector('.pfx-vfx-ocf-rawcta');
+        if (!bar) {
+          bar = document.createElement('button');
+          bar.type = 'button';
+          bar.className = 'pfx-vfx-ocf-rawcta';
+          (ocfContainer.parentElement || ocfContainer).appendChild(bar);
+        }
+        bar.textContent = '▶ Launch DaVinci Resolve to preview RAW';
+        bar.title = 'ARRIRAW / X-OCN / R3D need Resolve to decode. The link is already correct.';
+        bar.onclick = async () => {
+          bar.disabled = true;
+          bar.textContent = 'Launching DaVinci Resolve…';
+          const ok = await _pmEnsureResolveConnected((m) => { bar.textContent = m; }).catch(() => false);
+          if (ok) { _pmVfxWorkspaceGenerateFrameStrip(ev, mk0); }
+          else { bar.disabled = false; bar.textContent = '▶ Launch DaVinci Resolve to preview RAW'; }
+        };
+      } else {
+        const stale = ocfContainer.parentElement?.querySelector('.pfx-vfx-ocf-rawcta');
+        if (stale) stale.remove();
+      }
     })();
+  }
+
+  // Background pre-warm: once the current shot's strip is underway, quietly decode
+  // the OTHER linked shots' OCF strips into the shared cache so switching shots is
+  // instant. Delayed so the current (foreground) shot gets a head start; aborts if
+  // the selection changes (gen bump) and yields between frames to foreground work.
+  try {
+    setTimeout(() => {
+      if (_prefetchGen === _pmOcfPrefetchGen) _pmPrefetchOcfStrips(ev, _prefetchGen);
+    }, 1500);
+  } catch {}
+}
+
+// ── OCF strip background pre-warm ──────────────────────────────────────────────
+let _pmOcfPrefetchGen   = 0;     // bumped on each strip render; aborts stale prefetch
+let _pmOcfPrefetching   = false; // single in-flight prefetch run at a time
+
+// Linked VFX shots [{ev, mk0}] — mirrors _pmVfxWorkspacePopulateShotList's build.
+function _pmVfxEnumerateLinkedShots() {
+  try {
+    const renderOrder = _pmBuildRenderOrder(_pmBuildEventLinkCount());
+    const byEvent = new Map();
+    for (const mk of _pmClipMarkers) {
+      const evIdx = _pmLinkMap.get(mk.id);
+      if (evIdx == null) continue;
+      if (!byEvent.has(evIdx)) byEvent.set(evIdx, []);
+      byEvent.get(evIdx).push(mk);
+    }
+    const out = [];
+    for (const { ev, i } of renderOrder) {
+      if (!ev) continue;
+      const mk0 = (byEvent.get(i) || [])[0];
+      if (!mk0?.shotName) continue;
+      const ocf = _pmResolveVfxOcfState(ev, mk0);
+      if (ocf.status !== 'unlinked' && ocf.sourcePath) out.push({ ev, mk0 });
+    }
+    return out;
+  } catch { return []; }
+}
+
+// The 7 OCF preview requests for a shot — IDENTICAL arg shape to the foreground
+// strip (lines ~13650/13760) so the cache keys match and the foreground gets hits.
+async function _pmOcfStripRequestsFor(ev, mk0) {
+  const fps     = _pmFps || 24;
+  const recInF  = ev?.recIn  ? tcToFrames(ev.recIn,  fps) : -1;
+  const recOutF = ev?.recOut ? tcToFrames(ev.recOut, fps) : -1;
+  if (recInF < 0) return [];
+  const ocf = _pmResolveVfxOcfState(ev, mk0);
+  if (ocf.status === 'unlinked' || !ocf.sourcePath) return [];
+  const durF    = recOutF > recInF ? (recOutF - recInF) : 24;
+  const handleF = Number.isFinite(ev?._pmHandle) && ev._pmHandle > 0 ? ev._pmHandle : Math.min(8, Math.floor(durF * 0.1) || 8);
+  const absFs = [
+    recInF - handleF, recInF,
+    recInF + Math.round(durF * 0.25), recInF + Math.round(durF * 0.50), recInF + Math.round(durF * 0.75),
+    (recOutF > recInF ? recOutF : recInF + durF),
+    (recOutF > recInF ? recOutF : recInF + durF) + handleF,
+  ];
+  const resolveConnected = !!(window._pmVfxPullResolveConnected?.());
+  const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, fps) : 0;
+  const libraryNoTc = ocf.source === 'library';
+  let fileFrames = 0;
+  if (libraryNoTc && window.pfxPlatform?.media?.getInfo) {
+    try {
+      const info = await window.pfxPlatform.media.getInfo({ path: ocf.sourcePath });
+      fileFrames = Number(info?.frameCount ?? info?.data?.frameCount ?? 0) || 0;
+    } catch {}
+  }
+  const useFrames = libraryNoTc && fileFrames > 1;
+  const N = absFs.length;
+  return absFs.map((absF, idx) => {
+    if (useFrames) {
+      const ratio = N > 1 ? idx / (N - 1) : 0;
+      const fileFrame = Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio)));
+      return { ocfPath: ocf.sourcePath, sourceFrame: fileFrame, width: 320, height: 180, resolveConnected };
+    }
+    const srcF = Math.max(0, srcInF + (absF - recInF));
+    return { ocfPath: ocf.sourcePath, sourceTc: framesToTC(srcF, fps), width: 320, height: 180, resolveConnected };
+  });
+}
+
+// Decode the other shots' strips into _ocfStillCache in idle time. Cheap on cache
+// hits; aborts on selection change; yields 30ms between frames so a foreground
+// click is never stuck behind more than one in-flight decode.
+async function _pmPrefetchOcfStrips(excludeEv, gen) {
+  if (_pmOcfPrefetching || typeof window._pmGetOcfStillPreview !== 'function') return;
+  _pmOcfPrefetching = true;
+  try {
+    const shots = _pmVfxEnumerateLinkedShots().filter(s => s.ev !== excludeEv);
+    for (const { ev, mk0 } of shots) {
+      if (gen !== _pmOcfPrefetchGen) return;
+      let reqs = [];
+      try { reqs = await _pmOcfStripRequestsFor(ev, mk0); } catch { reqs = []; }
+      for (const req of reqs) {
+        if (gen !== _pmOcfPrefetchGen) return;
+        try { await window._pmGetOcfStillPreview(req); } catch {}
+        await new Promise(r => setTimeout(r, 30));   // yield to any foreground request
+      }
+    }
+  } finally {
+    _pmOcfPrefetching = false;
   }
 }
 
@@ -14088,20 +14532,24 @@ function _pfxPlrWire() {
   // Utility: Generate OCF Preview
   $('pfxVfxPlrGenOcf')?.addEventListener('click', _pfxPlrGenOcfFrames);
 
-  // Utility: Refresh Frame — bust OCF cache for current position, re-render
+  // Utility: Refresh Frame — bust the ENTIRE OCF cache for this clip (all strip
+  // positions + the viewer, any size) and re-render. Fixes a strip stuck on
+  // stale black frames cached during Resolve's warmup ("Media Offline" race).
   $('pfxVfxPlrRefresh')?.addEventListener('click', () => {
-    const ev  = _pfxPlr.ev;
-    const mk0 = _pfxPlr.mk0;
-    if (!ev || !mk0) return;
+    const ev  = _pfxPlr.ev  || _pmVfxCurrentShotEv;
+    const mk0 = _pfxPlr.mk0 || _pmVfxCurrentShotMk0;
+    if (!ev) return;
     const ocf = _pmResolveVfxOcfState(ev, mk0);
     if (ocf.sourcePath) {
-      const srcTc = framesToTC(Math.max(0, _pfxPlrRecToSrc(_pfxPlr.currentRecF)), _pfxPlr.fps || 24);
-      // Bust all keys that start with this path+tc combination
+      // Flush every cache entry for this OCF path (all TCs / frames / sizes).
       window._ocfStillCache?.forEach((_, k) => {
-        if (k.startsWith(`${ocf.sourcePath}|${srcTc}|`)) window._ocfStillCache.delete(k);
+        if (k.startsWith(`${ocf.sourcePath}|`)) window._ocfStillCache.delete(k);
       });
     }
-    _pfxPlrSeek(_pfxPlr.currentRecF);
+    // Re-render the player frame, the 7-frame strip, and the main viewer.
+    try { _pfxPlrSeek(_pfxPlr.currentRecF); } catch {}
+    try { _pmVfxWorkspaceGenerateFrameStrip(ev, mk0); } catch {}
+    try { _pmVfxWorkspaceShowQtRefFrame(ev, mk0); } catch {}
   });
 
   // Utility: Sync QT ↔ OCF — seek OCF to match current QT Ref position
@@ -14802,6 +15250,12 @@ function _wireControls() {
   }
   if (pmNextFrameBtn) {
     pmNextFrameBtn.addEventListener('click', () => _pmStepFrames(1));
+  }
+  if (pmPrevEventBtn) {
+    pmPrevEventBtn.addEventListener('click', () => _pmJumpToMarker(-1));
+  }
+  if (pmNextEventBtn) {
+    pmNextEventBtn.addEventListener('click', () => _pmJumpToMarker(1));
   }
 
   if (pmScrub) {

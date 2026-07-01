@@ -756,6 +756,27 @@ function register(mainWindow, appRoot) {
     }
   });
 
+  // pfx:imf:hashFile { filePath, algorithm } → { ok, algorithm, hashBase64 } | { ok:false, error }
+  //   Streams the file through node crypto so files >2 GB (most UHD MXF essence)
+  //   are hashed rather than silently skipped. algorithm: 'sha1' | 'sha256'.
+  ipcMain.handle('pfx:imf:hashFile', async (_e, { filePath, algorithm = 'sha256' } = {}) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: 'file not found' };
+      const algo = String(algorithm).toLowerCase() === 'sha1' ? 'sha1' : 'sha256';
+      const crypto = require('crypto');
+      const hash = crypto.createHash(algo);
+      await new Promise((resolve, reject) => {
+        const rs = fs.createReadStream(filePath, { highWaterMark: 8 * 1024 * 1024 });
+        rs.on('data', (chunk) => hash.update(chunk));
+        rs.on('error', reject);
+        rs.on('end', resolve);
+      });
+      return { ok: true, algorithm: algo, hashBase64: hash.digest('base64') };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
   ipcMain.handle('pfx:imf:cacheFrame', (_e, args = {}) => {
     if (!imfProvider) return { ok: false, error: 'IMF provider not available' };
     return imfProvider.cacheFrame(args);

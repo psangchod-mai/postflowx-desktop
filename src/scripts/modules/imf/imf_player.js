@@ -55,6 +55,8 @@ const S = {
   loadSeq:      0,        // incremented on each playerLoadReel call (cancel stale loads)
   isPlaying:    false,
   tcOffset:     0,        // Frame offset on timeline (for absolute TC)
+  dropFrame:    false,    // CPL CompositionTimecode drop-frame flag (SMPTE ST 12-1)
+  tcStart:      0,        // CPL TimecodeStartAddress as a frame offset (absolute TC origin)
   raf:          0,        // requestAnimationFrame ID
   lastTs:       0,        // last frame timestamp (ms)
   frameInterval: 41.67,   // ms per frame at 24fps
@@ -87,6 +89,11 @@ const S = {
   previewScale: 1,
   playbackMode: 'auto',
   droppedFrames: 0,
+  avOffsetMs:    0,      // measured audio-vs-video offset (ms); + = video behind audio
+  showRtHud:     false,  // operator-visible real-time playback health HUD (toggle)
+  rtHudFps:      0,      // measured presented frames per wall second
+  _rtFpsCount:   0,      // frames presented in the current 1s window
+  _rtFpsWinTs:   0,      // window start timestamp (performance.now)
   lastFrameAdvance: 0,
   lastAdaptiveTs: 0,
   scaleRecoveryScore: 0,
@@ -253,6 +260,13 @@ function _audCurrentFrame() {
   return Math.round(_AUD.startFrame + elapsed * (_AUD.fps || S.fps || 24));
 }
 
+// True when PCM audio is actively driving so the video loop should follow it as
+// the master clock. Guarded so any missing piece falls back to the wall clock.
+function _avLockActive() {
+  return !!(_AUD.ctx && _AUD.source && _AUD.buffer &&
+            _AUD.ctx.state === 'running' && _AUD.loadSeq === S.loadSeq && !S.proxyMode);
+}
+
 // Exposed so imf_ui.js can halt audio when it drives a reel change directly.
 export { _audStop as audStop, _audPlay as audPlay };
 
@@ -317,15 +331,50 @@ function drawScanProgress(pct, phase) {
 }
 
 // ── TC formatter ──────────────────────────────────────────────────────────────
-function fmtTC(frameNum, fps) {
+// SMPTE ST 12-1 timecode. The FF field uses the INTEGER nominal rate
+// (round(fps): 23.976→24, 29.97→30, 59.94→60) so the frame field never rolls
+// early for fractional rates. When {dropFrame} is set at a ~29.97/59.94 rate,
+// drop-frame math is applied (drop 2 (or 4 at 59.94) frames each minute except
+// every 10th minute) and the SS/FF separator becomes ';'.
+// Defaults keep legacy call sites (integer rate, non-drop) byte-identical.
+function fmtTC(frameNum, fps, opts) {
+  const dropFrame = !!(opts && opts.dropFrame);
   const fps_ = fps || 24;
-  const totalSec = frameNum / fps_;
-  const h  = Math.floor(totalSec / 3600);
-  const m  = Math.floor((totalSec % 3600) / 60);
-  const s  = Math.floor(totalSec % 60);
-  const fr = Math.floor(frameNum % fps_);
+  const nominal = Math.max(1, Math.round(fps_));   // integer frames per second for the FF field
+  let f = Math.max(0, Math.round(frameNum));
+
+  // Drop-frame is only defined at 30000/1001 (drop 2/min) and 60000/1001 (drop 4/min).
+  const isDF = dropFrame && (nominal === 30 || nominal === 60);
+  if (isDF) {
+    const dropPerMin = nominal === 60 ? 4 : 2;                 // frames dropped each non-tenth minute
+    const framesPer10Min = nominal * 600 - dropPerMin * 9;     // frames in a 10-minute block
+    const framesPerMin   = nominal * 60 - dropPerMin;          // frames in a normal (dropped) minute
+    const d = Math.floor(f / framesPer10Min);                  // whole 10-minute blocks
+    let   m = f % framesPer10Min;                              // remainder within the block
+    // Re-add dropped frames to convert the frame count back into wall-clock frame numbers.
+    if (m >= dropPerMin) {
+      f += dropPerMin * 9 * d + dropPerMin * Math.floor((m - dropPerMin) / framesPerMin);
+    } else {
+      f += dropPerMin * 9 * d;
+    }
+    const fr = f % nominal;
+    const s  = Math.floor(f / nominal) % 60;
+    const mm = Math.floor(f / (nominal * 60)) % 60;
+    const h  = Math.floor(f / (nominal * 3600)) % 24;
+    return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(s).padStart(2,'0')};${String(fr).padStart(2,'0')}`;
+  }
+
+  const fr = f % nominal;
+  const s  = Math.floor(f / nominal) % 60;
+  const m  = Math.floor(f / (nominal * 60)) % 60;
+  const h  = Math.floor(f / (nominal * 3600));
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:${String(fr).padStart(2,'0')}`;
 }
+
+// Drop-frame options for the currently-loaded reel (threaded from the parsed CPL
+// CompositionTimecode). Kept as a helper so every display-facing fmtTC() call
+// renders the same drop-frame flag the validator detected (TC001).
+function _tcOpts() { return { dropFrame: !!S.dropFrame }; }
 
 function _getProxyFrameState() {
   if (!S.proxyMode || !S.proxyVideoEl) return null;
@@ -614,7 +663,7 @@ export async function playerExportCompareStill() {
       mode:           S.compareMode,
       compareLabel:   S.compareLabel || 'comparison',
       frame:          S.currentFrame ?? 0,
-      timecode:       fmtTC(S.currentFrame ?? 0, S.fps),
+      timecode:       fmtTC(S.currentFrame ?? 0, S.fps, _tcOpts()),
       changedPercent: d ? Number(d.changedPercent.toFixed(2)) : null,
       meanAbsDiff:    d ? Number(d.meanAbsDiff.toFixed(2)) : null,
       identical:      d ? d.identical : null,
@@ -840,7 +889,7 @@ function drawFrame() {
   }
 
   // ── Center: frame data or timecode ──────────────────────────────────────────
-  const tc = fmtTC(S.currentFrame, S.fps);
+  const tc = fmtTC(S.currentFrame, S.fps, _tcOpts());
 
   if (!S.frameImageData && !S.frameBitmap && S.displayFrame == null) {
     _restoreAnyUsefulCachedFrame(S.currentFrame);
@@ -872,7 +921,7 @@ function drawFrame() {
     }
     _toneMapCtx(ctx, dx, dy, dw, dh);   // rawHDR PQ/HLG → SDR salvage (no-op otherwise)
 
-    const tc2 = fmtTC((S.displayFrame ?? S.currentFrame), S.fps);
+    const tc2 = fmtTC((S.displayFrame ?? S.currentFrame), S.fps, _tcOpts());
     ctx.font = 'bold 13px monospace';
     const tw = ctx.measureText(tc2).width;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -905,7 +954,7 @@ function drawFrame() {
     }
     _toneMapCtx(ctx, dx, dy, dw, dh);   // rawHDR PQ/HLG → SDR salvage (no-op otherwise)
 
-    const tc2 = fmtTC((S.displayFrame ?? S.currentFrame), S.fps);
+    const tc2 = fmtTC((S.displayFrame ?? S.currentFrame), S.fps, _tcOpts());
     ctx.font = 'bold 13px monospace';
     const tw = ctx.measureText(tc2).width;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -976,7 +1025,7 @@ function drawFrame() {
 
     // Timeline TC
     if (S.tcOffset > 0) {
-      const absTc = fmtTC(S.tcOffset + S.currentFrame, S.fps);
+      const absTc = fmtTC(S.tcOffset + S.currentFrame, S.fps, _tcOpts());
       ctx.font = '9px monospace';
       ctx.fillStyle = 'rgba(255,255,255,0.22)';
       ctx.textAlign = 'center';
@@ -995,7 +1044,7 @@ function drawFrame() {
     ctx.textAlign = 'left';
 
     if (S.tcOffset > 0) {
-      const absTc = fmtTC(S.tcOffset + S.currentFrame, S.fps);
+      const absTc = fmtTC(S.tcOffset + S.currentFrame, S.fps, _tcOpts());
       const subSize = Math.max(9, Math.min(12, Math.floor(tcFontSize * 0.28)));
       ctx.font = `${subSize}px monospace`;
       ctx.fillStyle = 'rgba(255,255,255,0.28)';
@@ -1043,6 +1092,33 @@ function drawFrame() {
     if (S.decodeAvgMs > 0) buildBits.push(`${Math.round(S.decodeAvgMs)}ms`);
     ctx.fillText(buildBits.join('  '), W - 6, 58);
     ctx.textAlign = 'left';
+  }
+
+  // ── Real-time playback health HUD (operator toggle: 'H' key) ────────────────
+  // Surfaces whether playback is actually hitting cadence, at what preview scale,
+  // and (when audio drives) the A/V offset — all derived from existing S.* fields,
+  // no extra decode work. Off by default so it never burns onto delivery captures.
+  if (S.showRtHud) {
+    const scaleLabel = S.previewScale <= 0.25 ? 'Quarter' : (S.previewScale < 1 ? 'Half' : 'Full');
+    const bits = [
+      `${(S.rtHudFps || 0).toFixed(1)} fps`,
+      `scale ${scaleLabel}`,
+      `drop ${S.droppedFrames | 0}`,
+      `${Math.round(S.decodeAvgMs || 0)}ms`,
+    ];
+    if (_avLockActive()) bits.push(`A/V ${S.avOffsetMs >= 0 ? '+' : ''}${Math.round(S.avOffsetMs)}ms`);
+    const text = bits.join('  ·  ');
+    ctx.font = 'bold 10px monospace';
+    const tw = ctx.measureText(text).width;
+    const padX = 8, boxH = 18, bx = 8, by = 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    roundRect(ctx, bx, by, tw + padX * 2, boxH, 4);
+    ctx.fill();
+    const targetFps = S.fps || 24;
+    const cadenceOk = (S.rtHudFps || 0) >= targetFps * 0.9 && S.previewScale >= 1;
+    ctx.fillStyle = cadenceOk ? '#4caf80' : (S.previewScale < 1 ? '#f7a26a' : '#e5c07b');
+    ctx.textAlign = 'left';
+    ctx.fillText(text, bx + padX, by + 13);
   }
 
   const barH = 26;
@@ -2920,8 +2996,18 @@ function _stopRealtimeStream() {
 function _streamClockTick() {
   if (!S.streamMode || !S.isPlaying) return;
   const fps = S.fps || (S.frameInterval ? 1000 / S.frameInterval : 24) || 24;
-  const elapsed = (performance.now() - S.streamStartTs) / 1000;
-  const f = S.streamStartFrame + Math.floor(elapsed * fps);
+  // Prefer the audio clock for the displayed playhead/TC when PCM audio is
+  // actively playing (presentation-accurate, matches the per-frame A/V lock).
+  // Falls back to the wall-clock estimate when audio is absent — no regression.
+  let f;
+  const audFrame = _avLockActive() ? _audCurrentFrame() : null;
+  if (audFrame != null && Number.isFinite(audFrame)) {
+    f = audFrame;
+    S.avOffsetMs = 0;   // audio is the reference on this path
+  } else {
+    const elapsed = (performance.now() - S.streamStartTs) / 1000;
+    f = S.streamStartFrame + Math.floor(elapsed * fps);
+  }
   if (S.totalFrames && f >= S.totalFrames - 1) {
     const seqBefore = S.loadSeq;
     S.currentFrame = S.totalFrames - 1;
@@ -2967,9 +3053,39 @@ function playLoop(ts) {
   const realtimeMode = _useRealtimePreviewMode();
   const mode = _getEffectivePlaybackMode();
   const clockStep = realtimeMode ? Math.max(S.playbackStride, _getRealtimeStepFrames()) : 1;
-  let target = _clockTargetFrame(ts, clockStep);
+  const wallTarget = _clockTargetFrame(ts, clockStep);
+  let target = wallTarget;
 
-  if (!realtimeMode) {
+  // ── A/V lock: audio is the master clock when PCM is actively playing ─────────
+  // AudioContext.currentTime and performance.now() are independent time bases, so
+  // over a long reel the wall-clock video target drifts from the audio. When the
+  // audio source is live+buffered we derive the presentation frame from the audio
+  // clock (_audCurrentFrame) instead. A max-slew clamp keeps a large audio-vs-video
+  // gap from causing a violent jump — small gaps track exactly, large gaps re-anchor
+  // the wall clock so the next frames converge. With no audio this branch is skipped
+  // and behavior is byte-identical to the wall-clock path.
+  const audFrame = _avLockActive() ? _audCurrentFrame() : null;
+  if (audFrame != null && Number.isFinite(audFrame)) {
+    const total = Math.max(1, S.totalFrames || 1);
+    const audTarget = _quantizeFrame(Math.max(0, Math.min(audFrame, total - 1)), clockStep);
+    const shown = (S.displayFrame ?? S.currentFrame ?? 0);
+    S.avOffsetMs = ((audFrame - shown) * S.frameInterval) || 0;   // + = video behind audio
+    const maxSlew = Math.max(clockStep, Math.round((S.fps || 24) * 0.5)); // ≤~0.5s correction/frame
+    const gap = audTarget - wallTarget;
+    if (Math.abs(gap) > maxSlew) {
+      // Large divergence — re-anchor the wall clock to the audio position instead of
+      // seeking violently, so subsequent frames track smoothly from here.
+      target = audTarget;
+      S.playBaseTs = ts - (audTarget * S.frameInterval);
+      S.playBaseFrame = 0;
+    } else {
+      target = audTarget;
+    }
+  } else {
+    S.avOffsetMs = 0;
+  }
+
+  if (audFrame == null && !realtimeMode) {
     const shown = (S.displayFrame ?? S.currentFrame);
     const lag = Math.max(0, target - shown);
     if (lag > Math.max(10, S.playbackStride * 4) && shown >= 0) {
@@ -2979,12 +3095,30 @@ function playLoop(ts) {
     }
   }
 
+  // Measured presented-FPS: count advances over a rolling 1-second wall window.
+  if (target !== S.currentFrame && S.isPlaying) {
+    if (!S._rtFpsWinTs) S._rtFpsWinTs = ts;
+    S._rtFpsCount++;
+    if (ts - S._rtFpsWinTs >= 1000) {
+      S.rtHudFps = (S._rtFpsCount * 1000) / (ts - S._rtFpsWinTs);
+      S._rtFpsCount = 0;
+      S._rtFpsWinTs = ts;
+    }
+  }
+
   if (target !== S.currentFrame) {
     if (S.isPlaying) {
       const prev = S.currentFrame | 0;
       const delta = target >= prev ? (target - prev) : 0;
-      if (delta > 1) S.droppedFrames += Math.max(0, delta - 1);
-      S.lastFrameAdvance = delta;
+      // Count only UNINTENDED lag: the realtime scheduler advances by clockStep
+      // frames on purpose (reduced-scale stride), so advances within the stride
+      // are intentional, not dropped frames. Counting the full delta inflated the
+      // drop metric AND pinned the adaptive scaler as 'stressed' (lastFrameAdvance>1
+      // / droppedFrames>0), so preview scale could never recover upward. For the
+      // non-realtime path clockStep===1, so lag === delta-1 as before.
+      const lag = Math.max(0, delta - clockStep);
+      if (lag > 0) S.droppedFrames += lag;
+      S.lastFrameAdvance = lag;
     }
     S.currentFrame = target;
 
@@ -3094,12 +3228,13 @@ function syncSeek() {
   if (lbl) lbl.textContent = totalFrames > 0
     ? `fr ${(currentFrame + 1).toLocaleString()} / ${totalFrames.toLocaleString()}`
     : '';
-  if (tc) tc.textContent = totalFrames > 0 ? fmtTC(currentFrame, fps) : '–:––:––:––';
+  const tcOpts = proxyState ? undefined : _tcOpts();
+  if (tc) tc.textContent = totalFrames > 0 ? fmtTC(currentFrame, fps, tcOpts) : '–:––:––:––';
   // Show absolute timeline timecode when tcOffset > 0 (multi-reel)
   if (tcTL) {
     const absFrame = (S.tcOffset || 0) + currentFrame;
     tcTL.textContent = S.tcOffset > 0 && totalFrames > 0
-      ? `TL ${fmtTC(absFrame, fps)}`
+      ? `TL ${fmtTC(absFrame, fps, tcOpts)}`
       : '';
   }
   _emitPlayerState();
@@ -4215,6 +4350,7 @@ export function initIMFPlayer() {
     if (e.key === 'Home') { e.preventDefault(); pausePlayer(); seekTo(0); return; }
     if (e.key === 'End')  { e.preventDefault(); pausePlayer(); seekTo(S.totalFrames - 1); return; }
     if (e.key === 'm' || e.key === 'M') { e.preventDefault(); _cyclePlaybackMode(); return; }
+    if (e.key === 'h' || e.key === 'H') { e.preventDefault(); S.showRtHud = !S.showRtHud; drawFrame(); return; }
     if (e.key === 'd' || e.key === 'D') {
       e.preventDefault();
       S.decodeInfo.show = !S.decodeInfo.show;
@@ -4477,8 +4613,8 @@ function _updateQCDetails() {
         ['Codec',      (S.codec && S.codec !== '–') ? S.codec : (isProxy ? 'H.264' : '—')],
         ['Resolution', (S.resolution && S.resolution !== '–') ? S.resolution : '—'],
         ['Color',      color],
-        ['Timecode',   fmtTC(off + cur, fps)],
-        ['Range',      `${fmtTC(off, fps)} → ${fmtTC(off + Math.max(0, total - 1), fps)}`],
+        ['Timecode',   fmtTC(off + cur, fps, isProxy ? undefined : _tcOpts())],
+        ['Range',      `${fmtTC(off, fps, isProxy ? undefined : _tcOpts())} → ${fmtTC(off + Math.max(0, total - 1), fps, isProxy ? undefined : _tcOpts())}`],
         ['Frames',     `${(cur + 1).toLocaleString()} / ${total.toLocaleString()}`],
         ['Asset',      asset],
       ]);
@@ -4645,6 +4781,8 @@ export function playerLoadReel(file, reelInfo = {}) {
   S.fps              = reelInfo.fps              || 24;
   S.frameInterval    = 1000 / S.fps;
   S.tcOffset         = reelInfo.tcOffset         || 0;
+  S.dropFrame        = !!reelInfo.dropFrame;      // CPL CompositionTimecode drop-frame flag
+  S.tcStart          = reelInfo.tcStart          || 0;
   S.color            = reelInfo.color            || '#7c6af7';
   S.filename         = reelInfo.filename         || '';
   S.codec            = reelInfo.codec            || '–';

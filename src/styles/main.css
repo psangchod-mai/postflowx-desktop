@@ -67195,16 +67195,54 @@ input[type="checkbox"], input[type="radio"], input[type="range"] {
    (center — the mounted pfxTransport .pfx-tx-host) · frame/zoom actions (right).
    The utils clusters hold their size; the transport bar fills the middle.
    ══════════════════════════════════════════════════════════════════════════ */
+/* Full-width scrubber: let the mounted pfxTransport bar span the whole row (so
+   its scrubber fills the width, transport buttons centred), and FLOAT the OCF /
+   zoom-sync clusters to flank the centred button row via absolute positioning —
+   instead of shrinking the scrubber into a narrow middle column. */
 #main-prepmark .pfx-vfx-plr-transport-row {
-  justify-content: space-between !important;
-  gap: 10px !important;
+  display: block !important;
+  position: relative !important;
+  padding: 4px 8px 6px !important;
 }
 #main-prepmark .pfx-vfx-plr-transport-row .pfx-tx-host {
-  flex: 1 1 auto !important;
+  width: 100% !important;
   min-width: 0 !important;
-  margin-top: 0 !important;   /* defeat the flex-column bottom-align default */
+  margin: 0 !important;   /* defeat the flex-column bottom-align default */
 }
-#main-prepmark .pfx-vfx-plr-transport-row .pfx-vfx-plr-utils-left,
-#main-prepmark .pfx-vfx-plr-transport-row .pfx-vfx-plr-utils-right {
+#main-prepmark .pfx-vfx-plr-utils-left,
+#main-prepmark .pfx-vfx-plr-utils-right {
+  position: absolute !important;
+  bottom: 8px !important;         /* sit on the transport button row */
+  z-index: 3 !important;
   flex-shrink: 0 !important;
 }
+#main-prepmark .pfx-vfx-plr-utils-left  { left: 12px !important; }
+#main-prepmark .pfx-vfx-plr-utils-right { right: 12px !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   VFX Pull player — match the Pulls Prep player colour scheme
+   ------------------------------------------------------------------------
+   The shared pfxTransport bar (scrubber + nav pod + transport buttons) already
+   matches between the two players. This aligns the VFX-Pull-specific controls
+   (Generate OCF / Refresh / Sync QT↔OCF / Fit / 100% / Zoom+ and the REC/SRC
+   readouts) to Pulls Prep's palette (.pm-hud / .pm-sync-btn): brighter lavender
+   text + lighter borders + the translucent-white button fill, instead of the
+   darker muted purple they used. Scoped to #main-prepmark (the Pulls Prep tab,
+   which hosts the VFX Pull workspace) so nothing else is affected.
+   ══════════════════════════════════════════════════════════════════════════ */
+#main-prepmark .pfx-vfx-plr-util {
+  background: rgba(255,255,255,.05) !important;
+  border-color: #4a4a70 !important;
+  color: #9090c8 !important;
+}
+#main-prepmark .pfx-vfx-plr-util:hover {
+  background: rgba(255,255,255,.09) !important;
+  border-color: #6060a0 !important;
+  color: #a0a0c8 !important;
+}
+#main-prepmark .pfx-vfx-plr-util.pfx-vfx-plr-zoom-btn { color: #8888b8 !important; }
+#main-prepmark .pfx-vfx-plr-util-sep { background: rgba(100,100,160,.25) !important; }
+/* REC/SRC/frame readouts (normally hidden in VFX Pull, styled for parity) */
+#main-prepmark .pfx-vfx-plr-tc-lbl { color: #8888a8 !important; }
+#main-prepmark .pfx-vfx-plr-tc     { color: #b0a0ff !important; }
+#main-prepmark .pfx-vfx-plr-tc-sep { color: #4a4a70 !important; }

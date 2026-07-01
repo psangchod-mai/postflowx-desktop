@@ -33,7 +33,7 @@ import {
   tryRestoreProxyForMeta,
   loadVideoWithProxyFallback,
 } from '../modules/proResProxy.js';
-import { selectEngine, ENGINE, proResDisplayName } from './playbackRouter.js';
+import { selectEngine, ENGINE } from './playbackRouter.js';
 import {
   NativeAVPlayerEngine,
   mountNativeCanvas,

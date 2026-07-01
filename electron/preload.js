@@ -535,6 +535,11 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
     extractAudio(args) {
       return invoke('pfx:imf:extractAudio', args);
     },
+    // Stream-hash a file via native node crypto (handles files >2 GB).
+    // args: { filePath, algorithm: 'sha1' | 'sha256' } → { ok, algorithm, hashBase64 }
+    hashFile(args) {
+      return invoke('pfx:imf:hashFile', args);
+    },
     // Sample reel at 5/15/30/50/70% and return first non-black/slate frame.
     // args: { mxfPath, totalFrames, entryPoint, packageHash, cplId, displayMode }
     // Returns: { ok, frame (reel-relative), mxfFrame, imageDataUrl?, lumaClass, frameInfo }

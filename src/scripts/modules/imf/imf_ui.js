@@ -5,7 +5,7 @@
 import { parseAssetMap, parsePKL, parseCPL, fmtDuration, fmtFrames } from './imf_parser.js';
 import { computeCplResourceDiff } from './imf_timeline_diff.js';
 import { mountMediaSearch } from '../../features/mediaSearch/mediaSearchBox.js';
-import { validateStructure, verifySHA1, SEV } from './imf_validator.js';
+import { validateStructure, verifySHA1, verifyHash, detectHashAlgorithm, SEV } from './imf_validator.js';
 import { extractIabAdmLabelQC, inspectIabAdm, inspectIabAdmFromNames, extractAdmProgrammeTree, extractAdmProgrammeTreeFromCompanion } from './imf_iab_labels.js';
 import { initIMFPlayer, playerLoadReel, playerSeekToFrame, playerGetState, playerStartProxyMode, playerStopProxyMode, playerSetCompanionThumb, playerGetCompanionThumbKey, playerClearCompanionThumb, playerSetDoviShots, playerToggleTrim, playerToggleHdr, playerSetPreviewMode, playerShowTestFrame, playerGetDecodeInputs, playerSetCompare, playerSetCompareFrame, playerGetCompareState, playerExportCompareStill, audStop } from './imf_player.js';
 import { readAudioMXF, extractEmbeddedDoviXml } from './imf_mxf.js';
@@ -75,6 +75,9 @@ let _admTreeLoading   = false;
 // Best Practice / Delivery Schema state
 let _customDeliverySchema = null;  // parsed schema from loadDeliverySchema()
 let _photonRunning        = false;
+// Last raw Photon results (severity/code/message), cached so they can be merged
+// into the unified verdict + report. Reset on package load.
+let _photonLastResults    = null;
 
 // Proxy audio meter (Web Audio API — real channel levels when proxy plays)
 let _proxyAudioCtx    = null;
@@ -1238,6 +1241,10 @@ async function _runPhoton() {
       return;
     }
 
+    // Cache for the unified verdict/report merge, then refresh.
+    _photonLastResults = Array.isArray(res.results) ? res.results : [];
+    try { _refreshValidationResults(); } catch {}
+
     const errors   = res.results.filter(r => r.severity === 'ERROR' || r.severity === 'FATAL').length;
     const warnings = res.results.filter(r => r.severity === 'WARNING').length;
 
@@ -1654,19 +1661,78 @@ function _doviExtractionToValidation() {
   return results;
 }
 
+// Map an IMF-UG check ({id,label,status,detail}) to a unified validation row.
+// status→sev: pass→pass, warn→warn, fail→fail, skip→info. Coded with a UG prefix
+// so _applyValFilter groups them and they participate in the overall verdict.
+function _ugResultsToValidation() {
+  if (!_pkg?.cpl) return [];
+  let ugRaw;
+  try {
+    ugRaw = runAllUgChecks({
+      cpl:        _pkg.cpl,
+      assetMap:   _pkg.assetMap,
+      fileMap:    _pkg.fileMap,
+      folderName: _imfSourceFolderName || '',
+      mcaData:    _labelQc?.rows?.length > 0 ? _buildMcaDataFromRows(_labelQc.rows) : null,
+    });
+  } catch (e) {
+    return [{ sev: SEV.FAIL, code: 'UG000', msg: 'IMF-UG checks threw an error', detail: (e && e.message) || String(e) }];
+  }
+  const sevMap = { pass: SEV.PASS, warn: SEV.WARN, fail: SEV.FAIL, skip: SEV.INFO, info: SEV.INFO };
+  // Escape at ingestion: these strings are CPL/label-derived and the validation
+  // renderer writes msg/detail as raw innerHTML — harden the externally-sourced
+  // engine rows without touching rows that use intentional markup.
+  return (ugRaw || []).map(r => ({
+    sev:    sevMap[r.status] || SEV.INFO,
+    code:   `UG-${r.id || '?'}`,
+    msg:    _esc(r.label || 'IMF-UG check'),
+    detail: _esc(r.detail || ''),
+  }));
+}
+
+// Map cached Photon results into unified validation rows. ERROR/FATAL→fail,
+// WARNING→warn, PASS→pass, everything else→info. Only present after Photon runs.
+function _photonResultsToValidation() {
+  if (!Array.isArray(_photonLastResults) || !_photonLastResults.length) return [];
+  const sevMap = { ERROR: SEV.FAIL, FATAL: SEV.FAIL, WARNING: SEV.WARN, PASS: SEV.PASS, INFO: SEV.INFO };
+  // Escape at ingestion — r.message is raw stdout from the external Photon JAR
+  // and the renderer writes it as raw innerHTML.
+  return _photonLastResults.map((r, i) => ({
+    sev:    sevMap[r.severity] || SEV.INFO,
+    code:   `PHOTON-${r.code || (i + 1)}`,
+    msg:    _esc(r.message || 'Photon result'),
+    detail: _esc(r.severity || ''),
+  }));
+}
+
 function _refreshValidationResults() {
   if (!_pkg) {
     _valResults = [];
     renderValidation();
     return;
   }
+  // Each engine is wrapped so a throw in one never blanks the whole panel — a
+  // failing engine surfaces as a single VAL000 fail row instead (a validator that
+  // crashes on a malformed package is worse than one that reports the defect).
+  const collect = (label, fn) => {
+    try { const r = fn(); return Array.isArray(r) ? r : []; }
+    catch (e) { return [{ sev: SEV.FAIL, code: 'VAL000', msg: `${label} failed: ${(e && e.message) || e}`, detail: '' }]; }
+  };
+  // Hash-verification rows are appended out-of-band by runHashVerification and
+  // are NOT reproduced by the engines below — preserve them across a rebuild so
+  // an async refresh (e.g. a Photon run completing) can't silently wipe the
+  // operator's hash pass/fail results from the panel and exports.
+  const hashRows = _valResults.filter(r => r && r.code === 'HASH');
   _valResults = [
-    ...validateStructure(_pkg.assetMap, _pkg.pkl, _pkg.cpl, _pkg.fileMap),
-    ..._labelResultsToValidation(),
-    ..._doviExtractionToValidation(),
+    ...collect('Structural validation', () => validateStructure(_pkg.assetMap, _pkg.pkl, _pkg.cpl, _pkg.fileMap)),
+    ...collect('Label QC', () => _labelResultsToValidation()),
+    ...collect('Dolby Vision extraction', () => _doviExtractionToValidation()),
+    ...collect('IMF-UG checks', () => _ugResultsToValidation()),
+    ...collect('Photon', () => _photonResultsToValidation()),
+    ...hashRows,
   ];
   renderValidation();
-  _renderNetflixCompliance();
+  try { _renderNetflixCompliance(); } catch {}
 }
 
 function renderLabelQC() {
@@ -3232,7 +3298,10 @@ function _applyValFilter() {
     { prefix: 'REEL', label: 'Inter-Reel Consistency' },
     { prefix: 'TC',   label: 'Timecode' },
     { prefix: 'APP',  label: 'Application / Delivery Logic' },
+    { prefix: 'UG-',  label: 'IMF User Group Best Practice' },
+    { prefix: 'PHOTON', label: 'Photon (Netflix/SMPTE)' },
     { prefix: 'HASH', label: 'Hash Verification' },
+    { prefix: 'VAL',  label: 'Validation Engine Errors' },
   ];
   const icon = { pass:'✓', warn:'⚠', fail:'✗', info:'ℹ' };
   const sevWeight = { fail: 3, warn: 2, info: 1, pass: 0 };
@@ -3277,12 +3346,17 @@ function _applyValFilter() {
         </span>
       </summary>`;
     html += `<div class="imf-val-section-body">`;
-    html += rows.map(r => `
+    html += rows.map(r => {
+      const jump = r.ref
+        ? `<button type="button" class="imf-val-jump" data-val-ref="${_esc(JSON.stringify(r.ref))}" title="Jump to this reel on the timeline">→ timeline</button>`
+        : '';
+      return `
       <div class="imf-val-row sev-${r.sev}">
         <span class="imf-val-icon">${icon[r.sev] || '·'}</span>
         <span class="imf-val-code">${r.code}</span>
-        <span class="imf-val-msg">${r.msg}${r.detail ? `<br><span class="imf-val-detail">${r.detail}</span>` : ''}</span>
-      </div>`).join('');
+        <span class="imf-val-msg">${r.msg}${r.detail ? `<br><span class="imf-val-detail">${r.detail}</span>` : ''}${jump}</span>
+      </div>`;
+    }).join('');
     html += `</div></details>`;
   }
 
@@ -3290,6 +3364,16 @@ function _applyValFilter() {
     html = `<div class="imf-val-empty">No checks match the current filter.</div>`;
   }
   list.innerHTML = html;
+
+  // Wire the "→ timeline" jump controls (delegated; rebuilt each render).
+  list.querySelectorAll('.imf-val-jump').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      let ref = null;
+      try { ref = JSON.parse(btn.dataset.valRef || 'null'); } catch {}
+      _focusTimelineResource(ref);
+    });
+  });
 }
 
 function renderValidation() {
@@ -3365,21 +3449,26 @@ async function runHashVerification() {
       list.prepend(row);
     }
 
-    const ok = await verifySHA1(fh, asset.hash, pct => {
+    const algorithm = detectHashAlgorithm(asset.hash);
+    const nativePath = (window.pfxPlatform?.getNativeFilePath?.(fh))
+      || (typeof fh.__pfxNativePath === 'string' ? fh.__pfxNativePath : '')
+      || (typeof fh.path === 'string' ? fh.path : '');
+    const ok = await verifyHash(fh, asset.hash, { algorithm, nativePath }, pct => {
       if (btn) btn.textContent = `Verifying ${Math.round(pct*100)}%`;
     });
 
-    hashResults.push({ file: assetLabel(asset), ok, hash: asset.hash });
+    hashResults.push({ file: assetLabel(asset), ok, hash: asset.hash, algorithm });
   }
 
   // Remove the "Verifying…" rows and add results
   const hashRows = _valResults.filter(r => r.code !== 'HASH');
-  for (const { file, ok } of hashResults) {
+  for (const { file, ok, algorithm } of hashResults) {
+    const algoLabel = algorithm === 'sha1' ? 'SHA-1' : 'SHA-256';
     hashRows.push({
       sev:  ok === true ? SEV.PASS : ok === false ? SEV.FAIL : SEV.WARN,
       code: 'HASH',
-      msg:  ok === true ? `SHA-1 OK: ${file}` : ok === false ? `SHA-1 MISMATCH: ${file}` : `SHA-1 error: ${file}`,
-      detail: '',
+      msg:  ok === true ? `${algoLabel} OK: ${file}` : ok === false ? `${algoLabel} MISMATCH: ${file}` : `${algoLabel} could not be verified: ${file}`,
+      detail: ok == null ? 'File too large for in-memory hashing and no native hash path available.' : '',
     });
   }
   _valResults = hashRows;
@@ -3423,6 +3512,7 @@ function wireTimelineControls() {
       totalFrames:       nextRange.res.sourceDuration,
       fps:               _pkg.cpl.editRate,
       tcOffset:          nextRange.absStart,
+      dropFrame:         !!_pkg.cpl.compositionTimecode?.dropFrame,
       color:             nextRange.color,
       filename:          _pkg.assetLabel(asset) || nextRange.res.trackFileId,
       codec:             _pkg.cpl.codec || '–',
@@ -3772,6 +3862,12 @@ function _injectNleStyle() {
   .imf-tl-seg-diff { outline:2px solid #f97316; outline-offset:-2px; }
   .imf-tl-seg-diff::after { content:'≠'; position:absolute; top:2px; right:4px; font-size:9px; font-weight:900; color:#f97316; pointer-events:none; }
   .imf-tl-seg { position:absolute; }
+  /* Validation "jump to timeline" control + the flash it triggers on the reel. */
+  .imf-val-jump { display:inline-block; margin-left:8px; padding:0 6px; font-size:8px; font-weight:700; line-height:15px; height:15px;
+    color:#9ab4ff; background:rgba(124,106,247,.14); border:1px solid rgba(124,106,247,.4); border-radius:3px; cursor:pointer; vertical-align:middle; }
+  .imf-val-jump:hover { background:rgba(124,106,247,.28); color:#cdd8ff; }
+  .imf-tl-seg-focus-flash { outline:2px solid #7c6af7; outline-offset:-2px; animation:pfxSegFlash 1.4s ease-out; }
+  @keyframes pfxSegFlash { 0%,20% { box-shadow:0 0 0 3px rgba(124,106,247,.6); } 100% { box-shadow:0 0 0 0 rgba(124,106,247,0); } }
   /* Multi-layer stack: VIDEO/AUDIO section headers. */
   .pfx-tl-section { color:#5a6072; font-size:9px; font-weight:800; letter-spacing:.14em; padding:5px 0 1px 6px; }
   /* Active (live) layer: red left-accent on the label + lifted text + LIVE pill,
@@ -4207,6 +4303,7 @@ function renderTimeline() {
       totalFrames: res.sourceDuration,
       fps: cpl.editRate,
       tcOffset: frameOffset,
+      dropFrame: !!cpl.compositionTimecode?.dropFrame,
       color,
       filename: _pkg.assetLabel(asset) || res.trackFileId,
       codec: cpl.codec || '–',
@@ -4239,6 +4336,7 @@ function renderTimeline() {
       totalFrames: res.sourceDuration,
       fps: cpl.editRate,
       tcOffset: 0,
+      dropFrame: !!cpl.compositionTimecode?.dropFrame,
       color,
       filename: _pkg.assetLabel(asset) || res.trackFileId,
       codec: cpl.codec || '–',
@@ -4267,6 +4365,31 @@ function renderTimeline() {
 
 function switchLeftTab(which) {
   setImfLeftTab(which === 'assets' ? 'reels' : which);
+}
+
+// Jump from a resource-scoped validation finding to the offending reel on the
+// timeline. Matches a timeline .imf-tl-seg by trackFileId (data-id) first, then
+// reelIndex (data-reel-index), switches to the reels view, highlights it, and
+// scrolls it into view. Returns the matched element (or null) so callers/tests
+// can assert the resolution. Never throws.
+function _focusTimelineResource(ref) {
+  if (!ref) return null;
+  try {
+    let seg = null;
+    if (ref.trackFileId) {
+      seg = document.querySelector(`#imfTLVideo .imf-tl-seg[data-id="${(window.CSS && CSS.escape) ? CSS.escape(ref.trackFileId) : ref.trackFileId}"]`);
+    }
+    if (!seg && ref.reelIndex != null) {
+      seg = document.querySelector(`#imfTLVideo .imf-tl-seg[data-reel-index="${ref.reelIndex}"]`);
+    }
+    switchLeftTab('reels');
+    if (seg) {
+      seg.classList.add('imf-tl-seg-focus-flash');
+      setTimeout(() => { try { seg.classList.remove('imf-tl-seg-focus-flash'); } catch {} }, 1400);
+      try { seg.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' }); } catch {}
+    }
+    return seg;
+  } catch { return null; }
 }
 
 function _getReelFile(res) {
@@ -5179,8 +5302,13 @@ async function exportReport() {
     ? `IAB / Dolby Atmos (${(cpl.iabResources||[]).length || (cpl.audioResources||[]).length} resource(s))`
     : `PCM ${cpl.audioLayout || ''} (${(cpl.audioResources||[]).length} resource(s))`.trim();
 
+  // Tolerate malformed/partial CPLs — a QC report must still emit for a broken
+  // package rather than throw on a missing field.
+  const resStr = (cpl.resolution && cpl.resolution.w != null && cpl.resolution.h != null)
+    ? `${cpl.resolution.w} × ${cpl.resolution.h}` : '—';
+
   const hdrDesc = (() => {
-    const pd = (cpl.descriptors||[]).find(d => d.isPicture);
+    const pd = (Array.isArray(cpl.descriptors) ? cpl.descriptors : []).find(d => d && d.isPicture);
     const parts = [];
     if (pd?.masteringMaxLum != null) parts.push(`Mastering: ${pd.masteringMaxLum} cd/m²`);
     if (pd?.maxCLL != null)          parts.push(`MaxCLL: ${pd.maxCLL}`);
@@ -5198,7 +5326,10 @@ async function exportReport() {
     { prefix: 'REEL', label: 'Inter-Reel Consistency' },
     { prefix: 'TC',   label: 'Timecode' },
     { prefix: 'APP',  label: 'Application / Delivery Logic' },
+    { prefix: 'UG-',  label: 'IMF User Group Best Practice' },
+    { prefix: 'PHOTON', label: 'Photon (Netflix/SMPTE)' },
     { prefix: 'HASH', label: 'Hash Verification' },
+    { prefix: 'VAL',  label: 'Validation Engine Errors' },
   ];
 
   const lines = [
@@ -5212,7 +5343,7 @@ async function exportReport() {
     `Content Kind: ${cpl.contentKind || '–'}`,
     `App Version : ${cpl.appVersion || '–'}`,
     `Codec       : ${cpl.codec || '–'}`,
-    `Resolution  : ${cpl.resolution.w} × ${cpl.resolution.h}`,
+    `Resolution  : ${resStr}`,
     `Bit Depth   : ${cpl.bitDepth !== '–' ? cpl.bitDepth + '-bit' : '–'}`,
     `Edit Rate   : ${cpl.editRate} fps`,
     `Duration    : ${fmtFrames(cpl.totalFrames, cpl.editRate)}`,
@@ -5221,7 +5352,7 @@ async function exportReport() {
     `HDR Metadata: ${hdrDesc}`,
     `Dolby Vision: ${cpl.isDolbyVision ? `Yes (Profile ${cpl.dvProfile || '?'}, Level ${cpl.dvLevel || '?'})` : 'No'}`,
     `Audio       : ${audioDesc}`,
-    `Video Reels : ${cpl.videoResources.length}`,
+    `Video Reels : ${(cpl.videoResources || []).length}`,
     `TC Start    : ${cpl.compositionTimecode ? `${cpl.compositionTimecode.startAddress} @ ${cpl.compositionTimecode.rate} fps${cpl.compositionTimecode.dropFrame ? ' (DF)' : ''}` : '—'}`,
     `CPL ID      : ${cpl.id}`,
     `PKL ID      : ${pkl.id}`,
@@ -5250,23 +5381,58 @@ async function exportReport() {
   lines.push(`OVERALL: ${overall}`);
   lines.push(`PostFlowX IMF Validation · ${counts.fail} Fail · ${counts.warn} Warn · ${counts.info} Info · ${counts.pass} Pass · ${_valResults.length} checks`);
 
-  const blob  = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
-  const fname = `IMF_Report_${(cpl.contentTitle || 'package').replace(/[^a-z0-9]/gi, '_').slice(0,40)}_${now.slice(0,10)}.txt`;
-  if (typeof window.__pfxSaveBlob === 'function') {
-    await window.__pfxSaveBlob(fname, blob);
-  } else {
-    const url = URL.createObjectURL(blob);
-    const a   = document.createElement('a');
-    a.href = url; a.download = fname;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  }
+  const baseName = `IMF_Report_${(cpl.contentTitle || 'package').replace(/[^a-z0-9]/gi, '_').slice(0,40)}_${now.slice(0,10)}`;
+  const saveBlob = async (fname, blob) => {
+    if (typeof window.__pfxSaveBlob === 'function') {
+      await window.__pfxSaveBlob(fname, blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href = url; a.download = fname;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+  };
+
+  await saveBlob(`${baseName}.txt`, new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' }));
+
+  // ── Structured (JSON) report for pipeline ingestion ─────────────────────────
+  // Machine-readable artifact with the same grouping map + overall verdict as the
+  // text report. groupOf() reuses the same prefix table so a row's group label
+  // matches the text section it appears under.
+  const groupOf = (code) => (groups.find(g => code.startsWith(g.prefix))?.label) || 'Other';
+  const report = {
+    generatedAt: new Date().toISOString(),
+    overall,
+    counts: { fail: counts.fail, warn: counts.warn, info: counts.info, pass: counts.pass },
+    package: {
+      cplId:      cpl.id || '',
+      pklId:      pkl.id || '',
+      title:      cpl.contentTitle || cpl.annotation || '',
+      codec:      cpl.codec || '',
+      resolution: resStr === '—' ? '' : resStr.replace(/\s/g, ''),
+      editRate:   cpl.editRate ?? null,
+      transfer:   cpl.transfer || '',
+      primaries:  cpl.primaries || '',
+      hdr:        hdrDesc === '—' ? '' : hdrDesc,
+      dv:         cpl.isDolbyVision ? `Profile ${cpl.dvProfile || '?'}, Level ${cpl.dvLevel || '?'}` : '',
+    },
+    results: _valResults.map(r => ({
+      code:   r.code,
+      sev:    r.sev,
+      msg:    r.msg,
+      detail: r.detail || '',
+      group:  groupOf(r.code),
+    })),
+  };
+  await saveBlob(`${baseName}.json`, new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' }));
 }
 
 function clearPackage() {
   const handleKey = _imfHandleKey();
   _pkg = null;
   _valResults = [];
+  _photonLastResults = null;
   _iabDecodeCaps = _defaultIabDecodeCaps();
   _resetLabelQC();
   _extFiles = [];

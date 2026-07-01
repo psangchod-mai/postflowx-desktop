@@ -4,8 +4,12 @@
 
 export const SEV = { PASS: 'pass', WARN: 'warn', FAIL: 'fail', INFO: 'info' };
 
-function result(sev, code, msg, detail = '') {
-  return { sev, code, msg, detail };
+// ref (optional): { trackFileId?, reelIndex? } — lets resource-scoped findings be
+// wired to a "jump to timeline" affordance in the UI (imf_ui _applyValFilter).
+function result(sev, code, msg, detail = '', ref = null) {
+  const r = { sev, code, msg, detail };
+  if (ref && (ref.trackFileId || ref.reelIndex != null)) r.ref = ref;
+  return r;
 }
 
 // ── Structure validation (no file reading, just cross-reference) ──────────────
@@ -198,7 +202,8 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   const incompleteRefs = [...videoResources, ...audioResources].filter(r => !r.trackFileId || !r.essenceDescriptorId);
   if (incompleteRefs.length) {
     results.push(result(SEV.WARN, 'CPL007',
-      `${incompleteRefs.length} resource${incompleteRefs.length === 1 ? '' : 's'} missing TrackFileId and/or EssenceDescriptorId`));
+      `${incompleteRefs.length} resource${incompleteRefs.length === 1 ? '' : 's'} missing TrackFileId and/or EssenceDescriptorId`,
+      '', { trackFileId: incompleteRefs.find(r => r.trackFileId)?.trackFileId || '' }));
   } else if (videoResources.length || audioResources.length) {
     results.push(result(SEV.PASS, 'CPL007', 'All resources declare TrackFileId and EssenceDescriptorId'));
   }
@@ -773,7 +778,8 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
     if (reelResolutions.length > 1) {
       results.push(result(SEV.FAIL, 'REEL001',
         `Resolution changes across reels: ${reelResolutions.join(', ')}`,
-        'SMPTE ST 2067-2 requires homogeneous picture parameters within a Composition'));
+        'SMPTE ST 2067-2 requires homogeneous picture parameters within a Composition',
+        { reelIndex: 0, trackFileId: videoResources[0]?.trackFileId || '' }));
     } else {
       results.push(result(SEV.PASS, 'REEL001',
         `Resolution consistent across ${reelDescs.length} reels: ${reelResolutions[0]}`));
@@ -997,20 +1003,60 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   return results;
 }
 
-// ── SHA-1 hash verification (async, per-file) ─────────────────────────────────
-export async function verifySHA1(file, expectedBase64, onProgress) {
-  try {
-    // Guard: Web Crypto requires the full file in one ArrayBuffer. Cap at 2 GB to
-    // avoid OOM on large MXF essence files — return null (skip) rather than crash.
-    const MAX = 2 * 1024 * 1024 * 1024;
-    if (file.size > MAX) return null;
+// ── Hash algorithm detection ──────────────────────────────────────────────────
+// PKL hashes are base64: SHA-1 = 20 bytes → 28 chars, SHA-256 = 32 bytes → 44
+// chars. Detect from the declared hash length so SHA-256 deliverables are verified
+// with SHA-256 (the validator's PKL006 advisory recommendation).
+export function detectHashAlgorithm(expectedBase64) {
+  const len = String(expectedBase64 || '').trim().length;
+  if (len === 44) return 'sha256';
+  if (len === 28) return 'sha1';
+  return 'sha256';   // default to the stronger algorithm when ambiguous
+}
 
+// ── Hash verification (async, per-file, streaming + SHA-256 capable) ──────────
+// Verifies a PKL asset hash. Order of preference:
+//   1. Native node crypto via IPC (handles files >2 GB by streaming) when a
+//      filesystem path is available (desktop app).
+//   2. Web Crypto over the whole ArrayBuffer (browser/extension) — capped at 2 GB
+//      to avoid OOM; returns null (skip) only when no native path exists AND the
+//      file is too large for the in-memory path.
+// The algorithm (SHA-1 vs SHA-256) is chosen from the declared hash length.
+// Returns true (match) | false (mismatch) | null (could not verify).
+export async function verifyHash(file, expectedBase64, opts = {}, onProgress) {
+  const algorithm = opts.algorithm || detectHashAlgorithm(expectedBase64);
+  const webAlgo   = algorithm === 'sha1' ? 'SHA-1' : 'SHA-256';
+
+  // 1) Native streaming path (no size limit).
+  const nativePath = opts.nativePath ||
+    (typeof file?.__pfxNativePath === 'string' ? file.__pfxNativePath : '') ||
+    (typeof file?.path === 'string' ? file.path : '');
+  const hashFile = (typeof window !== 'undefined') && window.pfxPlatform?.imf?.hashFile;
+  if (nativePath && typeof hashFile === 'function') {
+    try {
+      const r = await hashFile({ filePath: nativePath, algorithm });
+      if (onProgress) onProgress(1);
+      if (r && r.ok && typeof r.hashBase64 === 'string') {
+        return r.hashBase64 === expectedBase64;
+      }
+    } catch { /* fall through to web-crypto path */ }
+  }
+
+  // 2) Web Crypto in-memory path.
+  try {
+    const MAX = 2 * 1024 * 1024 * 1024;
+    if (file.size > MAX) return null;   // too large and no native path — cannot verify
     const ab = await file.arrayBuffer();
     if (onProgress) onProgress(1);
-    const digest = await crypto.subtle.digest('SHA-1', ab);
+    const digest = await crypto.subtle.digest(webAlgo, ab);
     const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
     return b64 === expectedBase64;
   } catch {
     return null;
   }
+}
+
+// Backwards-compatible wrapper — now algorithm-aware and streaming-capable.
+export async function verifySHA1(file, expectedBase64, onProgress) {
+  return verifyHash(file, expectedBase64, {}, onProgress);
 }

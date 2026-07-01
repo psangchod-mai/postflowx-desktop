@@ -26,6 +26,11 @@
 export class NativeAVPlayerEngine {
   constructor(canvas, opts = {}) {
     this._canvas      = canvas;
+    // Let the canvas's ResizeObserver (mountNativeCanvas) find us so it can
+    // repaint the current frame after a resize — resizing clears the bitmap, and
+    // without a repaint the canvas goes black (e.g. when the pane lays out after
+    // a project load). See repaint() + the ResizeObserver below.
+    try { canvas._pfxEngine = this; } catch {}
     this._ctx         = canvas.getContext('2d');
     this._opts        = opts;
     this._filePath    = null;
@@ -120,6 +125,9 @@ export class NativeAVPlayerEngine {
     this._frame = f;
     await this._renderFrame(f);
   }
+
+  // Re-paint the current frame (used after a canvas resize wipes the bitmap).
+  repaint() { if (this._filePath) this._renderFrame(this._frame); }
 
   async seekTime(seconds) {
     await this.seekFrame(Math.round(seconds * this._fps));
@@ -275,6 +283,9 @@ export function mountNativeCanvas(videoEl) {
     if (width > 0 && height > 0) {
       canvas.width  = Math.round(width  * (window.devicePixelRatio || 1));
       canvas.height = Math.round(height * (window.devicePixelRatio || 1));
+      // Resizing clears the bitmap — repaint the current frame so the canvas
+      // doesn't go black when the pane lays out (e.g. after a project load).
+      canvas._pfxEngine?.repaint?.();
     }
   });
   ro.observe(canvas);
