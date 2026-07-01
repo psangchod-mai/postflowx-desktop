@@ -130,12 +130,21 @@ function sendMessage(message, callbackOrOptions, maybeCallback) {
   // Store last error so code checking chrome.runtime.lastError works
   _lastError = null;
 
-  promise.then((result) => {
+  // MV3 semantics: when no callback is given, sendMessage must RETURN A PROMISE
+  // that resolves with the response. The old shim returned undefined and only
+  // delivered via the callback, so every `await chrome.runtime.sendMessage(...)`
+  // caller (e.g. vfxPull's OCF preview tiers) got `undefined` and threw a bare
+  // "Companion error" — the companion's real response was silently discarded.
+  // On transport failure we RESOLVE with a structured {ok:false,error} (rather
+  // than rejecting) so await-callers that test `bridged?.ok` see the real reason.
+  return promise.then((result) => {
     _lastError = null;
     if (callback) callback(result);
+    return result;
   }).catch((err) => {
     _lastError = { message: err.message || String(err) };
     if (callback) callback(undefined);
+    return { ok: false, error: { code: err?.code || 'BRIDGE_ERROR', message: err?.message || String(err) } };
   });
 }
 
@@ -306,6 +315,11 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
   pickFolder:  (opts)  => invoke('pfx:pickFolder', { options: opts }),
   saveFile:    (args)  => invoke('pfx:saveFile',   args),
   readFile:    (args)  => invoke('pfx:readFile',   args),
+  writeFile:   (args)  => invoke('pfx:writeFile',  args),         // silent write to a path (no dialog)
+  listProjects: (dirPath) => invoke('pfx:listProjects', { dirPath }),
+  deleteProject: (args) => invoke('pfx:deleteProject', args),    // move project to Trash
+  renameProject:    (args) => invoke('pfx:renameProject', args),
+  duplicateProject: (args) => invoke('pfx:duplicateProject', args),
   fileExists:  (fp)    => invoke('pfx:fileExists', { filePath: fp }),
   revealInFinder: (fp) => invoke('pfx:revealInFinder', { filePath: fp }),
   openExternal:     (url) => invoke('pfx:openExternal',     { url }),

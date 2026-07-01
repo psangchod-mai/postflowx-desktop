@@ -139,7 +139,10 @@ async function createWindow() {
     resizable:      true,
     fullscreenable: true,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
+    // Center the traffic lights in the 38px .mac-titlebar (see main.css): 12px
+    // buttons → y = (38-12)/2 ≈ 13. x=20 is Apple's standard left margin and sits
+    // within the titlebar's 78px reserved padding-left.
+    trafficLightPosition: { x: 20, y: 13 },
     backgroundColor: '#0b0b10',
     // macOS: native window material behind the translucent titlebar
     ...(process.platform === 'darwin' ? {
@@ -184,24 +187,29 @@ async function createWindow() {
     });
   } catch {}
 
-  // In dev: clear renderer cache so stale JS/CSS never loads after a source change
+  // Clear the renderer HTTP/code cache on EVERY launch. Chromium caches the
+  // linked CSS/JS (styles/main.css, script modules) in the user-data dir and
+  // serves them across launches — so after a rebuilt/updated app.asar the UI
+  // would otherwise stay stale ("nothing changed" even after quit+reopen).
+  // Clearing here guarantees a fresh renderer; cost is one cache rebuild per
+  // launch (negligible for local files). Was dev-only — packaged never cleared.
+  try {
+    await mainWindow.webContents.session.clearCache();
+  } catch (e) {
+    console.warn('[Main] cache clear failed:', e.message);
+  }
   if (IS_DEV) {
     try {
-      await mainWindow.webContents.session.clearCache();
       await mainWindow.webContents.session.clearStorageData({
         storages: ['serviceworkers', 'cachestorage'],
       });
     } catch (e) {
-      console.warn('[Main] dev cache clear failed:', e.message);
+      console.warn('[Main] dev storage clear failed:', e.message);
     }
   }
 
-  // Load the renderer. In dev, add a timestamp query param as an extra cache-buster.
-  if (IS_DEV) {
-    mainWindow.loadFile(RENDERER_INDEX, { query: { ts: String(Date.now()) } });
-  } else {
-    mainWindow.loadFile(RENDERER_INDEX);
-  }
+  // Load the renderer with a timestamp query param as an extra cache-buster.
+  mainWindow.loadFile(RENDERER_INDEX, { query: { ts: String(Date.now()) } });
 
   // Show window only when content is ready (avoids white flash).
   // First launch (no saved state) or previously maximized → maximize before show.

@@ -7,28 +7,12 @@
   // ── Presets ──────────────────────────────────────────────────────────────────
 
   var VFX_PULL_PRESETS = {
-    arri_aces: {
-      label: 'ARRI ACES Pull',
-      format: 'EXR', bitDepth: '16-bit Half Float',
-      colorspace: 'ACES Linear AP0 / ACES2065-1',
-      compression: 'PIZ', startFrame: 1001, framePadding: 4,
-      handles: 16, namingTemplate: '{reel}_{shotName}_v001',
-      framingMode: 'Full Resolution',
-    },
     netflix_mps: {
       label: 'Netflix / MPS ACES EXR',
       format: 'EXR', bitDepth: '16-bit Half Float',
       colorspace: 'ACES Linear AP0 / ACES2065-1',
       compression: 'PIZ', startFrame: 1001, framePadding: 4,
       handles: 24, namingTemplate: '{shotName}_PL01_v001',
-      framingMode: 'Full Resolution',
-    },
-    apple_hdr: {
-      label: 'Apple TV+ HDR DPX',
-      format: 'DPX', bitDepth: '12-bit',
-      colorspace: 'P3-D65 / PQ', compression: 'None',
-      startFrame: 1001, framePadding: 4, handles: 12,
-      namingTemplate: '{shotName}_PLATE_v{version}',
       framingMode: 'Full Resolution',
     },
     internal_proxy: {
@@ -38,14 +22,6 @@
       startFrame: 1001, framePadding: 4, handles: 8,
       namingTemplate: '{shotName}_PROXY_v001',
       framingMode: 'Reframe to Delivery',
-    },
-    dailies: {
-      label: 'Dailies / Client Review',
-      format: 'ProRes4444XQ', bitDepth: '10-bit',
-      colorspace: 'Rec.709', compression: 'None',
-      startFrame: 1001, framePadding: 4, handles: 2,
-      namingTemplate: '{clipName}_DAILY_{date}',
-      framingMode: 'Letterbox',
     },
   };
 
@@ -184,10 +160,24 @@
   function _vsRenderBody() {
     var body = document.getElementById('pfxVfxSettingsBody');
     if (!body) return;
-    if (_vs.tab === 'setup')  body.innerHTML = _vsRenderSetup();
-    if (_vs.tab === 'verify') body.innerHTML = _vsRenderVerify();
-    if (_vs.tab === 'export') body.innerHTML = _vsRenderExport();
-    _vsBindBody();
+    // Render inside a guard: if a tab's builder throws (e.g. a malformed saved
+    // setting), show the error IN the modal instead of leaving the body silently
+    // collapsed to nothing — which is exactly how this looked when it "broke".
+    try {
+      var html = '';
+      if (_vs.tab === 'setup')  html = _vsRenderSetup();
+      else if (_vs.tab === 'verify') html = _vsRenderVerify();
+      else if (_vs.tab === 'export') html = _vsRenderExport();
+      body.innerHTML = html;
+    } catch (err) {
+      console.error('[vfxPullSettings] render failed for tab', _vs.tab, err);
+      body.innerHTML =
+        '<div class="pfx-vfxs-section"><div class="pfx-vfxs-section-title">Setup unavailable</div>' +
+        '<div class="pfx-vfxs-warn-inline">⚠ Could not render this tab: ' +
+        esc(err && err.message ? err.message : String(err)) +
+        '</div><div class="pfx-vfxs-info-inline">Try <b>Reset Defaults</b> to clear a corrupt saved setting.</div></div>';
+    }
+    try { _vsBindBody(); } catch (e) { console.error('[vfxPullSettings] bind failed', e); }
   }
 
   // ── Setup Tab ─────────────────────────────────────────────────────────────────

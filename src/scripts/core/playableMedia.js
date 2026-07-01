@@ -246,7 +246,11 @@ function _startNativeAVPath(videoEl, file, nativePath, info, token, { onMode, on
   videoEl[_K.mode] = 'native';
 
   engine.open(nativePath).then(() => {
-    if (videoEl[_K.token] !== token) return;
+    // Stale success: the file changed while open() was in flight (a previous
+    // releasePlayableVideo may have run before the session existed). Close this
+    // engine so its AVAsset session isn't orphaned — _pfxNativeEngine now points
+    // at the new load's engine, so don't touch it.
+    if (videoEl[_K.token] !== token) { try { engine.close(); } catch {} return; }
     onMode?.('native', nativePath);
     onStatus?.(PLAYABLE_STATUS.native);
     onNativeEngine?.({ engine, info, canvas });
@@ -281,7 +285,9 @@ function _startMPVPath(videoEl, file, nativePath, info, token, {
   videoEl[_K.mode] = 'native';
 
   engine.open(nativePath).then(() => {
-    if (videoEl[_K.token] !== token) return;
+    // Stale success — close so the mpv process/socket isn't left running in the
+    // background (the new load owns _pfxNativeEngine now).
+    if (videoEl[_K.token] !== token) { try { engine.close(); } catch {} return; }
     onMode?.('native', nativePath);
     onStatus?.('Playing via MPV ↗');
     onNativeEngine?.({ engine, info, canvas });

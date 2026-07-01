@@ -92,7 +92,7 @@ function _probeOcfMeta(filePath, timeoutMs = 12000) {
     const args = [
       '-v', 'quiet', '-of', 'json',
       '-show_entries',
-      'format=duration:format_tags=timecode,material_package_umid,company_name,modification_date:stream=codec_type,r_frame_rate,duration_ts,nb_frames:stream_tags=timecode',
+      'format=duration:format_tags=timecode,material_package_umid,company_name,modification_date:stream=codec_type,codec_name,width,height,r_frame_rate,duration_ts,nb_frames:stream_tags=timecode',
       filePath,
     ];
     let out = '';
@@ -120,7 +120,8 @@ function _probeOcfMeta(filePath, timeoutMs = 12000) {
         const tcOut = (tcKnown && fps && frameCount) ? _tcAddFrames(tcIn, frameCount - 1, fps) : '';
         resolve({ tcIn: tcIn || undefined, tcOut: tcOut || undefined, fps: fps || undefined,
                   frameCount: frameCount || undefined, umid: umid || undefined,
-                  recordDate: recordDate || undefined, tcKnown });
+                  recordDate: recordDate || undefined, tcKnown,
+                  codec: v.codec_name || undefined, width: v.width || undefined, height: v.height || undefined });
       } catch { resolve({}); }
     });
   });
@@ -137,6 +138,15 @@ async function _enrichOcfMeta(files, concurrency = 4) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, files.length || 1) }, worker));
+  // Index the scanned media into the native SQLite DB (PFXMAC Sprint 3).
+  // Best-effort + non-blocking: a missing engine or DB error must never break the scan.
+  try {
+    const engine  = require('./native/pfx_native_engine.js');
+    const indexer  = require('./native/mediaIndexer.js');
+    indexer.indexFiles(files, engine)
+      .then(n => { if (n) console.log(`[MediaIndexer] indexed ${n} asset(s) into native DB`); })
+      .catch(() => {});
+  } catch { /* native engine/indexer unavailable — skip indexing */ }
   return files;
 }
 
@@ -255,6 +265,158 @@ function register(mainWindow, appRoot) {
 
   ipcMain.handle('pfx:fileExists', (_e, { filePath }) => {
     try { return fs.existsSync(filePath); } catch { return false; }
+  });
+
+  // Direct write to an absolute path — NO dialog (used by project save once a
+  // Project Folder is configured). Creates parent dirs as needed.
+  ipcMain.handle('pfx:writeFile', async (_e, { filePath, data, encoding = 'utf8' } = {}) => {
+    try {
+      if (!filePath) return { ok: false, error: 'no filePath' };
+      const p = require('path');
+      fs.mkdirSync(p.dirname(filePath), { recursive: true });
+      if (encoding === 'base64') fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
+      else fs.writeFileSync(filePath, data, encoding);
+      return { ok: true, path: filePath };
+    } catch (e) {
+      console.error('[IPC] writeFile error:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // List PostFlowX projects under a folder (subdirs containing project.json, or
+  // top-level *.json). Powers smart project Load. Newest first.
+  ipcMain.handle('pfx:listProjects', async (_e, { dirPath } = {}) => {
+    try {
+      if (!dirPath || !fs.existsSync(dirPath)) return { ok: true, projects: [] };
+      const p = require('path');
+      const out = [];
+      for (const ent of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        if (ent.name.startsWith('.')) continue;
+        if (ent.isDirectory()) {
+          const sub = p.join(dirPath, ent.name);
+          let manifest = null;
+          try {
+            const f = fs.readdirSync(sub).find(n => n === 'project.json' || /\.mpsproj\.json$/i.test(n));
+            if (f) manifest = p.join(sub, f);
+          } catch {}
+          if (manifest) {
+            let mtime = 0, created = 0;
+            try { const s = fs.statSync(manifest); mtime = s.mtimeMs; created = s.birthtimeMs || s.ctimeMs || 0; } catch {}
+            // Smart catalog: detect which tool tabs this project actually has
+            // data in (a shard file is written only when that tool is used).
+            // `settings` is excluded (always present, not a "what it's for" signal);
+            // tiny/empty shards (≤80 bytes ≈ "{}") are skipped.
+            let tabs = [];
+            try {
+              const tabsDir = p.join(sub, 'tabs');
+              if (fs.existsSync(tabsDir)) {
+                for (const tf of fs.readdirSync(tabsDir)) {
+                  const m = /^([a-z_]+)\.json$/i.exec(tf);
+                  if (!m || m[1] === 'settings') continue;
+                  let size = 0, smt = mtime;
+                  try { const s = fs.statSync(p.join(tabsDir, tf)); size = s.size; smt = s.mtimeMs; } catch {}
+                  if (size > 80) tabs.push({ key: m[1], size, mtime: smt });
+                }
+                tabs.sort((a, b) => b.size - a.size);   // primary tool first
+              }
+            } catch {}
+            out.push({ name: ent.name, path: sub, manifest, mtime, created, tabs });
+          }
+        } else if (/\.(mpsproj\.)?json$/i.test(ent.name)) {
+          const full = p.join(dirPath, ent.name);
+          let mtime = 0, created = 0;
+          try { const s = fs.statSync(full); mtime = s.mtimeMs; created = s.birthtimeMs || s.ctimeMs || 0; } catch {}
+          out.push({ name: ent.name.replace(/\.(mpsproj\.)?json$/i, ''), path: full, manifest: full, mtime, created });
+        }
+      }
+      out.sort((a, b) => b.mtime - a.mtime);
+      return { ok: true, projects: out };
+    } catch (e) {
+      return { ok: false, error: e.message, projects: [] };
+    }
+  });
+
+  // Delete a project (move to Trash — recoverable). Accepts the project's
+  // resolved path (file or dir). Safety: target must live inside the configured
+  // Project Folder and, if a directory, must contain a project manifest.
+  ipcMain.handle('pfx:deleteProject', async (_e, { dirPath, targetPath, name } = {}) => {
+    try {
+      const p = require('path');
+      const root = dirPath ? p.resolve(dirPath) : '';
+      let target = targetPath ? p.resolve(targetPath)
+                 : (root && name ? p.resolve(p.join(root, name)) : '');
+      if (!target || !fs.existsSync(target)) return { ok: false, error: 'Project not found' };
+      // Confine to the Project Folder — refuse anything outside it.
+      if (root) {
+        const rel = p.relative(root, target);
+        if (rel === '' || rel.startsWith('..') || p.isAbsolute(rel)) {
+          return { ok: false, error: 'Refusing to delete outside the Project Folder' };
+        }
+      }
+      const st = fs.statSync(target);
+      if (st.isDirectory()) {
+        const hasManifest = fs.readdirSync(target)
+          .some(n => n === 'project.json' || /\.mpsproj\.json$/i.test(n));
+        if (!hasManifest) return { ok: false, error: 'Not a PostFlowX project folder' };
+      } else if (!/\.(mpsproj\.)?json$/i.test(target)) {
+        return { ok: false, error: 'Not a PostFlowX project file' };
+      }
+      await shell.trashItem(target);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // Rename / duplicate a project within the Project Folder. Same confinement as
+  // deleteProject: target must live inside dirPath and be a PFX project. newName
+  // is sanitised (no path separators / leading dots) and must not already exist.
+  const _pmSafeName = (n) => String(n || '').trim().replace(/[\/\\:*?"<>|]/g, '').replace(/^\.+/, '');
+  const _pmResolveTarget = (fsMod, pMod, dirPath, targetPath) => {
+    const root = dirPath ? pMod.resolve(dirPath) : '';
+    const target = targetPath ? pMod.resolve(targetPath) : '';
+    if (!target || !fsMod.existsSync(target)) return { err: 'Project not found' };
+    if (root) {
+      const rel = pMod.relative(root, target);
+      if (rel === '' || rel.startsWith('..') || pMod.isAbsolute(rel)) return { err: 'Refusing to act outside the Project Folder' };
+    }
+    return { target };
+  };
+  const _pmDestPath = (pMod, target, isDir, cleanName) => {
+    let destName = cleanName;
+    if (!isDir) { const ext = (target.match(/\.(mpsproj\.)?json$/i) || [''])[0]; destName = cleanName + ext; }
+    return pMod.join(pMod.dirname(target), destName);
+  };
+
+  ipcMain.handle('pfx:renameProject', async (_e, { dirPath, targetPath, newName } = {}) => {
+    try {
+      const p = require('path');
+      const { target, err } = _pmResolveTarget(fs, p, dirPath, targetPath);
+      if (err) return { ok: false, error: err };
+      const clean = _pmSafeName(newName);
+      if (!clean) return { ok: false, error: 'Invalid name' };
+      const isDir = fs.statSync(target).isDirectory();
+      const dest = _pmDestPath(p, target, isDir, clean);
+      if (fs.existsSync(dest)) return { ok: false, error: 'A project with that name already exists' };
+      fs.renameSync(target, dest);
+      return { ok: true, name: clean, path: dest };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('pfx:duplicateProject', async (_e, { dirPath, targetPath, newName } = {}) => {
+    try {
+      const p = require('path');
+      const { target, err } = _pmResolveTarget(fs, p, dirPath, targetPath);
+      if (err) return { ok: false, error: err };
+      const clean = _pmSafeName(newName);
+      if (!clean) return { ok: false, error: 'Invalid name' };
+      const isDir = fs.statSync(target).isDirectory();
+      const dest = _pmDestPath(p, target, isDir, clean);
+      if (fs.existsSync(dest)) return { ok: false, error: 'A project with that name already exists' };
+      if (isDir) fs.cpSync(target, dest, { recursive: true });
+      else fs.copyFileSync(target, dest);
+      return { ok: true, name: clean, path: dest };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // ── Shell ────────────────────────────────────────────────────────────────

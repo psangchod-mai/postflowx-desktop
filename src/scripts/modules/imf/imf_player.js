@@ -6,6 +6,7 @@
 
 import { fmtDuration } from './imf_parser.js';
 import { scanMXF, readMXFFrame } from './imf_mxf.js';
+import { diffStats } from './imf_layer_compare.js';
 
 // J2K decoder loaded dynamically so a WASM failure doesn't break the player
 let _decodeHTJ2K    = null;
@@ -109,6 +110,17 @@ const S = {
   trimUserSet: false,       // user has explicitly toggled (suppresses default-ON)
   _trimShotKey: '',         // last shot/trim applied to the SVG filter (dedupe DOM writes)
   _trimActive: false,       // whether the current frame should be filtered
+  // Multi-layer compare (Sprint 5 #3): overlay one comparison layer (a soloed CPL)
+  // on the live picture. compareBitmap is fetched by the UI via the same companion
+  // thumb path as the main viewer; the draw is a native-canvas op so the hot decode
+  // path is untouched. All fields inert unless compareEnabled && compareBitmap.
+  compareEnabled: false,
+  compareMode:    'split',   // 'split' | 'difference' | 'blend'
+  compareSplit:   0.5,       // split divider position, fraction of picture width
+  compareOpacity: 0.5,       // blend opacity for the comparison layer
+  compareBitmap:  null,      // ImageBitmap of the comparison layer at the current frame
+  compareLabel:   '',        // e.g. 'VF1' — shown in the compare HUD
+  compareDiff:    null,      // { changedPercent, meanAbsDiff, identical } vs the live frame
   // Preview color-space toggle (PQ sources): SDR Rec.709 tonemap vs brighter HDR emulation
   previewHdr: false,
   previewMode: 'sdr',    // 'sdr' | 'full' | 'trim'
@@ -544,6 +556,186 @@ export function playerToggleHdr(on) {
 export function playerToggleTrim(on) {
   const targetMode = typeof on === 'boolean' ? (on ? 'trim' : 'sdr') : (S.previewMode === 'trim' ? 'sdr' : 'trim');
   playerSetPreviewMode(targetMode);
+}
+
+// ── Multi-layer compare (Sprint 5 #3) ─────────────────────────────────────────
+// Configure the compare overlay. Pass { enabled, mode, split, opacity, label }.
+// Disabling drops the held comparison bitmap so it can't leak across packages.
+export function playerSetCompare(opts = {}) {
+  if (typeof opts.enabled === 'boolean') S.compareEnabled = opts.enabled;
+  if (['split', 'difference', 'blend'].includes(opts.mode)) S.compareMode = opts.mode;
+  if (Number.isFinite(opts.split))   S.compareSplit   = Math.min(1, Math.max(0, opts.split));
+  if (Number.isFinite(opts.opacity)) S.compareOpacity = Math.min(1, Math.max(0, opts.opacity));
+  if (typeof opts.label === 'string') S.compareLabel = opts.label;
+  if (!S.compareEnabled) {
+    if (S.compareBitmap && typeof S.compareBitmap.close === 'function') { try { S.compareBitmap.close(); } catch {} }
+    S.compareBitmap = null;
+    S.compareLabel = '';
+  }
+  drawFrame();
+}
+
+// Supply the comparison layer's frame (ImageBitmap at the current playhead).
+// The UI fetches this via the existing companion thumb path for the soloed CPL.
+export function playerSetCompareFrame(bitmap) {
+  if (S.compareBitmap && S.compareBitmap !== bitmap && typeof S.compareBitmap.close === 'function') {
+    try { S.compareBitmap.close(); } catch {}
+  }
+  S.compareBitmap = bitmap || null;
+  _computeCompareDiff();
+  drawFrame();
+}
+
+// Read-only snapshot for the UI (mode toggle / split slider state).
+export function playerGetCompareState() {
+  return {
+    enabled: S.compareEnabled, mode: S.compareMode,
+    split: S.compareSplit, opacity: S.compareOpacity,
+    label: S.compareLabel, hasFrame: !!S.compareBitmap,
+    changedPercent: S.compareDiff ? S.compareDiff.changedPercent : null,
+    identical: S.compareDiff ? S.compareDiff.identical : null,
+  };
+}
+
+// Snapshot the current composited compare view (live + overlay + Δ% HUD already
+// on the canvas) as a PNG Blob + a metadata object for QC sign-off. Uses toBlob
+// (not toDataURL) to avoid the MV3 data-URL CSP path. Returns null when compare
+// isn't active or the canvas can't be read.
+export async function playerExportCompareStill() {
+  if (!S.compareEnabled || !S.compareBitmap || !S.canvas) return null;
+  const blob = await new Promise((resolve) => {
+    try { S.canvas.toBlob((b) => resolve(b), 'image/png'); } catch { resolve(null); }
+  });
+  if (!blob) return null;
+  const d = S.compareDiff;
+  return {
+    blob,
+    meta: {
+      mode:           S.compareMode,
+      compareLabel:   S.compareLabel || 'comparison',
+      frame:          S.currentFrame ?? 0,
+      timecode:       fmtTC(S.currentFrame ?? 0, S.fps),
+      changedPercent: d ? Number(d.changedPercent.toFixed(2)) : null,
+      meanAbsDiff:    d ? Number(d.meanAbsDiff.toFixed(2)) : null,
+      identical:      d ? d.identical : null,
+    },
+  };
+}
+
+// Quantify how much the comparison layer differs from the live frame at the
+// current playhead (drives the compare HUD's Δ%). Decoupled from the on-canvas
+// composite: reads the live + comparison pixels directly into a small offscreen
+// and runs the tested diffStats(). Cheap (~58k px) and best-effort.
+let _diffCanvas = null;
+function _computeCompareDiff() {
+  S.compareDiff = null;
+  if (!S.compareEnabled || !S.compareBitmap) return;
+  const liveDrawable = S.frameBitmap || S.frameSurface || null;
+  if (!liveDrawable && !S.frameImageData) return;
+  const DW = 320, DH = 180;
+  try {
+    if (!_diffCanvas) {
+      _diffCanvas = (typeof OffscreenCanvas !== 'undefined')
+        ? new OffscreenCanvas(DW, DH)
+        : document.createElement('canvas');
+    }
+    _diffCanvas.width = DW; _diffCanvas.height = DH;
+    const dctx = _diffCanvas.getContext('2d', { willReadFrequently: true });
+    if (!dctx) return;
+
+    dctx.clearRect(0, 0, DW, DH);
+    if (liveDrawable) {
+      dctx.drawImage(liveDrawable, 0, 0, DW, DH);
+    } else {
+      const tmp = document.createElement('canvas');
+      tmp.width = S.frameImageData.width; tmp.height = S.frameImageData.height;
+      tmp.getContext('2d').putImageData(S.frameImageData, 0, 0);
+      dctx.drawImage(tmp, 0, 0, DW, DH);
+    }
+    const live = dctx.getImageData(0, 0, DW, DH).data;
+
+    dctx.clearRect(0, 0, DW, DH);
+    dctx.drawImage(S.compareBitmap, 0, 0, DW, DH);
+    const comp = dctx.getImageData(0, 0, DW, DH).data;
+
+    S.compareDiff = diffStats(live, comp, DW, DH, { threshold: 10 });
+  } catch (e) { S.compareDiff = null; }
+}
+
+// Draw the comparison layer over the live picture. Self-contained: recomputes its
+// own fit-rect (same formula the picture branches use), so it needs no state
+// threaded through drawFrame's body. No-op unless enabled + a comparison frame is
+// present. Both layers share the delivery aspect, so fit-to-canvas aligns them.
+function _drawCompareOverlay() {
+  if (!S.compareEnabled || !S.compareBitmap) return;
+  const { ctx, canvas } = S;
+  if (!ctx || !canvas) return;
+  const bm = S.compareBitmap;
+  const W = canvas.width, H = canvas.height;
+  const scale = Math.min(W / bm.width, H / bm.height);
+  const dw = bm.width * scale, dh = bm.height * scale;
+  const dx = (W - dw) / 2,     dy = (H - dh) / 2;
+  S._compareRect = { dx, dy, dw, dh };   // for the split-divider drag hit-test
+
+  ctx.save();
+  try {
+    if (S.compareMode === 'difference') {
+      ctx.globalCompositeOperation = 'difference';
+      ctx.drawImage(bm, dx, dy, dw, dh);
+    } else if (S.compareMode === 'blend') {
+      ctx.globalAlpha = S.compareOpacity;
+      ctx.drawImage(bm, dx, dy, dw, dh);
+    } else { // 'split' — comparison fills the right of the divider
+      const splitX = dx + dw * S.compareSplit;
+      ctx.beginPath();
+      ctx.rect(splitX, dy, dx + dw - splitX, dh);
+      ctx.clip();
+      ctx.drawImage(bm, dx, dy, dw, dh);
+    }
+  } catch (e) { /* drawImage can throw on a closed/detached bitmap — ignore */ }
+  ctx.restore();
+
+  // Divider line + draggable grab knob for split.
+  if (S.compareMode === 'split') {
+    const splitX = dx + dw * S.compareSplit;
+    const midY = dy + dh / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(splitX, dy); ctx.lineTo(splitX, dy + dh); ctx.stroke();
+    // Grab knob (signals the divider is draggable).
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.beginPath(); ctx.arc(splitX, midY, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(20,30,55,0.9)';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('↔', splitX, midY + 3);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  // Compare HUD chip (top-center) — mode, layer pair, and Δ% pixels-differ.
+  let modeTxt = { split: 'SPLIT', difference: 'DIFF', blend: 'BLEND' }[S.compareMode] || 'COMPARE';
+  if (S.compareMode === 'blend') modeTxt += ` ${Math.round(S.compareOpacity * 100)}%`;
+  let diffTxt = '';
+  if (S.compareDiff) {
+    diffTxt = S.compareDiff.identical
+      ? ' · Δ identical'
+      : ` · Δ ${S.compareDiff.changedPercent.toFixed(1)}%`;
+  }
+  const hud = `◧ COMPARE · ${modeTxt}${S.compareLabel ? ' · LIVE | ' + S.compareLabel : ''}${diffTxt}`;
+  ctx.save();
+  ctx.font = 'bold 10px monospace';
+  const hw = ctx.measureText(hud).width + 16;
+  ctx.fillStyle = 'rgba(20,30,55,0.82)';
+  roundRect(ctx, (W - hw) / 2, 10, hw, 18, 4);
+  ctx.fill();
+  // Tint the Δ readout: green when identical, amber when the layers differ.
+  ctx.fillStyle = S.compareDiff && !S.compareDiff.identical ? '#fbbf24' : (S.compareDiff ? '#22c55e' : '#93c5fd');
+  ctx.textAlign = 'center';
+  ctx.fillText(hud, W / 2, 23);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 function _updateHdrButton() {
@@ -1041,6 +1233,10 @@ function drawFrame() {
     ctx.fillText('PLAY', W - 26, dotY + 3);
     ctx.textAlign = 'left';
   }
+
+  // Multi-layer compare overlay — last, so it sits above the picture + chrome.
+  // No-op unless compare is enabled and a comparison frame has been supplied.
+  _drawCompareOverlay();
 }
 
 // ── HDR → SDR tone map (rawHDR safety net) ────────────────────────────────────
@@ -2330,6 +2526,27 @@ function _setPreviewScale(scale, reason = '') {
   return true;
 }
 
+// Predict the decode resolution to START playback at, so heavy media plays
+// smoothly from the first frame instead of stuttering at full-res for ~0.7s
+// until the reactive controller drops it. CPU J2K decode cost ∝ pixel count, and
+// full-res already misses 23.976 above ~HD (C-RT0 audit: HD full = 20.7 fps),
+// so pick a level from the frame dimensions. Quality (HQ) mode never reduces.
+function _predictInitialPlaybackScale() {
+  if (S.playbackMode === 'quality') return 1;
+  const m = /(\d{3,5})\s*[x×]\s*(\d{3,5})/.exec(String(S.resolution || ''));
+  const px = m ? parseInt(m[1], 10) * parseInt(m[2], 10) : 0;
+  if (px) {
+    if (px >= 3200 * 1700) return 0.25;   // ~UHD/4K+ → quarter
+    if (px >= 1700 * 900)  return 0.5;    // ~HD/2K   → half (full-res < real-time)
+    return 1;                              // SD/small → full is fine
+  }
+  // Dims unknown — fall back to a prior decode-time sample if we have one.
+  const avg = S.decodeAvgMs || 0, fi = S.frameInterval || 41.67;
+  if (avg > fi * 2) return 0.25;
+  if (avg > fi)     return 0.5;
+  return 1;
+}
+
 function _maybeAdaptPreviewScale() {
   if (!S.isPlaying || S.playbackMode === 'quality') return false;
   const now = performance.now();
@@ -2337,7 +2554,10 @@ function _maybeAdaptPreviewScale() {
   const avg = Math.max(0, S.decodeAvgMs || 0);
   const stressed = avg > fi * 1.1 || S.lastFrameAdvance > 1 || S.droppedFrames > 0;
 
-  if (stressed && now - S.lastAdaptiveTs > 700) {
+  // React faster when severely behind (>2× the frame budget) so a bad guess or a
+  // resolution jump doesn't stutter for a full 700ms before dropping a level.
+  const downCooldown = (avg > fi * 2) ? 300 : 700;
+  if (stressed && now - S.lastAdaptiveTs > downCooldown) {
     return _setPreviewScale(_nextPreviewScaleDown(S.previewScale), `adaptive down ${Math.round(avg)}ms`);
   }
 
@@ -2431,8 +2651,12 @@ function _drainFrameBytePrefetch(seq) {
     if (S.frameByteCache.has(frame) || S.frameByteReads.has(frame) || S.decodedCache.has(frame) || _anyDecodeInflight(frame)) continue;
     S.prefetchInflight++;
     _readFrameBytesCached(frame).catch(() => null).finally(() => {
+      // Only touch the counter for the CURRENT reel. A reel change resets
+      // prefetchInflight to 0 (_clearFrameByteCache); a late read from the old
+      // reel must not decrement the new reel's count and starve its prefetch.
+      if (seq !== S.loadSeq) return;
       S.prefetchInflight = Math.max(0, S.prefetchInflight - 1);
-      if (seq === S.loadSeq) _drainFrameBytePrefetch(seq);
+      _drainFrameBytePrefetch(seq);
     });
   }
 }
@@ -2599,6 +2823,133 @@ function _clockTargetFrame(ts, step = 1) {
 }
 
 // ── Playback loop ─────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════
+// Realtime playback via the persistent IMF stream engine (imf_direct_engine).
+// On Play we route through ONE long-lived ffmpeg that streams JPEG frames over
+// a local MJPEG endpoint (with -lowres for cadence) into an <img> overlay —
+// instead of spawning ffmpeg per displayed frame (the "eCache" path that can't
+// hit realtime). Pause/scrub tear the stream down and return to crisp,
+// frame-accurate per-frame decode. Fully additive: any failure returns false
+// and the caller falls back to the per-frame playLoop (no regression).
+// ════════════════════════════════════════════════════════════════════════
+function _streamQuality() {
+  // Map the FULL/HALF/QUARTER preview toggle to the engine's -lowres ladder.
+  try {
+    const t = (document.getElementById('imfBtnHalf')?.textContent || '').toUpperCase();
+    if (t.includes('QUARTER')) return 'quarter';
+    if (t.includes('HALF'))    return 'half';
+    if (t.includes('FULL'))    return 'full';
+  } catch {}
+  return 'auto';
+}
+
+function _ensureStreamImg() {
+  if (S.streamImgEl && document.body.contains(S.streamImgEl)) return S.streamImgEl;
+  let img = document.getElementById('imfStreamImg');
+  if (!img) {
+    const stage = document.getElementById('imfViewerStage');
+    if (!stage) return null;
+    img = document.createElement('img');
+    img.id = 'imfStreamImg';
+    img.className = 'imf-stream-img';
+    img.alt = '';
+    stage.appendChild(img);
+  }
+  S.streamImgEl = img;
+  return img;
+}
+
+async function _startRealtimeStream() {
+  const eng = (typeof window !== 'undefined') && window.pfxPlatform && window.pfxPlatform.imfEngine;
+  if (!eng || typeof eng.startPlayback !== 'function' || typeof eng.openPackage !== 'function') return false;
+  if (!S.cplPath) return false;          // need the IMF-demux (CPL) path
+  if (S.proxyMode) return false;         // proxy playback owns the <video>
+  if (S.streamMode) return true;
+  const img = _ensureStreamImg();
+  if (!img) return false;
+  try {
+    if (!S.streamPackageId || S.streamPackageCplPath !== S.cplPath) {
+      const op = await eng.openPackage(S.cplPath);
+      if (!op || !op.ok || !op.packageId) return false;
+      S.streamPackageId      = op.packageId;
+      S.streamPackageCplPath = S.cplPath;
+    }
+    if (!S.isPlaying) return false;      // user paused while opening
+    const startFrame = (S.displayFrame ?? S.currentFrame ?? 0) | 0;
+    const r = await eng.startPlayback(S.streamPackageId, S.cplId || '', {
+      startFrame, quality: _streamQuality()
+    });
+    if (!r || !r.ok || !r.streamUrl) return false;
+    if (!S.isPlaying) { try { eng.stopPlayback(r.sessionId); } catch {} return false; }
+    S.streamSessionId  = r.sessionId;
+    S.streamStartFrame = startFrame;
+    S.streamStartTs    = performance.now();
+    const canvas = document.getElementById('imfCanvas');
+    if (canvas) canvas.style.visibility = 'hidden';
+    img.style.display = 'block';
+    img.src = r.streamUrl;
+    S.streamMode = true;
+    if (S.streamClockRaf) cancelAnimationFrame(S.streamClockRaf);
+    S.streamClockRaf = requestAnimationFrame(_streamClockTick);
+    try { _emitPlayerState(); } catch {}
+    return true;
+  } catch (e) {
+    console.warn('[IMF] realtime stream unavailable, using per-frame play:', (e && e.message) || e);
+    try { _stopRealtimeStream(); } catch {}
+    return false;
+  }
+}
+
+function _stopRealtimeStream() {
+  if (S.streamClockRaf) { cancelAnimationFrame(S.streamClockRaf); S.streamClockRaf = 0; }
+  const eng = (typeof window !== 'undefined') && window.pfxPlatform && window.pfxPlatform.imfEngine;
+  if (S.streamSessionId && eng && typeof eng.stopPlayback === 'function') {
+    try { eng.stopPlayback(S.streamSessionId); } catch {}
+  }
+  S.streamSessionId = null;
+  if (S.streamImgEl) { try { S.streamImgEl.src = ''; S.streamImgEl.style.display = 'none'; } catch {} }
+  const canvas = document.getElementById('imfCanvas');
+  if (canvas) canvas.style.visibility = '';
+  S.streamMode = false;
+}
+
+// Clock-driven TC/scrubber update while the MJPEG stream paints the <img>.
+// The engine advances frames on its own ffmpeg clock; we estimate the playhead
+// from wall-clock for the timecode + scrubber (monitor-accurate, not the
+// authority for decode). Honors loop + multi-reel auto-advance like playLoop.
+function _streamClockTick() {
+  if (!S.streamMode || !S.isPlaying) return;
+  const fps = S.fps || (S.frameInterval ? 1000 / S.frameInterval : 24) || 24;
+  const elapsed = (performance.now() - S.streamStartTs) / 1000;
+  const f = S.streamStartFrame + Math.floor(elapsed * fps);
+  if (S.totalFrames && f >= S.totalFrames - 1) {
+    const seqBefore = S.loadSeq;
+    S.currentFrame = S.totalFrames - 1;
+    document.dispatchEvent(new CustomEvent('imf:reel-end', {
+      detail: { tcOffset: S.tcOffset, totalFrames: S.totalFrames }
+    }));
+    if (S.loadSeq !== seqBefore) return;   // next reel loaded — bow out
+    if (S.loop) {                          // loop this reel
+      _stopRealtimeStream();
+      S.currentFrame = 0; S.displayFrame = 0;
+      _startRealtimeStream();
+      return;
+    }
+    S.isPlaying = false;                   // last reel — stop at final frame
+    _stopRealtimeStream();
+    const btn = document.getElementById('imfBtnPlay'); if (btn) btn.textContent = '▶';
+    syncSeek();
+    drawFrame();
+    _refineCurrentFrameFullRes();
+    try { _emitPlayerState(); } catch {}
+    return;
+  }
+  S.currentFrame = f;
+  S.displayFrame = f;
+  syncSeek();
+  S.streamClockRaf = requestAnimationFrame(_streamClockTick);
+}
+
 function playLoop(ts) {
   if (!S.isPlaying) return;
   if (!S.totalFrames) {
@@ -2755,6 +3106,15 @@ function syncSeek() {
 }
 
 function seekTo(frame) {
+  // Scrubbing during realtime streaming: drop the stream and pause to a crisp,
+  // frame-accurate decode at the target (resume playback to re-engage realtime).
+  if (S.streamMode) {
+    _stopRealtimeStream();
+    if (S.isPlaying) {
+      S.isPlaying = false;
+      const b = document.getElementById('imfBtnPlay'); if (b) b.textContent = '▶';
+    }
+  }
   S.currentFrame = Math.max(0, Math.min(frame, S.totalFrames - 1));
   S.frameBytes   = null;
   S.frameJ2K     = null;
@@ -2852,11 +3212,16 @@ async function _loadFrameBytes(frame, seq, opts = {}) {
 
     // ── Try WASM HTJ2K decode (OpenJPH) ───────────────────────────────────────
     if (_decodeHTJ2K) {
-      // Stability-first preview path: keep decoder at full resolution and apply
-      // timeline/view scaling in the renderer. Reduced decoder output proved unstable
-      // across HTJ2K preview modes and could oscillate between dark/corrupt frames.
-      const renderScale = 1;// stability-first: always render full-resolution decoded frames; preview mode now affects scheduling only.
-      const decoded = await _decodeHTJ2K(bytes, { scale: 1, fastMode: !!S.isPlaying });
+      // C-RT1b: reduced-resolution DWT decode during continuous playback (the J2K
+      // decode is the real-time bottleneck — full-res can't sustain UHD on CPU, see
+      // PostFlowX_CRT0_Audit.md). The earlier "dark/corrupt/oscillating" instability
+      // was a dims bug in imf_j2k.js (it returned getFrameInfo() FULL dims with a
+      // REDUCED buffer) — now fixed (dims come from calculateSizeAtDecompositionLevel).
+      // Default S.previewScale is 1 (full), so behaviour is unchanged until the user
+      // or the adaptive logic lowers it; pause/scrub always decode full-res.
+      const decodeScale = S.isPlaying ? (S.previewScale || 1) : 1;
+      const renderScale = 1; // canvas/view scaling stays full; decode scale handles reduction.
+      const decoded = await _decodeHTJ2K(bytes, { scale: decodeScale, fastMode: !!S.isPlaying });
       if (seq !== S.loadSeq) return;
 
       if (decoded) {
@@ -3583,6 +3948,10 @@ export function initIMFPlayer() {
   const btnPlay  = document.getElementById('imfBtnPlay');
   const btnPrev  = document.getElementById('imfBtnPrev');
   const btnNext  = document.getElementById('imfBtnNext');
+  const btnStop  = document.getElementById('imfTbStop');
+  const btnRev2  = document.getElementById('imfTbRev2');
+  const btnFwd2  = document.getElementById('imfTbFwd2');
+  const btnLoop  = document.getElementById('imfTbLoop');
   const seek     = document.getElementById('imfSeek');
   const btnClose = document.getElementById('imfPlayerClose');
   const btnHalf  = document.getElementById('imfBtnHalf');
@@ -3602,15 +3971,26 @@ export function initIMFPlayer() {
     S.isPlaying = !S.isPlaying;
     btnPlay.textContent = S.isPlaying ? '⏸' : '▶';
     if (S.isPlaying) {
-      S.lastTs = performance.now();
-      S.playBaseTs = S.lastTs;
-      S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
-      S.currentFrame = (S.displayFrame ?? S.currentFrame);
-      S.droppedFrames = 0;
-      S.lastFrameAdvance = 0;
-      S.scaleRecoveryScore = 0;
-      S.raf = requestAnimationFrame(playLoop);
+      // Prefer the realtime stream engine (one persistent ffmpeg + -lowres).
+      // Fall back to the per-frame decode loop if it can't start.
+      _startRealtimeStream().then((streaming) => {
+        if (streaming || !S.isPlaying) return;
+        // Warm-start the decode resolution from the media's dimensions so heavy
+        // media (HD/UHD) plays smoothly from frame 1 rather than stuttering at
+        // full-res until the reactive controller catches up. Auto/Realtime only;
+        // scrub/pause stay full-res (decodeScale forces 1 when not playing).
+        _setPreviewScale(_predictInitialPlaybackScale(), 'warm-start');
+        S.lastTs = performance.now();
+        S.playBaseTs = S.lastTs;
+        S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
+        S.currentFrame = (S.displayFrame ?? S.currentFrame);
+        S.droppedFrames = 0;
+        S.lastFrameAdvance = 0;
+        S.scaleRecoveryScore = 0;
+        S.raf = requestAnimationFrame(playLoop);
+      });
     } else {
+      if (S.streamMode) _stopRealtimeStream();
       cancelAnimationFrame(S.raf);
       drawFrame();
       // Playback decoded reduced-res preview frames — refine the paused frame to full res.
@@ -3635,6 +4015,50 @@ export function initIMFPlayer() {
       return;
     }
     if (S.totalFrames) { pausePlayer(); seekTo(S.currentFrame + 1); }
+  };
+
+  if (btnStop) btnStop.onclick = () => {
+    pausePlayer();
+    if (S.proxyMode && S.proxyVideoEl) {
+      try { S.proxyVideoEl.pause(); } catch {}
+      S.proxyVideoEl.currentTime = 0;
+      syncSeek();
+      return;
+    }
+    if (S.totalFrames) seekTo(0);
+    drawFrame();
+  };
+
+  if (btnRev2) btnRev2.onclick = () => {
+    const step = Math.max(1, Math.round(S.fps || 24));
+    pausePlayer();
+    if (S.proxyMode && S.proxyVideoEl) {
+      S.proxyVideoEl.currentTime = Math.max(0, (S.proxyVideoEl.currentTime || 0) - 1);
+      syncSeek();
+      return;
+    }
+    if (S.totalFrames) seekTo(S.currentFrame - step);
+  };
+
+  if (btnFwd2) btnFwd2.onclick = () => {
+    const step = Math.max(1, Math.round(S.fps || 24));
+    pausePlayer();
+    if (S.proxyMode && S.proxyVideoEl) {
+      const dur = Number.isFinite(S.proxyVideoEl.duration) ? S.proxyVideoEl.duration : Number.POSITIVE_INFINITY;
+      S.proxyVideoEl.currentTime = Math.min(dur, (S.proxyVideoEl.currentTime || 0) + 1);
+      syncSeek();
+      return;
+    }
+    if (S.totalFrames) seekTo(S.currentFrame + step);
+  };
+
+  if (btnLoop) btnLoop.onclick = () => {
+    S.loop = !S.loop;
+    btnLoop.classList.toggle('is-active', !!S.loop);
+    btnLoop.setAttribute('aria-pressed', S.loop ? 'true' : 'false');
+    if (S.proxyMode && S.proxyVideoEl) {
+      try { S.proxyVideoEl.loop = !!S.loop; } catch {}
+    }
   };
 
   if (btnHalf) btnHalf.onclick = () => {
@@ -3837,6 +4261,52 @@ export function initIMFPlayer() {
         .catch(err => console.warn('[IMF] Clipboard write failed:', err));
     }
   });
+
+  // ── Compare split-divider drag (Sprint 5 #3) ────────────────────────────────
+  // Drag the divider to wipe the split. Only grabs within 14px of the divider so
+  // it never swallows clicks elsewhere (e.g. the decode-diagnostic button above).
+  let _splitDragging = false;
+  const _splitFracFromEvent = (e) => {
+    const r = S._compareRect;
+    if (!r || !r.dw) return null;
+    const rect = S.canvas.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) * (S.canvas.width / rect.width);
+    return Math.min(1, Math.max(0, (cx - r.dx) / r.dw));
+  };
+  const _nearDivider = (e) => {
+    const r = S._compareRect;
+    if (!r || !r.dw) return false;
+    const rect = S.canvas.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) * (S.canvas.width / rect.width);
+    return Math.abs(cx - (r.dx + r.dw * S.compareSplit)) <= 14;
+  };
+  S.canvas.addEventListener('pointerdown', (e) => {
+    if (!S.compareEnabled || S.compareMode !== 'split' || !S.compareBitmap) return;
+    if (!_nearDivider(e)) return;
+    _splitDragging = true;
+    S.canvas.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  S.canvas.addEventListener('pointermove', (e) => {
+    if (_splitDragging) {
+      const f = _splitFracFromEvent(e);
+      if (f != null) { S.compareSplit = f; drawFrame(); }
+      return;
+    }
+    // Hover affordance: show the resize cursor only near the divider.
+    if (S.compareEnabled && S.compareMode === 'split' && S.compareBitmap) {
+      S.canvas.style.cursor = _nearDivider(e) ? 'ew-resize' : '';
+    } else if (S.canvas.style.cursor === 'ew-resize') {
+      S.canvas.style.cursor = '';
+    }
+  });
+  const _endSplitDrag = (e) => {
+    if (!_splitDragging) return;
+    _splitDragging = false;
+    try { S.canvas.releasePointerCapture?.(e.pointerId); } catch {}
+  };
+  S.canvas.addEventListener('pointerup', _endSplitDrag);
+  S.canvas.addEventListener('pointercancel', _endSplitDrag);
 
   const ro = new ResizeObserver(() => {
     resizeCanvas();
@@ -4062,6 +4532,7 @@ function pausePlayer() {
   }
   if (S.isPlaying) {
     S.isPlaying = false;
+    if (S.streamMode) _stopRealtimeStream();
     cancelAnimationFrame(S.raf);
     _audStop();
     S.playBaseTs = 0;

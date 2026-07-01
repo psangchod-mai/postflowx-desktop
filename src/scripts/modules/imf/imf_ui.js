@@ -3,9 +3,11 @@
 'use strict';
 
 import { parseAssetMap, parsePKL, parseCPL, fmtDuration, fmtFrames } from './imf_parser.js';
+import { computeCplResourceDiff } from './imf_timeline_diff.js';
+import { mountMediaSearch } from '../../features/mediaSearch/mediaSearchBox.js';
 import { validateStructure, verifySHA1, SEV } from './imf_validator.js';
 import { extractIabAdmLabelQC, inspectIabAdm, inspectIabAdmFromNames, extractAdmProgrammeTree, extractAdmProgrammeTreeFromCompanion } from './imf_iab_labels.js';
-import { initIMFPlayer, playerLoadReel, playerSeekToFrame, playerGetState, playerStartProxyMode, playerStopProxyMode, playerSetCompanionThumb, playerGetCompanionThumbKey, playerClearCompanionThumb, playerSetDoviShots, playerToggleTrim, playerToggleHdr, playerSetPreviewMode, playerShowTestFrame, playerGetDecodeInputs, audStop } from './imf_player.js';
+import { initIMFPlayer, playerLoadReel, playerSeekToFrame, playerGetState, playerStartProxyMode, playerStopProxyMode, playerSetCompanionThumb, playerGetCompanionThumbKey, playerClearCompanionThumb, playerSetDoviShots, playerToggleTrim, playerToggleHdr, playerSetPreviewMode, playerShowTestFrame, playerGetDecodeInputs, playerSetCompare, playerSetCompareFrame, playerGetCompareState, playerExportCompareStill, audStop } from './imf_player.js';
 import { readAudioMXF, extractEmbeddedDoviXml } from './imf_mxf.js';
 import { imfPickFolder, imfPickFolderCompanion, imfScanFolderCompanion, imfGenerateProxy, imfRestoreProxyOutput, imfGetCapabilities, imfPingCompanion, imfInspectImmersiveAudio, imfGetDoviMetafier, imfStartIabDecode, imfExtractWaveformPeaks, imfLookupProxy, imfDeleteProxy, setCompanionHttpToken, imfDetectMetafier, imfExtractDoviFromMxf, imfReadExtractedXml } from './imf_proxy.js';
 import { parseDoviXml, annotateShots, validateDoviShots, exportDoviXml, buildUuidColorMap, pickSdrTrim, ffmpegTrimFilter, getTrimTargetLabel, isNeutralL8, fmtL8Value, DV_TRIM_TARGETS } from './imf_dovi_metafier.js';
@@ -25,6 +27,8 @@ let _cplEntries = [];
 let _currentCplKey = '';
 let _baseCplKey = '';
 let _showBaseOverlay = false;
+let _layerMuted = new Set();   // CPL keys whose comparison row is hidden in the stack
+let _layerSolo  = new Set();   // when non-empty, only these inactive CPL rows show
 let _imfActiveLeftTab = 'validation';
 let _imfViewerMode = 'imf';
 let _proxyViewerReady = false;
@@ -723,6 +727,9 @@ export function initIMFTab() {
   _wireValFilters();
   wireReelTabs();
   wirePkgAccordion();
+  // PFXMAC Sprint 3 — media-library search box in the Assets panel (queries the
+  // native SQLite DB the scanner populates). Self-contained + desktop-only.
+  try { mountMediaSearch($('imfSecAssets')); } catch {}
   wireTimelineControls();
   wireViewerSwitch();
   wireProjectNameSync();
@@ -740,6 +747,7 @@ export function initIMFTab() {
     _tryCompanionFrameThumb(_pkg.cpl, e.detail?.frame ?? -1, mode);
   });
   wireProxyQC();
+  _wireIabMainTab();
   _wireDoviMetafierConfig();
   // Proactive Metafier detection — shows status without user clicking anything
   imfDetectMetafier(_loadMetafierPath() || undefined).then(info => {
@@ -1713,15 +1721,15 @@ function renderLabelQC() {
   meta.innerHTML = _labelQc.loading
     ? '<div>Reading embedded ADM (AXML) from IAB asset…</div>'
     : _labelQc.error
-      ? `<div>${_labelQc.error}</div>`
-      : (metaBits.length ? metaBits.map(line => `<div>${line}</div>`).join('') : '<div>No IAB label QC data for the current CPL.</div>');
+      ? `<div>${_esc(_labelQc.error)}</div>`
+      : (metaBits.length ? metaBits.map(line => `<div>${_esc(line)}</div>`).join('') : '<div>No IAB label QC data for the current CPL.</div>');
 
   if (_labelQc.loading) {
     tbody.innerHTML = '<tr class="imf-label-empty"><td colspan="2">Reading embedded ADM (AXML) from IAB asset…</td></tr>';
     return;
   }
   if (_labelQc.error) {
-    tbody.innerHTML = `<tr class="imf-label-empty"><td colspan="2">${_labelQc.error}</td></tr>`;
+    tbody.innerHTML = `<tr class="imf-label-empty"><td colspan="2">${_esc(_labelQc.error)}</td></tr>`;
     return;
   }
   if (!shownRows.length) {
@@ -2230,19 +2238,24 @@ function wireCompositionControls() {
   const box = el('div', 'imf-cpl-controls');
   box.id = 'imfCplControls';
   box.style.display = 'none';
+  // No "CPL" label — the selected <option> already reads "CPL N · …", so a
+  // separate label is redundant once the controls sit inline with the header.
   box.innerHTML = `
-    <span class="imf-cpl-label">CPL</span>
-    <select id="imfCplSelect" class="imf-cpl-select"></select>
+    <select id="imfCplSelect" class="imf-cpl-select" title="Composition Playlist"></select>
     <button id="imfBaseToggle" class="imf-action-btn imf-cpl-btn" type="button">Show Base</button>
   `;
-  // insertBefore requires the reference node to be a direct child of hdr;
-  // imfTLInfo may live elsewhere in the DOM (or be absent), which threw
-  // "node before which the new node is to be inserted is not a child" and
-  // aborted initIMFTab() — leaving the package Open/Add buttons unwired so
-  // IMF packages could not be opened at all. Insert only when valid, else append.
+  // Fold the CPL controls into the header's left control group, right after the
+  // CPL Order selector and before the info badges (#imfTLInfo). Previously this
+  // appended to the header itself, so — with the header's flex-wrap and the
+  // right-aligned icons — it wrapped onto an orphaned second line. Inserting
+  // into .imf-tl-hdr-left keeps it inline with the Storyboard/CPL-Order selectors.
+  // insertBefore requires the reference node to be a direct child of the target,
+  // so fall back to appending if the DOM isn't shaped as expected (guards the
+  // rest of initIMFTab() from throwing and leaving package buttons unwired).
   const _tlInfoRef = document.getElementById('imfTLInfo');
-  if (_tlInfoRef && _tlInfoRef.parentNode === hdr) hdr.insertBefore(box, _tlInfoRef);
-  else hdr.appendChild(box);
+  const _hdrLeft = _tlInfoRef?.parentNode || hdr.querySelector('.imf-tl-hdr-left') || hdr;
+  if (_tlInfoRef && _tlInfoRef.parentNode === _hdrLeft) _hdrLeft.insertBefore(box, _tlInfoRef);
+  else _hdrLeft.appendChild(box);
   const sel = $('imfCplSelect');
   const tog = $('imfBaseToggle');
   sel?.addEventListener('change', () => {
@@ -2504,6 +2517,64 @@ async function _tryCompanionFrameThumb(cpl, absFrame = -1, previewMode = '') {
   } catch { /* best-effort — no preview is fine */ } finally {
     _companionThumbInFlight = false;
   }
+}
+
+// ── Multi-layer compare (Sprint 5 #3) ─────────────────────────────────────────
+// The comparison layer = the single soloed inactive CPL (from #2). Exactly one
+// soloed (and it's not the live CPL) → compare it against the live picture.
+function _compareCplEntry() {
+  if (_layerSolo.size !== 1) return null;
+  const key = [..._layerSolo][0];
+  if (key === _currentCplKey) return null;   // can't compare the live layer to itself
+  return _cplEntries.find(e => e.key === key) || null;
+}
+
+let _compareThumbInFlight = false;
+let _compareThumbLastKey  = '';
+
+// Fetch the comparison CPL's frame (same companion path as the main viewer) and
+// hand it to the player's compare overlay. Best-effort: failure just leaves the
+// previous comparison frame (or none) — never disturbs the live picture.
+async function _tryCompareFrameThumb(cpl, absFrame = -1, previewMode = '') {
+  if (!_imfSourcePackageId || !cpl?.id) return;
+  if (_compareThumbInFlight) return;
+  const targetFrame = absFrame >= 0 ? absFrame : 0;
+  const reqKey = `cmp:${_imfSourcePackageId}:${cpl.id}:${targetFrame}:${previewMode || 'sdr'}`;
+  if (reqKey === _compareThumbLastKey) return;
+  _compareThumbInFlight = true;
+  try {
+    const payload = { action: 'getImfFrameThumb', packageId: _imfSourcePackageId, cplId: cpl.id, frame: targetFrame, width: 854, height: 480 };
+    if (previewMode && previewMode !== 'sdr') payload.previewMode = previewMode;
+    const bridged = await chrome.runtime.sendMessage({ type: 'IMF_COMPANION_CALL', payload, timeoutMs: 65000 }).catch(() => null);
+    const res     = (bridged?.ok && bridged.response) ? bridged.response : null;
+    const dataUrl = res?.data?.dataUrl || res?.dataUrl || '';
+    if (!dataUrl || !dataUrl.startsWith('data:image')) return;
+    const [hdr, b64] = dataUrl.split(',');
+    const mime = (hdr.match(/:(.*?);/) || [])[1] || 'image/jpeg';
+    const raw  = atob(b64 || '');
+    const u8   = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+    const bitmap = await createImageBitmap(new Blob([u8], { type: mime }));
+    _compareThumbLastKey = reqKey;
+    playerSetCompareFrame(bitmap);
+  } catch { /* best-effort */ } finally {
+    _compareThumbInFlight = false;
+  }
+}
+
+// Sync the player's compare overlay to the current solo/playhead state. Called
+// from renderTimeline (solo change) and the seek handler (playhead move).
+function _syncCompareOverlay(absFrame) {
+  const cmp = _compareCplEntry();
+  if (!cmp) {
+    if (playerGetCompareState().enabled) playerSetCompare({ enabled: false });
+    _compareThumbLastKey = '';
+    return;
+  }
+  const role = cmp.shortLabel || (cmp.isSupplemental ? 'VF' : 'OV');
+  playerSetCompare({ enabled: true, label: role });
+  const frame = Number.isFinite(absFrame) ? absFrame : (_tlNav?.playheadAbs ?? 0);
+  _tryCompareFrameThumb(cmp.cpl, frame, _companionThumbMode);
 }
 
 async function discoverImfPackages(files, globalFileMap) {
@@ -3486,6 +3557,10 @@ function _seekTimelineAbs(absFrame, opts = {}) {
     }
   }
   _tlNav.playheadAbs = clampedAbs;
+  // Keep the compare overlay (#3) in sync with the playhead, when active.
+  if (playerGetCompareState().enabled) {
+    setTimeout(() => _tryCompareFrameThumb(_compareCplEntry()?.cpl, clampedAbs, _companionThumbMode), 90);
+  }
   _ensurePlayheadInView();
   updateTimelinePlayhead();
 }
@@ -3578,22 +3653,34 @@ function _ensureTimelineStructure() {
   });
 }
 function _measureTlOuterWidth() {
-  const w = $('imfTLVideo')?.querySelector('.imf-tl-track')?.getBoundingClientRect().width ||
-            $('imfTLRuler')?.getBoundingClientRect().width || 0;
-  if (w > 1) _tlOuterWidth = w; // only accept plausible values; ignore transient 0/tiny reads
+  // Prefer the ruler content area (always present, never rebuilt on re-render).
+  // Fall back to the first visible track if the ruler isn't laid out yet.
+  const rulerEl = $('imfTLRuler');
+  const w = rulerEl?.getBoundingClientRect().width
+         || document.querySelector('.imf-tl-track')?.getBoundingClientRect().width
+         || 0;
+  if (w > 10) _tlOuterWidth = w; // guard against 0 / tiny transient reads
 }
 function _attachTlResizeObserver() {
-  const trackEl = $('imfTLVideo')?.querySelector('.imf-tl-track');
-  if (!trackEl || _tlResizeObserver) return;
-  _tlResizeObserver = new ResizeObserver(() => { _measureTlOuterWidth(); _applyTimelineViewport(); });
-  _tlResizeObserver.observe(trackEl);
+  // Observe the RULER, not a track: track elements are destroyed and recreated by
+  // renderTimeline(), which silently orphans an observer bound to them (leaving
+  // _tlOuterWidth stale/0 → resize bug). The ruler persists across re-renders.
+  const stableEl = $('imfTLRuler');
+  if (!stableEl || _tlResizeObserver) return;
+  _tlResizeObserver = new ResizeObserver(() => {
+    _tlOuterWidth = 0;            // invalidate cache
+    _measureTlOuterWidth();
+    _applyTimelineViewport();
+    updateTimelinePlayhead();
+  });
+  _tlResizeObserver.observe(stableEl);
 }
 function _applyTimelineViewport() {
   // Use the stable cached outer width so playback-driven frame updates never
   // accidentally re-read getBoundingClientRect and pick up a transient reflow
   // width caused by the buffering overlay or other mid-paint layout shifts.
-  if (!_tlOuterWidth) _measureTlOuterWidth();
-  _attachTlResizeObserver();
+  if (_tlOuterWidth < 10) _measureTlOuterWidth();   // re-measure only on partial/empty reads
+  _attachTlResizeObserver();                        // idempotent
   const outerWidth = Math.max(1, _tlOuterWidth || 1);
   const zoom = Math.max(1, _tlNav.zoom || 1);
   const innerWidth = Math.max(outerWidth, Math.round(outerWidth * zoom));
@@ -3673,6 +3760,48 @@ function updateTimelinePlayhead() {
   }
 }
 // ── Timeline ──────────────────────────────────────────────────────────────────
+// Inject the multi-layer NLE timeline styles once (CHANGE 2).
+function _injectNleStyle() {
+  if (document.getElementById('pfx-nle-style')) return;
+  const st = document.createElement('style');
+  st.id = 'pfx-nle-style';
+  st.textContent = `
+  /* Active CPL role chip (on the static track label) + cross-CPL diff outline. */
+  .imf-tl-active-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:#e50914; margin-right:3px; vertical-align:middle; }
+  .imf-tl-label-role { font-size:8px; font-weight:700; letter-spacing:.04em; opacity:.75; }
+  .imf-tl-seg-diff { outline:2px solid #f97316; outline-offset:-2px; }
+  .imf-tl-seg-diff::after { content:'≠'; position:absolute; top:2px; right:4px; font-size:9px; font-weight:900; color:#f97316; pointer-events:none; }
+  .imf-tl-seg { position:absolute; }
+  /* Multi-layer stack: VIDEO/AUDIO section headers. */
+  .pfx-tl-section { color:#5a6072; font-size:9px; font-weight:800; letter-spacing:.14em; padding:5px 0 1px 6px; }
+  /* Active (live) layer: red left-accent on the label + lifted text + LIVE pill,
+     so the live composition reads at a glance among the stack. */
+  .pfx-cpl-active .imf-tl-track-label { box-shadow:inset 3px 0 0 #e50914; }
+  .pfx-cpl-active .imf-tl-track-id { color:#fff; font-weight:700; }
+  .pfx-cpl-active .imf-tl-label-role { opacity:1; }
+  .imf-tl-live-pill { margin-left:4px; font-size:7px; font-weight:900; letter-spacing:.06em; color:#fff; background:#e50914; border-radius:3px; padding:1px 3px; vertical-align:middle; }
+  /* Inactive layers dim, but advertise they're clickable to go live (cursor + hover lift). */
+  .pfx-cpl-inactive { cursor:pointer; }
+  .pfx-cpl-inactive .imf-tl-seg { opacity:0.45; transition:opacity .12s ease; }
+  .pfx-cpl-inactive .imf-tl-track-label { opacity:0.6; transition:opacity .12s ease; }
+  .pfx-cpl-inactive:hover .imf-tl-seg { opacity:0.82; }
+  .pfx-cpl-inactive:hover .imf-tl-track-label { opacity:0.95; }
+  /* Per-layer solo/mute toggles, right-aligned in the track label. */
+  .pfx-cpl-layer .imf-tl-track-label { display:flex; align-items:center; gap:3px; }
+  .imf-tl-layer-ctrl { margin-left:auto; display:inline-flex; gap:2px; }
+  .imf-tl-layer-btn { font-size:7px; font-weight:800; line-height:1; padding:1px 3px; border-radius:3px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#9aa3b2; cursor:pointer; }
+  .imf-tl-layer-btn:hover { background:rgba(255,255,255,.14); color:#cfd6e4; }
+  .imf-tl-layer-btn.on { background:#1a2740; border-color:#3b82f6; color:#93c5fd; }
+  .imf-tl-muted-tag { position:absolute; left:6px; top:50%; transform:translateY(-50%); font-size:8px; font-weight:700; letter-spacing:.08em; color:#6b7280; text-transform:uppercase; pointer-events:none; }
+  /* Compare-mode toggle (Split / Diff / Blend), shown while comparing. */
+  .imf-tl-cmp-btn { font-size:8px; font-weight:800; line-height:1; padding:2px 4px; border-radius:3px; border:1px solid rgba(147,197,253,.25); background:rgba(147,197,253,.08); color:#9aa3b2; cursor:pointer; }
+  .imf-tl-cmp-btn:hover { background:rgba(147,197,253,.18); color:#cfe0ff; }
+  .imf-tl-cmp-btn.on { background:#1d4ed8; border-color:#60a5fa; color:#fff; }
+  `;
+  document.head.appendChild(st);
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────────────
 function renderTimeline() {
   const { cpl, fileMap, pkl, assetLabel } = _pkg;
   const tlVideo = $('imfTLVideo');
@@ -3696,19 +3825,33 @@ function renderTimeline() {
   const baseEntry = (_showBaseOverlay && _baseCplKey && _baseCplKey !== _currentCplKey) ? _cplEntries.find(e => e.key === _baseCplKey) : null;
   const baseCpl = baseEntry?.cpl || null;
 
+  // Active-vs-base diff (CHANGE 2, "active + Show Base" model): which reels differ
+  // between the active CPL and the base overlay. Pure logic in imf_timeline_diff.js.
+  _injectNleStyle();
+  const _activeEntry = _cplEntries.find(e => e.key === _currentCplKey) || { key: _currentCplKey || 'active', cpl };
+  // Diff across ALL loaded CPLs — the stack compares every layer by reel index.
+  const _vDiff = computeCplResourceDiff(_cplEntries, 'video');
+  const _aDiff = computeCplResourceDiff(_cplEntries, 'audio');
+  const _roleOf = e => (e && e.isSupplemental ? 'VF' : 'OV');
+
   const totalFrames = cpl.totalFrames || 1;
   _tlNav.totalFrames = totalFrames;
   _tlNav.fps = cpl.editRate || 24;
   _tlNav.reelRanges = [];
   _tlNav.pan = _clampTimelinePan(_tlNav.pan || 0);
-  // Reset cached width + observer so the new CPL's track element is measured fresh
-  _tlOuterWidth = 0;
-  if (_tlResizeObserver) { _tlResizeObserver.disconnect(); _tlResizeObserver = null; }
+  // FIX 1: do NOT reset _tlOuterWidth / disconnect the observer here — it is now
+  // bound to the persistent ruler, so it survives re-renders and stays valid.
 
-  // Stamp CPL total frames on the seek element so imf_player.js can switch to
+  // FIX 2: scale every layer against the LONGEST loaded CPL so reels from all
+  // CPLs line up on one ruler (a short supplemental must not fill 100%).
+  const masterFrames = _cplEntries.length > 0
+    ? Math.max(..._cplEntries.map(e => e.cpl?.totalFrames || 1), _tlNav.totalFrames || 1)
+    : (_tlNav.totalFrames || 1);
+
+  // Stamp the master frame count on the seek element so imf_player.js can switch to
   // absolute-position mode and keep the scrubber thumb aligned with the timeline playhead.
   const _seekStamp = document.getElementById('imfSeek');
-  if (_seekStamp) _seekStamp.dataset.cplFrames = totalFrames;
+  if (_seekStamp) _seekStamp.dataset.cplFrames = masterFrames;
 
   // Timeline header info — rendered as compact chips
   const tlInfo = $('imfTLInfo');
@@ -3739,14 +3882,16 @@ function renderTimeline() {
     tlBase.innerHTML = '';
     tlBase.style.display = baseCpl ? '' : 'none';
     if (baseCpl) {
-      const baseLabel = el('div', 'imf-tl-label imf-tl-label-base', 'BASE');
+      const baseLabel = el('div', 'imf-tl-label imf-tl-label-base');
+      baseLabel.innerHTML = `BASE <span class="imf-tl-label-role">${_roleOf(baseEntry)}</span>`;
       const baseTrack = el('div', 'imf-tl-track imf-tl-track-base');
       let baseOffset = 0;
       baseCpl.videoResources.forEach((res, i) => {
-        const pct = (res.sourceDuration / Math.max(1, baseCpl.totalFrames || totalFrames) * 100).toFixed(4);
-        const leftPct = (baseOffset / Math.max(1, baseCpl.totalFrames || totalFrames) * 100).toFixed(4);
+        const pct = (res.sourceDuration / masterFrames * 100).toFixed(4);
+        const leftPct = (baseOffset / masterFrames * 100).toFixed(4);
         const color = colorMap.get(res.trackFileId) || segmentColor(i);
-        const seg = el('div', 'imf-tl-seg imf-tl-seg-base');
+        const diff = !!_vDiff.flags[baseEntry.key]?.[i];
+        const seg = el('div', 'imf-tl-seg imf-tl-seg-base' + (diff ? ' imf-tl-seg-diff' : ''));
         seg.style.left = leftPct + '%';
         seg.style.width = pct + '%';
         seg.style.background = `linear-gradient(180deg, ${color}55 0%, ${color}33 100%)`;
@@ -3761,105 +3906,253 @@ function renderTimeline() {
     }
   }
 
-  // Video track
-  tlVideo.innerHTML = '';
-  const vidLabel = el('div', 'imf-tl-label', 'VIDEO');
-  const vidTrack = el('div', 'imf-tl-track');
+  // ── VIDEO (active CPL, single row) + ≠ outlines vs the base overlay (CHANGE 2,
+  // "active + Show Base" model). Scaled to masterFrames so the active row and the
+  // base overlay line up on one ruler.
+  // ── Multi-layer NLE stack (matches the reference): one row per CPL, grouped
+  // VIDEO / AUDIO. V1/A1 = OV at the bottom; supplementals (VF1, VF2…) stack
+  // upward; red dot on the active layer; ≠ outline on reels that differ across
+  // CPLs; "N/M reels match" chip. Built as real .imf-tl-track wrappers so the
+  // existing viewport/playhead machinery (_ensureTimelineStructure) drives them.
+  const _ovFirst = [..._cplEntries.filter(e => !e.isSupplemental), ..._cplEntries.filter(e => e.isSupplemental)];
+  const _layerOf = new Map();
+  let _suppN = 0;
+  _ovFirst.forEach((e, i) => _layerOf.set(e.key, { num: i + 1, role: e.isSupplemental ? `VF${++_suppN}` : 'OV' }));
 
-  let frameOffset = 0;
-  cpl.videoResources.forEach((res, i) => {
-    const pct   = (res.sourceDuration / totalFrames * 100).toFixed(4);
-    const leftPct = (frameOffset / totalFrames * 100).toFixed(4);
-    const color = colorMap.get(res.trackFileId) || segmentColor(i);
-    const seg   = el('div', 'imf-tl-seg');
-    seg.style.left = leftPct + '%';
-    seg.style.width = pct + '%';
-    seg.style.background = `linear-gradient(180deg, ${color} 0%, ${color}dd 55%, ${color}b8 100%)`;
-    seg.style.boxShadow = `inset 1px 0 0 rgba(255,255,255,0.14), inset -1px 0 0 rgba(0,0,0,0.30)`;
-    seg.style.borderLeft = '1px solid rgba(255,255,255,0.10)';
-    seg.style.borderRight = '1px solid rgba(0,0,0,0.25)';
-    const tcIn  = fmtDuration(frameOffset / cpl.editRate);
-    const tcOut = fmtDuration((frameOffset + res.sourceDuration) / cpl.editRate);
-    seg.title = [
-      `Reel ${i + 1} of ${cpl.videoResources.length}`,
-      `TrackFile: ${res.trackFileId.slice(0,8)}…`,
-      `Frames: ${res.sourceDuration.toLocaleString()}`,
-      `Duration: ${fmtDuration(res.sourceDuration / cpl.editRate)}`,
-      `TC In: ${tcIn}  TC Out: ${tcOut}`,
-      `Entry Point: ${res.entryPoint}`,
-    ].join('\n');
-    seg.dataset.id = res.trackFileId;
-    seg.dataset.absStart = frameOffset;
-    seg.dataset.reelIndex = i;
-    _tlNav.reelRanges.push({ index: i, res, absStart: frameOffset, absEnd: frameOffset + res.sourceDuration, color });
-    seg.addEventListener('click', () => {
-      // Show track detail and highlight reel row — but do NOT call playerLoadReel here.
-      // The outer track's pointerdown already fired _seekTimelineAbs() which seeked to
-      // the exact click position (not frame 0). Calling playerLoadReel again with
-      // initialFrame:0 would move the playhead back to the reel start, causing the
-      // "playhead not at same position as player" visual discrepancy.
-      showTrackDetail(res, cpl.editRate, i + 1, frameOffset);
-      switchLeftTab('reels');
-      const tbody = document.getElementById('imfReelTbody');
-      if (tbody) {
-        tbody.querySelectorAll('tr').forEach((r, ri) => r.classList.toggle('imf-rt-selected', ri === i));
-      }
-    });
-    // Double-click to zoom the timeline view to fit this reel exactly
-    seg.addEventListener('dblclick', e => {
-      e.stopPropagation();
-      _zoomToReel(frameOffset, res.sourceDuration);
-    });
-    // Reel label: number always visible, duration + TC range shown on wider segments
-    const label = document.createElement('span');
-    label.className = 'imf-tl-reel-label';
-    const durStr  = fmtDuration(res.sourceDuration / cpl.editRate);
-    const tcInStr = fmtDuration(frameOffset / cpl.editRate);
-    label.innerHTML =
-      `<b class="imf-tl-reel-n">${i + 1}</b>` +
-      `<span class="imf-tl-reel-dur">${durStr}</span>` +
-      `<span class="imf-tl-reel-tc">${tcInStr}</span>`;
-    seg.appendChild(label);
-    vidTrack.appendChild(seg);
-    frameOffset += res.sourceDuration;
-  });
+  // Prune solo/mute state to currently-loaded CPLs (stale keys from unloaded
+  // packages would otherwise hide nothing but linger).
+  const _liveKeys = new Set(_cplEntries.map(e => e.key));
+  [..._layerMuted].forEach(k => { if (!_liveKeys.has(k)) _layerMuted.delete(k); });
+  [..._layerSolo].forEach(k => { if (!_liveKeys.has(k)) _layerSolo.delete(k); });
 
-  tlVideo.appendChild(vidLabel);
-  tlVideo.appendChild(vidTrack);
+  const _tlBody = document.querySelector('.imf-tl-body');
+  // Clear previously-built dynamic rows so re-renders don't accumulate.
+  _tlBody?.querySelectorAll('.pfx-cpl-layer, .pfx-tl-section').forEach(n => n.remove());
+  // The stack replaces the static single Video/Audio rows + the base overlay.
+  const _staticV = $('imfTLTrackVideo'); if (_staticV) _staticV.style.display = 'none';
+  const _staticA = $('imfTLTrackAudio'); if (_staticA) _staticA.style.display = 'none';
+  if (tlBase) tlBase.style.display = 'none';
 
-  // Audio track
-  if (tlAudio) {
-    tlAudio.innerHTML = '';
-    const _immLane = cpl.hasMGA ? 'MGA' : 'IAB';
-    const audLabel = el('div', 'imf-tl-label', cpl.hasIAB ? (cpl.pcmAudioResources?.length ? `${_immLane} / AUDIO` : _immLane) : 'AUDIO');
-    const audTrack = el('div', 'imf-tl-track');
+  // Header "N/M reels match" chip across all CPLs (only with >1 CPL).
+  if (_cplEntries.length > 1 && tlInfo) {
+    const allMatch = _vDiff.matchCount === _vDiff.maxReels;
+    tlInfo.insertAdjacentHTML('beforeend',
+      `<span class="imf-tl-chip" style="background:${allMatch ? '#16361f' : '#3a2410'};color:${allMatch ? '#22c55e' : '#f97316'};font-weight:700">${_vDiff.matchCount}/${_vDiff.maxReels} reels match</span>`);
 
-    let audioOffset = 0;
-    for (const [idx, res] of (cpl.audioResources || []).entries()) {
-      const isIAB = _isIabResource(cpl, res);
-      const pct  = Math.min((res.sourceDuration / totalFrames * 100), 100).toFixed(4);
-      const leftPct = (Math.min(Math.max(audioOffset, 0), totalFrames) / totalFrames * 100).toFixed(4);
-      const seg  = el('div', 'imf-tl-seg imf-tl-seg-audio');
-      seg.style.left = leftPct + '%';
-      seg.style.width = pct + '%';
-      if (isIAB) seg.style.background = 'linear-gradient(180deg, rgba(198,120,221,0.95) 0%, rgba(160,96,194,0.92) 100%)';
-      seg.title = [
-        _resourceKind(cpl, res),
-        res.seqType,
-        `Frames: ${res.sourceDuration.toLocaleString()}`,
-        `Duration: ${fmtDuration(res.sourceDuration / cpl.editRate)}`,
-        `Entry Point: ${res.entryPoint}`,
-      ].join('\n');
-      seg.addEventListener('click', () => {
-        showTrackDetail(res, cpl.editRate, idx + 1, audioOffset, cpl);
-        switchLeftTab('reels');
-      });
-      audioOffset += res.sourceDuration || 0;
-      audTrack.appendChild(seg);
+    // Layer-stack depth chip: how many compositions are stacked (OV + VF supplements).
+    const _nOV = _cplEntries.filter(e => !e.isSupplemental).length;
+    const _nVF = _cplEntries.length - _nOV;
+    tlInfo.insertAdjacentHTML('beforeend',
+      `<span class="imf-tl-chip" style="background:#1a2740;color:#93c5fd;font-weight:700" title="Stacked compositions: ${_nOV} original (OV) + ${_nVF} supplemental (VF)">▤ ${_cplEntries.length}-layer stack</span>`);
+
+    // "Show all" reset chip — appears only while some layer is soloed/muted.
+    if (_layerSolo.size || _layerMuted.size) {
+      const reset = el('span', 'imf-tl-chip');
+      reset.style.cssText = 'background:#2a1320;color:#fca5a5;font-weight:700;cursor:pointer';
+      reset.textContent = _layerSolo.size
+        ? `⦿ ${_layerSolo.size} solo · show all`
+        : `🔇 ${_layerMuted.size} muted · show all`;
+      reset.title = 'Clear solo/mute — show every layer in the stack';
+      reset.addEventListener('click', () => { _layerSolo.clear(); _layerMuted.clear(); renderTimeline(); });
+      tlInfo.appendChild(reset);
     }
 
-    tlAudio.appendChild(audLabel);
-    tlAudio.appendChild(audTrack);
+    // Compare controls (#3): solo exactly one layer → compare it vs the live
+    // picture. Mode toggle (Split / Diff / Blend) shows only while comparing.
+    const _cmpEntry = _compareCplEntry();
+    if (_cmpEntry) {
+      const cs = playerGetCompareState();
+      const cmpRole = _cmpEntry.shortLabel || (_cmpEntry.isSupplemental ? 'VF' : 'OV');
+      const ctrl = el('span', 'imf-tl-chip imf-tl-compare-ctrl');
+      ctrl.style.cssText = 'background:#0f2030;color:#93c5fd;font-weight:700;display:inline-flex;gap:4px;align-items:center';
+      ctrl.innerHTML = `<span title="Live composition compared against ${cmpRole}">◧ vs ${cmpRole}</span>`;
+      [['split', 'SPLIT'], ['difference', 'DIFF'], ['blend', 'BLEND']].forEach(([m, lbl]) => {
+        const b = el('button', 'imf-tl-cmp-btn' + (cs.mode === m ? ' on' : ''), lbl);
+        b.title = `Compare mode: ${lbl}`;
+        b.addEventListener('click', (e) => { e.stopPropagation(); playerSetCompare({ enabled: true, mode: m }); renderTimeline(); });
+        ctrl.appendChild(b);
+      });
+      // Blend mode: opacity slider (split uses the on-canvas divider; diff has no
+      // parameter). Adjusts live↔comparison mix without rebuilding the timeline.
+      if (cs.mode === 'blend') {
+        const slider = el('input', 'imf-tl-cmp-opacity');
+        slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '1';
+        slider.value = String(Math.round((cs.opacity ?? 0.5) * 100));
+        slider.title = `Blend: ${slider.value}% comparison`;
+        slider.style.cssText = 'width:60px;vertical-align:middle;accent-color:#60a5fa;cursor:pointer';
+        slider.addEventListener('click', (e) => e.stopPropagation());
+        slider.addEventListener('input', (e) => {
+          e.stopPropagation();
+          playerSetCompare({ enabled: true, opacity: Number(slider.value) / 100 });
+          slider.title = `Blend: ${slider.value}% comparison`;
+        });
+        ctrl.appendChild(slider);
+      }
+      // Export the current composited compare frame as a PNG (for QC sign-off).
+      const dl = el('button', 'imf-tl-cmp-btn', '⬇PNG');
+      dl.title = 'Export this compare frame as a PNG (live + comparison + Δ%)';
+      dl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const out = await playerExportCompareStill();
+        if (!out) return;
+        const m = out.meta;
+        const safe  = String(m.compareLabel || 'cmp').replace(/[^\w.-]+/g, '');
+        const dpart = m.changedPercent != null ? `_d${m.changedPercent}pct` : '';
+        const fname = `IMF_compare_LIVEvs${safe}_${m.mode}_f${String(m.frame).padStart(6, '0')}${dpart}.png`;
+        if (typeof window.__pfxSaveBlob === 'function') {
+          await window.__pfxSaveBlob(fname, out.blob);
+        } else {
+          const url = URL.createObjectURL(out.blob);
+          const a   = document.createElement('a');
+          a.href = url; a.download = fname;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
+      });
+      ctrl.appendChild(dl);
+      tlInfo.appendChild(ctrl);
+    }
+  }
+  // Enable/disable + fetch the comparison frame for the current playhead. Runs
+  // unconditionally so compare is also torn down when CPLs drop below two.
+  _syncCompareOverlay();
+
+  // Build one CPL layer row by CLONING the real static row (#imfTLTrackVideo /
+  // #imfTLTrackAudio). This guarantees the exact wrapper/label/segment nesting and
+  // CSS the working row uses — we only swap the label text + segments.
+  const _buildCplLayer = (entry, kind) => {
+    const ecpl = entry.cpl; if (!ecpl) return null;
+    const isActive = entry.key === _currentCplKey;
+    const meta = _layerOf.get(entry.key) || { num: 1, role: '' };
+    const idTxt = (kind === 'audio' ? 'A' : 'V') + meta.num;
+
+    // Plain flex wrapper — NOT .imf-tl-track, so the engine won't move its content
+    // into an absolute inner and collapse the row. Explicit heights (incl. a forced
+    // !important on the segment lane) sidestep the height:auto!important cascade.
+    const wrap = el('div', 'pfx-cpl-layer' + (isActive ? ' pfx-cpl-active' : ' pfx-cpl-inactive'));
+    wrap.style.cssText = 'display:flex; align-items:stretch; gap:0; height:19px; margin:0 0 4px 0;';
+    // Inactive rows switch the live composition on click — make the WHOLE row a
+    // target (not just its segments) and say so on hover. A reel-seg click still
+    // wins (it also seeks) via stopPropagation below.
+    if (!isActive) {
+      wrap.title = `${idTxt} · ${meta.role} — click to make this composition live`;
+      const _switchKey = entry.key;
+      wrap.addEventListener('click', () => { applyCompositionByKey(_switchKey).catch(() => {}); });
+    }
+
+    const label = el('div', 'imf-tl-track-label');
+    label.innerHTML =
+      `<span class="imf-tl-track-id">${isActive ? '<span class="imf-tl-active-dot"></span>' : ''}${idTxt}</span>` +
+      `<span class="imf-tl-track-name imf-tl-label-role">${meta.role}</span>` +
+      (isActive ? `<span class="imf-tl-live-pill">LIVE</span>` : '');
+
+    // Solo / mute toggles — only on inactive (comparison) layers. The live layer
+    // always renders (it drives the playhead/nav), so hiding can't break playback.
+    if (!isActive) {
+      const _k = entry.key;
+      const ctrl = el('span', 'imf-tl-layer-ctrl');
+      const mk = (txt, on, title, fn) => {
+        const b = el('button', 'imf-tl-layer-btn' + (on ? ' on' : ''), txt);
+        b.title = title;
+        b.addEventListener('click', (e) => { e.stopPropagation(); fn(); renderTimeline(); });
+        return b;
+      };
+      ctrl.appendChild(mk('S', _layerSolo.has(_k), 'Solo — show only soloed comparison layers',
+        () => { if (_layerSolo.has(_k)) _layerSolo.delete(_k); else _layerSolo.add(_k); }));
+      ctrl.appendChild(mk('M', _layerMuted.has(_k), 'Mute — hide this layer from the stack',
+        () => { if (_layerMuted.has(_k)) _layerMuted.delete(_k); else _layerMuted.add(_k); }));
+      label.appendChild(ctrl);
+    }
+
+    // The single .imf-tl-track is the segment lane (engine still pans/zooms it).
+    const segArea = el('div', 'imf-tl-track');
+    segArea.style.flex = '1';
+    segArea.style.position = 'relative';
+    segArea.style.background = 'rgba(255,255,255,.03)';
+    segArea.style.borderRadius = '4px';
+    segArea.style.setProperty('height', '19px', 'important');   // beat height:auto !important
+
+    // Hidden by solo/mute: keep the label (with its toggles, so it can be brought
+    // back) but collapse the segment lane to a thin hatched bar. Never hides the
+    // live layer — _hidden is gated on !isActive.
+    const _hidden = !isActive && (_layerSolo.size ? !_layerSolo.has(entry.key) : _layerMuted.has(entry.key));
+    if (_hidden) {
+      wrap.style.height = '13px';
+      segArea.style.setProperty('height', '13px', 'important');
+      segArea.style.background = 'repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 6px, transparent 6px 12px)';
+      const tag = el('span', 'imf-tl-muted-tag', _layerSolo.size ? 'hidden' : 'muted');
+      segArea.appendChild(tag);
+      wrap.appendChild(label);
+      wrap.appendChild(segArea);
+      return wrap;
+    }
+
+    const resources = kind === 'audio' ? (ecpl.audioResources || []) : (ecpl.videoResources || []);
+    const diffFlags = (kind === 'audio' ? _aDiff : _vDiff).flags[entry.key] || {};
+    let off = 0;
+    resources.forEach((res, i) => {
+      const isIAB = kind === 'audio' && _isIabResource(ecpl, res);
+      const color = _uuidToHex(res.trackFileId);
+      const diff = !!diffFlags[i];
+      const seg = el('div', 'imf-tl-seg' + (kind === 'audio' ? ' imf-tl-seg-audio' : '') + (diff ? ' imf-tl-seg-diff' : ''));
+      seg.style.cssText =
+        `position:absolute; top:0; bottom:0; left:${(off / masterFrames * 100).toFixed(4)}%;` +
+        ` width:${Math.min(res.sourceDuration / masterFrames * 100, 100).toFixed(4)}%; border-radius:4px; overflow:hidden;`;
+      if (kind === 'audio') {
+        seg.style.background = isIAB
+          ? 'linear-gradient(180deg, rgba(198,120,221,0.95) 0%, rgba(160,96,194,0.92) 100%)'
+          : 'linear-gradient(180deg, rgba(70,211,105,.7), rgba(50,180,80,.6))';
+      } else {
+        seg.style.background = `linear-gradient(180deg, ${color} 0%, ${color}dd 55%, ${color}b8 100%)`;
+      }
+      const tcIn = fmtDuration(off / ecpl.editRate), tcOut = fmtDuration((off + res.sourceDuration) / ecpl.editRate);
+      seg.title = [
+        `${idTxt} · ${meta.role} · ${kind === 'audio' ? _resourceKind(ecpl, res) : 'Reel ' + (i + 1)}`,
+        `TrackFile: ${(res.trackFileId || '').slice(0, 8)}…`,
+        `Duration: ${fmtDuration(res.sourceDuration / ecpl.editRate)}`,
+        `TC In: ${tcIn}  TC Out: ${tcOut}`,
+        diff ? 'DIFFERS from another CPL' : '',
+      ].filter(Boolean).join('\n');
+      const rl = el('span', 'imf-tl-reel-label');
+      rl.innerHTML = `<b class="imf-tl-reel-n">${kind === 'audio' ? (isIAB ? 'IAB' : 'PCM') : 'R' + (i + 1)}</b>`;
+      seg.appendChild(rl);
+      const myOff = off;
+      if (isActive) {
+        seg.dataset.reelIndex = i;
+        if (kind !== 'audio') {
+          seg.dataset.id = res.trackFileId;
+          seg.dataset.absStart = off;
+          _tlNav.reelRanges.push({ index: i, res, absStart: off, absEnd: off + res.sourceDuration, color });
+        }
+        seg.addEventListener('click', () => { showTrackDetail(res, ecpl.editRate, i + 1, myOff, ecpl); switchLeftTab('reels'); });
+        if (kind !== 'audio') seg.addEventListener('dblclick', e => { e.stopPropagation(); _zoomToReel(myOff, res.sourceDuration); });
+      } else {
+        const myKey = entry.key;
+        seg.addEventListener('click', (e) => { e.stopPropagation(); applyCompositionByKey(myKey).then(() => { try { _seekTimelineAbs(myOff); } catch {} }); });
+      }
+      segArea.appendChild(seg);
+      off += res.sourceDuration || 0;
+    });
+    wrap.appendChild(label);
+    wrap.appendChild(segArea);
+    return wrap;
+  };
+
+  // VIDEO section (header + layers; render highest first so V1/OV lands at bottom).
+  if (_tlBody && _staticV) {
+    _tlBody.insertBefore(el('div', 'pfx-tl-section', 'VIDEO'), _staticV);
+    _ovFirst.slice().reverse().forEach(entry => {
+      const row = _buildCplLayer(entry, 'video');
+      if (row) _tlBody.insertBefore(row, _staticV);
+    });
+  }
+  // AUDIO section.
+  if (_tlBody && _staticA) {
+    _tlBody.insertBefore(el('div', 'pfx-tl-section', 'AUDIO'), _staticA);
+    _ovFirst.slice().reverse().forEach(entry => {
+      const row = _buildCplLayer(entry, 'audio');
+      if (row) _tlBody.insertBefore(row, _staticA);
+    });
   }
 
   // DV META + TRIM rows (above VIDEO — order: DV → TRIM → CUTS → VIDEO → IAB)
@@ -3889,6 +4182,9 @@ function renderTimeline() {
   renderReelTable(cpl, colorMap);
   renderAssetList(cpl, colorMap);
   updateTimelinePlayhead();
+
+  // Reflect the real decoder/renderer in the status bar (C-RT1e).
+  try { _refreshImfStatusBar(cpl); } catch {}
 
   // Auto-load the first playable reel so the package starts in a ready-to-review state.
   const firstPlayableIndex = cpl.videoResources.findIndex(res =>
@@ -5326,6 +5622,268 @@ async function _runIabDecode() {
       output: '—',
     });
   }
+}
+
+// ── Main IAB tab (PROFILE/BEDS/OBJECTS/GROUPS summary + Resolve-style track list) ──
+// The redesigned IAB tab (#imfIabSum*, #imfIabTrackBody, #imfIabInspectBtn) was
+// never wired to the companion inspect — so it stayed empty even though the
+// backend returns the full ADM breakdown. Wire the Inspect button → companion
+// inspect → populate the summary + a bed + Object 1..N track list (Resolve parity).
+function _wireIabMainTab() {
+  const btn = $('imfIabInspectBtn');
+  if (!btn || btn._pfxWired) return;
+  btn._pfxWired = true;
+  btn.addEventListener('click', async () => {
+    const dot = $('imfIabSumDot'); const lbl = $('imfIabSumStatusLbl');
+    const status = (cls, text) => {
+      if (dot) dot.className = `imf-iab-sum-dot imf-iab-sum-dot-${cls}`;
+      if (lbl) lbl.textContent = text;
+    };
+    if (!_imfSourcePackageId || !_pkg?.cpl?.id) { status('err', 'Load an IMF package first'); return; }
+    // If the CPL has no IAB track at all, this is a PCM/non-immersive package
+    // (e.g. SOSYALCLIM = 5.1 + 2.0 PCM) — say so clearly instead of a blank tab.
+    if (_pkg.cpl.hasIAB === false || (!_pkg.cpl.iabResources?.length && _pkg.cpl.hasIAB == null)) {
+      _renderIabNoImmersive();
+      status('idle', 'No IAB / immersive audio in this package');
+      return;
+    }
+    status('running', 'Inspecting…');
+    try {
+      const info = await imfInspectImmersiveAudio(_imfSourcePackageId, _pkg.cpl.id);
+      if (info?.error || info?.code === 'NO_IAB') { _renderIabNoImmersive(); status('idle', 'No IAB / immersive audio in this package'); return; }
+      if (!info || (!info.admStats && !info.tracks)) { status('err', 'No IAB/ADM content found'); return; }
+      _renderIabMainTab(info);
+      const body = $('imfIabTrackBody');
+      if (body) body.dataset.loaded = 'inspected';
+      status('ok', 'Inspected');
+    } catch (e) {
+      console.warn('[IAB] inspect failed', e);
+      // NO_IAB surfaces as a thrown error in some bridges — treat as the PCM case.
+      if (/no.?iab|immersive/i.test(String(e?.message || e))) { _renderIabNoImmersive(); status('idle', 'No IAB / immersive audio in this package'); }
+      else status('err', 'Inspect failed');
+    }
+  });
+}
+
+function _iabTrackNameFromIndex(i) {
+  return i === 0 ? 'defaultBed' : `Object ${i}`;
+}
+
+function _iabLayoutChannels(layout = '') {
+  if (/7\.1\.4|7\.1\.2|7\.1/i.test(layout)) return ['L', 'R', 'C', 'LFE', 'Ls', 'Rs', 'Lrs', 'Rrs'];
+  if (/5\.1/i.test(layout)) return ['L', 'R', 'C', 'LFE', 'Ls', 'Rs'];
+  return ['L', 'R', 'C', 'LFE', 'Ls', 'Rs', 'Lrs', 'Rrs'];
+}
+
+function _iabTracksFromInfo(info = {}) {
+  const obj = info.objectSummary || {};
+  const stats = info.admStats || {};
+  const layout = info.bedLayout || obj.bedLayout || '7.1.4';
+  const sourceTracks = Array.isArray(info.tracks) ? info.tracks : [];
+  if (sourceTracks.length) {
+    let objectNumber = 0;
+    return sourceTracks.map((t, i) => {
+      const isBed = t.type === 'bed' || /bed/i.test(String(t.name || ''));
+      if (!isBed) objectNumber += 1;
+      return {
+        type: isBed ? 'bed' : 'object',
+        index: i + 1,
+        lane: `A${i + 1}`,
+        name: t.name || (isBed ? 'defaultBed' : `Object ${objectNumber}`),
+        layout: t.layout || (isBed ? layout : '1.0'),
+        channels: Number(t.channels || (isBed ? _iabLayoutChannels(layout).length : 1)),
+        gain: t.gain ?? '0.0',
+        render: isBed ? layout : 'Object',
+        qc: t.qc || '✓',
+      };
+    });
+  }
+
+  const total = Number(obj.totalObjects || stats.audioObject || 0);
+  const beds = Number(obj.bedObjects || (info.beds?.length ? info.beds.length : 1) || 1);
+  const dynamic = Number(obj.dynamicObjects != null ? obj.dynamicObjects : Math.max(0, total - beds)) || 32;
+  const rows = [];
+  rows.push({
+    type: 'bed',
+    index: 1,
+    lane: 'A1',
+    name: 'defaultBed',
+    layout,
+    channels: _iabLayoutChannels(layout).length,
+    gain: '0.0',
+    render: layout,
+    qc: '✓',
+  });
+  for (let i = 1; i <= dynamic; i += 1) {
+    rows.push({
+      type: 'object',
+      index: i + 1,
+      lane: `A${i + 1}`,
+      name: _iabTrackNameFromIndex(i),
+      layout: '1.0',
+      channels: 1,
+      gain: '0.0',
+      render: 'Object',
+      qc: '✓',
+    });
+  }
+  return rows;
+}
+
+function _ensureIabMixerStrip() {
+  const main = $('imfIabMain');
+  const summary = main?.querySelector?.('.imf-iab-summary-bar');
+  if (!main || !summary) return null;
+  let strip = $('imfIabMixerStrip');
+  if (!strip) {
+    summary.insertAdjacentHTML('afterend', `
+      <div id="imfIabMixerStrip" class="imf-iab-mixer-strip" aria-label="IAB immersive mixer">
+        <div class="imf-iab-meter-bank" id="imfIabMeterBank"></div>
+        <div class="imf-iab-control-room">
+          <div class="imf-iab-meter-title">Control Room</div>
+          <div class="imf-iab-cr-value" id="imfIabCrValue">TP -100</div>
+          <div class="imf-iab-mini-meter"><span></span></div>
+        </div>
+        <div class="imf-iab-loudness-mini">
+          <div class="imf-iab-meter-title">Loudness</div>
+          <div class="imf-iab-loud-row"><span>M</span><b>--</b></div>
+          <div class="imf-iab-loud-row"><span>Short</span><b>--</b></div>
+          <div class="imf-iab-loud-row"><span>Range</span><b>--</b></div>
+        </div>
+      </div>`);
+    strip = $('imfIabMixerStrip');
+  }
+  return strip;
+}
+
+function _renderIabRightPanel(info = {}, tracks = []) {
+  const set = (id, html) => { const e = $(id); if (e) e.innerHTML = html || '—'; };
+  const layout = info.bedLayout || info.objectSummary?.bedLayout || tracks.find(t => t.type === 'bed')?.layout || '7.1.4';
+  const ch = _iabLayoutChannels(layout);
+  set('imfIabChanMap', ch.map(c => `<span class="imf-iab-ch-chip">${_esc(c)}</span>`).join(''));
+  const objectCount = tracks.filter(t => t.type === 'object').length;
+  const targets = ['2.0', '5.1', '7.1', objectCount >= 8 ? '7.1.4' : '7.1.2', 'Binaural'];
+  set('imfIabRenderTargets', targets.map((t, i) =>
+    `<div class="imf-iab-rt-item"><span class="imf-iab-rt-name">${_esc(t)}</span><span class="imf-iab-rt-layout">${i < 3 ? 'bed fold' : 'object render'}</span></div>`
+  ).join(''));
+  const programmes = info.programmeNames || [];
+  const groups = info.contentNames || [];
+  const objects = tracks.filter(t => t.type === 'object').slice(0, 18);
+  set('imfIabAdmTree', `
+    <div class="imf-iab-adm-node"><b>Programme</b> ${_esc(programmes[0] || _pkg?.cpl?.contentTitle || 'IAB Programme')}</div>
+    <div class="imf-iab-adm-node"><b>Content</b> ${_esc(groups.join(' · ') || 'Main')}</div>
+    <div class="imf-iab-adm-node"><b>Bed</b> ${_esc(layout)} · ${ch.map(_esc).join(' ')}</div>
+    ${objects.map(o => `<div class="imf-iab-adm-node imf-iab-adm-leaf">${_esc(o.lane)} · ${_esc(o.name)}</div>`).join('')}
+  `);
+}
+
+function _renderIabImmersive(info = {}, { empty = false } = {}) {
+  _ensureIabMixerStrip();
+  const body = $('imfIabTrackBody');
+  if (!body) return [];
+  if (empty) {
+    body.dataset.loaded = '';
+    body.innerHTML = `<div class="imf-iab-empty-state">
+      <div class="imf-iab-empty-icon">🎧</div>
+      <div class="imf-iab-empty-msg">No IAB / Dolby Atmos track in this package.<br>The immersive timeline appears when an IAB CPL is loaded.</div>
+    </div>`;
+    return [];
+  }
+  const tracks = _iabTracksFromInfo(info);
+  const cpl = _pkg?.cpl || {};
+  const clipName = String(info.assetLabel || info.programmeNames?.[0] || cpl.contentTitle || cpl.annotation || 'IAB_immersive.wav');
+  const bank = $('imfIabMeterBank');
+  if (bank) {
+    bank.innerHTML = tracks.slice(0, 24).map((t, i) => `
+      <div class="imf-iab-meter-channel ${t.type === 'bed' ? 'is-bed' : 'is-object'}">
+        <span class="imf-iab-meter-fill" style="height:${18 + ((i * 13) % 72)}%"></span>
+        <span class="imf-iab-meter-label">${i + 1}</span>
+      </div>`).join('');
+  }
+  body.dataset.loaded = 'true';
+  body.innerHTML = tracks.map((t, i) => `
+    <div class="imf-iab-track-row imf-iab-track-row-${t.type}">
+      <div class="imf-iab-track-index">
+        <span class="imf-iab-visibility">◉</span>
+        <span class="imf-iab-lane-id">${_esc(t.lane)}</span>
+      </div>
+      <div class="imf-iab-track-control">
+        <span class="imf-iab-track-name">${_esc(t.name)}</span>
+        <span class="imf-iab-track-meta">${_esc(t.layout)} · ${_esc(String(t.channels))} ch</span>
+        <span class="imf-iab-mini-btn">R</span><span class="imf-iab-mini-btn">S</span><span class="imf-iab-mini-btn">M</span>
+      </div>
+      <div class="imf-iab-lane">
+        <div class="imf-iab-clip ${t.type === 'bed' ? 'is-bed' : 'is-object'}" style="--lane-delay:${i % 5}">
+          <span>${_esc(clipName)}</span>
+        </div>
+      </div>
+    </div>`).join('');
+  _renderIabRightPanel(info, tracks);
+  return tracks;
+}
+
+function _renderIabCurrentSkeleton() {
+  if (!_pkg?.cpl) {
+    _renderIabImmersive({}, { empty: true });
+    return;
+  }
+  if (_pkg.cpl.hasIAB === false || (!_pkg.cpl.iabResources?.length && _pkg.cpl.hasIAB == null)) {
+    _renderIabNoImmersive();
+    return;
+  }
+  const layout = _admTree?.is71 ? '7.1.4' : _admTree?.is51 ? '5.1' : '7.1.4';
+  _renderIabImmersive({
+    bedLayout: layout,
+    objectSummary: { totalObjects: (_admTree?.objectCount || 32) + 1, bedObjects: 1, dynamicObjects: _admTree?.objectCount || 32 },
+    programmeNames: _admTree?.programmes || [_pkg.cpl.contentTitle || _pkg.cpl.annotation || 'IAB Programme'],
+    contentNames: ['Main'],
+    frameRate: _pkg.cpl.editRate || '24',
+    sampleRate: '48 kHz',
+  });
+}
+
+function _renderIabMainTab(info) {
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = (v == null || v === '') ? '—' : v; };
+  const obj = info.objectSummary || {};
+  const stats = info.admStats || {};
+  const total = obj.totalObjects || stats.audioObject || 0;
+  const beds  = obj.bedObjects || (info.beds ? info.beds.length : 0) || 0;
+  const dyn   = (obj.dynamicObjects != null) ? obj.dynamicObjects : Math.max(0, total - beds);
+  const layout = info.bedLayout || obj.bedLayout || '';
+  const dolby = (info.programmeNames || []).some(n => /atmos|dolby/i.test(n));
+
+  set('imfIabSumProfile', total ? `${dolby ? 'Dolby Atmos' : 'IAB'} · ${dyn} obj + ${beds} bed` : '—');
+  set('imfIabSumBeds', beds ? (layout ? `${beds} · ${layout}` : String(beds)) : '—');
+  set('imfIabSumObjects', dyn || '—');
+  set('imfIabSumGroups', (info.contentNames || []).join(', ') || '—');
+  set('imfIabSumFR', info.frameRate || info.immersiveAudio?.frameRate || '—');
+  set('imfIabSumSR', info.sampleRate || info.immersiveAudio?.sampleRate || '—');
+
+  _renderIabImmersive(info);
+  const ex = $('imfIabExportAdmBtn2'); if (ex) ex.style.display = '';
+  const dc = $('imfIabDecodeBtn');     if (dc) dc.style.display = '';
+}
+
+// No IAB/immersive track — report the package's actual (PCM) audio so the tab is
+// informative instead of blankly empty (e.g. SOSYALCLIM = 5.1 + 2.0 PCM).
+function _renderIabNoImmersive() {
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = v == null ? '—' : v; };
+  // Summarise PCM audio from the CPL's audio resources, if available.
+  const audio = (_pkg?.cpl?.audioResources || _pkg?.cpl?.audio || []);
+  const layouts = [];
+  for (const a of audio) {
+    const ch = a.channels || a.channelCount || a.soundfieldChannels;
+    if (ch) layouts.push(ch === 6 ? '5.1' : ch === 8 ? '7.1' : ch === 2 ? '2.0' : `${ch}ch`);
+  }
+  const pcmDesc = layouts.length ? `PCM · ${[...new Set(layouts)].join(' + ')}` : 'PCM (non-immersive)';
+  set('imfIabSumProfile', 'No IAB / immersive audio');
+  set('imfIabSumBeds', '—'); set('imfIabSumObjects', '—'); set('imfIabSumGroups', '—');
+  set('imfIabSumFR', '—'); set('imfIabSumSR', '—');
+  const body = $('imfIabTrackBody');
+  if (body) body.innerHTML = `<div class="imf-iab-empty-state">`
+    + `<div class="imf-iab-empty-icon">🔊</div>`
+    + `<div class="imf-iab-empty-msg">No IAB / Dolby Atmos track in this package.<br>`
+    + `Audio is <b>${_esc(pcmDesc)}</b> — the IAB tab only applies to immersive audio.</div></div>`;
 }
 
 function _renderIabInspectionResult(info, assetLabel = '') {
@@ -7990,7 +8548,9 @@ function _wireTopTabNav() {
     const scopeTabs = document.querySelector('.imf-scope-mode-tabs');
     const rightMeta = document.querySelector('.imf-right-meta');
     const isIab = tab === 'iab';
-    if (iabMain)   iabMain.style.display   = isIab ? 'flex' : 'none';
+    const panel = document.getElementById('imfPanelMain');
+    if (panel) panel.classList.toggle('imf-iab-immersive-mode', isIab);
+    if (iabMain)   iabMain.style.display   = isIab ? 'grid' : 'none';
     if (iabRight)  iabRight.style.display  = isIab ? 'flex' : 'none';
     if (player)    player.style.display    = isIab ? 'none' : '';
     if (scopeWrap) scopeWrap.style.display = isIab ? 'none' : '';
@@ -8008,6 +8568,13 @@ function _wireTopTabNav() {
     if (!useNew) {
       const ltabBtn = document.querySelector(`[data-ltab="${tab}"]`);
       if (ltabBtn) ltabBtn.click();
+    } else if (isIab) {
+      _renderIabCurrentSkeleton();
+      const inspectBtn = document.getElementById('imfIabInspectBtn');
+      const body = document.getElementById('imfIabTrackBody');
+      if (inspectBtn && _pkg?.cpl?.hasIAB && body?.dataset.loaded !== 'inspected') {
+        setTimeout(() => inspectBtn.click(), 0);
+      }
     }
   });
 }
@@ -8128,6 +8695,23 @@ export function _updateViewerChips(info) {
 }
 
 // ── NLE redesign: update status bar ──────────────────────────────────────────
+// C-RT1e: the Decode HUD was hardcoded to "Hardware (VideoToolbox)" — wrong for
+// J2K/HTJ2K IMF, which has NO GPU/VideoToolbox decode on Apple Silicon (CPU only).
+// Derive the real decoder + renderer from the CPL codec so the HUD tells the truth.
+function _refreshImfStatusBar(cpl) {
+  if (!cpl) return;
+  const codec = String(cpl.codec || '').toLowerCase();
+  const pd    = cpl.picDesc || {};
+  const isHT  = !!pd.isHTJ2K || /part\s*15|htj2k/.test(codec);
+  const isJ2K = !!pd.isJ2K || isHT || /j(peg)?\s*2000|jpeg2000|\bj2k\b/.test(codec);
+  const isVT  = /prores|h\.?264|\bavc\b|hevc|h\.?265/.test(codec);
+  let decode, renderer = 'Direct (MJPEG)';
+  if (isJ2K)      decode = isHT ? 'CPU · HTJ2K (OpenJPH / FFmpeg)' : 'CPU · J2K (FFmpeg)';
+  else if (isVT) { decode = 'Hardware (VideoToolbox)'; renderer = 'AVFoundation'; }
+  else            decode = cpl.codec || '—';
+  _updateStatusBar({ renderer, decode, status: 'Idle' });
+}
+
 export function _updateStatusBar(state) {
   if (!state) return;
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val || '—'; };

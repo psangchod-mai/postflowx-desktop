@@ -16,6 +16,125 @@
        references in main.css and its utility classes win the cascade. -->
   <link rel="stylesheet" href="styles/theme.postflowx-pro.css" />
   <link rel="stylesheet" href="scripts/features/aceslook/styles/acesLook.css" />
+  <!-- Inline overrides (load fresh with index.html; Electron caches the linked
+       main.css across reloads, so these guarantee the change shows). VFX Pull:
+       wider SHOT LIST panel + un-truncated shot names (user request). -->
+  <style>
+    #main-prepmark .pfx-vfx-ws-left { width:400px !important; min-width:360px !important; flex:0 0 400px !important; }
+    .pfx-vfx-ws-left { width:400px !important; min-width:360px !important; flex:0 0 400px !important; }
+    .pfx-vfx-ws-left .pfx-vfx-shot-name, .pfx-vfx-shot-name { max-width:320px !important; }
+    [data-pcb-stripped="1"],
+    [data-pfx-resolve-transport] > :not(.pcb-navpod):not([data-pfx-transport-action]),
+    .pfx-rvt-btn[data-act="mute"],
+    .pfx-rvt-btn[data-act="full"],
+    .pfx-rvt-muted-control,
+    .pfx-rvt-full-control {
+      display:none !important; visibility:hidden !important; width:0 !important; min-width:0 !important; max-width:0 !important;
+      height:0 !important; min-height:0 !important; max-height:0 !important; margin:0 !important; padding:0 !important;
+      border:0 !important; opacity:0 !important; overflow:hidden !important; pointer-events:none !important;
+    }
+    [data-pfx-resolve-transport],
+    .pfx-rvt,
+    .sm-anno-transport {
+      background:#202020 !important; border:1px solid #393939 !important; box-shadow:none !important; color:#cfcfcf !important;
+    }
+    [data-pfx-resolve-transport] {
+      height:34px !important; min-height:34px !important; max-height:34px !important;
+      padding:3px 7px !important; gap:9px !important; border-radius:8px !important;
+    }
+    [data-pfx-resolve-transport] > button,
+    [data-pfx-resolve-transport] > [role="button"],
+    .pfx-rvt-btn,
+    .sm-anno-transportBtn,
+    .pcb-navpod-arr,
+    .pcb-scrub-arr {
+      width:30px !important; min-width:30px !important; max-width:30px !important;
+      height:28px !important; min-height:28px !important; max-height:28px !important;
+      padding:0 !important; border-radius:6px !important; background:#292929 !important;
+      border:1px solid #393939 !important; color:#cfcfcf !important; box-shadow:none !important;
+    }
+    [data-pfx-resolve-transport] svg,
+    .pfx-rvt-btn svg,
+    .sm-anno-transportBtn svg,
+    .pcb-navpod-arr svg,
+    .pcb-navpod-dot svg,
+    .pcb-scrub-arr svg,
+    .pcb-scrub-dot svg {
+      width:14px !important; height:14px !important; color:inherit !important; fill:currentColor !important; stroke:currentColor !important;
+    }
+    .pcb-navpod,
+    .pcb-scrub,
+    .pfx-rvt-navpod {
+      width:100px !important; min-width:100px !important; max-width:100px !important;
+      height:30px !important; min-height:30px !important; max-height:30px !important;
+      padding:3px 5px !important; gap:5px !important; border-radius:8px !important;
+      background:#202020 !important; border:1px solid #393939 !important; box-shadow:none !important;
+    }
+    .pcb-navpod-arr,
+    .pcb-scrub-arr,
+    .pfx-rvt-navpod .pfx-rvt-btn {
+      width:26px !important; min-width:26px !important; max-width:26px !important;
+      height:24px !important; min-height:24px !important; max-height:24px !important; border-radius:5px !important;
+    }
+    .pcb-navpod-dot,
+    .pcb-scrub-dot,
+    .pfx-rvt-navpod .pfx-rvt-current {
+      width:24px !important; min-width:24px !important; max-width:24px !important;
+      height:24px !important; min-height:24px !important; max-height:24px !important;
+      background:#252525 !important; border:1px solid #464646 !important; color:#7f7f7f !important;
+      cursor:default !important; pointer-events:none !important; box-shadow:none !important;
+    }
+    [data-pfx-resolve-transport] .rti-active,
+    [data-pfx-resolve-transport] .active,
+    [data-pfx-resolve-transport] .is-active,
+    [data-pfx-resolve-transport] [aria-pressed="true"],
+    .pfx-rvt-btn.active,
+    .pfx-rvt-btn.rti-active {
+      color:#e6e6e6 !important; box-shadow:none !important;
+    }
+    [data-pfx-resolve-transport] [data-pfx-transport-action="loop"].rti-active,
+    [data-pfx-resolve-transport] [data-pfx-transport-action="loop"].active,
+    [data-pfx-resolve-transport] [data-pfx-transport-action="loop"].is-active,
+    [data-pfx-resolve-transport] [data-pfx-transport-action="loop"][aria-pressed="true"],
+    .pfx-rvt-loop.active,
+    .pfx-rvt-loop.rti-active {
+      color:#ff6a00 !important;
+    }
+    .pfx-rvt {
+      display:grid !important; grid-template-rows:16px 30px !important; gap:4px !important;
+      height:58px !important; min-height:58px !important; max-height:58px !important;
+      padding:5px 10px !important; align-items:center !important;
+    }
+    .pfx-rvt-scrub-row {
+      display:grid !important; grid-template-columns:auto minmax(120px,1fr) auto !important;
+      gap:10px !important; align-items:center !important; min-width:0 !important;
+    }
+    .pfx-rvt-control-row {
+      display:flex !important; align-items:center !important; justify-content:center !important;
+      gap:9px !important; min-width:0 !important;
+    }
+    .pfx-rvt-time {
+      display:inline !important; visibility:visible !important; width:auto !important; min-width:48px !important; max-width:none !important;
+      height:auto !important; min-height:0 !important; max-height:none !important; margin:0 !important; padding:0 !important;
+      border:0 !important; opacity:1 !important; overflow:visible !important; pointer-events:none !important;
+      color:#777 !important; font:700 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important;
+    }
+    .pfx-rvt-scrub {
+      display:block !important; visibility:visible !important; width:100% !important; min-width:0 !important; max-width:none !important;
+      height:12px !important; min-height:12px !important; max-height:12px !important; margin:0 !important; padding:0 !important;
+      border:0 !important; opacity:1 !important; overflow:visible !important; pointer-events:auto !important;
+      appearance:none !important; -webkit-appearance:none !important; background:transparent !important; cursor:pointer !important;
+    }
+    .pfx-rvt-scrub::-webkit-slider-runnable-track {
+      height:3px !important; border-radius:999px !important; background:#333 !important;
+    }
+    .pfx-rvt-scrub::-webkit-slider-thumb {
+      -webkit-appearance:none !important; width:10px !important; height:10px !important; margin-top:-3.5px !important;
+      border-radius:50% !important; background:#969696 !important; border:0 !important; box-shadow:none !important;
+    }
+    .pfx-rvt-scrub::-moz-range-track { height:3px !important; border-radius:999px !important; background:#333 !important; }
+    .pfx-rvt-scrub::-moz-range-thumb { width:10px !important; height:10px !important; border-radius:50% !important; background:#969696 !important; border:0 !important; }
+  </style>
   <!-- TF.js — loaded globally so the AI matcher can reference window.tf directly.
        defer keeps it non-blocking; it finishes before DOMContentLoaded. -->
   <script defer src="../assets/ai/tf.min.js"></script>
@@ -352,12 +471,15 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 
       <input id="projectNameGlobal" class="project-name" placeholder="Project name" />
       <span id="pfxProjectTypeBadge" class="pfx-project-type-badge" style="display:none"></span>
-      <span id="projDirtyDot" class="project-dirty" title="Unsaved changes" aria-hidden="true"></span>
-      <span id="projSaveStatus" class="project-save-status" aria-live="polite" title="Project save status">Ready</span>
+      <span id="projDirtyDot" class="project-dirty" title="Unsaved changes" aria-hidden="true" style="display:none"></span>
+      <span id="projSaveStatus" class="project-save-status" aria-live="polite" title="Project save status" style="display:none">Saved</span>
     </div>
 
     <div class="project-actions">
-      <button id="projNew" class="btn theme-q2" type="button" title="New project">
+      <!-- New / Load / Save-As / overflow are reachable from the Project Manager
+           (opened via the project dropdown). Kept in the DOM (hidden) so that
+           code path still drives them; only Save stays visible in the bar. -->
+      <button id="projNew" class="btn theme-q2" type="button" title="New project" style="display:none">
         <span class="bar"></span>New
       </button>
 
@@ -366,7 +488,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         <button id="projSave" class="btn theme-amf proj-save-main" type="button" title="Save project (Cmd/Ctrl+S)">
           <span class="bar"></span>Save
         </button>
-        <button id="projSaveSplitArrow" class="btn theme-amf proj-save-arrow" type="button" title="Save options" aria-haspopup="true" aria-expanded="false">
+        <button id="projSaveSplitArrow" class="btn theme-amf proj-save-arrow" type="button" title="Save options" aria-haspopup="true" aria-expanded="false" style="display:none">
           <span class="bar"></span>▾
         </button>
         <div id="projSaveMenu" class="proj-dropdown-menu" hidden>
@@ -374,12 +496,12 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         </div>
       </div>
 
-      <button id="projLoad" class="btn theme-amf" type="button" title="Load project file">
+      <button id="projLoad" class="btn theme-amf" type="button" title="Load project file" style="display:none">
         <span class="bar"></span>Load
       </button>
 
       <!-- Overflow: rare actions (gear, OCR, Clear Mem, Delete) -->
-      <div class="proj-overflow-wrap" id="projOverflowWrap">
+      <div class="proj-overflow-wrap" id="projOverflowWrap" style="display:none">
         <button id="projOverflowBtn" class="btn theme-q2 proj-overflow-btn" type="button" title="More actions" aria-haspopup="true" aria-expanded="false">
           <span class="bar"></span>···
         </button>
@@ -460,6 +582,141 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   </div>
 
   <!-- EDL Converter Pane -->
+
+  <!-- Player Transport Deep Dive Modal -->
+  <div id="playerTransportTutorialModal" class="pfx-tutorial-modal pfx-player-deep-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Player Transport Deep Dive">
+    <div class="pfx-tutorial-backdrop"></div>
+    <div class="pfx-tutorial-box pfx-player-deep-box">
+      <div class="pfx-tutorial-header">
+        <div class="pfx-tutorial-title">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="#ff6a00" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><polygon points="6.4,5.4 11.4,8 6.4,10.6" fill="#ff6a00" stroke="none"/></svg>
+          <span>Player Transport — Deep Dive</span>
+        </div>
+        <button class="pfx-tutorial-close" id="btnPlayerTransportTutorialClose" title="Close">✕</button>
+      </div>
+      <div class="pfx-tutorial-body pfx-player-deep-body">
+        <section class="pfx-player-demo" aria-label="Interactive player reference">
+          <div class="pfx-player-deep-eyebrow">Interactive Player — Click To Try</div>
+          <div class="pfx-player-demo-bar">
+            <span class="pfx-player-demo-time">00:01:24:08</span>
+            <div class="pfx-player-demo-scrub" aria-hidden="true"><span style="width:33%"></span><i></i></div>
+            <span class="pfx-player-demo-time">00:04:06:00</span>
+            <div class="pfx-player-demo-controls">
+              <div class="pfx-player-demo-nav" aria-label="Navigation pod">
+                <button type="button" data-player-demo="prev" title="Previous item">‹</button>
+                <span title="Current item indicator">•</span>
+                <button type="button" data-player-demo="next" title="Next item">›</button>
+              </div>
+              <span class="pfx-player-demo-sep"></span>
+              <button type="button" data-player-demo="start" title="Jump to start">|‹</button>
+              <button type="button" data-player-demo="back" title="Play backward">‹</button>
+              <button type="button" data-player-demo="stop" title="Stop">■</button>
+              <button type="button" data-player-demo="play" title="Play forward">▶</button>
+              <button type="button" data-player-demo="end" title="Jump to end">›|</button>
+              <span class="pfx-player-demo-sep"></span>
+              <button type="button" data-player-demo="loop" title="Loop">↻</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="pfx-player-deep-card pfx-player-deep-card--cyan">
+          <div class="pfx-player-deep-heading">
+            <span class="pfx-player-deep-icon">↔</span>
+            <div>
+              <h3>Scrub bar</h3>
+              <p>Timeline position slider · above transport buttons</p>
+            </div>
+          </div>
+          <div class="pfx-player-deep-scrub-detail" aria-hidden="true">
+            <div class="pfx-player-demo-scrub pfx-player-demo-scrub--wide"><span style="width:52%"></span><i></i></div>
+            <div class="pfx-player-deep-scale"><span>00:00:00:00</span><span>00:02:03:00</span><span>00:04:06:00</span></div>
+          </div>
+          <ul>
+            <li><strong>Played region</strong> is the filled track from the left edge to the current playhead.</li>
+            <li><strong>Playhead thumb</strong> is draggable. Click anywhere on the bar or drag the thumb to jump to that frame.</li>
+            <li><strong>Unplayed region</strong> is the dim track to the right of the thumb.</li>
+          </ul>
+          <p>The scrub bar is a <strong>separate control from the transport buttons</strong>. Dragging it does not activate play, stop, loop, or nav-pod states.</p>
+          <div class="pfx-player-deep-tags"><span>click anywhere</span><span>drag thumb</span><span>frame-accurate</span><span>not a button</span></div>
+        </section>
+
+        <section class="pfx-player-deep-card">
+          <div class="pfx-player-deep-eyebrow">Prev · Current · Next — Nav Pod</div>
+          <div class="pfx-player-deep-heading">
+            <span class="pfx-player-deep-dot">•</span>
+            <div>
+              <h3>Nav pod [ ‹  •  › ]</h3>
+              <p>Item navigation only · click-only · no drag / no scrub</p>
+            </div>
+          </div>
+          <div class="pfx-player-deep-nav-strip">
+            <div class="pfx-player-demo-nav"><button type="button">‹</button><span>•</span><button type="button">›</button></div>
+          </div>
+          <div class="pfx-player-deep-grid">
+            <article>
+              <b>‹ Prev item</b>
+              <p>Single click. Jumps the playhead to the start of the previous cut, marker, event, reel, or shot depending on the current tab.</p>
+              <code>Shift ←</code> <code>‹ click</code>
+            </article>
+            <article>
+              <b>• Current</b>
+              <p>Passive indicator dot. It is not a button, does not respond to clicks, and has no scrub action.</p>
+              <code>display only</code>
+            </article>
+            <article>
+              <b>› Next item</b>
+              <p>Single click. Jumps the playhead to the start of the next item. Each click moves exactly one item forward.</p>
+              <code>Shift →</code> <code>› click</code>
+            </article>
+          </div>
+          <div class="pfx-player-deep-warning"><strong>Not mouse scrub.</strong> The pod does not respond to drag, wheel, or click-and-hold. Scrubbing belongs to the scrub bar above the buttons.</div>
+          <p class="pfx-player-deep-note">PostFlowX maps the pod by tab: Pulls Prep = markers, VFX Pull = shots/handles, Plate Link / ACES Look / Trailers Conform = cuts, IMF Validation = reels.</p>
+        </section>
+
+        <section class="pfx-player-deep-card pfx-player-deep-card--amber">
+          <div class="pfx-player-deep-heading">
+            <span class="pfx-player-deep-icon">|‹</span>
+            <div>
+              <h3>|‹‹ Jump to start & Jump to end ››|</h3>
+              <p>Instant jump · blue flash momentary · not a toggle</p>
+            </div>
+          </div>
+          <div class="pfx-player-deep-grid pfx-player-deep-grid--stack">
+            <article>
+              <b>|‹‹ Jump to start</b>
+              <p>Moves the playhead to frame 0 of the clip or timeline. If playing, playback stops first, then lands at the start.</p>
+              <code>Home</code> <code>Fn ←</code> <code>|‹‹ click</code>
+            </article>
+            <article>
+              <b>››| Jump to end</b>
+              <p>Moves the playhead to the last frame of the clip or timeline. If the clip has an Out point, this lands on the Out point.</p>
+              <code>End</code> <code>Fn →</code> <code>››| click</code>
+            </article>
+            <article>
+              <b>Difference from nav pod ‹ ›</b>
+              <p>Jump start/end goes to the absolute edge. The nav pod goes to the nearest item boundary.</p>
+              <code>|‹‹ / ››| = absolute edge</code> <code>‹ / › = nearest item edge</code>
+            </article>
+          </div>
+        </section>
+
+        <div class="pfx-player-deep-two">
+          <section class="pfx-player-deep-card pfx-player-deep-card--green">
+            <h3>Play forward</h3>
+            <p>Plays clip forward at 1x speed. Space or L starts playback. Press L again to ramp speed.</p>
+            <div class="pfx-player-deep-tags"><span>▶ click</span><span>Space</span><span>L</span></div>
+          </section>
+          <section class="pfx-player-deep-card pfx-player-deep-card--blue">
+            <h3>Play backward</h3>
+            <p>Reverses from the current position. Single click moves one frame back. Hold J for continuous reverse playback.</p>
+            <div class="pfx-player-deep-tags"><span>◀ click</span><span>J</span></div>
+          </section>
+        </div>
+
+        <div class="pfx-player-deep-footer">JKL: J = play backward · K = stop · L = play forward · Repeat J or L to increase speed in steps</div>
+      </div>
+    </div>
+  </div>
 
   <!-- Pull Prep How to Use Modal -->
   <div id="pullPrepTutorialModal" class="pfx-tutorial-modal" style="display:none;" role="dialog" aria-modal="true" aria-label="Pull Prep How to Use">
@@ -1819,14 +2076,15 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
               <!-- Transport -->
               <div class="cd-vcmp-proctrl" aria-label="Transport">
                 <div class="cd-vcmp-transport5">
-                  <button id="cd2x-vc-home"   class="cd-vcmp-tbtn" type="button" title="To selection start"><svg viewBox="0 0 24 24"><polygon points="11,12 18,6 18,18"></polygon><polygon points="6,12 13,6 13,18"></polygon></svg></button>
-                  <button id="cd2x-vc-prev-f" class="cd-vcmp-tbtn" type="button" title="Prev frame"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="2.6" height="12" rx="1"></rect><polygon points="10,12 18,6 18,18"></polygon></svg></button>
+                  <!-- Icons match the shared Resolve transport set (resolveTransportIcons.js `I`) for pixel parity across tabs -->
+                  <button id="cd2x-vc-home"   class="cd-vcmp-tbtn" type="button" title="To selection start"><svg viewBox="0 0 24 24"><rect x="5.4" y="5.5" width="2.2" height="13" rx="1"></rect><path d="M19 5.5v13L9 12z"></path></svg></button>
+                  <button id="cd2x-vc-prev-f" class="cd-vcmp-tbtn" type="button" title="Prev frame"><svg viewBox="0 0 24 24"><rect x="6" y="5.5" width="2.2" height="13" rx="1"></rect><path d="M19 6.5v11L10.5 12z"></path></svg></button>
                   <button id="cd2x-vc-play"   class="cd-vcmp-tbtn cd-vcmp-playbtn" type="button" title="Play / Pause" aria-pressed="false">
-                    <svg viewBox="0 0 24 24" class="cd-icon-play"><polygon points="10,8 10,16 16,12"></polygon></svg>
-                    <svg viewBox="0 0 24 24" class="cd-icon-pause"><rect x="9" y="7" width="2.8" height="10" rx="1"></rect><rect x="12.8" y="7" width="2.8" height="10" rx="1"></rect></svg>
+                    <svg viewBox="0 0 24 24" class="cd-icon-play"><path d="M8 5.5v13l10-6.5z"></path></svg>
+                    <svg viewBox="0 0 24 24" class="cd-icon-pause"><path d="M7.5 5h3v14h-3zM13.5 5h3v14h-3z"></path></svg>
                   </button>
-                  <button id="cd2x-vc-next-f" class="cd-vcmp-tbtn" type="button" title="Next frame"><svg viewBox="0 0 24 24"><polygon points="14,12 6,6 6,18"></polygon><rect x="16" y="6" width="2.6" height="12" rx="1"></rect></svg></button>
-                  <button id="cd2x-vc-end"    class="cd-vcmp-tbtn" type="button" title="To selection end"><svg viewBox="0 0 24 24"><polygon points="13,12 6,6 6,18"></polygon><polygon points="18,12 11,6 11,18"></polygon></svg></button>
+                  <button id="cd2x-vc-next-f" class="cd-vcmp-tbtn" type="button" title="Next frame"><svg viewBox="0 0 24 24"><path d="M5 6.5v11L13.5 12z"></path><rect x="15.8" y="5.5" width="2.2" height="13" rx="1"></rect></svg></button>
+                  <button id="cd2x-vc-end"    class="cd-vcmp-tbtn" type="button" title="To selection end"><svg viewBox="0 0 24 24"><path d="M5 5.5v13L15 12z"></path><rect x="16.4" y="5.5" width="2.2" height="13" rx="1"></rect></svg></button>
                 </div>
                 <select id="cd2x-vc-rate" class="cd-vcmp-rate mono" title="Playback rate">
                   <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
@@ -2127,6 +2385,9 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     <button id="pmOcfSmartLinkBtn" type="button" class="pm-ocf-smartlink-quick" title="Find your camera files and link them to every shot automatically — only the uncertain ones need a look" style="display:none">
       <span class="bar"></span> ⚡ Smart Link OCF
     </button>
+    <button id="pmOcfLinkLibraryBtn" type="button" class="pm-ocf-linklibrary-quick" title="Link shots using your scanned media library — no folder pick. Filename/reel matches; scan a folder for timecode-exact matches." style="display:none">
+      <span class="bar"></span> 📚 Link from Library
+    </button>
     <button id="pmOcfRelinkQuickBtn" type="button" class="pm-ocf-relink-quick" title="Pick a different camera-files folder and relink manually" style="display:none">
       <span class="bar"></span> Change folder…
     </button>
@@ -2388,6 +2649,9 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         </button>
       </div>
       <div class="pm-controls">
+        <button id="pmPrevEventBtn"    class="pm-vid-ctrl-btn" title="Prev marker (Shift+←)" aria-label="Prev marker">◀</button>
+        <button id="pmCurrentEventBtn" class="pm-vid-ctrl-btn pfx-nav-dot" title="Current" aria-label="Current item">●</button>
+        <button id="pmNextEventBtn"    class="pm-vid-ctrl-btn" title="Next marker (Shift+→)" aria-label="Next marker">▶</button>
         <button id="pmPrevFrameBtn" title="Prev frame (←)">&#9664;|</button>
         <button id="pmPlayBtn"      title="Play / Pause (Space)">&#9654;</button>
         <button id="pmNextFrameBtn" title="Next frame (→)">|&#9654;</button>
@@ -3018,16 +3282,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     <div class="pfx-vfx-ws-body">
 
       <!-- LEFT: Shot list with verify columns -->
-      <div class="pfx-vfx-ws-left">
+      <div class="pfx-vfx-ws-left" style="width:400px;min-width:360px;flex:0 0 400px;">
         <div class="pfx-vfx-ws-panel-hdr">SHOT LIST</div>
-        <!-- OCF Drop Zone — drag an OCF root folder here to auto-relink -->
-        <div id="pfxVfxOcfDropZone" class="pfx-vfx-ocf-drop-zone" title="Drop OCF folder here to auto-relink">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
-            <path d="M3 17V5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            <line x1="11" y1="9" x2="11" y2="15"/><line x1="8" y1="12" x2="14" y2="12"/>
-          </svg>
-          <span id="pfxVfxOcfDropLabel">Drop OCF Folder · or <button id="pfxVfxOcfPickBtn" class="pfx-vfx-ocf-pick-btn">Browse…</button></span>
-        </div>
         <div class="pfx-vfx-ws-shot-scroll">
           <table class="pfx-vfx-shot-table" id="pfxVfxShotTable">
             <thead>
@@ -3040,7 +3296,15 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             </thead>
             <tbody id="pfxVfxShotBody">
               <tr class="pfx-vfx-shot-empty">
-                <td colspan="4">No shots — load an EDL with VFX markers</td>
+                <td colspan="4" style="padding:14px 16px;">
+                  <div style="font-size:11px;font-weight:700;color:#cfd6e4;letter-spacing:.03em;margin-bottom:8px;">No VFX shots yet — quick start</div>
+                  <ol style="margin:0;padding-left:18px;color:#9aa3b2;font-size:10.5px;line-height:1.7;">
+                    <li>Load your edit (EDL / XML / FCPXML / OTIO) with VFX markers on the shots to pull</li>
+                    <li>Link camera files — <b style="color:#a0b0ff;">⚡ Smart Link OCF</b> or <b style="color:#cfd6e4;">📚 Link from Library</b></li>
+                    <li>Run <b style="color:#cfd6e4;">⚡ Analyze &amp; Build VFX Pull Package</b></li>
+                    <li>Review &amp; approve the matches, then export the <b style="color:#7ee0a0;">⬇ Pull Package</b></li>
+                  </ol>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -3079,13 +3343,21 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 
         <!-- VFX Player Controls -->
         <div class="pfx-vfx-player" id="pfxVfxPlayer">
+          <!-- Combined transport row: OCF action (left) · playback controls
+               (center — the mounted pfxTransport bar takes over .pfx-vfx-plr-btns)
+               · frame / zoom actions (right). The old dedicated
+               .pfx-vfx-plr-utils-row was merged into this row. -->
           <div class="pfx-vfx-plr-row pfx-vfx-plr-transport-row">
+            <div class="pfx-vfx-plr-utils-left">
+              <button class="pfx-vfx-plr-util" id="pfxVfxPlrGenOcf">Generate OCF Preview Frames</button>
+              <span class="pfx-vfx-plr-ocf-prog" id="pfxVfxPlrOcfProg" hidden>OCF Preview: 0/7 frames ready</span>
+            </div>
             <div class="pfx-vfx-plr-btns">
               <button class="pfx-vfx-plr-btn" id="pfxVfxPlrGoStart"   title="Go to start">|◀</button>
               <button class="pfx-vfx-plr-btn" id="pfxVfxPlrPrevCut"   title="Previous cut">◀◀</button>
-              <button class="pfx-vfx-plr-btn" id="pfxVfxPlrPrevFrame" title="Prev frame [←]">◀</button>
+              <button class="pfx-vfx-plr-btn" id="pfxVfxPlrPrevFrame" title="Prev frame [←]">❙◀</button>
               <button class="pfx-vfx-plr-btn pfx-vfx-plr-play" id="pfxVfxPlrPlay" title="Play / Pause [Space]">▶</button>
-              <button class="pfx-vfx-plr-btn" id="pfxVfxPlrNextFrame" title="Next frame [→]">▶</button>
+              <button class="pfx-vfx-plr-btn" id="pfxVfxPlrNextFrame" title="Next frame [→]">▶❙</button>
               <button class="pfx-vfx-plr-btn" id="pfxVfxPlrNextCut"   title="Next cut">▶▶</button>
               <button class="pfx-vfx-plr-btn" id="pfxVfxPlrGoEnd"     title="Go to end">▶|</button>
             </div>
@@ -3104,15 +3376,6 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
                 <button class="pfx-vfx-plr-speed" data-speed="0">Step</button>
               </div>
             </div>
-          </div>
-          <div class="pfx-vfx-plr-row pfx-vfx-plr-scrub-row">
-            <input type="range" id="pfxVfxPlrSlider" class="pfx-vfx-plr-slider" min="0" max="1000" value="0" step="1">
-          </div>
-          <div class="pfx-vfx-plr-row pfx-vfx-plr-utils-row">
-            <div class="pfx-vfx-plr-utils-left">
-              <button class="pfx-vfx-plr-util" id="pfxVfxPlrGenOcf">Generate OCF Preview Frames</button>
-              <span class="pfx-vfx-plr-ocf-prog" id="pfxVfxPlrOcfProg" hidden>OCF Preview: 0/7 frames ready</span>
-            </div>
             <div class="pfx-vfx-plr-utils-right">
               <button class="pfx-vfx-plr-util" id="pfxVfxPlrRefresh" title="Re-fetch current frame">Refresh Frame</button>
               <button class="pfx-vfx-plr-util" id="pfxVfxPlrSync"    title="Sync QT Ref and OCF to same source position">Sync QT ↔ OCF</button>
@@ -3121,6 +3384,9 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
               <button class="pfx-vfx-plr-util pfx-vfx-plr-zoom-btn" id="pfxVfxPlr100"   title="View at 100% pixel size">100%</button>
               <button class="pfx-vfx-plr-util pfx-vfx-plr-zoom-btn" id="pfxVfxPlrZoomIn" title="Zoom in">Zoom +</button>
             </div>
+          </div>
+          <div class="pfx-vfx-plr-row pfx-vfx-plr-scrub-row">
+            <input type="range" id="pfxVfxPlrSlider" class="pfx-vfx-plr-slider" min="0" max="1000" value="0" step="1">
           </div>
         </div>
 
@@ -3179,6 +3445,10 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           <div class="pfx-vfx-vf-row">
             <span class="pfx-vfx-vf-key">Decoder</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfDecoderVal">—</span>
+          </div>
+          <div class="pfx-vfx-vf-row">
+            <span class="pfx-vfx-vf-key">Backend</span>
+            <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfBackendVal" title="Decode-backend quality state">—</span>
           </div>
           <div class="pfx-vfx-vf-row">
             <span class="pfx-vfx-vf-key">Duration</span>
@@ -4106,10 +4376,10 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <button class="imf-tbtn imf-tbtn2" id="imfTbLoop"      title="Loop">⟳</button>
             <button class="imf-tbtn imf-tbtn2" id="imfBtnReelPrev" title="Previous reel ↑">⏮</button>
             <button class="imf-tbtn imf-tbtn2" id="imfTbRev2"      title="Rewind">◀◀</button>
-            <button class="imf-tbtn imf-tbtn2" id="imfBtnPrev"     title="Previous frame ←">◀</button>
+            <button class="imf-tbtn imf-tbtn2" id="imfBtnPrev"     title="Previous frame ←">❙◀</button>
             <button class="imf-tbtn imf-tbtn2 imf-tbtn2-play" id="imfBtnPlay" title="Play / Pause  Space">▶</button>
             <button class="imf-tbtn imf-tbtn2" id="imfTbStop"      title="Stop">⏹</button>
-            <button class="imf-tbtn imf-tbtn2" id="imfBtnNext"     title="Next frame →">▶</button>
+            <button class="imf-tbtn imf-tbtn2" id="imfBtnNext"     title="Next frame →">▶❙</button>
             <button class="imf-tbtn imf-tbtn2" id="imfTbFwd2"      title="Fast fwd">▶▶</button>
             <button class="imf-tbtn imf-tbtn2" id="imfBtnReelNext" title="Next reel ↓">⏭</button>
           </div>
@@ -4585,7 +4855,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="imf-sb-sep">│</span>
       <span class="imf-sb-item">Renderer <span id="imfSbRenderer" class="imf-sb-val">Direct (MJPEG)</span></span>
       <span class="imf-sb-sep">│</span>
-      <span class="imf-sb-item">Decode <span id="imfSbDecode" class="imf-sb-val imf-sb-val-blue">Hardware (VideoToolbox)</span></span>
+      <span class="imf-sb-item">Decode <span id="imfSbDecode" class="imf-sb-val imf-sb-val-blue">—</span></span>
     </div>
     <div class="imf-sb-right">
       <span class="imf-sb-item">Status <span id="imfSbStatus" class="imf-sb-val imf-sb-val-green">Idle</span></span>
@@ -6343,5 +6613,9 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   <script type="module" src="scripts/modules/trailerConform.js"></script>
   <!-- Smart VFX Pull Settings -->
   <script defer src="scripts/features/vfxPull/vfxPullSettings.js"></script>
+  <!-- Unified media transport: one shared scrub+buttons component on every player -->
+  <script type="module" src="scripts/core/pfxTransportMount.js"></script>
+  <!-- Global JKL / Space / Home-End / Shift-arrow transport keyboard layer -->
+  <script type="module" src="scripts/core/pfxTransportKeys.js"></script>
 </body>
 </html>

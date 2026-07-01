@@ -75,8 +75,11 @@ export class NativeAVPlayerEngine {
         if (session.needsProxy && session.sessionId) {
           ne.proxyCreate(session.sessionId, { width: 960 }).catch(() => {});
         }
-        await this._renderFrame(0);
-        return { ok: true, info: session, decoder: 'PFXNativeEngine', hwDecode: true };
+        // Verify the first frame actually paints — if it can't, reject so the
+        // caller can fall back to the Chromium/proxy path instead of showing a
+        // silent black canvas.
+        if (!(await this._renderFrame(0))) throw new Error('AVFoundation rendered no first frame');
+        return { ok: true, info: session, decoder: this.decoder, hwDecode: this._useNativeEngine };
       } catch (err) {
         console.warn('[NativeAVPlayer] native engine open failed, falling back:', err.message);
         this._sessionId       = null;
@@ -96,7 +99,7 @@ export class NativeAVPlayerEngine {
     this._totalFrames = Math.max(1, Math.round(this._fps * dur));
 
     this._opts.onStatus?.('Direct Playback');
-    await this._renderFrame(0);
+    if (!(await this._renderFrame(0))) throw new Error('avf_bridge rendered no first frame');
     return { ok: true, info, decoder: 'avf_bridge' };
   }
 
@@ -166,55 +169,76 @@ export class NativeAVPlayerEngine {
     }
   }
 
+  // Pull one frame's data URL from whichever decoder is active. Throws on a hard
+  // decoder error; returns null when the decoder produced no image.
+  async _extractFrame(frame) {
+    const w = this._canvas.width || 1280;
+    if (this._useNativeEngine && this._sessionId) {
+      const r = await window.pfxPlatform.nativeEngine.frameExtract(this._sessionId, frame, w, 0.88);
+      return r?.imageDataUrl || r?.dataUrl || null;
+    }
+    const r = await window.pfxPlatform.media.getStill({ path: this._filePath, frame, outputWidth: w });
+    if (r && r.ok === false) throw new Error(r.error || 'avf_bridge getStill failed');
+    return r?.imageDataUrl || r?.dataUrl || null;
+  }
+
+  // Render `frame` to the canvas. Returns true only if a pixel actually landed.
+  // Self-heals: if the fast native-engine path yields nothing (or throws), it
+  // drops to the avf_bridge spawn path and retries the SAME frame — previously a
+  // failed fast-path frame was silently dropped, leaving the canvas black (and,
+  // when paused, forever, since no later tick would repaint it).
   async _renderFrame(frame) {
-    if (!this._filePath || this._busy) return;
+    if (!this._filePath || this._busy) return false;
     this._busy = true;
+    let drawn = false;
     try {
-      let imageDataUrl;
-
-      if (this._useNativeEngine && this._sessionId) {
-        // Fast path: session-cached AVAssetImageGenerator, ~5ms vs ~100ms for spawn
-        const r = await window.pfxPlatform.nativeEngine.frameExtract(
-          this._sessionId, frame, this._canvas.width || 1280, 0.88
-        );
-        imageDataUrl = r?.imageDataUrl || r?.dataUrl;
-      } else {
-        // Legacy fallback: avf_bridge spawn per frame
-        const r = await window.pfxPlatform.media.getStill({
-          path:        this._filePath,
-          frame,
-          outputWidth: this._canvas.width || 1280,
-        });
-        imageDataUrl = r?.imageDataUrl;
+      let url = null;
+      try {
+        url = await this._extractFrame(frame);
+      } catch (e) {
+        if (!this._useNativeEngine) throw e;   // avf_bridge itself failed — bubble up
+        console.warn('[NativeAVPlayer] native engine threw, switching to avf_bridge:', e.message);
+        this._useNativeEngine = false; this._sessionId = null;
       }
-
-      if (imageDataUrl) {
-        await this._drawDataUrl(imageDataUrl);
+      // Fast path produced no image → retry the same frame via avf_bridge.
+      if (!url && this._useNativeEngine) {
+        console.warn('[NativeAVPlayer] native engine returned no frame; retrying via avf_bridge, frame', frame);
+        this._useNativeEngine = false; this._sessionId = null;
       }
+      if (!url) url = await this._extractFrame(frame);
+
+      if (url) drawn = await this._drawDataUrl(url);
+      if (!drawn) this._opts.onError?.(`Frame ${frame}: decoder produced no renderable image`);
       this._opts.onTimeUpdate?.(frame, this._fps);
     } catch (e) {
-      // On native engine failure, try falling back to legacy
-      if (this._useNativeEngine) {
-        console.warn('[NativeAVPlayer] native engine frame extract failed, switching to avf_bridge:', e.message);
-        this._useNativeEngine = false;
-        this._sessionId       = null;
-      } else {
-        this._opts.onError?.(`Frame decode error: ${e.message}`);
-      }
+      this._opts.onError?.(`Frame decode error: ${e.message}`);
     } finally {
       this._busy = false;
     }
+    return drawn;
   }
 
+  // Paint a data URL to the canvas. Resolves to true only on a successful draw.
+  // Hardened so a bad/slow image can never deadlock playback: re-acquires a lost
+  // 2D context, guards zero-size canvases, catches draw exceptions, and always
+  // resolves (a watchdog timeout releases _busy even if the Image never fires).
   _drawDataUrl(dataUrl) {
     return new Promise((resolve) => {
-      const img  = new Image();
+      if (!this._ctx) { try { this._ctx = this._canvas.getContext('2d'); } catch {} }
+      const ctx = this._ctx;
+      if (!ctx) { resolve(false); return; }
+      const img = new Image();
+      let settled = false;
+      const finish = (ok) => { if (settled) return; settled = true; clearTimeout(t); resolve(ok); };
+      const t = setTimeout(() => finish(false), 4000);
       img.onload = () => {
-        this._ctx.drawImage(img, 0, 0, this._canvas.width, this._canvas.height);
-        resolve();
+        const cw = this._canvas.width, ch = this._canvas.height;
+        if (!(cw > 0 && ch > 0)) { finish(false); return; }
+        try { ctx.drawImage(img, 0, 0, cw, ch); finish(true); }
+        catch { finish(false); }
       };
-      img.onerror = resolve;
-      img.src     = dataUrl;
+      img.onerror = () => finish(false);
+      img.src = dataUrl;
     });
   }
 }

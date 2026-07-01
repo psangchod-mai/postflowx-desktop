@@ -45,6 +45,7 @@ export function defaultState() {
   return {
     source:          null,           // File | null (never serialized)
     sourceName:      '',             // string — survives serialization, drives re-link overlay
+    sourcePath:      '',             // string — absolute path (desktop only); enables silent auto-relink
     sourceClass:     'unknown',      // camera_native | aces_exr_ap0 | qt_rec709 | unknown
     mode:            'hdr_vfx_pull',
     inputTransform:  'AUTO',
@@ -61,6 +62,7 @@ export function defaultState() {
     cdl:         { ...EMPTY_CDL },
     lookStack:   [],                 // [{ id, kind, label, enabled, file?, transformId? }]
     clipId:      '',
+    ocfMeta:     null,               // {colorSpace,codec,cameraType,container} for OCF auto-IDT (AUTO path)
     warnings:    [],
     errors:      [],
     exportResult: null,

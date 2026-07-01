@@ -8,7 +8,7 @@ import {
   setWorkingLocation, setPrimaryControl,
   setCdlEnabled, setCdlValue,
   addLookItem, toggleLookItem, removeLookItem, reorderLookItems, updateLookItem,
-  setClipId, setExportResult,
+  setClipId, setOcfMeta, setExportResult,
 } from './state/acesLookStore.js';
 import { validate }              from './state/acesLookValidation.js';
 import { REGISTRY }              from './services/transformRegistry.js';
@@ -683,11 +683,25 @@ function _wireLeftRail(root) {
   _rebuildPresetList();
 }
 
+// Capture the file's absolute path (desktop only) so a later session can
+// silently re-link it without a Browse dialog. No-op / '' in the browser build.
+function _captureSourcePath(file) {
+  let p = '';
+  try { p = window.pfxPlatform?.getNativeFilePath?.(file) || ''; } catch { p = ''; }
+  patch({ sourcePath: p });
+}
+
 function _handleSourceFile(file) {
   const { sourceClass, suggestedInputTransform } = detectSource(file);
   setSource(file);
   // sourceName survives serialization so the re-link prompt can show the filename after restore
   patch({ sourceClass, sourceName: file.name });
+  _captureSourcePath(file);
+  // OCF metadata for the AUTO-IDT path (filename-derived — see SourceDetectionCard).
+  if (file?.name) {
+    const ext = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : '';
+    setOcfMeta({ colorSpace: '', codec: ext, cameraType: file.name, container: ext, source: 'filename' });
+  }
   if (suggestedInputTransform !== 'AUTO') {
     setInputTransform(suggestedInputTransform);
   }
@@ -701,6 +715,7 @@ function _handleSourceFile(file) {
 function _relinkSourceFile(file) {
   setSource(file);
   patch({ sourceName: file.name });
+  _captureSourcePath(file); // refresh the saved path (file may have moved)
 }
 
 function _rebuildPresetList() {
@@ -1321,6 +1336,43 @@ function _renderAll(state) {
 
 let _relinkWired    = false;
 let _relinkDismissed = false; // user dismissed overlay for this session; re-show on next project load
+let _autoRelinkTriedPath = null; // path we've already attempted this session (avoid re-try loops)
+let _autoRelinkBusy      = false;
+
+function _b64ToFile(b64, name, type) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name || 'source', type ? { type } : undefined);
+}
+
+function _guessMime(name) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  return ({ mov: 'video/quicktime', mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm' })[ext] || '';
+}
+
+// Desktop-only silent re-link: if the source went missing but we saved its
+// absolute path, reopen it from disk (no Browse dialog) — provided it still
+// exists. Falls through (leaving the manual overlay) if the file moved or the
+// read fails. Browser builds have no readFile, so this never runs there.
+async function _tryAutoRelink(sourcePath, sourceName) {
+  if (_autoRelinkBusy) return;
+  const pf = window.pfxPlatform;
+  if (!pf || typeof pf.readFile !== 'function') return;
+  _autoRelinkBusy = true;
+  try {
+    if (typeof pf.fileExists === 'function') {
+      const exists = await pf.fileExists(sourcePath);
+      if (!exists) return; // moved/deleted → manual re-link
+    }
+    const b64 = await pf.readFile({ filePath: sourcePath, encoding: 'base64' });
+    if (!b64) return;
+    // Only apply if still orphaned — the user may have re-linked manually meanwhile.
+    if (getState().source instanceof File) return;
+    _relinkSourceFile(_b64ToFile(b64, sourceName, _guessMime(sourceName || sourcePath)));
+  } catch { /* leave the manual overlay up */ }
+  finally { _autoRelinkBusy = false; }
+}
 
 function _wireRelinkOverlay() {
   if (_relinkWired) return;
@@ -1346,13 +1398,21 @@ function _renderRelinkOverlay(state) {
   const orphaned = !hasFile && !!state.sourceName;
 
   if (hasFile) {
-    // File restored — reset dismissed flag so overlay shows again if file goes missing again
+    // File restored — reset flags so a later disappearance shows/retries again
     _relinkDismissed = false;
+    _autoRelinkTriedPath = null;
     overlay.style.display = 'none';
   } else if (orphaned && !_relinkDismissed) {
     overlay.style.display = '';
     if (nameEl) nameEl.textContent = state.sourceName;
     document.getElementById('al2-sec-source')?.classList.add('open');
+    // Desktop: try to reopen silently from the saved absolute path before the
+    // user has to Browse. On success the next render hides this overlay; on
+    // failure (file moved/deleted) the manual re-link button stays.
+    if (state.sourcePath && _autoRelinkTriedPath !== state.sourcePath && window.pfxPlatform?.readFile) {
+      _autoRelinkTriedPath = state.sourcePath;
+      _tryAutoRelink(state.sourcePath, state.sourceName);
+    }
   } else {
     overlay.style.display = 'none';
   }
@@ -1837,7 +1897,14 @@ function _updateViewer(state) {
     _releaseProxyVideo();
     _viewerSourceName = null;
     _stopHistogram();
+    wrap.style.cssText = 'flex:1;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;';
     wrap.innerHTML = '<span style="color:var(--al-text-muted);font-size:12px">Drop a source file to preview</span>';
+    const emptyVideo = document.createElement('video');
+    emptyVideo.style.cssText = 'display:none;';
+    emptyVideo.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(emptyVideo);
+    import('../../core/resolveVideoTransport.js')
+      .then(m => m.attachResolveTransport(emptyVideo)).catch(() => {});
     return;
   }
 
@@ -1861,6 +1928,9 @@ function _updateViewer(state) {
     video.controls = true;
     video.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
     wrap.appendChild(video);
+    // Resolve-style transport (replaces the native <video controls> bar).
+    import('../../core/resolveVideoTransport.js')
+      .then(m => m.attachResolveTransport(video)).catch(() => {});
 
     const _setVideoSrc = (src) => {
       video.src = src;
@@ -1928,6 +1998,9 @@ function _updateViewer(state) {
     videoEl.style.cssText = 'width:100%;height:100%;object-fit:contain;display:none;position:absolute;inset:0;z-index:1;';
     wrap.appendChild(videoEl);
     _proxyVideoEl = videoEl;
+    // Resolve-style transport (replaces the native <video controls> bar).
+    import('../../core/resolveVideoTransport.js')
+      .then(m => m.attachResolveTransport(videoEl)).catch(() => {});
 
     const _getEl = id => wrap.querySelector(`#${id}`);
     const _eta   = _makeProxyEta();
@@ -2053,6 +2126,8 @@ function _loadProxyVideo(wrap, proxyFile, state) {
   video.controls = true;
   video.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
   wrap.appendChild(video);
+  import('../../core/resolveVideoTransport.js')
+    .then(m => m.attachResolveTransport(video)).catch(() => {});
   _addTcOverlay(wrap, video);
 
   const proxyBadge = document.getElementById('al2-proxy-badge');
