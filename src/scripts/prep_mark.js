@@ -13503,6 +13503,19 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
             imageUrl: r.dataUrl ? '[dataUrl present]' : null, error: r.error,
           }));
 
+          // TC diagnostic: compares what WE asked for (editorial sourceTc + the OCF
+          // container start TC we passed) against what the Resolve tier actually did
+          // (embedded clipStartTc + the frame it seeked to). If relFrames is huge the
+          // editorial TC and the OCF's embedded TC are on DIFFERENT clocks → the
+          // Resolve tier lands on the wrong frame regardless of sourceStartTc.
+          const _sd = r.seekDiag || r.details?.seekDiag;
+          console.log('[OCF TC DIAG] ' + _pmJ({
+            passed_sourceTc:    tcStr,
+            passed_sourceStart: ocf.ocfStartTc || '(none)',
+            ocf_matched_tcIn:   ocf.ocfStartTc || '(none)',
+            resolve_seekDiag:   _sd || '(companion did not report — update/restart companion)',
+          }));
+
           // Always store result so verify panel reflects actual preview outcome.
           // Include dataUrl + provenance so classifyBackendStatus() can reach READY —
           // without dataUrl it has no frame and always classifies BACKEND as Unavailable.

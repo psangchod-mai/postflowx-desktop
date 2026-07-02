@@ -3212,6 +3212,19 @@ class CompanionApi:
                         "[VFX Resolve Preview] seek: clip_start=%s tl_start=%s rel=%.3fs target=%s",
                         clip_start_tc, tl_start_tc, rel_sec, target_tl_tc,
                     )
+                    # Diagnostic snapshot surfaced back to the renderer so we can see,
+                    # live, whether the editorial requestedTc and the OCF's embedded
+                    # clipStartTc share a clock (relFrames small = same clock; huge =
+                    # different clock → the Resolve tier seeks to the wrong frame).
+                    self._last_ocf_seek_diag = {
+                        "requestedTc": timecode,
+                        "clipStartTc": clip_start_tc,
+                        "tlStartTc":   tl_start_tc,
+                        "fps":         fps,
+                        "relSec":      round(rel_sec, 3),
+                        "relFrames":   int(round(rel_sec * fps)),
+                        "targetTc":    target_tl_tc,
+                    }
                     timeline.SetCurrentTimecode(target_tl_tc)
                     # Wait for the playhead to actually land — a reused (warm)
                     # timeline lags, and exporting too early grabs the previous
@@ -3866,6 +3879,7 @@ class CompanionApi:
                 "extractor":      "resolve",
                 "resolveAvailable": True,
                 "details":        details,
+                "seekDiag":       getattr(self, "_last_ocf_seek_diag", None),
             })
 
         return self._ok({
@@ -3874,6 +3888,7 @@ class CompanionApi:
             "decoder":        "Resolve Engine",
             "extractor":      "resolve",
             "resolveAvailable": True,
+            "seekDiag":       getattr(self, "_last_ocf_seek_diag", None),
         })
 
     def _vfx_preview_avf_still(self, request: dict[str, Any]) -> dict[str, Any]:
