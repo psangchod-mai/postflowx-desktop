@@ -248,14 +248,25 @@ function parseSIZ(bytes) {
 
 function decodeHTBytes(bytes, reduceLevel = 0) {
   if (!htModuleInstance) throw new Error('HTJ2K decoder module unavailable');
-  const reduce = Math.max(0, reduceLevel | 0);
+  let reduce = Math.max(0, reduceLevel | 0);
   const decoder = new htModuleInstance.HTJ2KDecoder();
   const buf = decoder.getEncodedBuffer(bytes.length);
   buf.set(bytes);
   decoder.readHeader();
+  // Clamp: decodeSubResolution throws if reduce >= decomposition levels.
+  const numDecomp = (typeof decoder.getNumDecompositions === 'function')
+    ? (decoder.getNumDecompositions() | 0) : 0;
+  if (numDecomp > 0 && reduce > numDecomp) reduce = numDecomp;
   decoder.decodeSubResolution(reduce);
   const frameInfo = decoder.getFrameInfo();
   const rawBuf = decoder.getDecodedBuffer();
+  // At a reduced level the buffer is reduced-size but getFrameInfo() reports the
+  // FULL dims — use the actual decoded dims or the renderer reads garbage.
+  let _w = frameInfo.width, _h = frameInfo.height;
+  if (reduce > 0 && typeof decoder.calculateSizeAtDecompositionLevel === 'function') {
+    const dm = decoder.calculateSizeAtDecompositionLevel(reduce);
+    if (dm && dm.width > 0 && dm.height > 0) { _w = dm.width; _h = dm.height; }
+  }
 
   let pixels;
   let pixelsType = 'u8';
@@ -275,8 +286,10 @@ function decodeHTBytes(bytes, reduceLevel = 0) {
 
   return {
     decoderKind: 'htj2k-openjph',
-    width: frameInfo.width,
-    height: frameInfo.height,
+    width: _w,
+    height: _h,
+    fullWidth: frameInfo.width,
+    fullHeight: frameInfo.height,
     componentCount: frameInfo.componentCount,
     bitsPerSample: frameInfo.bitsPerSample,
     isSigned: frameInfo.isSigned,

@@ -3,6 +3,10 @@
 (function () {
   'use strict';
 
+  // HTML-escape file/user-derived strings before interpolating into innerHTML.
+  const _esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
   const LS = {
     PROXY_PROFILE:        'pfx.proxy.profile',
     RENDER_BACKEND:       'pfx.worker.backend',
@@ -31,7 +35,7 @@
       }
       rootsList.innerHTML = roots.map((r, i) =>
         `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.path}">${r.label || r.path}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(r.path)}">${_esc(r.label || r.path)}</span>
           <button data-root-idx="${i}" style="font-size:10px;opacity:.5;background:none;border:none;color:#f88;cursor:pointer;">✕</button>
         </div>`
       ).join('');

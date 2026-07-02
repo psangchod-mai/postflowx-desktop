@@ -47,12 +47,23 @@ def _run_capture(cmd: list[str], timeout: int = 5) -> tuple[int, str, str]:
         return -3, "", str(e)
 
 
+def _bundled(name: str) -> str | None:
+    """Bundled binary under .app/Contents/Resources/bin (Dev Brief P0#2).
+    A GUI-launched companion has a stripped PATH and no /opt/homebrew, so this
+    must win over the Homebrew-first FFMPEG_SEARCH/FFPROBE_SEARCH lists."""
+    try:
+        from ..proxy_service import _resource_bin
+        return _resource_bin(name)
+    except Exception:
+        return None
+
+
 def find_ffmpeg() -> str | None:
-    return _which_first(FFMPEG_SEARCH, "ffmpeg")
+    return _bundled("ffmpeg") or _which_first(FFMPEG_SEARCH, "ffmpeg")
 
 
 def find_ffprobe() -> str | None:
-    return _which_first(FFPROBE_SEARCH, "ffprobe")
+    return _bundled("ffprobe") or _which_first(FFPROBE_SEARCH, "ffprobe")
 
 
 def find_mpv() -> str | None:

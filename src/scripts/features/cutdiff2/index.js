@@ -1560,7 +1560,9 @@ export function createCutDiff2Feature(deps = {}) {
     if (_dom.kpiPctChg) {
       const totalNew = _s.newEvents.length || _s.diff.length;
       const changedCount = _s.diff.filter(ev => ev.diffType !== 'UNCHANGED').length;
-      _dom.kpiPctChg.textContent = totalNew > 0 ? `${Math.round((changedCount / totalNew) * 100)}%` : '—';
+      // changedCount can include OLD-only (REMOVED/TRIMMED) events not present in
+      // newEvents, so the raw ratio can exceed 100% — clamp the displayed value.
+      _dom.kpiPctChg.textContent = totalNew > 0 ? `${Math.min(100, Math.round((changedCount / totalNew) * 100))}%` : '—';
     }
 
     // Total summary

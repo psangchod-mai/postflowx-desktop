@@ -85,6 +85,15 @@ def resolve_decode_frame(
             }
 
         clip_item  = clips[0]
+        # Derive the clip's real frame rate; hardcoding 24 mis-seeks 23.976/25/30 fps
+        # OCF, exporting the wrong frame's still.
+        try:
+            fps_prop = clip_item.GetClipProperty("FPS")
+            clip_fps = int(round(float(fps_prop))) if fps_prop else 24
+            if clip_fps < 1:
+                clip_fps = 24
+        except Exception:
+            clip_fps = 24
         tl         = media_pool.CreateTimelineFromClips(
             f"pfx_ocf_still_{uuid.uuid4().hex[:6]}", [clip_item]
         )
@@ -97,7 +106,7 @@ def resolve_decode_frame(
             }
 
         project.SetCurrentTimeline(tl)
-        tl.SetCurrentTimecode(_frame_to_tc(frame_number, 24))
+        tl.SetCurrentTimecode(_frame_to_tc(frame_number, clip_fps))
 
         # Try ExportCurrentFrameAsStill
         if hasattr(project, "ExportCurrentFrameAsStill"):
@@ -108,7 +117,7 @@ def resolve_decode_frame(
         if not os.path.isfile(out_img) or os.path.getsize(out_img) == 0:
             out_img = _render_queue_still(project, tl, frame_number, out_dir, stem)
 
-        tc_out = _frame_to_tc(frame_number, 24)
+        tc_out = _frame_to_tc(frame_number, clip_fps)
         _cleanup(pm, created_proj)
 
         if os.path.isfile(out_img) and os.path.getsize(out_img) > 0:

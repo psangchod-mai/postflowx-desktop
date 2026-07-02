@@ -86,8 +86,8 @@
     let camera = 'UNKNOWN';
     if (['.r3d', 'r3d'].includes(ext) || /red|r3d/i.test(clipName)) camera = 'RED';
     else if (['.ari', '.arx', 'ari', 'arx'].includes(ext) || /arri|alexa/i.test(clipName)) camera = 'ARRI';
-    else if (['.mxf', 'mxf'].includes(ext)) camera = 'ARRI'; // conservative guess; upgraded by index
     else if (/sony|venice|burano|fx[0-9]/i.test(clipName)) camera = 'SONY';
+    else if (['.mxf', 'mxf'].includes(ext)) camera = 'ARRI'; // conservative guess for bare .mxf; upgraded by index
 
     const swi = {
       shotWorkId: _uid(),

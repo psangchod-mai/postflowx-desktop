@@ -238,6 +238,12 @@ export function mountIMFPackageUI(container, opts = {}) {
         <option value="2">x2</option>
         <option value="4">x4</option>
       </select>
+      <select class="pfx-imf-rate-select" id="imf-quality-select" title="Playback quality — reduced J2K decode level sustains real-time on CPU; full-res may stutter at HD/UHD">
+        <option value="auto" selected>Auto</option>
+        <option value="full">Full</option>
+        <option value="half">Half</option>
+        <option value="quarter">Quarter</option>
+      </select>
     </div>
 
     <!-- HUD -->
@@ -285,6 +291,7 @@ export function mountIMFPackageUI(container, opts = {}) {
     scrubber:     $('imf-scrubber'),
     tcDisplay:    $('imf-tc-display'),
     rateSelect:   $('imf-rate-select'),
+    qualitySelect:$('imf-quality-select'),
     hud:          $('imf-hud'),
     fallback:     $('imf-fallback'),
     fallbackMsg:  $('imf-fallback-msg'),
@@ -695,6 +702,13 @@ export function mountIMFPackageUI(container, opts = {}) {
   els.scrubber.addEventListener('input', _onScrubInput);
 
   els.rateSelect.addEventListener('change', _onRateChange);
+
+  if (els.qualitySelect) {
+    els.qualitySelect.addEventListener('change', () => {
+      // C-RT1: set reduced J2K decode level for real-time continuous playback.
+      if (player && typeof player.setQuality === 'function') player.setQuality(els.qualitySelect.value);
+    });
+  }
 
   // Fallback actions (emit events for the host to handle)
   els.fbProxy.addEventListener('click', () => {

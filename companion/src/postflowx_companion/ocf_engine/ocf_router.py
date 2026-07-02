@@ -34,8 +34,18 @@ class SdkStatus:
 def sdk_status() -> SdkStatus:
     s = SdkStatus()
     s.avf, s.avf_path = _check_avf()
-    s.ffmpeg, s.ffmpeg_path = _check_bin("ffmpeg",
-        ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"])
+    # Bundled ffmpeg (Dev Brief P0#2) wins over Homebrew: a GUI-launched companion
+    # has a stripped PATH and no /opt/homebrew, so a Homebrew-only check would wrongly
+    # report ffmpeg unavailable in the packaged app.
+    _ff_cands = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+    try:
+        from ..proxy_service import _resource_bin
+        _bundled_ff = _resource_bin("ffmpeg")
+        if _bundled_ff:
+            _ff_cands.insert(0, _bundled_ff)
+    except Exception:
+        pass
+    s.ffmpeg, s.ffmpeg_path = _check_bin("ffmpeg", _ff_cands)
     s.mpv, s.mpv_path = _check_bin("mpv",
         ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv"])
     s.resolve, s.resolve_path = _check_resolve()

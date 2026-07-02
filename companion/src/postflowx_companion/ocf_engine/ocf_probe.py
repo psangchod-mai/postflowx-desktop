@@ -85,10 +85,19 @@ def _tc_source(all_tags: dict) -> tuple[str, str]:
 def _detect_family_from_tags(all_tags: dict, codec: str, ext: str) -> str:
     cam = str(all_tags.get("encoder") or all_tags.get("camera_model")
               or all_tags.get("CameraModel") or all_tags.get("make") or "").lower()
+    company = str(all_tags.get("company_name") or "").lower()
+    product = str(all_tags.get("product_name") or "").lower()
+    codec_l = str(codec or "").lower()
     if "arri" in cam or ext in (".ari", ".arx", ".arriraw"):    return "ARRI"
-    if "blackmagic" in cam or "braw" in codec or ext == ".braw": return "Blackmagic"
-    if "red" in cam or "redcode" in codec or ext == ".r3d":      return "RED"
+    if "blackmagic" in cam or "braw" in codec_l or ext == ".braw": return "Blackmagic"
+    if "red" in cam or "redcode" in codec_l or ext == ".r3d":      return "RED"
     if "sony" in cam:                                             return "Sony"
+    # Sony X-OCN / RAW MXF: ffmpeg can't decode the essence (codec unknown / 0x0),
+    # but the MXF carries Sony AXS authoring tags (company_name=Sony,
+    # product_name=AXS…). Gate on RAW-ness so decodable Sony XAVC (h264/hevc/xavc)
+    # stays on the fast ffmpeg path instead of being forced through Resolve.
+    if "sony" in company and ("axs" in product or codec_l in ("", "unknown", "none", "mxf")):
+        return "Sony"
     if "canon" in cam or ext in (".crm", ".rmf"):                return "Canon"
     return "Generic"
 

@@ -35,7 +35,7 @@ export function attachScrub(labelEl, inputEl, {
       let v = startVal + dx * step;
       if (min !== undefined) v = Math.max(min, v);
       if (max !== undefined) v = Math.min(max, v);
-      v = Math.round(v / step) * step;           // snap to step
+      if (step) v = Math.round(v / step) * step;  // snap to step (guard step:0 → NaN)
       inputEl.value = v.toFixed(decimals);
       onChange?.(parseFloat(v.toFixed(decimals)));
     }

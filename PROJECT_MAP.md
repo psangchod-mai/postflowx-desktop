@@ -89,9 +89,26 @@ PostFlowX/
 | Package macOS .app | `npm run build:mac-dir` |
 | Full release build | `npm run build:mac` |
 | Prep Chrome extension for loading | `npm run build:extension` |
+| Sandbox-safe verify (tests + security gates) | `npm run build-verify` |
+| List candidate innerHTML XSS sinks (review) | `npm run scan:xss` |
 
 > **Rule:** After any UI source change, run `npm run build:renderer` before rebuilding the .app.  
 > In dev, `npm run dev` loads `src/` directly — no build step needed.
+
+---
+
+## Quality gates & tests
+
+`npm run build-verify` is the sandbox-safe gate (run before packaging / hand-off). It chains:
+1. `test:node` — `node --test` over `test/{parsers,pipeline,color}`
+2. `test:js` — 50+ `tests-js/*.test.mjs` (pure-logic units; import ESM from `src/`, polyfill `window`/`localStorage`/`navigator`/`URL` as needed)
+3. companion `pytest` (`companion/tests/`)
+4. **XSS gate** — `tools/scan-innerhtml.mjs --gate`: fails if untrusted data (`${x.error}`, `${ev.clipName}`…) is interpolated into `innerHTML` without an escaper
+5. **XXE gate** — `tools/scan-rawxml.mjs --gate`: fails if any companion `.py` parses XML with a raw entrypoint instead of `safe_xml`
+
+**Testability pattern:** DOM-coupled panels (`prep_mark.js`, `vfxPull/vfxPullPanel.js`) can't be imported in node tests, so HTML-builders / decision logic are extracted into pure leaf modules that ARE unit-tested — e.g. `vfxPull/idtBadge.js`, `vfxPull/ocfErrorPane.js`, `vfxPull/ocfBatchPlan.js`, `electron/native/seekModel.js` (CJS, used by the playback engines), `features/watchFolder/*`.
+
+**Security helpers:** renderer untrusted→`innerHTML` must use an escaper (`_esc`/`escapeHtml`/module-local); companion XML must use `companion/src/postflowx_companion/safe_xml.py`.
 
 ---
 

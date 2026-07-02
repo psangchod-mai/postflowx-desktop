@@ -347,6 +347,8 @@ export class ReviewPlayer {
       if (!window.PFX_MEDIA_COORD.claimPlayback()) return; // denied
     }
     try {
+      // Reset any leftover J/L shuttle rate so normal play resumes at 1×.
+      try { this.active.playbackRate = 1; } catch {}
       if (this.active.paused || this.active.ended) {
         const p = this.active.play();
         if (p && typeof p.catch === 'function') {

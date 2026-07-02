@@ -13,6 +13,7 @@
 
 import { resolveInputTransform, resolveOutputTransform, resolveLookTransform, ACES_DEFAULT_VERSION } from './transformRegistry.js';
 import { validate } from '../state/acesLookValidation.js';
+import { resolveIdtFromOCFMeta } from './ocfIdtResolver.js';
 
 const AMF_NS = 'urn:ampas:aces:amf:v2.0';
 
@@ -32,6 +33,12 @@ export function buildAmf(state) {
 
   const acesVersion = state.acesVersion || ACES_DEFAULT_VERSION;
   const idt = resolveInputTransform(state.inputTransform, { acesVersion });
+  // OCF auto-detect: when the IDT is unresolved (no registry entry, or the AUTO
+  // sentinel) but the clip carries OCF metadata, derive the IDT (label + ACES
+  // URN) straight from the camera format so the inputTransform isn't left blank.
+  const idtUnresolved = !idt || idt.resolved === false || state.inputTransform === 'AUTO';
+  const ocfIdt = (idtUnresolved && state.ocfMeta && state.inputTransform !== 'NONE_ALREADY_ACES')
+    ? resolveIdtFromOCFMeta(state.ocfMeta) : null;
   const odt = resolveOutputTransform(state.outputTransform, { acesVersion });
   const now = new Date().toISOString();
   const uuid1 = _uuid();
@@ -46,7 +53,7 @@ export function buildAmf(state) {
   // ── amfInfo ──────────────────────────────────────────────────────────────
   // Resolve 21 displays this description as the "AMF transform name" in the
   // project settings ACES AMF tree. Make it informative: IDT → ODT.
-  const idt_label = (idt && idt.label) ? idt.label : (state.inputTransform || 'Camera');
+  const idt_label = ocfIdt ? ocfIdt.colorSpaceLabel : ((idt && idt.label) ? idt.label : (state.inputTransform || 'Camera'));
   const odt_label = (odt && odt.label) ? odt.label : (state.outputTransform || 'Display');
   const transformName = state.clipId
     ? `${_esc(state.clipId)} | ${_esc(idt_label)} → ${_esc(odt_label)}`
@@ -89,11 +96,14 @@ export function buildAmf(state) {
   p(`    </aces:pipelineInfo>`);
 
   // ── Input Transform ───────────────────────────────────────────────────────
-  if (idt && state.inputTransform !== 'NONE_ALREADY_ACES') {
+  if ((idt || ocfIdt) && state.inputTransform !== 'NONE_ALREADY_ACES') {
+    // OCF-resolved IDT wins when the registry transform was unresolved/AUTO.
+    const idtDesc = ocfIdt ? ocfIdt.colorSpaceLabel : idt.label;
+    const idtTid  = ocfIdt ? ocfIdt.acesIdtUrn : idt.transformId;
     p(`    <aces:inputTransform applied="false">`);
-    p(`      <aces:description>${_esc(idt.label)}</aces:description>`);
-    if (idt.transformId) {
-      p(`      <aces:transformId>${_esc(idt.transformId)}</aces:transformId>`);
+    p(`      <aces:description>${_esc(idtDesc)}</aces:description>`);
+    if (idtTid) {
+      p(`      <aces:transformId>${_esc(idtTid)}</aces:transformId>`);
     } else {
       // No official ACES IDT — reference the CLF file
       p(`      <aces:file>${_esc(state.inputTransformFile || '')}</aces:file>`);

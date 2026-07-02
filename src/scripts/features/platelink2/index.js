@@ -626,6 +626,13 @@ export function createPlateLinkFeature(deps = {}) {
     v.selMeta       = q('pl2SelMeta');
     v.qtWrap        = q('pl2QtWrap');
     v.qtPreview     = q('pl2QtPreview');
+    // Resolve-style transport (replaces the native <video controls> bar).
+    if (v.qtPreview) import('../../core/resolveVideoTransport.js')
+      .then(m => m.attachResolveTransport(v.qtPreview, {
+        onPreviousItem: () => _navActiveShot(-1),
+        onCurrentItem:  () => _navActiveShot(0),
+        onNextItem:     () => _navActiveShot(1),
+      })).catch(() => {});
     v.qtHint        = q('pl2QtHint');
     v.qtNoRef       = q('pl2QtNoRef');
     v.langSel       = q('pl2LangSel');
@@ -947,10 +954,45 @@ export function createPlateLinkFeature(deps = {}) {
     if (_activeRowEl) _activeRowEl.classList.remove('pl2-sl-active');
     const escaped = CSS.escape(shotName);
     _activeRowEl = v.shotList?.querySelector(`.pl2-sl-shot[data-shot="${escaped}"]`) || null;
-    if (_activeRowEl) _activeRowEl.classList.add('pl2-sl-active');
+    if (_activeRowEl) {
+      const grp = _activeRowEl.closest('.pl2-sl-group');
+      grp?.classList.add('pl2-sl-open');
+      grp?.querySelectorAll('.pl2-sl-shot').forEach(row => {
+        if (row.dataset.visible !== '0') row.style.display = '';
+      });
+      _activeRowEl.classList.add('pl2-sl-active');
+    }
     const shot = _shotMap.get(shotName) || null;
     _loadQtVideo(shot);
     _renderInspector(shot);
+  }
+
+  function _visibleShotNames() {
+    return Array.from(v.shotList?.querySelectorAll('.pl2-sl-shot') || [])
+      .filter(row => row.dataset.visible !== '0' && row.closest('.pl2-sl-group')?.style.display !== 'none')
+      .map(row => row.dataset.shot)
+      .filter(Boolean);
+  }
+
+  function _navActiveShot(delta) {
+    const names = _visibleShotNames();
+    if (!names.length) return false;
+    let idx = _activeShot ? names.indexOf(_activeShot) : -1;
+    if (delta === 0) {
+      if (idx >= 0) {
+        const vid = v.qtPreview;
+        try { if (vid && Number.isFinite(vid.duration)) { vid.pause(); vid.currentTime = 0; } } catch {}
+        _setActiveShot(names[idx]);
+        return true;
+      }
+      _setActiveShot(names[0]);
+      return true;
+    }
+    if (idx < 0) idx = delta > 0 ? -1 : names.length;
+    idx = Math.max(0, Math.min(names.length - 1, idx + delta));
+    _setActiveShot(names[idx]);
+    _activeRowEl?.scrollIntoView?.({ block: 'nearest' });
+    return true;
   }
 
   // Fully abort the video decode pipeline and release media resources.

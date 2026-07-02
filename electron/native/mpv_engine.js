@@ -22,6 +22,7 @@ const net        = require('net');
 const path       = require('path');
 const fs         = require('fs');
 const os         = require('os');
+const seekModel  = require('./seekModel');   // C2 frame-accurate parity
 
 const BUNDLED_MPV = path.join(__dirname, 'mpv');
 const SYSTEM_MPV_PATHS = [
@@ -136,7 +137,14 @@ async function open({ path: filePath } = {}) {
     _sessions.delete(sessionId);
   });
 
-  await _waitForSocket(sockPath);
+  try {
+    await _waitForSocket(sockPath);
+  } catch (err) {
+    // Socket never appeared but the process may still be alive — kill it so we don't
+    // leak an orphaned (on-top, borderless) mpv window with no session reference.
+    try { proc.kill('SIGKILL'); } catch {}
+    throw err;
+  }
 
   _sessions.set(sessionId, { proc, socketPath: sockPath, filePath });
   return { ok: true, sessionId };
@@ -161,6 +169,18 @@ async function seek({ sessionId, position } = {}) {
   if (!s) return { ok: false, error: 'Unknown sessionId' };
   await _sendCommand(s.socketPath, ['seek', position, 'absolute']);
   return { ok: true };
+}
+
+// Frame-accurate seek — mpv has no frame-seek, so convert via the shared model
+// to a MID-FRAME absolute time that lands inside the target frame (parity with
+// AVFoundation's frame-native getStill). Accepts frame | timecode | seconds.
+async function seekFrame({ sessionId, frame, timecode, seconds, fps = 0, sourceStartTc = '' } = {}) {
+  const s = _sessions.get(sessionId);
+  if (!s) return { ok: false, error: 'Unknown sessionId' };
+  const targetFrame = seekModel.normalizeToFrame({ frame, timecode, seconds }, fps, sourceStartTc);
+  const { command, seconds: pos } = seekModel.toEngineSeek(targetFrame, fps, 'mpv');
+  await _sendCommand(s.socketPath, command);
+  return { ok: true, frame: targetFrame, seconds: pos };
 }
 
 async function stepForward({ sessionId } = {}) {
@@ -208,6 +228,7 @@ const HANDLED = new Set([
   'media.mpv.play',
   'media.mpv.pause',
   'media.mpv.seek',
+  'media.mpv.seekFrame',
   'media.mpv.stepForward',
   'media.mpv.stepBack',
   'media.mpv.getTime',
@@ -223,6 +244,7 @@ async function route({ type, payload = {} }) {
     case 'media.mpv.play':        return play(payload);
     case 'media.mpv.pause':       return pause(payload);
     case 'media.mpv.seek':        return seek(payload);
+    case 'media.mpv.seekFrame':   return seekFrame(payload);
     case 'media.mpv.stepForward': return stepForward(payload);
     case 'media.mpv.stepBack':    return stepBack(payload);
     case 'media.mpv.getTime':     return getTime(payload);

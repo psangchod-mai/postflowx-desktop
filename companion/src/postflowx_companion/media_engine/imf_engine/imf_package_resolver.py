@@ -4,6 +4,8 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from ... import safe_xml
+
 
 _UUID_BARE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
@@ -39,7 +41,7 @@ def _parse_assetmap(xml_path: str) -> dict[str, str]:
     folder = p.parent
     assets: dict[str, str] = {}
     try:
-        tree = ET.parse(xml_path)
+        tree = safe_xml.parse_path(xml_path)
         root = tree.getroot()
     except Exception:
         return assets
@@ -118,7 +120,7 @@ def find_cpls(root: str, asset_map: dict[str, str] | None = None) -> list[str]:
     cpls: list[str] = []
     for xml_file in root_p.rglob("*.xml"):
         try:
-            tree = ET.parse(str(xml_file))
+            tree = safe_xml.parse_path(str(xml_file))
             r = tree.getroot()
             if "CompositionPlaylist" in _ns_strip(r.tag):
                 cpls.append(str(xml_file))
@@ -129,7 +131,7 @@ def find_cpls(root: str, asset_map: dict[str, str] | None = None) -> list[str]:
         for path in asset_map.values():
             if path not in cpls and path.lower().endswith(".xml"):
                 try:
-                    tree = ET.parse(path)
+                    tree = safe_xml.parse_path(path)
                     r = tree.getroot()
                     if "CompositionPlaylist" in _ns_strip(r.tag):
                         cpls.append(path)
@@ -147,7 +149,7 @@ def resolve_cpl_mxf_paths(
     """
     resources: list[dict] = []
     try:
-        tree = ET.parse(cpl_path)
+        tree = safe_xml.parse_path(cpl_path)
         root = tree.getroot()
     except Exception:
         return resources
@@ -184,7 +186,7 @@ def open_package(folder_path: str) -> dict:
     root_p = Path(folder_path)
     for xml_file in root_p.rglob("*.xml"):
         try:
-            tree = ET.parse(str(xml_file))
+            tree = safe_xml.parse_path(str(xml_file))
             r = tree.getroot()
             if "PackingList" in _ns_strip(r.tag):
                 pkls.append(str(xml_file))

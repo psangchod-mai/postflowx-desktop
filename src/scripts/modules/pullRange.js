@@ -24,7 +24,11 @@ import { tcToFrames, framesToTC } from './utils_time.js';
 export function normalizeSpeedPercent(raw) {
   const v = Number(raw);
   if (!Number.isFinite(v) || v === 0) return 100;
-  const pct = Math.abs(v) <= 10 ? v * 100 : v;
+  // Use the MAGNITUDE: a reverse retime (e.g. -50% or ratio -1.5) carries the
+  // same source-frame span as its forward counterpart; direction is handled
+  // separately. Previously negatives fell through to 100% and under-pulled.
+  const mag = Math.abs(v);
+  const pct = mag <= 10 ? mag * 100 : mag;
   return pct > 0 ? pct : 100;
 }
 

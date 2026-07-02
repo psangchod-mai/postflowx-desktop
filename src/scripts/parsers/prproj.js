@@ -52,7 +52,9 @@ export async function parsePRPROJ(file) {
   // Pick primary sequence (longest, non-nested)
   const sequences   = [...doc.querySelectorAll('Sequence')];
   const nestedUids  = _findNestedSequenceUids(doc);
-  const candidates  = sequences.filter(s => !nestedUids.has(s.getAttribute('ObjectUID') || ''));
+  let   candidates  = sequences.filter(s => !nestedUids.has(s.getAttribute('ObjectUID') || ''));
+  // Never let nested-detection filter out everything (defensive against schema quirks).
+  if (!candidates.length) candidates = sequences;
   const seq         = candidates.reduce((best, s) =>
     _seqEndTick(s) > _seqEndTick(best) ? s : best,
     candidates[0] || sequences[0]
@@ -115,12 +117,19 @@ function _detectTickRate(doc, uidMap) {
 
 function _findNestedSequenceUids(doc) {
   const nested = new Set();
-  // ClipItems that reference a Sequence (not a MasterClip) are nested
-  for (const ref of doc.querySelectorAll('ClipItem ComponentClipID ObjectRef, ClipItem ClipID ObjectRef')) {
+  // Collect every Sequence's ObjectUID, then flag any that are referenced from
+  // within a ClipItem/TrackItem — those are nested (compound) sequences used as
+  // clips, not top-level editorial timelines.
+  const seqUids = new Set();
+  for (const s of doc.querySelectorAll('Sequence')) {
+    const u = s.getAttribute('ObjectUID');
+    if (u) seqUids.add(u);
+  }
+  if (!seqUids.size) return nested;
+  for (const ref of doc.querySelectorAll(
+    'ClipItem ObjectRef, TrackItem ObjectRef, SubClip ObjectRef')) {
     const uid = ref.getAttribute('ObjectUID');
-    if (!uid) continue;
-    const el = doc.getElementById ? null : null; // can't use getElementById on arbitrary XML
-    // we'll mark these after building uid map — handled in main flow
+    if (uid && seqUids.has(uid)) nested.add(uid);
   }
   return nested;
 }

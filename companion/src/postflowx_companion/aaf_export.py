@@ -80,6 +80,16 @@ def find_ffmpeg() -> str | None:
     env_path = os.environ.get('POSTFLOWX_FFMPEG', '').strip()
     if env_path and shutil.which(env_path):
         return env_path
+    # Prefer the binary BUNDLED in the .app (Dev Brief P0#2): a GUI-launched
+    # companion has a stripped PATH and no /opt/homebrew, so the lookups below
+    # only resolve in dev. _resource_bin() returns a full path or None.
+    try:
+        from .proxy_service import _resource_bin
+        bundled = _resource_bin('ffmpeg')
+        if bundled:
+            return bundled
+    except Exception:
+        pass
     for c in ('ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/bin/ffmpeg'):
         found = shutil.which(c)
         if found:

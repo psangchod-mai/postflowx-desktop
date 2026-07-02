@@ -148,6 +148,13 @@ export function resolveIdtUrn(cameraModel) {
  * @param {Object}  [params.cdl]        - { slope:[r,g,b], offset:[r,g,b],
  *                                          power:[r,g,b], sat:number }
  * @param {boolean} [params.cdlApplied] - Whether CDL has already been applied
+ * @param {string}  [params.outputColorSpace] - Color space of the DELIVERED plate
+ *                                        (e.g. 'ACES2065-1', 'Rec.709', or a
+ *                                        camera log space). Drives the
+ *                                        inputTransform applied flag: an ACES /
+ *                                        display-space plate has the IDT baked in
+ *                                        (applied="true"); a camera-log/raw plate
+ *                                        does not (applied="false").
  * @param {string}  [params.appVersion] - App version string
  * @returns {{ ok: boolean, xml: string|null, warnings: string[] }}
  */
@@ -163,6 +170,7 @@ export function buildVfxPullAmf({
   mode        = 'match_editorial',
   cdl         = null,
   cdlApplied  = false,
+  outputColorSpace = 'ACES2065-1',
   colorMatch  = null,
   retime      = null,
   reframe     = null,
@@ -204,6 +212,24 @@ export function buildVfxPullAmf({
     }
   }
   for (const w of (Array.isArray(extraWarnings) ? extraWarnings : [])) warnings.push(w);
+
+  // ── Input-transform "applied" contract ─────────────────────────────────────
+  // The AMF accompanies the DELIVERED plate, so applied must describe whether the
+  // IDT is already baked into THAT plate — which is decided by its color space:
+  //   • ACES2065-1 / ACEScg / a display space (Rec.709 review proxy) → the IDT was
+  //     applied during the pull render → applied="true".
+  //   • Camera-native log/raw passthrough (e.g. DPX log) → IDT NOT applied; the
+  //     compositor must apply it → applied="false".
+  // This must NOT be hardcoded: colorPlanEngine reads applied to gate IDT re-apply
+  // (applyIDT = !amfAppliedIDT), so a stale "false" on an ACES plate = double IDT.
+  const _outCs = String(outputColorSpace || 'ACES2065-1').toLowerCase();
+  // Camera-native color-space strings reliably carry a log/raw/cineon marker
+  // (e.g. "ARRI LogC4", "REDLog3G10", "redcode raw"); no ACES or display space
+  // does, so a substring test is safe and catches prefix-glued tokens.
+  const _plateIsCameraNative =
+    /(?:log|cineon|arriraw|x-?ocn|xocn|camera[\s-]?native|\braw\b)/.test(_outCs);
+  const idtApplied     = !_plateIsCameraNative;
+  const idtAppliedAttr = idtApplied ? 'true' : 'false';
 
   // ── Build XML ─────────────────────────────────────────────────────────────
   const now        = new Date().toISOString();
@@ -275,8 +301,9 @@ export function buildVfxPullAmf({
   p(``);
 
   // ── Input Transform ───────────────────────────────────────────────────────
-  // All modes emit an input transform block.
-  p(`    <aces:inputTransform applied="false">`);
+  // All modes emit an input transform block. applied reflects whether the IDT is
+  // baked into the delivered plate (see "applied contract" above).
+  p(`    <aces:inputTransform applied="${idtAppliedAttr}">`);
 
   if (resolvedIdtUrn) {
     p(`      <aces:transformId>${_esc(resolvedIdtUrn)}</aces:transformId>`);
@@ -288,9 +315,9 @@ export function buildVfxPullAmf({
   }
 
   if (safeMode === 'ocf_native') {
-    p(`      <aces:description>${_esc('VFX plate pull — IDT only. No output transform. Plate remains in ACES2065-1.')}</aces:description>`);
+    p(`      <aces:description>${_esc(`VFX plate pull — IDT only. No output transform. Plate delivered in ${outputColorSpace || 'ACES2065-1'} (IDT ${idtApplied ? 'baked in' : 'NOT applied — compositor applies it'}).`)}</aces:description>`);
   } else if (cameraProfile || cameraModel) {
-    p(`      <aces:description>${_esc(`Input profile: ${cameraProfile || cameraModel}`)}</aces:description>`);
+    p(`      <aces:description>${_esc(`Input profile: ${cameraProfile || cameraModel} — IDT ${idtApplied ? 'baked into delivered plate' : 'not applied (camera-native delivery)'}.`)}</aces:description>`);
   }
 
   p(`    </aces:inputTransform>`);

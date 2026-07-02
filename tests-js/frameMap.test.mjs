@@ -76,5 +76,29 @@ const baseJob = {
   ok(j.shot.frame_map.map(e => e.src_frame).join(',') === '1001,1002,1003', 'normal 1:1 plate-local map');
 }
 
+// ── Freeze: hold the editorial freeze frame, NOT the handle-extended in-point ──
+// (audit E1) exportIn 86400 = srcIn − handles; the freeze frame is 86412.
+{
+  const job = { ...baseJob, expectedRenderedFrameCount: 5, frameCount: 5,
+    retime: { freeze: true, freezeSourceFrame: 86412 } };
+  const f = srcFrames(buildFrameMapCSV(job));
+  ok(f.length === 5, 'freeze: 5 output frames');
+  ok(f.every(v => v === 86412), 'freeze holds the FREEZE frame (86412), not exportIn (86400)');
+}
+// Freeze without an explicit freeze frame → backward-compatible fallback to srcStart.
+{
+  const job = { ...baseJob, expectedRenderedFrameCount: 3, frameCount: 3, retime: { freeze: true } };
+  const f = srcFrames(buildFrameMapCSV(job));
+  ok(f.every(v => v === 86400), 'freeze (no freezeSourceFrame) falls back to exportIn (86400)');
+}
+// JSON freeze: plate-local all hold the first plate frame.
+{
+  const job = { ...baseJob, expectedRenderedFrameCount: 4, frameCount: 4,
+    retime: { freeze: true, freezeSourceFrame: 86412 } };
+  const j = buildFrameMapJSON(job, { frameStart: 1001, frameCount: 4 });
+  ok(j.shot.retime_type === 'freeze' && j.shot.nuke_retime.node_type === 'FrameHold', 'freeze → FrameHold node');
+  ok(j.shot.frame_map.every(e => e.src_frame === 1001), 'freeze JSON: every frame holds the first plate frame');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

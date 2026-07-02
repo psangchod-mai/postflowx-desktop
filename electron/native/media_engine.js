@@ -338,7 +338,9 @@ async function open({ path: filePath, role = 'qtRef' } = {}) {
   }
 
   const playerId = _makePlayerId();
-  const ext      = filePath.split('.').pop().toLowerCase();
+  // Use path.extname (not split('.')) so paths with a dotted directory and no file
+  // extension — e.g. /Volumes/My.Footage/CLIP — aren't misread as extension "footage/clip".
+  const ext      = path.extname(filePath).slice(1).toLowerCase();
   const h264Like = ['mp4', 'mov', 'mkv', 'm4v', 'hevc', 'h264', 'mts', 'm2ts'].includes(ext);
   const srcUrl   = info
     ? _buildSrcUrl(filePath, info)

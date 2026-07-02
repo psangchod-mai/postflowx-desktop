@@ -801,8 +801,9 @@ export function matchAllEvents(events, ocfFiles, opts = {}) {
         const aIn = _tcToFrames(ea.srcIn || '', fa), aOut = _tcToFrames(ea.srcOut || ea.srcIn || '', fa);
         const bIn = _tcToFrames(eb.srcIn || '', fb), bOut = _tcToFrames(eb.srcOut || eb.srcIn || '', fb);
         if (!Number.isFinite(aIn) || !Number.isFinite(bIn)) continue;
-        // Inclusive intersection of [in,out] ranges.
-        if (aIn <= bOut && bIn <= aOut) { overlapSet.add(group[a]); overlapSet.add(group[b]); }
+        // Exclusive intersection — frame-adjacent cuts (one's srcOut == the
+        // next's srcIn) are normal consecutive pulls, NOT an overlap conflict.
+        if (aIn < bOut && bIn < aOut) { overlapSet.add(group[a]); overlapSet.add(group[b]); }
       }
     }
   }

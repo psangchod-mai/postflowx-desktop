@@ -42,5 +42,25 @@ const amf = buildVfxPullAmf({
 });
 ok(amf.ok && /IDT\.Canon\.CanonLog2_CGamut/.test(amf.xml), 'AMF emits Canon C-Log2 IDT');
 
+// ── AMF inputTransform applied flag (audit E11) ────────────────────────────
+// applied describes whether the IDT is baked into the DELIVERED plate, driven by
+// the plate's color space — NOT hardcoded. A stale "false" on an ACES plate would
+// make an AMF-aware compositor re-apply the IDT (double IDT).
+const appliedOf = (xml) => (xml.match(/<aces:inputTransform applied="(true|false)">/) || [])[1];
+const mkAmf = (outputColorSpace, mode = 'ocf_native') => buildVfxPullAmf({
+  clipName: 'A001', cameraModel: 'ARRI LogC4', mode, outputColorSpace,
+}).xml;
+
+ok(appliedOf(mkAmf('ACES2065-1')) === 'true', 'ACES2065-1 plate → inputTransform applied=true (IDT baked)');
+ok(appliedOf(buildVfxPullAmf({ clipName: 'A001', cameraModel: 'ARRI LogC4', mode: 'match_editorial' }).xml) === 'true',
+   'default output (ACES2065-1) → applied=true');
+ok(appliedOf(mkAmf('Rec.709', 'review_proxy')) === 'true', 'Rec.709 review proxy → applied=true (IDT baked through)');
+ok(appliedOf(mkAmf('ARRI LogC4')) === 'false', 'camera-log plate (LogC4) → applied=false (compositor applies IDT)');
+ok(appliedOf(mkAmf('REDLog3G10')) === 'false', 'prefix-glued log token (REDLog3G10) → applied=false');
+ok(appliedOf(mkAmf('REDCODE RAW')) === 'false', 'camera-raw plate → applied=false');
+const acesAmf = buildVfxPullAmf({ clipName: 'A001', cameraModel: 'GENERIC', mode: 'ocf_native', outputColorSpace: 'ACES2065-1' }).xml;
+ok(appliedOf(acesAmf) === 'true' && /already in ACES2065-1/.test(acesAmf),
+   'already-ACES source → applied=true + no-IDT comment');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

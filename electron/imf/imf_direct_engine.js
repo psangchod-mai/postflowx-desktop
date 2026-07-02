@@ -28,12 +28,23 @@ const http          = require('http');
 const os            = require('os');
 const { spawn }     = require('child_process');
 
-function _resolveBin(name, candidates) {
-  for (const p of candidates) { if (fs.existsSync(p)) return p; }
-  return name;
+// Prefer the BUNDLED ffmpeg/ffprobe (.app/Contents/Resources/bin) over Homebrew.
+// Critical here: only the bundled build has the IMF demuxer (--enable-demuxer=imf
+// + libxml2); Homebrew/system ffmpeg does NOT, so the -f imf stream would fail.
+// ffbins.js resolves bundled → PFX_*_BIN env → Homebrew (Dev Brief P0#2).
+let FFMPEG, FFPROBE;
+try {
+  ({ FFMPEG, FFPROBE } = require('../native/ffbins'));
+} catch {
+  const _resolveBin = (name, candidates) => {
+    const env = process.env[`PFX_${name.toUpperCase()}_BIN`];
+    if (env && fs.existsSync(env)) return env;
+    for (const p of candidates) { if (fs.existsSync(p)) return p; }
+    return name;
+  };
+  FFMPEG  = _resolveBin('ffmpeg',  ['/opt/homebrew/bin/ffmpeg',  '/usr/local/bin/ffmpeg',  '/usr/bin/ffmpeg']);
+  FFPROBE = _resolveBin('ffprobe', ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']);
 }
-const FFMPEG  = _resolveBin('ffmpeg',  ['/opt/homebrew/bin/ffmpeg',  '/usr/local/bin/ffmpeg',  '/usr/bin/ffmpeg']);
-const FFPROBE = _resolveBin('ffprobe', ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']);
 
 const { IMFPackageIndex } = require('./imf_package_index');
 const nativeDecoder       = require('./imf_native_decoder');
@@ -63,7 +74,7 @@ function _ensureHttpServer() {
         return res.end('ok');
       }
 
-      // MJPEG stream: GET /imf/stream/{sessionId}
+      // MJPEG stream: GET /imf/stream/{sessionId}[?q=auto|full|half|quarter]
       const streamMatch = url.match(/^\/imf\/stream\/([^/?]+)/);
       if (streamMatch) {
         const session = _sessions.get(streamMatch[1]);
@@ -71,6 +82,11 @@ function _ensureHttpServer() {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Session not found' }));
         }
+        // Reduced-resolution playback (C-RT1): J2K DWT reduce-level via ffmpeg
+        // -lowres makes UHD/HD sustain real-time on CPU (full-res can't — see
+        // PostFlowX_CRT0_Audit.md). Scrub/pause stay full-res for a crisp frame.
+        const qMatch = url.match(/[?&]q=([a-z0-9]+)/i);
+        if (qMatch) session.lowres = _qualityToLowres(qMatch[1]);
         _attachMJPEGStream(session, req, res);
         return;
       }
@@ -100,6 +116,18 @@ function _ensureHttpServer() {
       resolve(_httpPort);
     });
   });
+}
+
+// Map a quality label to a J2K reduce-level (ffmpeg -lowres power-of-two).
+// 'auto' picks half-res — measured real-time at HD/UHD where full-res can't keep up.
+function _qualityToLowres(q) {
+  switch (String(q || '').toLowerCase()) {
+    case 'full':    return 0;   // full resolution (decode-bound; may drop below realtime)
+    case 'half':    return 1;   // 1/2 each axis — verified ~40fps HD IMF (clears 23.976)
+    case 'quarter': return 2;   // 1/4 each axis — fastest preview
+    case 'auto':    return 1;
+    default:        return 0;
+  }
 }
 
 function _attachMJPEGStream(session, _req, res) {
@@ -500,6 +528,7 @@ async function startPlayback(packageId, cplId, opts = {}) {
     primaries:   cpl.primaries || '–',
     audioInfo:   null,
     outputWidth: opts.outputWidth || 1920,
+    lowres:      _qualityToLowres(opts.quality || 'full'),  // continuous-play reduce level
   };
   _sessions.set(sessionId, session);
 
@@ -557,6 +586,19 @@ async function controlPlayback(sessionId, command, value) {
         _startFFmpegStream(session, targetFrame);
       }
       return { ok: true, frame: targetFrame };
+    }
+
+    case 'quality': {
+      // Reduced-resolution continuous-play level (C-RT1). Restart the stream so
+      // the new -lowres takes effect mid-playback.
+      const lowres = _qualityToLowres(value);
+      const changed = lowres !== session.lowres;
+      session.lowres = lowres;
+      if (changed && session.state === 'playing') {
+        _killFFmpegProc(session);
+        _startFFmpegStream(session, session.currentFrame);
+      }
+      return { ok: true, quality: value, lowres };
     }
 
     case 'stepForward': {
@@ -772,6 +814,10 @@ function _startFFmpegStream(session, startFrame) {
     '-f', 'imf',
     '-assetmaps', session.assetMapPath,
   ];
+  // Reduced-resolution decode for real-time continuous playback (C-RT1). -lowres
+  // is a DECODER option → must precede -i. The J2K decoder emits at 1/2^N per
+  // axis (far cheaper); the scale filter below resizes to the canvas width.
+  if (session.lowres > 0) args.push('-lowres', String(session.lowres));
   if (seekTs) args.push('-ss', seekTs);
   args.push('-i', session.cplPath);
   args.push(

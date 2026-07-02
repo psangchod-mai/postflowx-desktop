@@ -170,7 +170,9 @@ function tcFromFrames(frames, fps) {
 export function createTimeline(rootEl, options = {}) {
   injectStyles();
 
-  const fps = options.fps ?? 24;
+  // `?? 24` only defaults null/undefined — fps:0 would slip through and make
+  // tcFromFrames/niceStepFrames divide by zero (NaN/Infinity ruler). Guard >0.
+  const fps = Number(options.fps) > 0 ? Number(options.fps) : 24;
   const onSelect = typeof options.onSelect === 'function' ? options.onSelect : () => {};
   const onHover = typeof options.onHover === 'function' ? options.onHover : () => {};
   const onViewChange = typeof options.onViewChange === 'function' ? options.onViewChange : () => {};

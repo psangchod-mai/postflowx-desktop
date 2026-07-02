@@ -35,8 +35,14 @@ function _resolveBin(name, candidates) {
   for (const p of candidates) { if (fs.existsSync(p)) return p; }
   return name;
 }
-const FFMPEG      = _resolveBin('ffmpeg',      ['/opt/homebrew/bin/ffmpeg',      '/usr/local/bin/ffmpeg',      '/usr/bin/ffmpeg']);
-const FFPROBE     = _resolveBin('ffprobe',     ['/opt/homebrew/bin/ffprobe',     '/usr/local/bin/ffprobe',     '/usr/bin/ffprobe']);
+// Prefer the BUNDLED ffmpeg (only it has the IMF demuxer + libxml2; Homebrew
+// does not) via ffbins.js (bundled → PFX_*_BIN env → Homebrew, Dev Brief P0#2).
+let FFMPEG, FFPROBE;
+try { ({ FFMPEG, FFPROBE } = require('../native/ffbins')); }
+catch {
+  FFMPEG  = _resolveBin('ffmpeg',  [process.env.PFX_FFMPEG_BIN,  '/opt/homebrew/bin/ffmpeg',  '/usr/local/bin/ffmpeg',  '/usr/bin/ffmpeg'].filter(Boolean));
+  FFPROBE = _resolveBin('ffprobe', [process.env.PFX_FFPROBE_BIN, '/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'].filter(Boolean));
+}
 const OJPH_EXPAND = _resolveBin('ojph_expand', ['/opt/homebrew/bin/ojph_expand', '/usr/local/bin/ojph_expand']);
 
 // Bare string fallback means the binary was not found at any known absolute path.

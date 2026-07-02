@@ -745,15 +745,22 @@ async function readJSONFile(dirHandle, filename){
 }
 
 async function loadAndApplyTabsFromFS(tabsDir){
-  const pull = await readJSONFile(tabsDir, TAB_FILES.pull_prep);
-  const cut = await readJSONFile(tabsDir, TAB_FILES.cut_diff);
-  const markers = await readJSONFile(tabsDir, TAB_FILES.markers);
-  const plate = await readJSONFile(tabsDir, TAB_FILES.plate_link);
-  const imf = await readJSONFile(tabsDir, TAB_FILES.imf);
-  const review = await readJSONFile(tabsDir, TAB_FILES.review);
-  const trlConf = await readJSONFile(tabsDir, TAB_FILES.trl_conf);
-  const settings = await readJSONFile(tabsDir, TAB_FILES.settings);
-  const shots = await readJSONFile(tabsDir, TAB_FILES.shots);
+  return _applyProjectTabs((fn) => readJSONFile(tabsDir, fn));
+}
+
+// Shared tab-apply core. `readJSON(filename)` returns the parsed tab object (or
+// null/throws-handled). Works with the FS Access dir handle OR native readFile
+// (smart Load on desktop), so both load paths apply state identically.
+async function _applyProjectTabs(readJSON){
+  const pull = await readJSON(TAB_FILES.pull_prep);
+  const cut = await readJSON(TAB_FILES.cut_diff);
+  const markers = await readJSON(TAB_FILES.markers);
+  const plate = await readJSON(TAB_FILES.plate_link);
+  const imf = await readJSON(TAB_FILES.imf);
+  const review = await readJSON(TAB_FILES.review);
+  const trlConf = await readJSON(TAB_FILES.trl_conf);
+  const settings = await readJSON(TAB_FILES.settings);
+  const shots = await readJSON(TAB_FILES.shots);
 
   // Unconditionally overwrite every global — if a tab has no data in this project,
   // null it out so stale data from a previously-loaded project can't bleed through.
@@ -769,7 +776,7 @@ async function loadAndApplyTabsFromFS(tabsDir){
   try{ window.__PFX_IMF_STATE           = imf?.state    ?? null; }catch{}
   try{ window.__PFX_REVIEWS_STATE       = review?.state ?? null; }catch{}
   try{ window.__PFX_TRL_CONF_STATE      = trlConf?.state ?? null; }catch{}
-  const acesLook = await readJSONFile(tabsDir, TAB_FILES.aces_look);
+  const acesLook = await readJSON(TAB_FILES.aces_look);
   try{ window.__PFX_ACES_LOOK_STATE = acesLook?.state ?? null; }catch{}
 
   // Restore localStorage (settings)
@@ -900,6 +907,30 @@ async function loadAndApplyTabFromFS(tabsDir, tabKey){
   return { ok:true, tab:t };
 }
 
+// Desktop fast-path: when a Project Folder is configured (Settings → Set Project
+// Folder, stored as the string `pfx_project_dir_path`), write project files
+// straight there via the native bridge — NO save dialog. Additive: callers fall
+// back to the FS Access API + Downloads when this returns { ok:false }.
+async function writeProjectViaNative(projectName, files){
+  let pf = '';
+  try { pf = localStorage.getItem('pfx_project_dir_path') || ''; } catch {}
+  const wf = (typeof window !== 'undefined') ? window.pfxPlatform?.writeFile : null;
+  if (!pf || typeof wf !== 'function') return { ok:false, reason:'no_native' };
+  const proj = sanitizeFilename(projectName);
+  try{
+    for (const f of (files || [])){
+      // file.path is "PFX/<proj>/…"; the configured folder IS the PFX root, so
+      // strip the leading "PFX/" to avoid nesting it twice.
+      const rel = String(f.path || '').replace(new RegExp('^' + PFX_ROOT_DIR + '/'), '');
+      const res = await wf({ filePath: `${pf}/${rel}`, data: f.text });
+      if (!res || res.ok === false) return { ok:false, reason:'write_failed', error: res?.error };
+    }
+    return { ok:true, where:'project_folder', folder:`${pf}/${proj}` };
+  }catch(err){
+    return { ok:false, reason:'write_failed', error:String(err?.message||err) };
+  }
+}
+
 export async function saveTabProjectFile(tabKey, projectName){
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('save_project')) {
     window.PFX_GUARD?.toast?.('Save blocked — no save_project permission', 'deny');
@@ -912,6 +943,18 @@ export async function saveTabProjectFile(tabKey, projectName){
   // project folder is granted / the picker is cancelled) writes current content +
   // media. The FS path flushes again internally for the shots tab — harmless.
   if (t === 'shots') await _flushSWISnapshot();
+
+  // Desktop fast-path: configured Project Folder → write directly, no dialog.
+  try{
+    const manifest = buildManifest(projectName);
+    const tabs = buildTabsSnapshot(projectName);
+    const base = `${PFX_ROOT_DIR}/${sanitizeFilename(projectName)}`;
+    const rn = await writeProjectViaNative(projectName, [
+      { path:`${base}/${PROJECT_MANIFEST}`, text:JSON.stringify(manifest,null,2) },
+      { path:`${base}/${DIR_TABS}/${TAB_FILES[t]}`, text:JSON.stringify(tabs[t],null,2) },
+    ]);
+    if (rn.ok) return rn;
+  }catch{}
 
   // Prefer FS (may prompt on manual save)
   try{
@@ -1036,6 +1079,29 @@ async function fileHandleInfo(fh){
     return { exists:true, lastModified:Number(f.lastModified||0), size:Number(f.size||0) };
   }catch{
     return { exists:false };
+  }
+}
+
+// Desktop fast-path load: read a project's manifest + tab shards straight from
+// the configured Project Folder via native readFile (no FS Access prompt).
+// Reuses the shared _applyProjectTabs core. Returns { ok:false } to fall back.
+export async function loadProjectViaNative(projectName){
+  let pf = '';
+  try { pf = localStorage.getItem('pfx_project_dir_path') || ''; } catch {}
+  const rf = (typeof window !== 'undefined') ? window.pfxPlatform?.readFile : null;
+  if (!pf || typeof rf !== 'function') return { ok:false, reason:'no_native' };
+  const projDir = `${pf}/${sanitizeFilename(projectName)}`;
+  let man = null;
+  try { man = await rf({ filePath: `${projDir}/${PROJECT_MANIFEST}` }); } catch {}
+  if (man == null) return { ok:false, reason:'not_found' };
+  try {
+    await _applyProjectTabs(async (fn) => {
+      try { const txt = await rf({ filePath: `${projDir}/${DIR_TABS}/${fn}` }); return txt ? JSON.parse(txt) : null; }
+      catch { return null; }
+    });
+    return { ok:true, where:'project_folder', folder: projDir };
+  } catch (err) {
+    return { ok:false, reason:'apply_failed', error:String(err?.message||err) };
   }
 }
 
@@ -1371,6 +1437,23 @@ export async function saveUnifiedProjectFile(projectName){
   // project folder is granted / the picker is cancelled) writes current content +
   // media, not a stale snapshot. The FS path flushes again internally — harmless.
   await _flushSWISnapshot();
+
+  // Desktop fast-path: configured Project Folder → write directly, no dialog.
+  try{
+    const manifest = buildManifest(projectName);
+    const tabs = buildTabsSnapshot(projectName);
+    const base = `${PFX_ROOT_DIR}/${sanitizeFilename(projectName)}`;
+    const files = [{ path:`${base}/${PROJECT_MANIFEST}`, text:JSON.stringify(manifest,null,2) }];
+    for (const [tab, file] of Object.entries(TAB_FILES)){
+      files.push({ path:`${base}/${DIR_TABS}/${file}`, text:JSON.stringify(tabs[tab],null,2) });
+    }
+    const rn = await writeProjectViaNative(projectName, files);
+    if (rn.ok){
+      try{ window.MPS_auditAdd?.({ type:'PROJECT_SAVE', intent:'project', files:[`${base}/${PROJECT_MANIFEST}`], note:'Save Project (Project Folder)' }); }catch{}
+      return rn;
+    }
+  }catch{}
+
   // v4 per-tab shards
   try{
     const r = await writeProjectV4ViaFS(projectName, { autosave:false });

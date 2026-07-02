@@ -157,13 +157,17 @@ def _safe_stem(path: str) -> str:
 
 
 def _find_ffprobe(ffmpeg_bin: str) -> str | None:
-    import shutil
-    candidates = [ffmpeg_bin.replace("ffmpeg", "ffprobe"),
-                  "/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"]
-    for p in candidates:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return shutil.which("ffprobe")
+    # Sibling next to the resolved ffmpeg first (keeps a bundled pair together),
+    # then the shared bundled-first resolver (Dev Brief P0#2).
+    sib = ffmpeg_bin.replace("ffmpeg", "ffprobe")
+    if os.path.isfile(sib) and os.access(sib, os.X_OK):
+        return sib
+    try:
+        from ..proxy_service import _resource_bin
+        return _resource_bin("ffprobe")
+    except Exception:
+        import shutil
+        return shutil.which("ffprobe")
 
 
 def _probe_start_tc(clip_path: str, ffprobe: str | None) -> str:

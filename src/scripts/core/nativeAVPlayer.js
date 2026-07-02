@@ -95,7 +95,9 @@ export class NativeAVPlayerEngine {
     // Legacy avf_bridge fallback
     this._opts.onStatus?.('Probing ProRes…');
     const info = await window.pfxPlatform.media.getInfo({ path: filePath });
-    if (!info?.ok && info?.ok !== undefined) {
+    // Throw on a null/failed probe (bridge returned nothing) or an explicit ok:false.
+    // A plain info object with no `ok` field is still treated as success.
+    if (!info || info.ok === false) {
       throw new Error(info?.error || 'avf_bridge getInfo failed');
     }
     this._info        = info;

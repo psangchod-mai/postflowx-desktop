@@ -26,7 +26,9 @@ export function validate(state) {
     errors.push('No source selected.');
   }
 
-  if (state.inputTransform === 'AUTO') {
+  // AUTO is acceptable when the clip carries OCF metadata — the IDT is then
+  // auto-resolved from the camera format at build time (ocfIdtResolver).
+  if (state.inputTransform === 'AUTO' && !state.ocfMeta) {
     errors.push('Input transform is unresolved (AUTO). Select a transform or confirm source detection.');
   }
 
@@ -51,9 +53,11 @@ export function validate(state) {
     if (!validVec(offset)) errors.push('CDL Offset values are invalid.');
     if (!validVec(power))  errors.push('CDL Power values are invalid.');
     if (typeof sat !== 'number' || !isFinite(sat)) errors.push('CDL Saturation value is invalid.');
-    if (slope.some(v => v < 0))  errors.push('CDL Slope must be ≥ 0.');
-    if (power.some(v => v <= 0)) errors.push('CDL Power must be > 0.');
-    if (sat < 0) errors.push('CDL Saturation must be ≥ 0.');
+    // Guard with validVec — these ran unconditionally before and threw on a
+    // non-array CDL (e.g. a hand-edited .pfxpreset), crashing the render loop.
+    if (validVec(slope) && slope.some(v => v < 0))  errors.push('CDL Slope must be ≥ 0.');
+    if (validVec(power) && power.some(v => v <= 0)) errors.push('CDL Power must be > 0.');
+    if (typeof sat === 'number' && sat < 0) errors.push('CDL Saturation must be ≥ 0.');
   }
 
   for (const item of state.lookStack) {

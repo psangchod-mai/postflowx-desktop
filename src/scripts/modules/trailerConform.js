@@ -644,7 +644,10 @@ function _renderSrcList() {
       if (btn.dataset.kind === 'folder') {
         _files.srcFolder = null;
       } else {
-        _files.src.splice(parseInt(btn.dataset.idx, 10), 1);
+        // Guard: a missing/non-numeric idx → parseInt NaN → splice(NaN,1) removes
+        // index 0 (the wrong file). Only splice on a valid index.
+        const idx = parseInt(btn.dataset.idx, 10);
+        if (Number.isInteger(idx) && idx >= 0 && idx < _files.src.length) _files.src.splice(idx, 1);
       }
       _renderSrcList();
       _checkReadiness();

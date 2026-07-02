@@ -12,13 +12,16 @@ import { buildPackagePaths } from './packagePaths.js';
 import { buildFDL, buildFDLJson, buildFDLCsv, buildFDLTxt } from './fdlGenerator.js';
 import { buildVfxPullAmf, resolveIdtUrn } from './amfVfxPullGenerator.js';
 import { buildQcReportHtml, buildQcReportJson, computeQcBlocks, buildContactSheetHtml } from './vfxPullQcReport.js';
-import { nativePickOcfFolder, nativeProbeOcfFolder, nativeProbeOcfFile, nativeOpenOutputFolder, nativePickFolder, nativePickMediaFile, nativeGrabThumbnailAtTimecode, nativeCopyExrDelivery, nativeRenderPullExrStart, nativeRenderPullExrStatus, nativeRenderPullExrCancel, nativeQcExrSequence, nativeWritePullSidecars, nativeResolveStartBackground, nativeResolveProbeClips, nativeOcfExtractFrameToFile, nativeOcfExtractProxyMov, sharedMediaOpen, sharedMediaClose } from '../../modules/native_helper_client.js';
+import { nativePickOcfFolder, nativeProbeOcfFolder, nativeProbeOcfFile, nativeOpenOutputFolder, nativePickFolder, nativePickMediaFile, nativeGrabThumbnailAtTimecode, nativeCopyExrDelivery, nativeRenderPullExrStart, nativeRenderPullExrStatus, nativeRenderPullExrCancel, nativeRenderReviewProxyStart, nativeAces2OutputTransforms, nativeQcExrSequence, nativeWritePullSidecars, nativeResolveStartBackground, nativeResolveProbeClips, nativeOcfExtractFrameToFile, nativeOcfExtractProxyMov, sharedMediaOpen, sharedMediaClose } from '../../modules/native_helper_client.js';
 import { detectLetterboxPillarbox, computeReformatParams, estimateCDL, buildFrameFingerprint, findBestFrameOffset, compareFingerprints, pickVisualMatch } from './referenceMatchEngine.js';
 import { tcToFrames as _tcToFrames, framesToTC as _framesToTC } from '../../modules/utils_time.js';
 import { shotRiskScore } from './triageScore.js';
 import { buildNukeScript } from './nukeScript.js';
 import { buildAeScript } from './aeScript.js';
-import { buildFrameMapJSON } from './pullJobModel.js';
+import { buildFrameMapJSON, buildFrameMapRows } from './pullJobModel.js';
+import { buildIdtBadgeHtml } from './idtBadge.js';
+import { mountMediaSearch } from '../mediaSearch/mediaSearchBox.js';
+import { loadOcfFilesFromLibrary, libraryCount } from './dbLibrarySource.js';
 import { decodeWithRetry, isTimeout, runDecodeChain } from '../../modules/mediaDecode.js';
 import { createBridgeMonitor } from '../../modules/bridgeHealth.js';
 import { nativeHelperPing } from '../../modules/native_helper_client.js';
@@ -55,14 +58,33 @@ async function nativeOcfExtractFrame(filePath, timecode, opts = {}) {
 
 // Tier-1 dedicated Resolve Engine still — called by _pmGetOcfStillPreview.
 async function _nativeOcfResolveStill(ocfPath, sourceTc, opts = {}) {
-  return _sendCompanionAction('vfx.preview.resolveStill', {
+  const payload = {
     ocfPath,
     sourceTc,
     outputWidth:  opts.width  || 960,
     outputHeight: opts.height || 0,
     format: 'jpg',
-  }, 90000);
+  };
+  if (opts.sourceFrame != null) payload.sourceFrame = opts.sourceFrame;
+  return _sendCompanionAction('vfx.preview.resolveStill', {
+    ...payload,
+    // Must exceed the companion's worst-case render (render-queue fallback polls
+    // up to ~120s + import/seek/settle); a shorter timeout aborts a WORKING
+    // render and surfaces a misleading "needs Resolve".
+  }, 150000);
 }
+
+// Batch Resolve strip — renders the HdlSt→HdlEnd range ONCE and extracts every
+// position from it (the 7× perf fix). Returns { ok, frames:[{label, frame, dataUrl}] }.
+// picks: [{label, sourceTc?|frame?}]. Long timeout: one range render of a clip.
+async function _nativeOcfResolveStillBatch(ocfPath, picks, opts = {}) {
+  return _sendCompanionAction('vfx.preview.resolveStillBatch', {
+    ocfPath,
+    outputWidth: opts.width || 480,
+    picks: picks || [],
+  }, 200000);
+}
+window._pmVfxResolveStillBatch = _nativeOcfResolveStillBatch;
 
 // Direct Resolve still — bypasses the 3-tier cache and orchestration.
 // Used by the diagnostic "Test Resolve Still" button so failures report the exact stage.
@@ -148,6 +170,7 @@ let _settings = {
   frameStart: 1001,
   plateFormat: 'exr_aces',
   pullMode: 'ocf_native',
+  odtId: 'rec709_sdr',          // ACES 2.0 output transform for Review Proxy
   renderEngine: 'auto',
   matchMethods: ['timecode', 'reel', 'clipname', 'duration'],
   outputFolder: '',
@@ -486,6 +509,15 @@ export function initVfxPullCard(getEvents, getMarkers, getProjectMeta) {
   card.innerHTML = _buildPanelHTML();
   card.style.display = '';
 
+  // PFXMAC Sprint 3 — media-library search in the VFX Pull shot-list panel
+  // (queries the native SQLite DB this workspace's OCF scans populate).
+  try {
+    mountMediaSearch(
+      document.querySelector('#pmVfxWorkspace .pfx-vfx-ws-left'),
+      (rec) => { _linkLibraryFileToSelectedShot(rec); },   // click result → link to selected shot
+    );
+  } catch {}
+
   _applySettingsToUI();
   _wireListeners();
   _updateWfDots();
@@ -569,9 +601,9 @@ function _injectCSS() {
   transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 .pm-vfx-pull-wfdot.is-done {
-  background: rgba(55,181,115,0.18);
-  color: #37b573;
-  border-color: rgba(55,181,115,0.35);
+  background: rgba(10,163,86,0.18);
+  color: #0AA356;
+  border-color: rgba(10,163,86,0.35);
 }
 .pm-vfx-pull-wfdot.is-warn {
   background: rgba(255,185,74,0.16);
@@ -598,7 +630,11 @@ function _injectCSS() {
 }
 .pm-vfx-pull-go-btn:hover { opacity: 0.88; }
 .pm-vfx-pull-go-btn:active { transform: scale(0.98); }
-.pm-vfx-pull-go-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.pm-vfx-pull-go-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(55%); transform: none; }
+/* Disabled buttons read unmistakably as inactive (not just dimmed). */
+.pm-vfx-pull-exp-btn:disabled, .pfx-vfx-approve-btn:disabled, .pm-vfx-ocf-btn:disabled {
+  opacity: 0.4; cursor: not-allowed; filter: grayscale(55%);
+}
 /* Progress */
 .pm-vfx-pull-progress {
   border-radius: 4px;
@@ -709,18 +745,20 @@ function _injectCSS() {
 .pm-vfx-pull-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: 7px;
+  padding: 6px 10px;
+  margin-bottom: 3px;
   border-radius: 4px;
   background: rgba(255,255,255,0.03);
   border-left: 3px solid transparent;
-  font-size: 11px;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: #e4ebff;
   cursor: pointer;
   transition: background 0.15s;
 }
 .pm-vfx-pull-row:hover { background: rgba(255,255,255,0.07); }
-.pm-vfx-pull-row--ready   { border-left-color: #37b573; }
+.pm-vfx-pull-row--ready   { border-left-color: #0AA356; }
 .pm-vfx-pull-row--review  { border-left-color: #ffb94a; }
 .pm-vfx-pull-row--missing { border-left-color: #ff5d6d; }
 .pm-vfx-pull-dot {
@@ -729,31 +767,31 @@ function _injectCSS() {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.pm-vfx-pull-dot--ready   { background: #37b573; }
+.pm-vfx-pull-dot--ready   { background: #0AA356; }
 .pm-vfx-pull-dot--review  { background: #ffb94a; }
 .pm-vfx-pull-dot--missing { background: #ff5d6d; }
 .pm-vfx-pull-shotname {
   flex: 1;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 11.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .pm-vfx-pull-clip {
-  font-size: 10px;
+  font-size: 10.5px;
   color: rgba(228,235,255,0.55);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 90px;
+  max-width: 110px;
 }
 .pm-vfx-pull-conf {
   font-size: 10px;
   font-weight: 700;
   flex-shrink: 0;
 }
-.pm-vfx-pull-conf.is-ok    { color: #37b573; }
+.pm-vfx-pull-conf.is-ok    { color: #0AA356; }
 .pm-vfx-pull-conf.is-warn  { color: #ffb94a; }
 .pm-vfx-pull-conf.is-error { color: #ff5d6d; }
 .pm-vfx-pull-badges {
@@ -773,22 +811,27 @@ function _injectCSS() {
   text-transform: uppercase;
 }
 .pm-vfx-pull-badge--amf {
-  background: rgba(55,181,115,0.16);
-  color: #37b573;
-  border-color: rgba(55,181,115,0.3);
+  background: rgba(10,163,86,0.16);
+  color: #0AA356;
+  border-color: rgba(10,163,86,0.3);
 }
 /* Spec-mandated badge variants — OCF / manual / colour / frame / speed /
    reframe / EXR status. Same pill geometry as the existing badges so they
    slot into the same flex row without disturbing layout. */
-.pm-vfx-pull-badge--ok     { background: rgba(55,181,115,0.16); color: #37b573; border-color: rgba(55,181,115,0.3); }
+/* Calmer palette: status (ok/err/exr) keep their semantic colours; the
+   "attribute present" flags collapse into two muted families — slate for MATCH
+   info (color/frame) and amber for TIMING (speed/reframe) — so rows read as a
+   couple of accents, not a rainbow. Uniform opacity per family. */
+.pm-vfx-pull-badge--ok     { background: rgba(10,163,86,0.16); color: #0AA356; border-color: rgba(10,163,86,0.3); }
 .pm-vfx-pull-badge--err    { background: rgba(255,93,109,0.16); color: #ff5d6d; border-color: rgba(255,93,109,0.3); }
-.pm-vfx-pull-badge--manual { background: rgba(160,140,255,0.16); color: #b0a0ff; border-color: rgba(160,140,255,0.35); }
-.pm-vfx-pull-badge--color  { background: rgba(102,114,232,0.14); color: #a3aef5; border-color: rgba(102,114,232,0.32); }
-.pm-vfx-pull-badge--frame  { background: rgba(102,114,232,0.10); color: #c8d0ff; border-color: rgba(102,114,232,0.28); }
-.pm-vfx-pull-badge--speed  { background: rgba(245,197,66,0.14); color: #f5c542; border-color: rgba(245,197,66,0.32); }
-.pm-vfx-pull-badge--reframe{ background: rgba(245,197,66,0.10); color: #ffd054; border-color: rgba(245,197,66,0.28); }
-.pm-vfx-pull-badge--exr    { background: rgba(55,181,115,0.20); color: #6be099; border-color: rgba(55,181,115,0.45); }
-.pm-vfx-pull-badge--exr-run{ background: rgba(245,197,66,0.18); color: #ffd054; border-color: rgba(245,197,66,0.40); }
+.pm-vfx-pull-badge--manual { background: rgba(150,135,205,0.14); color: #b6a8e6; border-color: rgba(150,135,205,0.30); }
+.pm-vfx-pull-badge--color  { background: rgba(124,142,176,0.14); color: #b3c0d8; border-color: rgba(124,142,176,0.30); }
+.pm-vfx-pull-badge--auto   { background: rgba(10,163,86,0.16); color: #6be099; border-color: rgba(10,163,86,0.34); }
+.pm-vfx-pull-badge--frame  { background: rgba(124,142,176,0.14); color: #b3c0d8; border-color: rgba(124,142,176,0.30); }
+.pm-vfx-pull-badge--speed  { background: rgba(224,176,84,0.13); color: #e0b054; border-color: rgba(224,176,84,0.30); }
+.pm-vfx-pull-badge--reframe{ background: rgba(224,176,84,0.13); color: #e0b054; border-color: rgba(224,176,84,0.30); }
+.pm-vfx-pull-badge--exr    { background: rgba(10,163,86,0.20); color: #6be099; border-color: rgba(10,163,86,0.45); }
+.pm-vfx-pull-badge--exr-run{ background: rgba(224,176,84,0.18); color: #e0b054; border-color: rgba(224,176,84,0.40); }
 
 .pm-vfx-pull-chip-warn {
   font-size: 9px;
@@ -959,7 +1002,7 @@ function _injectCSS() {
   letter-spacing: 0.06em;
   flex-shrink: 0;
 }
-.pm-vfx-detail-match-status.is-ok    { background: rgba(55,181,115,0.16); color: #37b573; border: 1px solid rgba(55,181,115,0.3); }
+.pm-vfx-detail-match-status.is-ok    { background: rgba(10,163,86,0.16); color: #0AA356; border: 1px solid rgba(10,163,86,0.3); }
 .pm-vfx-detail-match-status.is-warn  { background: rgba(255,185,74,0.14); color: #ffb94a; border: 1px solid rgba(255,185,74,0.28); }
 .pm-vfx-detail-match-status.is-error { background: rgba(255,93,109,0.14); color: #ff5d6d; border: 1px solid rgba(255,93,109,0.28); }
 /* Frame + scores row */
@@ -1047,7 +1090,7 @@ function _injectCSS() {
   border-radius: 3px;
   transition: width 0.4s ease;
 }
-.pm-vfx-detail-bar.is-ok    { background: #37b573; }
+.pm-vfx-detail-bar.is-ok    { background: #0AA356; }
 .pm-vfx-detail-bar.is-warn  { background: #ffb94a; }
 .pm-vfx-detail-bar.is-error { background: #ff5d6d; }
 .pm-vfx-detail-score-val {
@@ -1172,8 +1215,20 @@ function _injectCSS() {
 .pm-vfx-ocf-btn:hover { background: rgba(99,142,255,0.22); }
 .pm-vfx-ocf-btn--secondary { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.06); color: #aaa; }
 .pm-vfx-ocf-btn--secondary:hover { background: rgba(255,255,255,0.12); }
+/* Accent tier — the secondary auto-link option (Library), distinct from the
+   plain admin buttons (Change folder / Rescan) so the action hierarchy reads. */
+.pm-vfx-ocf-btn--alt { border-color: rgba(99,142,255,0.35); background: rgba(99,142,255,0.10); color: #9fb2f0; }
+.pm-vfx-ocf-btn--alt:hover { background: rgba(99,142,255,0.18); }
 .pm-vfx-ocf-btn--danger { border-color: rgba(255,93,109,0.4); background: rgba(255,93,109,0.1); color: #ff5d6d; }
 .pm-vfx-ocf-btn--danger:hover { background: rgba(255,93,109,0.2); }
+/* Proactive export-readiness summary (shown above the export buttons). */
+.pm-vfx-export-preflight { margin: 0 0 8px; padding: 7px 10px; border-radius: 5px; font-size: 10.5px; line-height: 1.5; border-left: 3px solid transparent; }
+.pm-vfx-export-preflight.is-blocked { background: rgba(200,50,50,0.12); border-left-color: #cc4444; color: #f0a0a0; }
+.pm-vfx-export-preflight.is-warn    { background: rgba(200,150,40,0.10); border-left-color: #d8a23c; color: #e6c98a; }
+.pm-vfx-export-preflight.is-ready   { background: rgba(10,163,86,0.10); border-left-color: #0AA356; color: #8ed9ad; }
+.pm-vfx-pf-hd   { font-weight: 700; }
+.pm-vfx-pf-list { margin: 4px 0 0; padding-left: 18px; opacity: 0.92; }
+.pm-vfx-pf-list li { margin: 1px 0; }
 .pm-vfx-ocf-summary { font-size: 10px; color: #888; margin-left: 4px; }
 /* Resolve live connection badge in panel header */
 .pm-vfx-resolve-badge {
@@ -1181,9 +1236,9 @@ function _injectCSS() {
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(55,181,115,0.18);
-  color: #37b573;
-  border: 1px solid rgba(55,181,115,0.3);
+  background: rgba(10,163,86,0.18);
+  color: #0AA356;
+  border: 1px solid rgba(10,163,86,0.3);
   letter-spacing: 0.04em;
   flex-shrink: 0;
   white-space: nowrap;
@@ -1293,49 +1348,49 @@ function _injectCSS() {
 .pm-vfx-ws-list-scroll { flex:1 1 0; overflow-y:auto; overflow-x:hidden; }
 .pm-vfx-ws-list-empty { padding:14px 10px; color:rgba(228,235,255,.32); font-size:10px; text-align:center; }
 .pm-vfx-ws-triage-bar { display:flex; align-items:center; gap:5px; padding:4px 8px; border-bottom:1px solid rgba(255,255,255,.05); flex-shrink:0; }
-.pm-vfx-ws-triage-count { font-size:9px; font-weight:700; color:#d6a33a; letter-spacing:.02em; }
-.pm-vfx-ws-triage-count.is-clear { color:#4ccf7a; }
+.pm-vfx-ws-triage-count { font-size:9px; font-weight:700; color:#E0B341; letter-spacing:.02em; }
+.pm-vfx-ws-triage-count.is-clear { color:#0AA356; }
 .pm-vfx-ws-triage-spacer { flex:1 1 auto; }
 .pm-vfx-ws-triage-btn { font-size:8.5px; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.05); color:rgba(228,235,255,.62); cursor:pointer; white-space:nowrap; }
 .pm-vfx-ws-triage-btn:hover { background:rgba(255,255,255,.1); }
 .pm-vfx-ws-triage-btn.is-active { background:rgba(90,167,255,.2); border-color:rgba(90,167,255,.5); color:#cfe2ff; }
-.pm-vfx-ws-list-row.risk-review   { box-shadow:inset 2px 0 0 #d6a33a; }
-.pm-vfx-ws-list-row.risk-blocked  { box-shadow:inset 2px 0 0 #ff5a6a; }
+.pm-vfx-ws-list-row.risk-review   { box-shadow:inset 2px 0 0 #E0B341; }
+.pm-vfx-ws-list-row.risk-blocked  { box-shadow:inset 2px 0 0 #E5484D; }
 .pm-vfx-ws-bridge { font-size:8.5px; font-weight:700; padding:1px 6px; border-radius:10px; letter-spacing:.02em; }
-.pm-vfx-ws-bridge.is-offline { color:#ff5a6a; background:rgba(255,90,106,.14); border:1px solid rgba(255,90,106,.34); animation:pmWsBridgePulse 1.1s ease-in-out infinite; }
-.pm-vfx-ws-bridge.is-degraded { color:#d6a33a; background:rgba(214,163,58,.14); border:1px solid rgba(214,163,58,.32); }
+.pm-vfx-ws-bridge.is-offline { color:#E5484D; background:rgba(229,72,77,.14); border:1px solid rgba(229,72,77,.34); animation:pmWsBridgePulse 1.1s ease-in-out infinite; }
+.pm-vfx-ws-bridge.is-degraded { color:#E0B341; background:rgba(224,179,65,.14); border:1px solid rgba(224,179,65,.32); }
 @keyframes pmWsBridgePulse { 0%,100%{opacity:.55} 50%{opacity:1} }
 .pm-vfx-ws-vpane-stale { filter:grayscale(.35) brightness(.82); }
 .pm-vfx-ws-stale-banner { position:absolute; left:0; right:0; bottom:0; padding:3px 6px; font-size:9px; font-weight:700; color:#ffd9a0; background:rgba(120,70,0,.62); text-align:center; }
 .pm-vfx-ws-list-row { display:grid; grid-template-columns:10px 1fr auto auto 12px 14px; align-items:center; gap:5px; padding:5px 8px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,.04); transition:background .12s; content-visibility:auto; contain-intrinsic-size:auto 27px; }
 .pm-vfx-ws-list-row:hover { background:rgba(255,255,255,.05); }
-.pm-vfx-ws-list-row.is-active { background:rgba(55,181,115,.1); border-left:2px solid #37b573; padding-left:6px; }
+.pm-vfx-ws-list-row.is-active { background:rgba(10,163,86,.1); border-left:2px solid #0AA356; padding-left:6px; }
 .pm-vfx-ws-row-dot { width:8px; height:8px; border-radius:50%; background:rgba(228,235,255,.2); flex-shrink:0; }
 .pm-vfx-ws-row-name { font-size:10px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e4ebff; }
 .pm-vfx-ws-row-badge { font-size:8.5px; border-radius:3px; padding:1px 4px; white-space:nowrap; }
 .pm-vfx-ws-row-score { font-size:9px; font-weight:700; white-space:nowrap; }
 .pm-vfx-ws-row-ocf { font-size:10px; }
 .pm-vfx-ws-row-approve { font-size:10px; color:rgba(228,235,255,.35); }
-.pm-vfx-ws-row-approve.is-approved { color:#37b573; }
+.pm-vfx-ws-row-approve.is-approved { color:#0AA356; }
 
 /* status colours */
-.ws-status--approved .pm-vfx-ws-row-dot, .ws-status--approved { background:rgba(55,181,115,.25); color:#37b573; }
-.ws-status--ok .pm-vfx-ws-row-dot, .ws-status--ok { background:rgba(55,181,115,.15); color:#6ee7b7; }
+.ws-status--approved .pm-vfx-ws-row-dot, .ws-status--approved { background:rgba(10,163,86,.25); color:#0AA356; }
+.ws-status--ok .pm-vfx-ws-row-dot, .ws-status--ok { background:rgba(10,163,86,.15); color:#6ee7b7; }
 .ws-status--warn .pm-vfx-ws-row-dot, .ws-status--warn { background:rgba(255,185,74,.2); color:#ffb94a; }
 .ws-status--error .pm-vfx-ws-row-dot, .ws-status--error { background:rgba(255,93,109,.2); color:#ff8a96; }
 .ws-status--none .pm-vfx-ws-row-dot, .ws-status--none { background:rgba(228,235,255,.12); color:rgba(228,235,255,.4); }
-.ws-score--safe { color:#37b573; }
+.ws-score--safe { color:#0AA356; }
 .ws-score--warn { color:#ffb94a; }
 .ws-score--fail { color:#ff8a96; }
 .ws-score--none { color:rgba(228,235,255,.35); }
-.pm-vfx-ws-row-ocf.is-ok  { color:#37b573; }
+.pm-vfx-ws-row-ocf.is-ok  { color:#0AA356; }
 .pm-vfx-ws-row-ocf.is-missing { color:rgba(255,93,109,.7); }
 
 /* Pull readiness panel */
 .pm-vfx-ws-readiness { border-top:1px solid rgba(255,255,255,.07); padding:7px 8px 5px; flex-shrink:0; }
 .pm-vfx-ws-readiness-row { display:flex; align-items:center; gap:7px; padding:2px 0; }
 .pm-vfx-ws-ready-gate { font-size:8.5px; font-weight:800; padding:1px 5px; border-radius:3px; min-width:28px; text-align:center; background:rgba(255,255,255,.06); color:rgba(228,235,255,.38); border:1px solid rgba(255,255,255,.1); transition:background .18s, color .18s; }
-.pm-vfx-ws-ready-gate.is-ok  { background:rgba(55,181,115,.18); color:#37b573; border-color:rgba(55,181,115,.35); }
+.pm-vfx-ws-ready-gate.is-ok  { background:rgba(10,163,86,.18); color:#0AA356; border-color:rgba(10,163,86,.35); }
 .pm-vfx-ws-ready-gate.is-warn { background:rgba(255,185,74,.12); color:#ffb94a; border-color:rgba(255,185,74,.25); }
 .pm-vfx-ws-ready-label { font-size:9px; color:rgba(228,235,255,.45); }
 .pm-vfx-ws-approved-count { margin-top:5px; font-size:9.5px; font-weight:700; color:rgba(228,235,255,.55); text-align:center; padding:3px 0; border-top:1px solid rgba(255,255,255,.05); }
@@ -1346,7 +1401,7 @@ function _injectCSS() {
 .pm-vfx-ws-modes { display:flex; gap:3px; flex-wrap:wrap; }
 .pm-vfx-ws-mode { font-size:9px; padding:2px 7px; border-radius:4px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.05); color:rgba(228,235,255,.6); cursor:pointer; white-space:nowrap; }
 .pm-vfx-ws-mode:hover { background:rgba(255,255,255,.1); color:#e4ebff; }
-.pm-vfx-ws-mode.is-active { background:rgba(55,181,115,.18); color:#6ee7b7; border-color:rgba(55,181,115,.3); }
+.pm-vfx-ws-mode.is-active { background:rgba(10,163,86,.18); color:#6ee7b7; border-color:rgba(10,163,86,.3); }
 .pm-vfx-ws-shot-name { font-size:10px; font-weight:700; color:rgba(228,235,255,.7); margin-left:auto; }
 .pm-vfx-ws-viewer { flex:1 1 0; min-height:0; position:relative; overflow:hidden; background:#02040a; }
 .pm-vfx-ws-viewer-inner { width:100%; height:100%; display:flex; position:relative; overflow:hidden; }
@@ -1378,14 +1433,14 @@ function _injectCSS() {
 .pm-vfx-ws-tc-item { display:flex; align-items:center; gap:3px; }
 .pm-vfx-ws-tc-label { font-size:8px; font-weight:700; letter-spacing:.05em; color:rgba(228,235,255,.32); text-transform:uppercase; }
 .pm-vfx-ws-tc-sep { color:rgba(228,235,255,.2); }
-.pm-vfx-ws-scrub-slider { width:100%; margin:2px 0; accent-color:#37b573; height:3px; cursor:pointer; }
+.pm-vfx-ws-scrub-slider { width:100%; margin:2px 0; accent-color:#0AA356; height:3px; cursor:pointer; }
 .pm-vfx-ws-scrub-nav { display:flex; gap:3px; align-items:center; margin-top:4px; }
 .pm-vfx-ws-scrub-btn { font-size:9px; padding:2px 8px; border-radius:4px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.06); color:#e4ebff; cursor:pointer; }
-.pm-vfx-ws-jump-btn { font-size:8.5px; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,.09); background:rgba(55,181,115,.09); color:#6ee7b7; cursor:pointer; flex:1; }
+.pm-vfx-ws-jump-btn { font-size:8.5px; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,.09); background:rgba(10,163,86,.09); color:#6ee7b7; cursor:pointer; flex:1; }
 .pm-vfx-ws-scrub-btn:hover, .pm-vfx-ws-jump-btn:hover { background:rgba(255,255,255,.12); color:#fff; }
-.pm-vfx-ws-play-btn { font-size:11px; padding:2px 10px; border-radius:4px; border:1px solid rgba(55,181,115,.4); background:rgba(55,181,115,.15); color:#6ee7b7; cursor:pointer; min-width:28px; }
-.pm-vfx-ws-play-btn.is-playing { background:rgba(55,181,115,.28); color:#a7f3d0; border-color:rgba(55,181,115,.7); }
-.pm-vfx-ws-play-btn:hover { background:rgba(55,181,115,.3); color:#a7f3d0; }
+.pm-vfx-ws-play-btn { font-size:11px; padding:2px 10px; border-radius:4px; border:1px solid rgba(10,163,86,.4); background:rgba(10,163,86,.15); color:#6ee7b7; cursor:pointer; min-width:28px; }
+.pm-vfx-ws-play-btn.is-playing { background:rgba(10,163,86,.28); color:#a7f3d0; border-color:rgba(10,163,86,.7); }
+.pm-vfx-ws-play-btn:hover { background:rgba(10,163,86,.3); color:#a7f3d0; }
 .pm-vfx-ws-vpane video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
 
 /* Hero contact sheet */
@@ -1393,7 +1448,7 @@ function _injectCSS() {
 .pm-vfx-ws-sheet { display:flex; flex-direction:column; gap:3px; padding:4px 8px 6px; flex-shrink:0; }
 .pm-vfx-ws-sheet-row { display:flex; gap:3px; }
 .pm-vfx-ws-sheet-cell { flex:1; display:flex; flex-direction:column; align-items:center; gap:1px; cursor:pointer; }
-.pm-vfx-ws-sheet-cell:hover .pm-vfx-ws-sheet-thumb { border-color:rgba(55,181,115,.6); }
+.pm-vfx-ws-sheet-cell:hover .pm-vfx-ws-sheet-thumb { border-color:rgba(10,163,86,.6); }
 .pm-vfx-ws-sheet-thumb { width:100%; aspect-ratio:16/9; border-radius:3px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); overflow:hidden; }
 .pm-vfx-ws-sheet-thumb--empty { background:repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0, rgba(255,255,255,.03) 2px, transparent 2px, transparent 6px); }
 .pm-vfx-ws-sheet-pos { font-size:7.5px; color:rgba(228,235,255,.3); white-space:nowrap; text-overflow:ellipsis; overflow:hidden; max-width:100%; text-align:center; }
@@ -1403,7 +1458,7 @@ function _injectCSS() {
 .pm-vfx-ws-tabs-hdr { display:flex; border-bottom:1px solid rgba(255,255,255,.07); flex-shrink:0; }
 .pm-vfx-ws-tab { flex:1; font-size:9.5px; font-weight:700; padding:6px 4px; text-align:center; border:none; border-bottom:2px solid transparent; background:none; color:rgba(228,235,255,.42); cursor:pointer; transition:color .15s, border-color .15s; }
 .pm-vfx-ws-tab:hover { color:#e4ebff; }
-.pm-vfx-ws-tab.is-active { color:#6ee7b7; border-bottom-color:#37b573; }
+.pm-vfx-ws-tab.is-active { color:#6ee7b7; border-bottom-color:#0AA356; }
 .pm-vfx-ws-tab-body { flex:1 1 0; overflow-y:auto; overflow-x:hidden; }
 .pm-vfx-ws-tab-pane { display:none; padding:8px; }
 .pm-vfx-ws-tab-pane.is-active { display:flex; flex-direction:column; gap:6px; }
@@ -1412,18 +1467,18 @@ function _injectCSS() {
 /* Verify tab */
 .pm-vfx-ws-verify-checks { display:flex; flex-direction:column; gap:2px; }
 .pm-vfx-ws-check-row { display:grid; grid-template-columns:14px 1fr auto; align-items:center; gap:5px; padding:3px 5px; border-radius:4px; font-size:9.5px; }
-.pm-vfx-ws-check-row.ws-check--ok    { background:rgba(55,181,115,.07); }
+.pm-vfx-ws-check-row.ws-check--ok    { background:rgba(10,163,86,.07); }
 .pm-vfx-ws-check-row.ws-check--fail  { background:rgba(255,93,109,.07); }
 .pm-vfx-ws-check-row.ws-check--none  { background:rgba(255,255,255,.03); }
 .pm-vfx-ws-check-icon { font-weight:900; text-align:center; }
-.ws-check--ok   .pm-vfx-ws-check-icon { color:#37b573; }
+.ws-check--ok   .pm-vfx-ws-check-icon { color:#0AA356; }
 .ws-check--fail .pm-vfx-ws-check-icon { color:#ff5d6d; }
 .ws-check--none .pm-vfx-ws-check-icon { color:rgba(228,235,255,.3); }
 .pm-vfx-ws-check-label { color:rgba(228,235,255,.7); }
 .pm-vfx-ws-check-value { font-size:9px; color:rgba(228,235,255,.45); white-space:nowrap; text-overflow:ellipsis; overflow:hidden; max-width:80px; }
 .pm-vfx-ws-score-row { display:flex; align-items:center; }
 .pm-vfx-ws-score-badge { font-size:10px; font-weight:800; padding:3px 8px; border-radius:5px; background:rgba(255,255,255,.06); }
-.pm-vfx-ws-score-badge.ws-score--safe { background:rgba(55,181,115,.18); color:#37b573; }
+.pm-vfx-ws-score-badge.ws-score--safe { background:rgba(10,163,86,.18); color:#0AA356; }
 .pm-vfx-ws-score-badge.ws-score--warn { background:rgba(255,185,74,.15); color:#ffb94a; }
 .pm-vfx-ws-score-badge.ws-score--fail { background:rgba(255,93,109,.13); color:#ff8a96; }
 .pm-vfx-ws-score-badge.ws-score--none { color:rgba(228,235,255,.4); }
@@ -1435,7 +1490,7 @@ function _injectCSS() {
 .pm-vfx-ws-action-btn:hover { background:rgba(255,255,255,.14); }
 .pm-vfx-ws-action-btn.primary { background:linear-gradient(135deg,#22c55e,#3b82f6); border-color:rgba(255,255,255,.2); }
 .pm-vfx-ws-action-btn.primary:hover { background:linear-gradient(135deg,#16a34a,#2563eb); }
-.pm-vfx-ws-action-btn.is-approved { background:rgba(55,181,115,.2); color:#37b573; border-color:rgba(55,181,115,.35); }
+.pm-vfx-ws-action-btn.is-approved { background:rgba(10,163,86,.2); color:#0AA356; border-color:rgba(10,163,86,.35); }
 .pm-vfx-ws-action-btn.is-locked { opacity:.42; cursor:not-allowed; }
 
 /* Conform + Export tabs */
@@ -1448,7 +1503,7 @@ function _injectCSS() {
 
 /* Notes tab */
 .pm-vfx-ws-notes-field { width:100%; min-height:100px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:5px; color:#e4ebff; font-size:10px; padding:6px 8px; resize:vertical; font-family:inherit; }
-.pm-vfx-ws-notes-field:focus { outline:none; border-color:rgba(55,181,115,.4); }
+.pm-vfx-ws-notes-field:focus { outline:none; border-color:rgba(10,163,86,.4); }
 
 `;
   document.head.appendChild(style);
@@ -1469,22 +1524,22 @@ function _buildPanelHTML() {
   </div>
 
   <!-- Spec workflow: Timeline → QT Ref → OCF → Reconnect → Color → Frame → EXR → QC -->
-  <div class="pm-vfx-pull-wf pm-vfx-pull-wf--v2" id="pmVfxPullWf">
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfTimeline" title="Timeline / EDL / XML / FCPXML / OTIO loaded">Timeline</div>
+  <div class="pm-vfx-pull-wf pm-vfx-pull-wf--v2" id="pmVfxPullWf" title="VFX pull workflow — each step lights up green as it completes. Hover a step for what to do.">
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfTimeline" title="Step 1 of 8 — Load your edit (EDL / XML / FCPXML / OTIO) with VFX markers on the shots to pull.">Timeline</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfRef"      title="QT Reference (Rec709) loaded">QT Ref</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfRef"      title="Step 2 of 8 — Load the Rec.709 QuickTime reference to match color against.">QT Ref</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfOcf"      title="OCF folder linked">OCF</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfOcf"      title="Step 3 of 8 — Link your original camera files (OCF) folder, or use the media library.">OCF</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfMatch"    title="Smart reconnect to OCF">Reconnect</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfMatch"    title="Step 4 of 8 — Smart-reconnect: match each shot to its camera clip by timecode.">Reconnect</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfColor"    title="QT-Ref vs OCF CDL match">Color</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfColor"    title="Step 5 of 8 — Match the QT-Ref look to the OCF (CDL) for a reference grade.">Color</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfFrame"    title="Letterbox + reframe to UHD">Frame</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfFrame"    title="Step 6 of 8 — Reframe / letterbox the plate to the delivery resolution.">Frame</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfExr"      title="EXR sequence exported">EXR</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfExr"      title="Step 7 of 8 — Render the EXR plate sequence with handles.">EXR</div>
     <div class="pm-vfx-pull-wf-sep">›</div>
-    <div class="pm-vfx-pull-wfdot" id="pmVfxWfQc"       title="QC + sidecars built">QC</div>
+    <div class="pm-vfx-pull-wfdot" id="pmVfxWfQc"       title="Step 8 of 8 — Build the QC report + sidecars, ready to export.">QC</div>
   </div>
 
   <button class="pm-vfx-pull-go-btn" id="pmVfxPullGoBtn">
@@ -1563,6 +1618,14 @@ function _buildPanelHTML() {
         <option value="review_proxy">Review Proxy — IDT + look + ODT baked</option>
       </select>
     </div>
+    <!-- ACES 2.0 output transform — only meaningful for Review Proxy (ODT bake) -->
+    <div class="pm-vfx-pull-adv-row" id="pmVfxOdtRow" style="display:none;">
+      <label class="pm-vfx-pull-adv-lbl">ACES 2.0 ODT</label>
+      <select id="pmVfxOdtTransform" class="pm-vfx-pull-sel">
+        <option value="rec709_sdr">ACES 2.0 — SDR Rec.709 100 nits</option>
+      </select>
+      <button class="pm-sly-btn-xs" id="pmVfxRenderReviewBtn" title="Bake the ACES 2.0 output transform onto the rendered AP0 EXR plates and encode a Rec.709 review movie per shot.">Render Review</button>
+    </div>
     <div class="pm-vfx-pull-adv-row">
       <label class="pm-vfx-pull-adv-lbl">Render engine</label>
       <select id="pmVfxRenderEngine" class="pm-vfx-pull-sel">
@@ -1640,9 +1703,10 @@ function _buildPanelHTML() {
 
   <div class="pm-vfx-ocf-toolbar" id="pmVfxOcfToolbar">
     <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--smart" id="pmVfxSmartLinkBtn" type="button" title="Find your camera files and link them to every shot automatically">⚡ Smart Link OCF</button>
+    <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--alt" id="pmVfxLinkLibraryBtn" type="button" title="Link shots using your scanned media library (no folder pick). Filename/reel matches — scan a folder for timecode-exact matches.">📚 Link from Library</button>
     <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--secondary" id="pmVfxRelinkOcfBtn" type="button" title="Pick a different camera-files folder">Change folder…</button>
-    <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--secondary" id="pmVfxRescanOcfBtn" type="button">Rescan</button>
-    <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--danger"    id="pmVfxClearOcfBtn"  type="button">Clear OCF</button>
+    <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--secondary" id="pmVfxRescanOcfBtn" type="button" title="Re-scan the current camera-files folder (use after adding or replacing files)">Rescan</button>
+    <button class="pm-vfx-ocf-btn pm-vfx-ocf-btn--danger"    id="pmVfxClearOcfBtn"  type="button" title="Unlink all camera files and start over">Clear OCF</button>
     <span class="pm-vfx-ocf-summary" id="pmVfxOcfSummary"></span>
   </div>
   <div class="pm-vfx-ocf-friendly" id="pmVfxOcfFriendly" style="display:none;"></div>
@@ -1659,13 +1723,14 @@ function _buildPanelHTML() {
 
   <div class="pm-vfx-pull-export" id="pmVfxPullExport" style="display:none;">
     <div class="pm-vfx-pull-exp-label">EXPORT</div>
+    <div class="pm-vfx-export-preflight" id="pmVfxExportPreflight" style="display:none;"></div>
     <div class="pm-vfx-pull-exp-btns">
-      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpFdl">FDL</button>
-      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpAmf">AMF</button>
-      <button class="pm-vfx-pull-exp-btn pm-vfx-pull-exp-btn--primary" id="pmVfxExpPackage">⬇ Pull Package</button>
-      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpQc">QC Report</button>
-      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpContactSheet" title="Per-shot QT-vs-OCF contact sheet — print to PDF">QC Sheet</button>
-      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpNuke">Nuke</button>
+      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpFdl" title="FDL — Frame Decision List. Reframe / crop / scale metadata for the comp (ASC-FDL JSON).">FDL</button>
+      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpAmf" title="AMF — Academy Color Metadata File. The ACES color recipe (IDT + look) for each plate.">AMF</button>
+      <button class="pm-vfx-pull-exp-btn pm-vfx-pull-exp-btn--primary" id="pmVfxExpPackage" title="Export the full VFX pull package — plates, sidecars (FDL/AMF), frame maps, Nuke/AE scripts, and QC report.">⬇ Pull Package</button>
+      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpQc" title="QC Report — per-shot quality-control summary (match, color, frames) as JSON/HTML.">QC Report</button>
+      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpContactSheet" title="QC Sheet — per-shot QT-vs-OCF contact sheet, print to PDF.">QC Sheet</button>
+      <button class="pm-vfx-pull-exp-btn" id="pmVfxExpNuke" title="Nuke — generate a Nuke read/conform script for the pulled plates.">Nuke</button>
     </div>
   </div>
 </div>
@@ -1719,7 +1784,8 @@ function _wireListeners() {
   _onChange('pmVfxHandles', v => { _settings.handles = parseInt(v, 10); _persistState(); });
   _onChange('pmVfxFrameStart', v => { _settings.frameStart = parseInt(v, 10) || 1001; _persistState(); });
   _onChange('pmVfxPlateFormat', v => { _settings.plateFormat = v; _persistState(); });
-  _onChange('pmVfxPullMode',      v => { _settings.pullMode      = v; _persistState(); });
+  _onChange('pmVfxPullMode',      v => { _settings.pullMode      = v; _persistState(); _syncOdtRow(); });
+  _onChange('pmVfxOdtTransform',  v => { _settings.odtId         = v; _persistState(); });
   _onChange('pmVfxRenderEngine',  v => { _settings.renderEngine  = v; _persistState(); });
   _onChange('pmVfxOutputFolder', v => { _settings.outputFolder = v; _persistState(); });
 
@@ -1744,6 +1810,11 @@ function _wireListeners() {
       _persistState();
     });
   }
+
+  // ── ACES 2.0 ODT (Review Proxy) ─────────────────────────────────────────────
+  _populateOdtTransforms();
+  _syncOdtRow();
+  _on('pmVfxRenderReviewBtn', 'click', () => { if (!_running) _runReviewProxies(_state.jobs); });
 
   // Export buttons
 
@@ -1775,6 +1846,7 @@ function _wireListeners() {
 
   // OCF toolbar buttons
   _on('pmVfxSmartLinkBtn', 'click', () => { if (!_running) _smartLinkOcf(); });
+  _on('pmVfxLinkLibraryBtn', 'click', () => { if (!_running) _linkFromLibrary(); });
   _on('pmVfxRelinkOcfBtn', 'click', () => _chooseAndRelinkOcf());
   _on('pmVfxRescanOcfBtn', 'click', async () => {
     if (!_state.ocfFolder) { _chooseAndRelinkOcf(); return; }
@@ -1794,8 +1866,10 @@ function _wireListeners() {
   });
   _on('pmVfxClearOcfBtn', 'click', () => {
     _state.ocfFolder    = null;
+    _state.ocfFromLibrary = false;
     _state.ocfFiles     = [];
     _state.matchResults = [];
+    _state.normalisedRows = [];
     _state.jobs         = [];
     _state.fdls         = [];
     _state.amfXmls      = [];
@@ -1931,6 +2005,11 @@ async function _manualRelinkRow(idx) {
     job.metadata.matchConfidence = newMatch.confidence;
     job.metadata.manualLink      = true;
   }
+  // Persist so the manual relink survives re-match / reopen.
+  if (!_state.manualLinks) _state.manualLinks = {};
+  _state.manualLinks[_eventKey(event)] = {
+    path, ocf: manualOcf, match: newMatch, linkedAt: new Date().toISOString(),
+  };
   _state.normalisedRows = _state.matchResults.map((r, i) => normalizeVfxPullRow(r, _state.jobs[i]));
   _renderShotTable();
   _updateOcfSummary();
@@ -1961,6 +2040,122 @@ async function _manualRelinkRow(idx) {
 }
 
 // ---------------------------------------------------------------------------
+// Sprint 4: link a media-library search result (Sprint 3 search box) to the
+// currently selected workspace shot. DB-powered MANUAL linking — complements
+// the bulk "Link from Library". rec = SQLite row {path, filename, fps, …}.
+// ---------------------------------------------------------------------------
+function _matchResultIdxForShotKey(key) {
+  if (!key) return -1;
+  const rows = _state.matchResults || [];
+  // recIn (most reliable) → reel+srcIn → shot name.
+  if (key.recIn) {
+    const i = rows.findIndex(r => (r.event?.recIn || '') === key.recIn);
+    if (i >= 0) return i;
+  }
+  if (key.reel && key.srcIn) {
+    const i = rows.findIndex(r => ((r.event?.reel || r.event?.clipName || '') === key.reel)
+      && ((r.event?.srcIn || '') === key.srcIn));
+    if (i >= 0) return i;
+  }
+  if (key.shotName) {
+    const i = (_state.jobs || []).findIndex((j, n) =>
+      String(j?.shotId || j?.shotName || rows[n]?.event?.shotName || '').trim() === key.shotName);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+// Find the pull-list shot a library file belongs to, by filename then reel.
+function _findShotIdxForOcfFile(rec) {
+  const rows = _state.matchResults || [];
+  const fn   = String(rec.filename || (rec.path || '').split('/').pop() || '').toLowerCase();
+  const stem = fn.replace(/\.[^.]+$/, '');
+  // 1. exact source-file / clip-name match
+  let i = rows.findIndex(r => {
+    const e  = r.event || {};
+    const ef = String(e.srcFile || e.clipName || e.name || '').toLowerCase().replace(/\.[^.]+$/, '');
+    return ef && (ef === stem);
+  });
+  if (i >= 0) return i;
+  // 2. reel prefix (ARRI A001C001… / card A001…) — but ONLY when it's
+  // unambiguous. A roll has many takes; force-linking the first match on a
+  // multi-take roll would silently link the WRONG shot. Refuse if >1 candidate.
+  const m = String(rec.filename || '').match(/^([A-Z][0-9]{3,4})/i);
+  const reel = m ? m[1].toUpperCase() : '';
+  if (reel) {
+    const matches = [];
+    rows.forEach((r, n) => {
+      const e = r.event || {};
+      if (String(e.reel || e.clipName || '').toUpperCase().startsWith(reel)) matches.push(n);
+    });
+    if (matches.length === 1) return matches[0];   // unambiguous only
+  }
+  return -1;
+}
+
+async function _linkLibraryFileToSelectedShot(rec) {
+  if (!rec || !rec.path) return;
+  // Prefer an explicitly selected shot; otherwise auto-find the shot this file
+  // belongs to (by filename / reel) so a single click "just works".
+  const key = (typeof window !== 'undefined' && window._pmGetSelectedVfxShotKey)
+    ? window._pmGetSelectedVfxShotKey() : null;
+  let idx = key ? _matchResultIdxForShotKey(key) : -1;
+  if (idx < 0) idx = _findShotIdxForOcfFile(rec);
+  if (idx < 0) {
+    _showFriendly('info', `Couldn't find a shot matching "${rec.filename || 'that file'}". Click a shot in the list first, then click the file to force-link it.`);
+    return;
+  }
+
+  const result = _state.matchResults[idx];
+  const job    = _state.jobs[idx];
+  if (!result || !job) return;
+  const event  = result.event || {};
+
+  const ocf = {
+    name:           rec.filename || String(rec.path).split('/').pop(),
+    path:           rec.path,
+    reel:           '',
+    cameraModel:    rec.codec || '',
+    durationFrames: Number(rec.durationFrames) || 0,
+    fps:            Number(rec.fps) || event.fps || 24,
+    tcKnown:        false,            // library files carry no container timecode
+    _manualPick:    true,
+  };
+  // User explicitly chose this file — force a SAFE/100% manual link.
+  result.match = {
+    status:      MATCH_STATUS?.SAFE || 'SAFE',
+    confidence:  100,
+    matchedPath: rec.path,
+    reasons:     ['Manually linked from media library'],
+    warnings:    [],
+    cameraModel: ocf.cameraModel,
+    _manualLink: true,
+  };
+  result.ocf     = ocf;
+  job.sourcePath = rec.path;
+  if (job.metadata) {
+    job.metadata.matchStatus     = result.match.status;
+    job.metadata.matchConfidence = 100;
+    job.metadata.manualLink      = true;
+  }
+  // Persist as a manual link so it survives re-match / reopen (otherwise
+  // _matchOcfToCurrentEvents or _restoreLibraryLinksIfNeeded wipes it).
+  if (!_state.manualLinks) _state.manualLinks = {};
+  _state.manualLinks[_eventKey(event)] = {
+    path: rec.path, ocf, match: result.match, linkedAt: new Date().toISOString(),
+  };
+  _state.normalisedRows = _state.matchResults.map((r, i) => normalizeVfxPullRow(r, _state.jobs[i]));
+  _renderShotTable();
+  _updateOcfSummary();
+  _persistState();
+  try { window._pmRefreshVfxWorkspaceList?.(); } catch {}
+  const shotLabel = job.shotId || job.shotName || event.shotName || event.reel || `shot ${idx + 1}`;
+  _setStatus(`Linked ${ocf.name} → ${shotLabel}`);
+  _showFriendly('ok', `✓ Linked ${ocf.name} → ${shotLabel} (manual). Shows MAN — confirm timecode before final pull.`);
+}
+window._pmLinkLibraryFileToSelectedShot = _linkLibraryFileToSelectedShot;
+
+// ---------------------------------------------------------------------------
 // Visual-fallback OCF relink — when reel/TC matching fails, find the right OCF
 // by image content using the perceptual-fingerprint engine.
 // ---------------------------------------------------------------------------
@@ -1975,7 +2170,7 @@ async function _visualRelinkShot(idx) {
 
   if (!refAssetId)        { _setStatus('Visual relink needs a QT reference loaded'); return; }
   if (!event.recIn)       { _setStatus('Shot has no editorial timecode to match against'); return; }
-  if (!candidates.length) { _setStatus('No OCF candidates in the folder to search'); return; }
+  if (!candidates.length) { _setStatus('No camera files to search. Link an OCF folder (Change folder…) or 📚 Link from Library first.'); return; }
 
   const CAP = 60;
   const pool = candidates.slice(0, CAP);
@@ -2061,6 +2256,11 @@ function _applyVisualRelink(idx, cand, confidence) {
     job.metadata.matchConfidence = confidence;
     job.metadata.visualLink      = true;
   }
+  // Persist so the visual relink survives re-match / reopen.
+  if (!_state.manualLinks) _state.manualLinks = {};
+  _state.manualLinks[_eventKey(event)] = {
+    path: cand.path, ocf, match: result.match, linkedAt: new Date().toISOString(),
+  };
   _state.normalisedRows = _state.matchResults.map((r, i) => normalizeVfxPullRow(r, _state.jobs[i]));
   _renderShotTable();
   _renderWorkspaceList();
@@ -2096,6 +2296,50 @@ function _applyManualLinks() {
 }
 
 // ---------------------------------------------------------------------------
+// Smart VFX Pull Setup modal → pull config bridge.
+// The modal (vfxPullSettings.js) persists EXR bit-depth / compression and the
+// project colorspace via window._pfxVfxSettingsGet(). Until this bridge existed
+// nothing consumed those choices, so every pull silently wrote hard-coded
+// 16-bit-half / ZIP / ACES2065-1 regardless of what the user picked. This maps
+// the modal settings onto the {exr, color} config blocks buildAllExrJobs reads.
+// ---------------------------------------------------------------------------
+const _EXR_BITDEPTH_MAP = {
+  '16-bit Half Float': 'half',
+  '32-bit Float':      'float',
+};
+const _EXR_COLORSPACE_MAP = {
+  'ACES Linear AP0 / ACES2065-1': 'ACES2065-1',
+  'ACEScct':                      'ACEScct',
+  'ACEScg':                       'ACEScg',
+  'P3-D65 / PQ':                  'P3-D65',
+  'P3-D65 / HLG':                 'P3-D65',
+  'Rec.2020 / PQ':                'Rec.2020',
+  'Rec.709':                      'Rec.709',
+  'sRGB':                         'sRGB',
+  'Log3G10 / RWG':                'Log3G10',
+  'S-Log3 / S-Gamut3':            'S-Log3',
+};
+
+// Reads the Smart VFX Pull Setup modal settings (safe if the modal never
+// opened — falls back to the historical hard-coded defaults).
+function _readVfxOutputSettings() {
+  let s = null;
+  try { s = window._pfxVfxSettingsGet && window._pfxVfxSettingsGet(); } catch (e) {}
+  s = s || {};
+  return {
+    format:           s.format || 'EXR',
+    exr: {
+      bitDepth:    _EXR_BITDEPTH_MAP[s.bitDepth] || 'half',
+      compression: String(s.compression || 'ZIP').toLowerCase(),
+      channels:    'rgb',
+    },
+    // outputColorSpace only changes review-proxy output (colorPlanEngine keeps
+    // ocf_native / match_editorial plates in ACES2065-1 by design).
+    outputColorSpace: _EXR_COLORSPACE_MAP[s.colorspace] || 'ACES2065-1',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Artifact rebuild — regenerates jobs, normalisedRows, fdls, amfXmls, qcShots
 // from the current _state.matchResults without re-running the full analysis.
 // Called after any manual relink or OCF folder change.
@@ -2105,6 +2349,7 @@ async function _rebuildVfxPullArtifactsFromMatches() {
   const projectMeta = await _providers.getProjectMeta?.() || {};
   const [_resWStr, _resHStr] = String(_settings.targetResolution || '3840x2160').split('x');
   const _projNaming = _readProjectNaming();
+  const _vfxOut = _readVfxOutputSettings();
   const config = {
     outputBasePath:    _settings.outputFolder || '',
     handleFrames:      _settings.handles,
@@ -2114,8 +2359,8 @@ async function _rebuildVfxPullArtifactsFromMatches() {
     matchMethods:      _settings.matchMethods,
     pullMode:          _settings.pullMode || 'ocf_native',
     bakeGeometry:      !!_settings.bakeReframe,
-    exr:   { bitDepth: 'half', compression: 'zip', channels: 'rgb' },
-    color: { mode: 'aces', outputColorSpace: 'ACES2065-1' },
+    exr:   _vfxOut.exr,
+    color: { mode: 'aces', outputColorSpace: _vfxOut.outputColorSpace },
     retime: { mode: _settings.bakeSpeed ? 'bake_to_timeline' : 'source_frames_only' },
     reframe: {
       mode: _settings.bakeReframe ? 'baked' : 'none',
@@ -2152,6 +2397,7 @@ async function _rebuildVfxPullArtifactsFromMatches() {
       cameraProfile: job?.colorPlan?.cameraProfile || job?.metadata?.cameraProfile || '',
       idtUrn:      job?.colorPlan?.idtUrn || job?.metadata?.idtUrn || '',
       mode:        _settings.pullMode,
+      outputColorSpace: job?.colorPlan?.outputSpace || config?.color?.outputColorSpace || 'ACES2065-1',
       retime:      job?.retime || null,
       reframe:     job?.reframe || null,
       timeline:    { name: projectMeta.timelineName || '', recIn: row.recIn || job?.metadata?.recIn || '', recOut: row.recOut || job?.metadata?.recOut || '' },
@@ -2176,7 +2422,10 @@ async function _rebuildVfxPullArtifactsFromMatches() {
       manual:       row.manual,
       tcIn:         job.sourceIn  || row.srcIn,
       tcOut:        job.sourceOut || row.srcOut,
-      frameCount:   job.expectedFrameCount || job.frameCount || 0,
+      // Delivered (rendered) count — must match the export-path QC build so the
+      // preview frame count equals what lands on disk. expectedFrameCount is the
+      // un-baked SOURCE span and understates retimed/freeze plates.
+      frameCount:   job.expectedRenderedFrameCount || job.frameCount || 0,
       reformatScale: job?.reframe?.scale ?? null,
       fdl:          _state.fdls[i]    || null,
       amf:          _state.amfXmls[i] || null,
@@ -2190,6 +2439,7 @@ async function _rebuildVfxPullArtifactsFromMatches() {
 
 async function _scanOcfFolder(folder) {
   if (!folder) throw new Error('No OCF folder selected.');
+  _state.ocfFromLibrary = false;   // a real folder scan carries authoritative timecode
   _setStatus('Scanning OCF folder…');
   const probeResult   = await nativeProbeOcfFolder(folder);
   _state.ocfFiles     = _extractOcfFiles(probeResult);
@@ -2425,10 +2675,76 @@ function _markShotApproved(idx, { auto = false } = {}) {
   _wsVerifyStatus[idx] = 'approved';
 }
 
+// Sprint 4 (DB-powered linking): link shots directly against the scanned SQLite
+// media library — no folder pick / re-scan. Library candidates carry no container
+// timecode, so matches are filename/reel-based (flagged for TC confirmation).
+async function _linkFromLibrary() {
+  if (_running) return;
+  try {
+    const n = await libraryCount();
+    if (n <= 0) {
+      _showFriendly('info', 'Your media library is empty. Scan a folder once (Smart Link OCF) — scanned files are remembered for next time.');
+      return;
+    }
+    _setStatus('Loading camera files from media library…');
+    const lib = await loadOcfFilesFromLibrary();
+    if (!lib.ok || !lib.files.length) {
+      _showFriendly('error', lib.error || 'No camera files in the media library yet.');
+      return;
+    }
+    _state.ocfFiles  = lib.files;
+    _state.ocfFolder = '(media library)';
+    _state.ocfFromLibrary = true;
+    _setStatus('Matching shots against media library…');
+    await _matchOcfToCurrentEvents();
+    await _rebuildVfxPullArtifactsFromMatches();
+
+    const results = _state.matchResults || [];
+    let autoLinked = 0;
+    const reviewQueue = [];
+    results.forEach((r, i) => {
+      const path = r?.match?.matchedPath || r?.ocf?.path || '';
+      if (r?.match?.status === MATCH_STATUS.SAFE && path) { _markShotApproved(i, { auto: true }); autoLinked++; }
+      else reviewQueue.push(i);
+    });
+    _persistState();
+    _renderShotTable();
+    _renderVerifyStation();
+    _updateOcfSummary();
+    _updateWfDots();
+    if (_state.jobs.length > 0) _showExport(true);
+
+    const total = results.length;
+    _showFriendly('info', `📚 Linked ${autoLinked} of ${total} shot${total === 1 ? '' : 's'} from ${lib.files.length} library file${lib.files.length === 1 ? '' : 's'} by filename/reel. ${reviewQueue.length ? `${reviewQueue.length} need a quick look — confirm timecode, or scan the OCF folder for exact matches.` : 'Confirm timecode before final pull, or scan the OCF folder for exact matches.'}`);
+    if (reviewQueue.length) _openSmartWizard(reviewQueue, autoLinked, total);
+  } catch (e) {
+    _showFriendly('error', `Link from Library couldn't finish: ${e?.message || e}`);
+    console.error('[VfxPull] _linkFromLibrary error:', e);
+  }
+}
+window._pmLinkFromLibrary = _linkFromLibrary;
+
 async function _smartLinkOcf() {
   if (_running) return;
   try {
     // 1. Make sure we have an OCF folder with indexed files. Pick once if not.
+    if (!_state.ocfFolder || !(_state.ocfFiles || []).length) {
+      // Sprint 4 (DB-powered linking): before asking for a folder, try the
+      // SQLite media library populated by earlier scans. Lets the user link
+      // against previously-scanned camera files with no re-scan.
+      try {
+        if (await libraryCount() > 0) {
+          _setStatus('Loading camera files from media library…');
+          const lib = await loadOcfFilesFromLibrary();
+          if (lib.ok && lib.files.length) {
+            _state.ocfFiles = lib.files;
+            _state.ocfFolder = _state.ocfFolder || '(media library)';
+            _state.ocfFromLibrary = true;
+            _showFriendly('info', `Using ${lib.files.length} camera file${lib.files.length === 1 ? '' : 's'} from your media library. (Scan a folder if you need timecode-exact matches.)`);
+          }
+        }
+      } catch (e) { console.warn('[VfxPull] library seed failed:', e); }
+    }
     if (!_state.ocfFolder || !(_state.ocfFiles || []).length) {
       _showFriendly('info', 'Choose the folder that holds your camera files (OCF)…');
       const picked     = await nativePickOcfFolder();
@@ -2497,11 +2813,11 @@ function _ensureWizardCss() {
   const s = document.createElement('style');
   s.id = 'pmSwCss';
   s.textContent = `
-  .pm-vfx-ocf-btn--smart{background:linear-gradient(180deg,#7c5cff,#5b3df0);color:#fff;border:none;font-weight:700;box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 2px 8px rgba(91,61,240,.35);}
+  .pm-vfx-ocf-btn--smart{background:#2172E3;color:#fff;border:none;font-weight:700;box-shadow:0 1px 0 rgba(255,255,255,.12) inset,0 2px 8px rgba(33,114,227,.35);}
   .pm-vfx-ocf-btn--smart:hover{filter:brightness(1.08);}
   .pm-vfx-ocf-friendly{margin:6px 0 2px;font-size:12px;font-weight:600;border-radius:7px;padding:7px 11px;line-height:1.4;}
-  .pm-vfx-ocf-friendly.is-info{background:rgba(124,92,255,.14);color:#cfc4ff;border:1px solid rgba(124,92,255,.3);}
-  .pm-vfx-ocf-friendly.is-ok{background:rgba(55,181,115,.16);color:#7fe3ac;border:1px solid rgba(55,181,115,.35);}
+  .pm-vfx-ocf-friendly.is-info{background:rgba(33,114,227,.12);color:#a8c4ff;border:1px solid rgba(33,114,227,.3);}
+  .pm-vfx-ocf-friendly.is-ok{background:rgba(10,163,86,.16);color:#7fe3ac;border:1px solid rgba(10,163,86,.35);}
   .pm-vfx-ocf-friendly.is-error{background:rgba(232,90,90,.14);color:#ffb4b4;border:1px solid rgba(232,90,90,.35);}
   .pm-sw-ov{position:fixed;inset:0;z-index:9000;background:rgba(8,8,14,.86);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;font:13px -apple-system,system-ui,sans-serif;}
   .pm-sw-card{width:min(1040px,94vw);max-height:92vh;overflow:auto;background:#14141b;border:1px solid rgba(255,255,255,.08);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.6);padding:22px 26px 26px;}
@@ -2510,7 +2826,7 @@ function _ensureWizardCss() {
   .pm-sw-close{background:none;border:none;color:rgba(228,235,255,.5);font-size:22px;cursor:pointer;line-height:1;}
   .pm-sw-close:hover{color:#fff;}
   .pm-sw-prog{height:5px;border-radius:3px;background:rgba(255,255,255,.08);margin:8px 0 18px;overflow:hidden;}
-  .pm-sw-prog-bar{height:100%;background:linear-gradient(90deg,#7c5cff,#37b573);transition:width .25s ease;}
+  .pm-sw-prog-bar{height:100%;background:#2172E3;transition:width .25s ease;}
   .pm-sw-shot{font-size:21px;font-weight:800;color:#f2f5ff;margin:0 0 3px;}
   .pm-sw-q{font-size:14px;color:rgba(228,235,255,.75);margin:0 0 16px;}
   .pm-sw-q b{color:#fff;}
@@ -2533,7 +2849,7 @@ function _ensureWizardCss() {
   .pm-sw-toast{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-12px);z-index:9500;max-width:min(640px,90vw);padding:11px 18px;border-radius:10px;font:600 13px -apple-system,system-ui,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;}
   .pm-sw-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
   .pm-sw-toast.is-info{background:#2a2350;color:#d8cfff;border:1px solid rgba(124,92,255,.5);}
-  .pm-sw-toast.is-ok{background:#13362a;color:#9ff0c4;border:1px solid rgba(55,181,115,.5);}
+  .pm-sw-toast.is-ok{background:#13362a;color:#9ff0c4;border:1px solid rgba(10,163,86,.5);}
   .pm-sw-toast.is-error{background:#3a1d1d;color:#ffc2c2;border:1px solid rgba(232,90,90,.5);}
   `;
   document.head.appendChild(s);
@@ -2627,8 +2943,25 @@ async function _swRenderStep() {
   ov.querySelector('#pmSwWhy').innerHTML = `<span class="pm-sw-why-h">Why this came up:</span> ${_swEsc(detail)}`;
 
   const hasOcf = !!row.sourcePath;
-  ov.querySelector('#pmSwOcfMeta').textContent = hasOcf ? (row.sourceFileName || row.sourcePath) : 'No file linked yet';
-  ov.querySelector('#pmSwQtMeta').textContent = `Reel ${row.reel || '—'} · TC ${row.srcIn || '—'}`;
+
+  // OCF preview frame: seek to the MIDDLE of the shot's source range, not srcIn.
+  // srcIn frequently lands on the clip's slate/clapper at the head (the "OCF is
+  // the wrong clip" report) — the midpoint shows the actual action that matches
+  // the editorial reference.
+  const _fps = Number(row.event?.fps || row.ocf?.fps || 24) || 24;
+  const _in  = row.srcIn || row.tcIn || row.event?.srcIn || '00:00:00:00';
+  const _out = row.srcOut || row.tcOut || row.event?.srcOut || '';
+  let tc = _in;
+  try {
+    if (_out && _out.includes(':')) {
+      const midF = Math.round((_tcToFrames(_in, _fps) + _tcToFrames(_out, _fps)) / 2);
+      if (midF > 0) tc = _framesToTC(midF, _fps);
+    }
+  } catch {}
+
+  const ocfName = hasOcf ? (row.sourceFileName || String(row.sourcePath).split('/').pop()) : '';
+  ov.querySelector('#pmSwOcfMeta').textContent = hasOcf ? `${ocfName} · TC ${tc}` : 'No file linked yet';
+  ov.querySelector('#pmSwQtMeta').textContent = `Reel ${row.reel || '—'} · TC ${tc}`;
 
   // Buttons depend on whether we have a candidate file.
   const actions = ov.querySelector('#pmSwActions');
@@ -2642,8 +2975,8 @@ async function _swRenderStep() {
   actions.querySelector('#pmSwNo')?.addEventListener('click', () => _swPickAnother());
   actions.querySelector('#pmSwSkip')?.addEventListener('click', () => _swAdvance());
 
-  // Lazily extract the comparison frames (don't block the buttons).
-  const tc = row.srcIn || row.tcIn || '00:00:00:00';
+  // Lazily extract the comparison frames (don't block the buttons). `tc` (the
+  // shot midpoint) was computed above and is reused for the OCF preview seek.
   _swSetPane('#pmSwQt', 'Loading…');
   _swSetPane('#pmSwOcf', hasOcf ? 'Loading…' : 'No camera file linked yet.');
 
@@ -2672,22 +3005,53 @@ async function _swRenderStep() {
   if (hasOcf) {
     (async () => {
       try {
-        // The OCF runs free-run timecode — seek RELATIVE to its own start TC
-        // (captured by the probe as ocf.tcIn) so we land on the matched frame,
-        // not the slate at the clip head.
-        const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
-        const r = await window._pmGetOcfStillPreview({
-          ocfPath: row.sourcePath, sourceTc: tc, sourceStartTc: ocfStartTc,
-          fps: row.ocf?.fps || 0,
-          width: 480, height: 270,
-          resolveConnected: _state.resolveConnected,
-        });
+        // Run one preview attempt. Library OCF (no container TC) previews a
+        // representative mid-file frame; otherwise seek by the matched source TC.
+        const doPreview = async () => {
+          const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
+          let frameArg = {};
+          if (!row.ocf?.tcKnown && window.pfxPlatform?.media?.getInfo) {
+            try {
+              const info = await window.pfxPlatform.media.getInfo({ path: row.sourcePath });
+              const fc = Number(info?.frameCount ?? info?.data?.frameCount ?? 0) || 0;
+              if (fc > 1) frameArg = { sourceFrame: Math.round(fc * 0.5) };
+            } catch {}
+          }
+          return window._pmGetOcfStillPreview({
+            ocfPath: row.sourcePath, sourceTc: tc, sourceStartTc: ocfStartTc,
+            fps: row.ocf?.fps || 0, ...frameArg,
+            width: 480, height: 270,
+            resolveConnected: _state.resolveConnected || !!window._pmVfxPullResolveConnected?.(),
+          });
+        };
+
+        let r = await doPreview();
         if (reqId !== _sw.reqSeq) return;
-        // Camera RAW (ARRIRAW/X-OCN/R3D) can't be decoded by FFmpeg/QuickTime —
-        // only DaVinci Resolve can. Surface that instead of a dead-end message so
-        // the user knows the link is fine and how to get a preview.
+
+        // Smart auto-Resolve: sensor-RAW (ARRIRAW/X-OCN/R3D) needs Resolve. Rather
+        // than dead-end, connect (launching Resolve in the background if needed)
+        // and retry — then it decodes. First RAW shot warms the connection; every
+        // shot after is fast (cached + warm engine).
+        if (r?.requiresResolve && !r?.resolveAvailable && typeof window._pmEnsureResolveConnected === 'function') {
+          _swSetPane('#pmSwOcf', 'Connecting to DaVinci Resolve…');
+          const ok = await window._pmEnsureResolveConnected((m) => {
+            if (reqId === _sw.reqSeq) _swSetPane('#pmSwOcf', m);
+          }).catch(() => false);
+          if (reqId !== _sw.reqSeq) return;
+          if (ok) {
+            _state.resolveConnected = true;
+            _swSetPane('#pmSwOcf', 'Rendering frame via Resolve…');
+            r = await doPreview();
+            if (reqId !== _sw.reqSeq) return;
+          } else {
+            const err = window._pmResolveConnectLastError?.() || 'Resolve scripting API is unavailable.';
+            _swSetPane('#pmSwOcf', `${_swRawLabel(row.sourcePath)} — Resolve opened, but PostFlowX cannot control it yet. ${err}`);
+            return;
+          }
+        }
+
         const emptyMsg = (r?.requiresResolve && !r?.resolveAvailable)
-          ? 'Camera RAW — open DaVinci Resolve to preview this frame. The link itself is fine.'
+          ? `${_swRawLabel(row.sourcePath)} — couldn't reach DaVinci Resolve. Open Resolve, then reopen this shot. The link is correct.`
           : (r?.error ? 'Could not preview this file.' : 'No frame returned.');
         _swSetPaneImg('#pmSwOcf', r?.dataUrl, emptyMsg);
       } catch { if (reqId === _sw.reqSeq) _swSetPane('#pmSwOcf', 'Could not preview this file.'); }
@@ -2706,6 +3070,18 @@ function _swSetPaneImg(sel, dataUrl, emptyText) {
     : `<div id="${sel.slice(1)}" class="pm-sw-pane-empty">${_swEsc(emptyText)}</div>`;
 }
 function _swEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+// Format label for the sensor-RAW "needs Resolve" message in the review wizard.
+function _swRawLabel(p) {
+  switch (String(p || '').toLowerCase().split('.').pop()) {
+    case 'r3d':             return 'RED R3D RAW';
+    case 'ari': case 'arx': return 'ARRIRAW';
+    case 'braw':            return 'Blackmagic RAW';
+    case 'crm':             return 'Canon Cinema RAW Light';
+    case 'mxf':             return 'RAW MXF (ARRIRAW / X-OCN)';
+    case 'dng':             return 'CinemaDNG RAW';
+    default:                return 'Camera RAW';
+  }
+}
 
 async function _swApprove() {
   const idx = _swCurrentIdx();
@@ -2744,6 +3120,9 @@ async function _swPickAnother() {
 
 // Expose normalisedRows for VFX Pull workspace OCF state lookup (prep_mark.js)
 window._pmGetVfxNormRows = () => _state.normalisedRows || [];
+// Sprint 4: whether the current OCF link batch came from the media library
+// (filename/reel, no container TC) vs a folder scan (timecode-exact).
+window._pmIsOcfFromLibrary = () => !!_state.ocfFromLibrary;
 
 // Session-scoped OCF still-frame cache: key = "ocfPath|tc|WxH[|ff]"
 // Exposed on window so prep_mark.js can invalidate entries on Retry / Start Resolve.
@@ -2781,19 +3160,60 @@ window._pmMarkResolveConnected = _pmMarkResolveConnected;
 //   When true, a companion-side "not running" response does NOT block fallback tiers — it is
 //   treated as a transient extraction failure rather than proof that Resolve is unavailable.
 // Returns { dataUrl, error, decoder, extractor, backend, requiresResolve, resolveAvailable, ocfPath, sourceTc }.
+// Near-pure-black frame = a failed/blank decode (Resolve slate, render miss,
+// offline media) — NOT a legitimately dark shot (which still keeps highlights).
+// Lets us reject black OCF frames so they neither display nor cache as "ready".
+async function _ocfFrameIsBlack(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return false;
+  try {
+    const img = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error('img decode failed'));
+      im.src = dataUrl;
+    });
+    const W = 48, H = 27;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    if (!cx) return false;
+    cx.drawImage(img, 0, 0, W, H);
+    const d = cx.getImageData(0, 0, W, H).data;
+    let sum = 0, max = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      sum += l; if (l > max) max = l;
+    }
+    // Whole frame ~0 with no highlight anywhere → blank decode, not dark content.
+    return (sum / (W * H)) < 3 && max < 18;
+  } catch { return false; }   // can't tell → don't over-reject
+}
+
+// Returns the result if its frame is usable, else null so the caller falls
+// through to the next decoder tier instead of caching/showing a black frame.
+async function _ocfUsable(result) {
+  if (result?.dataUrl && await _ocfFrameIsBlack(result.dataUrl)) {
+    try { console.warn('[OCF Preview] rejected near-black frame from', result.decoder, result.ocfPath); } catch {}
+    return null;
+  }
+  return result;
+}
+
 window._pmGetOcfStillPreview = async function({
-  ocfPath, sourceTc, sourceStartTc = '', fps = 0,
+  ocfPath, sourceTc, sourceStartTc = '', fps = 0, sourceFrame = null,
   timeout = 15000, width = 640, height = 360,
   forceFfmpeg = false, resolveConnected = false,
 } = {}) {
-  if (!ocfPath || !sourceTc) {
+  // sourceFrame lets callers seek by an absolute frame index inside the file —
+  // used for library OCF (no container TC) where editorial-TC seeking is unmapped.
+  const haveFrame = Number.isFinite(sourceFrame) && sourceFrame >= 0;
+  if (!ocfPath || (!sourceTc && !haveFrame)) {
     const error = !ocfPath ? 'no ocfPath' : 'no sourceTc';
     return { dataUrl: null, error, decoder: 'Unsupported', extractor: 'none', backend: '',
              requiresResolve: false, resolveAvailable: true,
              ocfPath: ocfPath || '', sourceTc: sourceTc || '' };
   }
 
-  const cacheKey = `${ocfPath}|${sourceTc}|${sourceStartTc}|${width}x${height}|${forceFfmpeg ? 'ff' : ''}`;
+  const cacheKey = `${ocfPath}|${sourceTc}|${sourceStartTc}|${haveFrame ? 'f' + sourceFrame : ''}|${width}x${height}|${forceFfmpeg ? 'ff' : ''}`;
   if (_ocfStillCache.has(cacheKey)) return _ocfStillCache.get(cacheKey);
 
   const _save = (result) => {
@@ -2804,21 +3224,48 @@ window._pmGetOcfStillPreview = async function({
     return result;
   };
 
-  // ── Electron fast-path: native media engine (AVFoundation + Resolve + FFmpeg) ──
-  // media_engine.js handles the 3-tier logic natively; no companion round-trip needed.
-  if (!forceFfmpeg && window.pfxPlatform?.media) {
+  // Diagnostics: capture WHY preview failed so the UI shows a specific reason
+  // instead of "Failed (unknown)". A black-frame rejection (Resolve produced a
+  // frame but it's blank — usually Media Offline or a bad seek) is a very
+  // different cause from a Resolve extraction failure (ok:false at some stage).
+  let _blackFrom   = null;   // a tier produced a frame we rejected as near-black
+  let _resolveFail = null;   // Resolve tier returned ok:false {stage,error}
+  const _failInfo = () => {
+    if (_blackFrom) return {
+      error: `${_blackFrom} returned a black frame — Resolve could not decode/debayer this clip. Common causes: camera-RAW that Resolve's GPU/RAW decode can't read (verify the file plays in Resolve directly), the clip is Media Offline, or the seek landed out of range. Use "Test Resolve Still" to diagnose.`,
+      stage: 'black_frame',
+    };
+    if (_resolveFail) return {
+      error: _resolveFail.error || 'Resolve could not extract a preview frame.',
+      stage: _resolveFail.stage || 'resolve_failed',
+    };
+    return null;
+  };
+
+  // ── Electron fast-path: native media engine (AVFoundation via avf_bridge) ──
+  // media_engine.js handles the 3-tier logic natively; no companion round-trip.
+  // When seeking by frame index (library OCF, no container TC) this is the only
+  // tier that can fulfil the request — the TC tiers below need a timecode.
+  if ((!forceFfmpeg || haveFrame) && window.pfxPlatform?.media) {
     try {
       const r = await window.pfxPlatform.media.getOcfStill({
-        ocfPath, sourceTc, sourceStartTc, fps, outputWidth: width, colorPreviewMode: 'rec709',
+        ocfPath, sourceTc, sourceStartTc, fps,
+        ...(haveFrame ? { sourceFrame } : {}),
+        outputWidth: width, colorPreviewMode: 'rec709',
       });
       const dataUrl = r?.dataUrl || r?.imageDataUrl || null;
       if (dataUrl) {
-        _pmMarkResolveConnected(r.decoder, r.extractor);
-        return _save({ dataUrl, error: null,
+        const _r = await _ocfUsable({ dataUrl, error: null,
                        decoder: r.decoder || 'Native', extractor: r.extractor || 'native', backend: '',
                        requiresResolve: false, resolveAvailable: true, ocfPath, sourceTc });
+        if (_r) { _pmMarkResolveConnected(r.decoder, r.extractor); return _save(_r); }
+        _blackFrom = r.decoder || 'Native';
+        // black/blank decode — fall through to the companion tiers
       }
     } catch (_) {}
+    // Frame-based requests can still be fulfilled by Resolve for RAW MXF/R3D/etc.
+    // If the native engine cannot decode them, continue into the Resolve tier
+    // instead of stopping at "Unsupported".
     // Fall through to companion path if native engine failed.
   }
 
@@ -2826,29 +3273,63 @@ window._pmGetOcfStillPreview = async function({
   if (!forceFfmpeg) {
     let resolveData;
     try {
-      const res = await _nativeOcfResolveStill(ocfPath, sourceTc, { width, height });
+      const res = await _nativeOcfResolveStill(ocfPath, sourceTc, {
+        width, height,
+        ...(haveFrame ? { sourceFrame } : {}),
+      });
       resolveData = res?.data ?? res ?? {};
-    } catch (_) {
-      resolveData = { ok: false, resolveAvailable: false, error: 'Companion unreachable.' };
+    } catch (e) {
+      // The companion CALL threw (timeout or transport error) — it did not return
+      // a structured {ok:false, stage}. Preserve the REAL cause + a meaningful
+      // stage so the UI stops reporting a generic "resolve_failed". A timed-out
+      // call means Resolve is present but the render exceeded the budget, so keep
+      // resolveAvailable=true (don't wrongly prompt "Start Resolve"); only a down
+      // companion is genuinely unavailable.
+      const msg           = e?.message || String(e);
+      const companionDown = e?.code === 'COMPANION_UNAVAILABLE';
+      const isTimeoutErr  = /tim(e|ed)\s?out/i.test(msg);
+      resolveData = {
+        ok: false,
+        resolveAvailable: !companionDown,
+        stage: companionDown ? 'companion_down' : isTimeoutErr ? 'render_timeout' : 'companion_error',
+        error: companionDown
+          ? 'Native companion is not running.'
+          : isTimeoutErr
+            ? 'Resolve render timed out — the clip is taking too long to debayer. Retry, or close other Resolve renders/jobs and try again.'
+            : `Resolve preview call failed: ${msg}`,
+      };
+    }
+
+    if (resolveData?.retryable && resolveData?.stage === 'black_frame') {
+      await new Promise(r => setTimeout(r, 900));
+      try {
+        const res = await _nativeOcfResolveStill(ocfPath, sourceTc, {
+          width, height,
+          ...(haveFrame ? { sourceFrame } : {}),
+        });
+        resolveData = res?.data ?? res ?? {};
+      } catch (_) {}
     }
 
     if (resolveData.ok && resolveData.dataUrl) {
-      _pmMarkResolveConnected('Resolve Engine', 'resolve');
-      return _save({ dataUrl: resolveData.dataUrl, error: null,
+      const _r = await _ocfUsable({ dataUrl: resolveData.dataUrl, error: null,
                      decoder: 'Resolve Engine', extractor: 'resolve', backend: '',
                      requiresResolve: false, resolveAvailable: true, ocfPath, sourceTc });
+      if (_r) { _pmMarkResolveConnected('Resolve Engine', 'resolve'); return _save(_r); }
+      _blackFrom = 'Resolve Engine';
+      // Resolve returned a black/slate frame — fall through to AVF/FFmpeg rather
+      // than caching black as "ready" (the cause of the black strip).
+    } else if (resolveData && resolveData.ok === false) {
+      _resolveFail = {
+        stage: resolveData.stage,
+        error: resolveData.error,
+        resolveAvailable: resolveData.resolveAvailable !== false,
+      };
     }
-    // Companion says Resolve is not running.
-    // If the VFX Pull panel confirmed Resolve was connected (resolveConnected=true), treat
-    // this as a transient failure and fall through to AVFoundation rather than blocking the user.
-    // Only hard-stop when we have no evidence Resolve is available.
-    if (resolveData.resolveAvailable === false && !resolveConnected) {
-      return _save({ dataUrl: null, error: resolveData.error || 'Resolve Engine is not running.',
-                     decoder: 'Unsupported', extractor: 'resolve', backend: '',
-                     requiresResolve: true, resolveAvailable: false, ocfPath, sourceTc });
-    }
-    // Resolve running (or resolveConnected hint says it should be) but extraction failed —
-    // fall through to AVFoundation.
+    // Resolve unavailable OR its extraction failed. Do NOT stop here — fall
+    // through to AVFoundation (Tier 2) and FFmpeg (Tier 3), which decode
+    // MXF / MOV / ProRes / many camera containers WITHOUT Resolve. Only if
+    // every native decoder also fails do we report requiresResolve (Tier 3 end).
   }
 
   // ── Tier 2: AVFoundation / QuickLook (macOS only) ─────────────────────────
@@ -2857,9 +3338,11 @@ window._pmGetOcfStillPreview = async function({
       const res  = await _nativeOcfAvfStill(ocfPath, { width, sourceTc, sourceStartTc, fps });
       const data = res?.data ?? res ?? {};
       if (data.ok && data.dataUrl) {
-        return _save({ dataUrl: data.dataUrl, error: null,
+        const _r = await _ocfUsable({ dataUrl: data.dataUrl, error: null,
                        decoder: 'AVFoundation', extractor: 'avf', backend: '',
                        requiresResolve: false, resolveAvailable: true, ocfPath, sourceTc });
+        if (_r) return _save(_r);
+        _blackFrom = _blackFrom || 'AVFoundation';
       }
     } catch (_) {}
   }
@@ -2867,6 +3350,17 @@ window._pmGetOcfStillPreview = async function({
   // ── Tier 3: FFmpeg ────────────────────────────────────────────────────────
   // Only reached when forceFfmpeg=true (user clicked "Use FFmpeg Fallback")
   // or when Resolve ran but couldn't decode AND AVFoundation also failed.
+  if (haveFrame && !sourceTc) {
+    const _fi = _failInfo();
+    return _save({ dataUrl: null,
+                   error: _fi?.error || 'No decoder could extract a preview for this file.',
+                   stage: _fi?.stage || 'unknown',
+                   decoder: 'Unsupported', extractor: 'none', backend: '',
+                   requiresResolve: !_blackFrom,
+                   resolveAvailable: _resolveFail?.resolveAvailable ?? !!_blackFrom,
+                   ocfPath, sourceTc });
+  }
+
   try {
     const timeoutP = new Promise((_, rej) =>
       setTimeout(() => rej(new Error(`OCF preview timed out after ${timeout}ms`)), timeout));
@@ -2876,19 +3370,33 @@ window._pmGetOcfStillPreview = async function({
     ]);
     const data = res?.data ?? res ?? {};
     if (data.dataUrl) {
-      return _save({ dataUrl: data.dataUrl, error: null,
+      const _r = await _ocfUsable({ dataUrl: data.dataUrl, error: null,
                      decoder: 'FFmpeg', extractor: 'ffmpeg', backend: '',
                      requiresResolve: false, resolveAvailable: true, ocfPath, sourceTc });
+      if (_r) return _save(_r);
+      _blackFrom = _blackFrom || 'FFmpeg';
+      // black ffmpeg frame — treat as no usable decode (fall to the error return)
     }
     // ffmpeg failed — suppress stderr from the viewer; log to console only.
     console.warn('[OCF Preview] ffmpeg tier failed:', data.error);
-    return _save({ dataUrl: null, error: 'No decoder could extract a preview for this file.',
+    const _fi = _failInfo();
+    return _save({ dataUrl: null,
+                   error: _fi?.error || 'No decoder could extract a preview for this file.',
+                   stage: _fi?.stage || 'unknown',
                    decoder: 'Unsupported', extractor: 'ffmpeg', backend: '',
-                   requiresResolve: true, resolveAvailable: true, ocfPath, sourceTc });
+                   // A black frame means Resolve IS available (it produced something) —
+                   // don't prompt "Start Resolve"; show the decode-error diagnostics.
+                   requiresResolve: !_blackFrom,
+                   resolveAvailable: _resolveFail?.resolveAvailable ?? true,
+                   ocfPath, sourceTc });
   } catch (e) {
-    return _save({ dataUrl: null, error: e?.message || String(e),
+    const _fi = _failInfo();
+    return _save({ dataUrl: null, error: _fi?.error || e?.message || String(e),
+                   stage: _fi?.stage || 'exception',
                    decoder: 'Unsupported', extractor: 'none', backend: '',
-                   requiresResolve: true, resolveAvailable: false, ocfPath, sourceTc });
+                   requiresResolve: !_blackFrom,
+                   resolveAvailable: _resolveFail?.resolveAvailable ?? !!_blackFrom,
+                   ocfPath, sourceTc });
   }
 };
 
@@ -3177,6 +3685,7 @@ async function _runAnalysis() {
     // the full color/retime/reframe block so downstream stages (EXR export,
     // FDL referenceInfo, AMF lookTransform) have what they need.
     const _projNaming2 = _readProjectNaming();
+    const _vfxOut2 = _readVfxOutputSettings();
     const config = {
       outputBasePath:   _settings.outputFolder || '',
       handleFrames:     _settings.handles,
@@ -3186,14 +3695,10 @@ async function _runAnalysis() {
       matchMethods:     _settings.matchMethods,
       pullMode:         _settings.pullMode || 'ocf_native',
       bakeGeometry:     !!_settings.bakeReframe,
-      exr: {
-        bitDepth:    'half',
-        compression: 'zip',
-        channels:    'rgb',
-      },
+      exr: _vfxOut2.exr,
       color: {
         mode:              'aces',
-        outputColorSpace:  'ACES2065-1',
+        outputColorSpace:  _vfxOut2.outputColorSpace,
         matchMode:         _settings.colorMatchMode || 'preview',
       },
       retime: {
@@ -3414,6 +3919,7 @@ async function _runAnalysis() {
         cameraProfile: job?.colorPlan?.cameraProfile || job?.metadata?.cameraProfile || '',
         idtUrn:      job?.colorPlan?.idtUrn || job?.metadata?.idtUrn || '',
         mode:        _settings.pullMode,
+        outputColorSpace: job?.colorPlan?.outputSpace || 'ACES2065-1',
         cdl:         matchCdl,
         colorMatch,
         retime:      job?.retime || null,
@@ -3631,6 +4137,47 @@ function _escHtml(str) {
 function _showExport(visible) {
   const el = document.getElementById('pmVfxPullExport');
   if (el) el.style.display = visible ? '' : 'none';
+  if (visible) { try { _renderExportPreflight(); } catch {} }
+}
+
+// Proactive export readiness summary — shows what (if anything) blocks the pull
+// package BEFORE the user clicks, and disables the Pull Package button while
+// blocked. Errors block; warnings inform but still allow export.
+function _renderExportPreflight() {
+  const box = document.getElementById('pmVfxExportPreflight');
+  const btn = document.getElementById('pmVfxExpPackage');
+  if (!box) return;
+  const hardBlocks = (_state.qcBlocks || []).filter(b => b.severity === 'error');
+  const valErrors  = (_state.validation && _state.validation.ok === false)
+    ? (_state.validation.issues || []).filter(i => i.severity === 'error') : [];
+  const warns = [
+    ...((_state.qcBlocks || []).filter(b => b.severity === 'warn')),
+    ...((_state.validation && _state.validation.issues || []).filter(i => i.severity === 'warn')),
+  ];
+  const errMsgs  = [...hardBlocks, ...valErrors].map(b => b.message || b.code).filter(Boolean);
+  const warnMsgs = warns.map(b => b.message || b.code).filter(Boolean);
+
+  if (btn) btn.disabled = errMsgs.length > 0;
+
+  if (errMsgs.length) {
+    box.style.display = '';
+    box.className = 'pm-vfx-export-preflight is-blocked';
+    box.innerHTML =
+      `<div class="pm-vfx-pf-hd">⛔ Export blocked — fix ${errMsgs.length} issue${errMsgs.length > 1 ? 's' : ''}:</div>` +
+      `<ul class="pm-vfx-pf-list">${errMsgs.slice(0, 4).map(m => `<li>${_escHtml(m)}</li>`).join('')}` +
+      `${errMsgs.length > 4 ? `<li>…and ${errMsgs.length - 4} more</li>` : ''}</ul>`;
+  } else if (warnMsgs.length) {
+    box.style.display = '';
+    box.className = 'pm-vfx-export-preflight is-warn';
+    box.innerHTML =
+      `<div class="pm-vfx-pf-hd">⚠ Ready to export — ${warnMsgs.length} warning${warnMsgs.length > 1 ? 's' : ''} to review:</div>` +
+      `<ul class="pm-vfx-pf-list">${warnMsgs.slice(0, 3).map(m => `<li>${_escHtml(m)}</li>`).join('')}` +
+      `${warnMsgs.length > 3 ? `<li>…and ${warnMsgs.length - 3} more</li>` : ''}</ul>`;
+  } else {
+    box.style.display = '';
+    box.className = 'pm-vfx-export-preflight is-ready';
+    box.innerHTML = `<div class="pm-vfx-pf-hd">✓ Ready to export — all checks passed.</div>`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3695,10 +4242,10 @@ function _renderShotTable() {
 
     // ── Color plan (IDT / engine) ──
     if (colorPlan) {
-      const idt = colorPlan.idtName ? colorPlan.idtName.split('/').pop().replace(/\s*\(.*?\)\s*/g, '').trim() : '';
       const amfOk = !!colorPlan.amfPath;
       if (amfOk) badges.push(`<span class="pm-vfx-pull-badge pm-vfx-pull-badge--amf" title="AMF: ${_esc(colorPlan.amfPath.split('/').pop())}">AMF ${colorPlan.amfAppliedIDT ? 'APL' : 'OK'}</span>`);
-      if (idt)   badges.push(`<span class="pm-vfx-pull-badge pm-vfx-pull-badge--color" title="IDT: ${_esc(colorPlan.idtName)}">${_esc(idt.slice(0, 8))}</span>`);
+      const idtBadgeHtml = buildIdtBadgeHtml(colorPlan);   // 🎬 = OCF auto-detected
+      if (idtBadgeHtml) badges.push(idtBadgeHtml);
       const engMap = { resolve: 'RLV', oiio: 'OII', ffmpeg_fallback: 'FFM' };
       const engTag = engMap[colorPlan.engineHint];
       if (engTag) badges.push(`<span class="pm-vfx-pull-badge pm-vfx-pull-badge--frame" title="Render engine: ${colorPlan.engineHint}">${engTag}</span>`);
@@ -3815,7 +4362,8 @@ function _updateOcfSummary() {
   const linked  = rows.filter(r => (r.status === 'SAFE') || (r.sourcePath && r.match?._manualLink)).length;
   const review  = rows.filter(r => r.status === 'REVIEW_NEEDED' || r.status === 'NOT_RECOMMENDED').length;
   const missing = rows.filter(r => r.status === 'MISSING').length;
-  const text = `${linked} linked / ${review} review / ${missing} missing`;
+  const libSuffix = _state.ocfFromLibrary ? ' · 📚 library (confirm TC)' : '';
+  const text = `${linked} linked / ${review} review / ${missing} missing${libSuffix}`;
   if (el) el.textContent = text;
   if (toolbarEl) toolbarEl.textContent = `OCF: ${text}`;
 }
@@ -4166,7 +4714,7 @@ async function _runSevenFrameCheck() {
 
 function _approveCurrentLink() {
   const { idx, row } = _currentVerifyRow();
-  if (!row?.sourcePath) { _setStatus('Cannot approve: OCF is not linked'); return; }
+  if (!row?.sourcePath) { _setStatus('Can’t approve — no camera file linked. Use Relink on this row, or run ⚡ Smart Link OCF to match all shots.'); return; }
   _verifyData[idx] = { ...(_verifyData[idx] || {}), approved: true, approvedAt: new Date().toISOString() };
   _setStatus('OCF link approved for EXR pull');
   _renderVerifyStation();
@@ -4255,7 +4803,7 @@ Sat ${cdl.sat != null ? Number(cdl.sat).toFixed(4) : '1.0000'}
       <div class="pm-vfx-detail-section-hdr">Resolve Source</div>
       <div class="pm-vfx-detail-kv-grid">
         ${isOffline ? '<span style="color:#ff5d6d;grid-column:1/-1;font-weight:600;">&#9888; Offline in Resolve — use Relink to locate</span>' : ''}
-        ${isResolveDirect ? '<span style="color:#37b573;grid-column:1/-1;">&#10003; Linked directly from Resolve media pool</span>' : ''}
+        ${isResolveDirect ? '<span style="color:#0AA356;grid-column:1/-1;">&#10003; Linked directly from Resolve media pool</span>' : ''}
         ${trackNum != null ? `<span>Track</span><span>V${trackNum}</span>` : ''}
         ${isDynSpeed
           ? '<span>Speed</span><span style="color:#ffb94a;">Dynamic ramp</span>'
@@ -4312,7 +4860,7 @@ Sat ${cdl.sat != null ? Number(cdl.sat).toFixed(4) : '1.0000'}
         <span>Src Out</span><span>${_esc(tcOut)}</span>
         ${recIn !== '—' ? `<span>Rec In</span><span>${_esc(recIn)}</span>` : ''}
         ${recOut !== '—' ? `<span>Rec Out</span><span>${_esc(recOut)}</span>` : ''}
-        <span>Frames</span><span>${frameCount} + ${handles} handles</span>
+        <span>Frames</span><span>${frameCount} fr (incl. ${handles}f handles/side)</span>
         <span>Start</span><span>${frameStart}</span>
         <span>Format</span><span>${_esc(plateFormat)}</span>
         <span>Color Space</span><span>${_esc(colorSpace)}</span>
@@ -4324,7 +4872,7 @@ Sat ${cdl.sat != null ? Number(cdl.sat).toFixed(4) : '1.0000'}
       <div class="pm-vfx-detail-section-hdr">Camera / Color</div>
       <div class="pm-vfx-detail-kv-grid">
         <span>Camera</span><span>${_esc(cameraModel)}</span>
-        <span>IDT</span><span>${_esc(idtShort)}</span>
+        <span>IDT</span><span>${_esc(idtShort)}${job.colorPlan?.idtAutoDetected ? ' · 🎬 Auto (OCF)' : ''}</span>
         <span>Pull Mode</span><span>${_esc(pullMode)}</span>
       </div>
     </div>
@@ -4792,6 +5340,85 @@ async function _matchFramesForShot({ event, sourcePath, refAssetId, settings }) 
 //   • After render: per-shot QC + sidecar write (frameMap, geometry, pullReport, QC).
 // Returns the list of per-job result entries (one per planner job, same order).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ACES 2.0 Review Proxy — output transform picker + per-shot review movie.
+// The ACES 2.0 ODT is baked onto the rendered AP0 EXR plates (display-referred
+// Rec.709/P3 movie) — see api.py renderReviewProxyStart. Review-only, not a
+// final VFX plate.
+// ---------------------------------------------------------------------------
+
+// Show the ODT row only for Review Proxy (the only mode that bakes an ODT).
+function _syncOdtRow() {
+  const row = document.getElementById('pmVfxOdtRow');
+  if (row) row.style.display = (_settings.pullMode === 'review_proxy') ? '' : 'none';
+  const sel = document.getElementById('pmVfxOdtTransform');
+  if (sel && _settings.odtId) sel.value = _settings.odtId;
+}
+
+// Populate the ODT dropdown from the companion's available ACES 2.0 transforms.
+async function _populateOdtTransforms() {
+  const sel = document.getElementById('pmVfxOdtTransform');
+  if (!sel) return;
+  try {
+    const res = await nativeAces2OutputTransforms();
+    const list = res?.data?.transforms || res?.transforms || [];
+    if (Array.isArray(list) && list.length) {
+      sel.innerHTML = list.map(t => `<option value="${_esc(t.id)}">${_esc(t.label || t.id)}</option>`).join('');
+      if (_settings.odtId && list.some(t => t.id === _settings.odtId)) {
+        sel.value = _settings.odtId;
+      } else {
+        _settings.odtId = list[0].id;
+      }
+    }
+  } catch (e) {
+    console.warn('[VfxPull] ACES 2.0 ODT list unavailable:', e?.message || e);
+  }
+}
+
+// Render a Rec.709 review movie per shot from its AP0 EXR plates, with the
+// selected ACES 2.0 ODT baked. Reuses the EXR render-job status registry.
+async function _runReviewProxies(jobs) {
+  const results = _state.exrResults || [];
+  const rendered = results.filter(r => r.outputDir && (r.status === 'done' || r.status === 'rendered'));
+  if (!rendered.length) {
+    _setStatus('No rendered EXR plates yet — run the pull first.');
+    return;
+  }
+  const odtId = _settings.odtId || 'rec709_sdr';
+  for (let i = 0; i < rendered.length; i++) {
+    const r = rendered[i];
+    _setStatus(`Review proxy ${r.plateName} (${i + 1}/${rendered.length})…`);
+    try {
+      const job = {
+        exrDir:      r.outputDir,
+        exrPattern:  `${r.plateName}.%04d.exr`,
+        frameStart:  _settings.frameStart || 1001,
+        fps:         _settings.fps || 24,
+        codec:       'h264',
+        shotId:      r.plateName,
+        colorPlan:   { odtId, odtStandard: 'ACES 2.0' },
+      };
+      const startRes = await nativeRenderReviewProxyStart(job);
+      const { jobId } = startRes?.data || startRes?.result || startRes || {};
+      if (!jobId) throw new Error('no jobId');
+      // poll (shared registry) — review encodes are fast
+      const t0 = Date.now();
+      while (Date.now() - t0 < 30 * 60 * 1000) {
+        await new Promise(res => setTimeout(res, 1000));
+        const stRes = await nativeRenderPullExrStatus(jobId);
+        const st = stRes?.data || stRes?.result || stRes || {};
+        if (st.state === 'done') { r.reviewMovie = st.result?.output || ''; break; }
+        if (st.state === 'failed' || st.state === 'cancelled') throw new Error(st.error || st.state);
+      }
+    } catch (e) {
+      console.warn('[VfxPull] Review proxy failed:', r.plateName, e?.message || e);
+      _setStatus(`Review proxy error (${r.plateName}): ${e?.message || e}`);
+    }
+  }
+  _setStatus(`Review proxies done (${rendered.length}) — ACES 2.0 ${odtId}`);
+  _renderShotTable();
+}
+
 async function _runExrExport(jobs) {
   if (!jobs?.length) return [];
   if (!_settings.outputFolder) {
@@ -4948,6 +5575,14 @@ async function _runExrExport(jobs) {
   const errorCount = _state.exrResults.filter(r => r.status === 'error').length;
   const qcFail     = _state.exrResults.filter(r => r.status === 'qc_fail').length;
   _setStatus(`EXR export: ${doneCount} done, ${qcFail} QC fail, ${errorCount} errors`);
+
+  // Review Proxy mode → auto-bake the ACES 2.0 ODT review movie from the AP0
+  // plates we just rendered. (The "Render Review" button does the same on demand.)
+  if (_settings.pullMode === 'review_proxy' && doneCount > 0) {
+    try { await _runReviewProxies(jobs); }
+    catch (e) { console.warn('[VfxPull] Auto review-proxy render failed:', e?.message || e); }
+  }
+
   return _state.exrResults;
 }
 
@@ -4970,8 +5605,11 @@ async function _runRefExtraction(jobs) {
     const pkg      = job.package || buildPackagePaths(outputBase, job.plateName || _plateName(i), job.shotId || job.naming?.shotName || '');
     const shotName = job.shotId || job.naming?.shotName || _plateName(i);
 
-    const tcIn  = job.sourceIn  || row.tcIn  || '00:00:00:00';
-    const tcOut = job.sourceOut || row.tcOut || tcIn;
+    // Use the handle-extended pull range so the first/mid/last reference frames
+    // represent the DELIVERED plate (which includes handles), not just the
+    // editorial in/out.
+    const tcIn  = job.exportIn  || job.sourceIn  || row.tcIn  || '00:00:00:00';
+    const tcOut = job.exportOut || job.sourceOut || row.tcOut || tcIn;
 
     // HH:MM:SS:FF → fractional seconds
     const _tcToSec = tc => {
@@ -5021,6 +5659,22 @@ async function _runRefExtraction(jobs) {
 
 async function _exportPullPackage() {
   if (!_state.jobs.length) return;
+
+  // Gate: refuse to write the package when there are hard QC blocks (OCF missing,
+  // unacknowledged NOT_RECOMMENDED, …) or validation ERRORs (zero/negative
+  // duration, …). The analysis auto-run had this gate but the manual EXPORT
+  // button bypassed it. Library "confirm TC" matches are WARNINGS and never block.
+  const _hardBlocks = (_state.qcBlocks || []).filter(b => b.severity === 'error');
+  const _valErrors  = (_state.validation && _state.validation.ok === false)
+    ? (_state.validation.issues || []).filter(i => i.severity === 'error') : [];
+  if (_hardBlocks.length || _valErrors.length) {
+    const msgs = [..._hardBlocks, ..._valErrors].map(b => b.message || b.code).filter(Boolean);
+    try { _showVfxBlockedBanner(msgs); } catch {}
+    _setStatus(`Export blocked: ${msgs[0] || 'fix errors before export'}`);
+    try { _showFriendly('error', `Can't export yet — fix ${msgs.length} issue${msgs.length > 1 ? 's' : ''} first: ${msgs.slice(0, 2).join(' · ')}`); } catch {}
+    return;
+  }
+
   const meta = await _providers.getProjectMeta?.() || {};
   const startedAt = Date.now();
 
@@ -5219,7 +5873,7 @@ function _vfxColorManifest(job, amfPath, opts) {
   return {
     colorPipeline: opts.color || 'ACES2065-1 AP0 Linear + AMF',
     exrColorSpace: opts.color === 'acescg' ? 'ACEScg' : 'ACES2065-1 AP0 Linear',
-    bitDepth: '16-bit half float',
+    bitDepth: (job.exr?.bitDepth === 'float') ? '32-bit float' : '16-bit half float',
     channels: 'RGB',
     displayTransformBaked: opts.color === 'review_baked',
     amfPath: amfPath || '',
@@ -5231,41 +5885,34 @@ function _vfxColorManifest(job, amfPath, opts) {
 function _buildVfxFrameMapCSV(job, manifest) {
   const header = 'output_frame,output_filename,timeline_tc,timeline_frame,source_tc,source_frame,speed,retime_note';
   const rows = [header];
-  const start = Number(manifest.frameStart || 1001);
-  const count = Number(manifest.frameCount || job.frameCount || 0);
-  const fps = Number(job.fps || 24);
-  const srcStart = (() => {
-    const tc = String(job.sourceIn || manifest.sourceTcIn || '00:00:00:00').replace(/[;,]/g, ':').split(':').map(Number);
-    if (tc.length < 4 || tc.some(Number.isNaN)) return 0;
-    return ((tc[0] * 3600 + tc[1] * 60 + tc[2]) * fps) + tc[3];
-  })();
-  for (let i = 0; i < count; i++) {
-    const outFrame = start + i;
-    let srcFrame = srcStart + i;
-    let speed = job.retime?.speedPercent ?? 100;
-    let note = job.retime?.originalSummary || 'normal';
-    if (job.retime?.freeze) {
-      srcFrame = srcStart;
-      speed = 0;
-      note = 'freeze frame';
-    } else if (job.retime?.reversed) {
-      srcFrame = srcStart + count - 1 - i;
-      speed = -Math.abs(speed || 100);
-      note = 'reverse';
-    } else if (job.retime?.hasSpeedChange && Number.isFinite(job.retime?.speed) && job.retime.speed > 0) {
-      srcFrame = srcStart + Math.round(i * job.retime.speed);
-    }
+  const start = Math.round(Number(manifest.frameStart || job.frameStart || 1001));
+  const count = Math.max(0, Math.round(Number(manifest.frameCount || job.expectedRenderedFrameCount || job.frameCount || 0)));
+  const fps   = Number(job.fps || 24);
+  const plate = manifest.plateName || job.plateName || 'plate';
+  const note  = job.retime?.originalSummary || '';
+
+  // Use the CANONICAL per-frame retime resolution so this CSV, the JSON frame map,
+  // and the Nuke/AE handoffs all agree (was diverging on reverse/speed math, used
+  // the un-handled source-in, and emitted a constant source_tc per row).
+  const mapRows = buildFrameMapRows(job, { frameStart: start, count, fps });
+  const _f2tc = (sf) => {
+    const r = Math.round(fps || 24); let n = Math.max(0, Math.round(sf));
+    const z = x => String(x).padStart(2, '0');
+    return `${z(Math.floor(n / (r * 3600)))}:${z(Math.floor(n / (r * 60)) % 60)}:${z(Math.floor(n / r) % 60)}:${z(n % r)}`;
+  };
+  mapRows.forEach((m, i) => {
+    const retimeNote = note || m.retimeType || 'normal';
     rows.push([
-      outFrame,
-      `${manifest.plateName}.${String(outFrame).padStart(4, '0')}.exr`,
+      m.outFrame,
+      `${plate}.${String(m.outFrame).padStart(4, '0')}.exr`,
       manifest.timelineTcIn || '',
       i,
-      manifest.sourceTcIn || '',
-      srcFrame,
-      speed,
-      note,
+      _f2tc(m.srcFrame),          // per-frame source TC (was a constant column)
+      m.srcFrame,
+      m.speed,
+      retimeNote,
     ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
-  }
+  });
   return rows.join('\n');
 }
 
@@ -5979,12 +6626,12 @@ function _buildWorkspaceHTML() {
     <input class="pm-vfx-ws-scrub-slider" id="pmWsScrubSlider" type="range" min="0" max="1000" value="0" step="1">
     <div class="pm-vfx-ws-scrub-nav">
       <button class="pm-vfx-ws-scrub-btn" id="pmWsScrubPrev" type="button">◀ Prev</button>
-      <button class="pm-vfx-ws-jump-btn" data-jump="handleStart" type="button">⊢</button>
-      <button class="pm-vfx-ws-jump-btn" data-jump="cutIn"       type="button">In</button>
+      <button class="pm-vfx-ws-jump-btn" data-jump="handleStart" data-pfx-jump-extra="1" type="button">⊢</button>
+      <button class="pm-vfx-ws-jump-btn" data-jump="cutIn"       data-pfx-jump-extra="1" type="button">In</button>
       <button class="pm-vfx-ws-play-btn" id="pmWsPlayBtn" type="button" title="Play/Pause (K)">▶</button>
-      <button class="pm-vfx-ws-jump-btn" data-jump="q50"         type="button">Mid</button>
-      <button class="pm-vfx-ws-jump-btn" data-jump="cutOut"      type="button">Out</button>
-      <button class="pm-vfx-ws-jump-btn" data-jump="handleEnd"   type="button">⊣</button>
+      <button class="pm-vfx-ws-jump-btn" data-jump="q50"         data-pfx-jump-extra="1" type="button">Mid</button>
+      <button class="pm-vfx-ws-jump-btn" data-jump="cutOut"      data-pfx-jump-extra="1" type="button">Out</button>
+      <button class="pm-vfx-ws-jump-btn" data-jump="handleEnd"   data-pfx-jump-extra="1" type="button">⊣</button>
       <button class="pm-vfx-ws-scrub-btn" id="pmWsScrubNext" type="button">Next ▶</button>
     </div>
   </div>
@@ -6571,7 +7218,7 @@ function _renderWsTabConform(idx) {
   ${kv('Src Out', tcOut)}
   ${kv('Rec In',  recIn)}
   ${kv('Rec Out', recOut)}
-  ${kv('Frames',  job.frameCount != null ? `${job.frameCount} + ${_settings.handles || 8} handles` : '—')}
+  ${kv('Frames',  job.frameCount != null ? `${job.frameCount} fr (incl. ${_settings.handles || 8}f handles/side)` : '—')}
 </div>
 <div class="pm-vfx-ws-conform-section">
   <div class="pm-vfx-ws-section-lbl">REFORMAT</div>
@@ -7215,6 +7862,7 @@ function _persistState() {
       outputFolder: _settings.outputFolder,
       settings: { ..._settings },
       manualLinks: _state.manualLinks || {},
+      ocfFromLibrary: !!_state.ocfFromLibrary,   // Sprint 4: restore library-link batch on reopen
     };
     localStorage.setItem(_LS_KEY, JSON.stringify(data));
   } catch (e) {
@@ -7223,6 +7871,7 @@ function _persistState() {
 }
 
 function _restoreState() {
+  _libRestoreDone = false;   // re-arm library-link restore for this project
   try {
     const raw = localStorage.getItem(_LS_KEY);
     if (!raw) return;
@@ -7231,10 +7880,66 @@ function _restoreState() {
     if (data.settings) Object.assign(_settings, data.settings);
     if (data.outputFolder) _settings.outputFolder = data.outputFolder;
     _state.manualLinks = data.manualLinks || {};
+    _state.ocfFromLibrary = !!data.ocfFromLibrary;
   } catch (e) {
     console.warn('[VfxPull] State restore failed:', e);
   }
 }
+
+// Sprint 4: silently re-derive library-sourced OCF links when a project that was
+// last linked from the media library is reopened. No wizard, no auto-approve —
+// just repopulate the matches so the LIB badges + counts come back. Guarded so it
+// never runs over a real folder scan or an already-matched session.
+let _libRestoreDone = false;
+async function _restoreLibraryLinksIfNeeded() {
+  if (_libRestoreDone) return;
+  if ((_state.matchResults || []).length) { _libRestoreDone = true; return; }
+  const events = await _providers.getEvents?.() || [];
+  if (!events.length) return;                    // events not ready yet — try again next open
+
+  // Case A: a real OCF folder was scanned last session — re-scan + re-match so
+  // the shot table isn't empty on reopen (matchResults aren't persisted). Uses a
+  // path probe (no folder-picker dialog), guarded to run once per project.
+  const folder = _state.ocfFolder;
+  if (folder && folder !== '(media library)' && !_state.ocfFromLibrary) {
+    try {
+      await _scanOcfFolder(folder);
+      if ((_state.ocfFiles || []).length) {
+        await _matchOcfToCurrentEvents();          // re-applies persisted manual links
+        await _rebuildVfxPullArtifactsFromMatches();
+        _renderShotTable();
+        _updateOcfSummary();
+        try { window._pmRefreshVfxWorkspaceList?.(); } catch {}
+        _libRestoreDone = true;
+        return;
+      }
+    } catch (e) { console.warn('[VfxPull] folder re-scan restore failed:', e); }
+    // fall through to library if the folder yielded nothing
+  }
+
+  // Case B: project was last linked from the media library.
+  const wasLibrary = !!_state.ocfFromLibrary || folder === '(media library)';
+  if (!wasLibrary) { _libRestoreDone = true; return; }
+  let n = 0;
+  try { n = await libraryCount(); } catch {}
+  if (n <= 0) { _libRestoreDone = true; return; }
+  try {
+    const lib = await loadOcfFilesFromLibrary();
+    if (!lib.ok || !lib.files.length) { _libRestoreDone = true; return; }
+    _state.ocfFiles  = lib.files;
+    _state.ocfFolder = '(media library)';
+    _state.ocfFromLibrary = true;
+    await _matchOcfToCurrentEvents();            // re-applies persisted manual links too
+    await _rebuildVfxPullArtifactsFromMatches();
+    _renderShotTable();
+    _updateOcfSummary();
+    try { window._pmRefreshVfxWorkspaceList?.(); } catch {}
+    _libRestoreDone = true;
+  } catch (e) {
+    console.warn('[VfxPull] library link restore failed:', e);
+  }
+}
+window._pmVfxRestoreLibraryLinks = _restoreLibraryLinksIfNeeded;
 
 // ---------------------------------------------------------------------------
 // UI helpers
@@ -7283,7 +7988,11 @@ function _setInputValue(id, value) {
 function _plateName(i) {
   const job = _state.jobs[i];
   const mr = _state.matchResults[i] || {};
-  return (job?.plateName || job?.shotName || mr?.clipName || `plate_${String(i + 1).padStart(3, '0')}`).replace(/\s+/g, '_');
+  const raw = job?.plateName || job?.shotName || mr?.clipName || `plate_${String(i + 1).padStart(3, '0')}`;
+  // Full sanitize (not just whitespace) — a clip name with '/' or ':' would
+  // inject a path separator into the package layout, and unsanitized names can
+  // collide silently. Fall back to a stable index name if sanitizing empties it.
+  return _sanitizeVfxExportName(raw) || `plate_${String(i + 1).padStart(3, '0')}`;
 }
 
 function _esc(str) {

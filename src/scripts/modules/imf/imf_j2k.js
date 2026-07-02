@@ -137,15 +137,31 @@ function _reduceLevelFromScale(scale) {
 }
 
 function _decodeHTBytesWithModule(mod, bytes, scale = 1) {
-  const reduceLevel = _reduceLevelFromScale(scale);
+  let reduceLevel = _reduceLevelFromScale(scale);
   const decoder = new mod.HTJ2KDecoder();
   const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const enc = decoder.getEncodedBuffer(src.length);
   enc.set(src);
   decoder.readHeader();
+  // decodeSubResolution(N) THROWS if N >= the codestream's decomposition levels,
+  // so clamp to the available count (a clip with few resolution levels can't be
+  // reduced as far as requested).
+  const numDecomp = (typeof decoder.getNumDecompositions === 'function')
+    ? (decoder.getNumDecompositions() | 0) : 0;
+  if (numDecomp > 0 && reduceLevel > numDecomp) reduceLevel = numDecomp;
   decoder.decodeSubResolution(reduceLevel);
   const info = decoder.getFrameInfo();
   const raw = decoder.getDecodedBuffer();
+  // CRITICAL: at a reduced level the decoded BUFFER is the reduced size, but
+  // getFrameInfo() still reports the FULL frame dimensions. Returning the full
+  // width/height with a reduced buffer makes the renderer read a small buffer as
+  // a large image → garbage / dark / oscillating frames (the old C-RT1b bug that
+  // forced scale:1). Use the actual decoded dimensions for the reduced level.
+  let width = info.width, height = info.height;
+  if (reduceLevel > 0 && typeof decoder.calculateSizeAtDecompositionLevel === 'function') {
+    const dims = decoder.calculateSizeAtDecompositionLevel(reduceLevel);
+    if (dims && dims.width > 0 && dims.height > 0) { width = dims.width; height = dims.height; }
+  }
   let pixels;
   let pixelsType = 'u8';
   if (info.bitsPerSample > 8) {
@@ -157,8 +173,10 @@ function _decodeHTBytesWithModule(mod, bytes, scale = 1) {
     pixels = new Uint8Array(src8);
   }
   return {
-    width: info.width,
-    height: info.height,
+    width,
+    height,
+    fullWidth: info.width,
+    fullHeight: info.height,
     componentCount: info.componentCount,
     bitsPerSample: info.bitsPerSample,
     isSigned: !!info.isSigned,

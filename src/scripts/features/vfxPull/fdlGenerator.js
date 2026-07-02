@@ -8,8 +8,20 @@
 //   buildFDLCsv(fdls)     → CSV string (array of FDL objects → single CSV)
 //   buildFDLTxt(fdl)      → Human-readable block text
 
+import { resolveIdtFromOCFMeta } from '../aceslook/services/ocfIdtResolver.js';
+
 const FDL_SCHEMA = 'postflowx.vfxpull.fdl.v1';
 const APP_VERSION = 'PostFlowX 2026.5.2';
+
+// uuid-v4 without a dependency (crypto.randomUUID is in Electron renderer + Node 16+).
+function _uuid() {
+  try { return crypto.randomUUID(); } catch { /* fall through */ }
+  // RFC4122-ish fallback (used only if crypto.randomUUID is unavailable)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0; const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -114,8 +126,11 @@ export function buildFDL({
   };
 
   // ── Frame range ───────────────────────────────────────────────────────────
+  // Use the RENDERED frame count (what's actually on disk) — for a speed-baked
+  // pull this differs from the source span (expectedFrameCount), so advertising
+  // expectedFrameCount would give the FDL a range that doesn't match the plate.
   const frameStart     = job.frameStart ?? 1001;
-  const expectedFrames = job.expectedFrameCount ?? 1;
+  const expectedFrames = job.expectedRenderedFrameCount ?? job.expectedFrameCount ?? 1;
   const frameEnd       = frameStart + expectedFrames - 1;
   const handles        = job.handleFrames ?? 8;
 
@@ -399,4 +414,71 @@ export function buildFDLTxt(fdl) {
   p('='.repeat(72));
 
   return lines.join('\n');
+}
+
+/**
+ * generateASCFDLv2 — emit standards-compliant ASC FDL v2.0 JSON for pull
+ * delivery (Netflix Footage Management Pulls Workstream / Baselight / Resolve
+ * import), replacing the proprietary `postflowx.vfxpull.fdl.v1` schema. Keeps
+ * the internal pull-plan model unchanged — this is serialization only.
+ *
+ * @param {Object} pullPlan  - { label|showName, width, height, shots|clips[] }
+ * @param {Object} [ocfMeta] - optional OCF metadata; its resolved IDT label is
+ *                             appended to the FDL label for traceability.
+ * @returns {string} pretty-printed ASC FDL v2.0 JSON
+ */
+export function generateASCFDLv2(pullPlan = {}, ocfMeta = null) {
+  const rows = pullPlan.shots || pullPlan.clips || [];
+
+  const _dims = (shot, kind) => ({
+    width:  shot[`${kind}Width`]  || shot.width  || shot.sourceWidth  || pullPlan.width  || 0,
+    height: shot[`${kind}Height`] || shot.height || shot.sourceHeight || pullPlan.height || 0,
+  });
+
+  const canvases = rows.map((shot, i) => {
+    const canvasId = shot.canvasId || `canvas_${i + 1}`;
+    const dim = { width: shot.width || shot.sourceWidth || pullPlan.width || 0,
+                  height: shot.height || shot.sourceHeight || pullPlan.height || 0 };
+    if (!dim.width || !dim.height) {
+      try { console.warn('[FDL v2.0] canvas has zero dimension:', shot.clipName || canvasId); } catch {}
+    }
+    return {
+      id: canvasId,
+      label: shot.reelName || shot.clipName || canvasId,
+      width: dim.width, height: dim.height,
+      imageContainer: {
+        dimensions: dim,
+        pixelAspectRatio: shot.par || 1.0,
+        photometricCharacteristic: 'linear',
+      },
+      framing: {
+        dimensions: _dims(shot, 'framing'),
+        anchor: { x: shot.framingOffsetX || 0, y: shot.framingOffsetY || 0 },
+      },
+    };
+  });
+
+  const framingDecisions = rows.map((shot, i) => ({
+    id: shot.fdId || `fd_${i + 1}`,
+    label: shot.shotLabel || shot.clipName || `Shot ${i + 1}`,
+    canvas: shot.canvasId || `canvas_${i + 1}`,
+    framing: {
+      dimensions: _dims(shot, 'framing'),
+      anchor: { x: shot.framingOffsetX || 0, y: shot.framingOffsetY || 0 },
+    },
+  }));
+
+  const idtLabel = ocfMeta ? ` [${resolveIdtFromOCFMeta(ocfMeta).colorSpaceLabel}]` : '';
+
+  const fdl = {
+    $schema: 'https://www.ascfdl.org/schema/v2.0/fdl.json',
+    version: '2.0',
+    uuid:    _uuid(),
+    label:   (pullPlan.label || pullPlan.showName || 'VFX Pull') + idtLabel,
+    default: canvases[0]?.id || 'canvas_1',
+    canvases,
+    framingDecisions,
+  };
+
+  return JSON.stringify(fdl, null, 2);
 }

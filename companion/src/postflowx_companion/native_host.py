@@ -62,7 +62,10 @@ def _normalize_request(message: dict[str, Any]) -> tuple[str | None, dict[str, A
 def _to_v1_response(request_id: Any, raw: dict[str, Any]) -> dict[str, Any]:
     resp: dict[str, Any] = {"id": request_id or "", "ok": raw.get("status") == "ok"}
     if resp["ok"]:
-        resp["result"] = raw.get("data") or {}
+        # Preserve valid-but-falsy payloads (e.g. an empty list []); only substitute
+        # {} when data is genuinely absent. `or {}` would wipe [], 0, False, "".
+        data = raw.get("data")
+        resp["result"] = data if data is not None else {}
     else:
         err = raw.get("error") or {}
         code = err.get("code", "INTERNAL_ERROR") if isinstance(err, dict) else "INTERNAL_ERROR"
@@ -157,6 +160,9 @@ _ASYNC_ACTIONS = frozenset({
     # OCF Resolve still preview — imports OCF into Resolve and renders a frame (can take 30+ s)
     "vfxPreviewResolveStill",
     "vfx.preview.resolveStill",
+    "vfxPreviewResolveStillBatch",
+    "vfx.preview.resolveStillBatch",
+    "resolve.previewFrameBatch",
     "resolve.extractStillFrame",
     "resolve.previewFrame",
     "resolve.extract_still_frame",

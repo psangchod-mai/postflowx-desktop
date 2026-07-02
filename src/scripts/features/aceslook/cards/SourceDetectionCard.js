@@ -2,7 +2,12 @@
 // Left panel card: drop/select source file, show detection result.
 
 import { detectSource }                                        from '../services/sourceDetection.js';
-import { setSource, setInputTransform, setClipId, patch, getState } from '../state/acesLookStore.js';
+import { setSource, setInputTransform, setClipId, setOcfMeta, patch, getState } from '../state/acesLookStore.js';
+
+// Escape the dropped file's name before it goes into innerHTML (untrusted —
+// macOS filenames can contain <>"'&).
+const _esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export function renderSourceDetectionCard(container, state) {
   container.innerHTML = `
@@ -12,7 +17,7 @@ export function renderSourceDetectionCard(container, state) {
         <div class="al-drop-zone" id="al-drop-zone" tabindex="0" role="button"
              aria-label="Drop source file or click to browse">
           <span class="al-drop-icon">⬆</span>
-          <span class="al-drop-label">${state.source ? state.source.name : 'Drop file or click to browse'}</span>
+          <span class="al-drop-label">${state.source ? _esc(state.source.name) : 'Drop file or click to browse'}</span>
           <input type="file" id="al-source-input" accept=".exr,.dpx,.mov,.mp4,.mxf,.r3d,.arx,.ari,.braw" hidden>
         </div>
         ${state.source ? `
@@ -52,6 +57,22 @@ function _handleFile(file) {
   const { sourceClass, suggestedInputTransform } = detectSource(file);
   setSource(file);
   patch({ sourceClass });
+  // Feed OCF metadata for the AUTO-IDT path. The renderer can't probe a dropped
+  // File (no companion), so the only signal is the filename + extension — but the
+  // IDT_MAP token list (venice/alexa/komodo/xocn/…) is far richer than
+  // detectSource's coarse regex, so resolveIdtFromOCFMeta in amfBuilder can still
+  // resolve the camera from the name when detection returns AUTO. Put the filename
+  // in cameraType (a searched field) so those tokens match.
+  if (file?.name) {
+    const ext = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : '';
+    setOcfMeta({
+      colorSpace: '',
+      codec:      ext,
+      cameraType: file.name,
+      container:  ext,
+      source:     'filename',
+    });
+  }
   if (suggestedInputTransform !== 'AUTO') {
     setInputTransform(suggestedInputTransform);
   }

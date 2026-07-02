@@ -475,7 +475,7 @@ function extractFxFromClipitem(clipitem){
         const val = (getText(param, 'value', '') || '').trim();
         const kfs = parseKeyframes(param);
 
-        if (key.includes('scale') && !key.includes('scaleX') && !key.includes('scaleY')){
+        if (key.includes('scale') && !key.includes('scalex') && !key.includes('scaley')){
           let scaleVal = readNum(val);
           scaleVal = chooseMotionValueFromKeys(scaleVal, kfs, readNum, sameNum, n => Math.abs(Number(n)) > 0.001);
           if (scaleVal != null) t.scale = scaleVal;
@@ -1052,8 +1052,11 @@ export function parseXMEML(xmlText) {
       if (recStartFrames < 0 || recEndFrames < 0) {
         const _dbg = { clip: clipName, ti, recStartRaw: recStartFrames, recEndRaw: recEndFrames, srcIn: srcInFrames, srcOut: _srcOutRaw, dur: clipDurFrames };
         console.log('[xml.js -1 debug]', JSON.stringify(_dbg));
-        if (!window.__PFX_NEG_DEBUG) window.__PFX_NEG_DEBUG = [];
-        window.__PFX_NEG_DEBUG.push(_dbg);
+        // Guard: this parser also runs in Node (tests) where `window` is undefined.
+        if (typeof window !== 'undefined') {
+          if (!window.__PFX_NEG_DEBUG) window.__PFX_NEG_DEBUG = [];
+          window.__PFX_NEG_DEBUG.push(_dbg);
+        }
       }
 
       if (recStartFrames < 0 && recEndFrames >= 0 && clipDurFrames > 0) {

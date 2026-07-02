@@ -265,10 +265,34 @@ export function buildExrJob({
   // When baking speed into the EXR sequence, the rendered frame count
   // changes: 200% speed → half the frames; 50% → double. Pure reverse keeps
   // the count; dynamic ramps need the companion to resolve at render time.
+  // Freeze: the single source frame to HOLD is the editorial freeze frame
+  // (= srcIn), NOT the handle-extended in-point. Carry it explicitly (absolute
+  // source frame) so the frame map holds the right frame — it was defaulting to
+  // exportIn (= srcIn − handles), i.e. `handles` frames too early.
+  if (retimeInfo.freeze) {
+    const ff = retimeInfo.freeze.frame;
+    retimeInfo.freezeSourceFrame = (ff != null && Number.isFinite(Number(ff))) ? Number(ff) : safeSrcIn;
+  }
+
   let bakedFrameCount = expectedFrameCount;
   if (retimeMode === 'bake_to_timeline' && retimeInfo.hasSpeedChange) {
     if (retimeInfo.freeze) {
-      bakedFrameCount = expectedFrameCount; // freeze: same output length, repeated source frame
+      // (audit E1) A freeze holds ONE source frame for the full TIMELINE
+      // duration, so the source span (expectedFrameCount) — which collapses
+      // toward a single frame + handles — can't define the rendered length.
+      // Derive the baked count from the clip's timeline duration + handles on
+      // both sides, so the sequence is as long as the freeze occupies in the
+      // cut. Prefer event.durationFrames; fall back to recOut−recIn, then to
+      // expectedFrameCount when no timeline duration is known (no regression).
+      const recInF  = tcToFrames(event.recIn,  fps);
+      const recOutF = tcToFrames(event.recOut, fps);
+      const recordSpan = (Number.isFinite(recInF) && Number.isFinite(recOutF) && recOutF > recInF)
+        ? (recOutF - recInF) : NaN;
+      const timelineDur = (Number.isFinite(Number(event.durationFrames)) && Number(event.durationFrames) > 0)
+        ? Number(event.durationFrames) : recordSpan;
+      bakedFrameCount = (Number.isFinite(timelineDur) && timelineDur > 0)
+        ? Math.round(timelineDur) + 2 * handles
+        : expectedFrameCount;
     } else if (retimeInfo.isDynamic) {
       bakedFrameCount = expectedFrameCount; // companion resolves from sourceFrameMap
     } else if (Number.isFinite(retimeInfo.speed) && retimeInfo.speed > 0) {
@@ -323,9 +347,12 @@ export function buildExrJob({
     },
     pullMode,
     {
-      ocioConfig: cfg.ocioConfig || '',
-      showLut:    cfg.showLut   || '',
-      odtName:    cfg.odtName   || '',
+      ocioConfig:       cfg.ocioConfig || '',
+      showLut:          cfg.showLut   || '',
+      odtName:          cfg.odtName   || '',
+      // Project colorspace from the Smart VFX Pull Setup modal — colorPlanEngine
+      // only applies it to review-proxy output (plates stay ACES2065-1).
+      outputColorSpace: cfg.color?.outputColorSpace || '',
     }
   );
 
@@ -401,6 +428,7 @@ export function buildExrJob({
       speedKeys:       retimeInfo.speedKeys,
       reversed:        retimeInfo.reversed,
       freeze:          retimeInfo.freeze,
+      freezeSourceFrame: retimeInfo.freezeSourceFrame,
       sourceFrameMap:  retimeInfo.sourceFrameMap,
       originalSummary: retimeInfo.originalSummary,
     },

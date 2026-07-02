@@ -31,6 +31,9 @@ const HANDLED = new Set([
   'app.paths', 'file.exists', 'folder.reveal',
   'media.probe', 'media.extractStill',
   'resolve.status', 'resolve.detect', 'resolve.engineStatus',
+  'resolveCheckReady', 'resolve.checkReady',
+  'resolveStartBackground', 'resolve.startBackground',
+  'resolveStartEngine', 'resolve.startEngine',
   'resolve.extractStillFrame', 'resolve.renderEXR.prepare',
 ]);
 
@@ -123,6 +126,8 @@ function _runResolveBridge(command, timeoutMs = 30000) {
 
     const timer = setTimeout(() => {
       proc.kill('SIGTERM');
+      // Escalate to SIGKILL if the bridge ignores SIGTERM, so it can't linger.
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 2000).unref?.();
       settle(() => reject(new Error('resolve_bridge.py timed out')));
     }, timeoutMs);
 
@@ -157,8 +162,15 @@ function _runResolveBridge(command, timeoutMs = 30000) {
       settle(() => reject(new Error(`resolve_bridge spawn failed: ${err.message}`)));
     });
 
-    proc.stdin.write(JSON.stringify(command));
-    proc.stdin.end();
+    // Guard the synchronous write: if the child already died (EPIPE on a closed
+    // stdin), this can throw right out of the executor unless we catch and settle.
+    try {
+      proc.stdin.write(JSON.stringify(command));
+      proc.stdin.end();
+    } catch (err) {
+      clearTimeout(timer);
+      settle(() => reject(new Error(`resolve_bridge stdin write failed: ${err.message}`)));
+    }
   });
 }
 
@@ -200,6 +212,27 @@ async function _resolveStatusDirect() {
     return { ok: true, installed: true, running: true, connected: false,
              state: 'disconnected', error: err.message };
   }
+}
+
+// ── Resolve background launch (Node-side, no companion needed) ──────────────
+// `open -g` = don't bring to foreground, `-j` = launch hidden. Resolve has no
+// true headless mode, so the process still starts fully — but it won't steal
+// focus or show its window. Combined with the Node→resolve_bridge.py status +
+// extract path, this lets OCF RAW previews work without the user opening Resolve.
+async function _resolveStartBackground() {
+  const appBundle = '/Applications/DaVinci Resolve/DaVinci Resolve.app';
+  if (!fs.existsSync(appBundle)) {
+    return { ok: false, installed: false, running: false, launched: false, state: 'not_installed' };
+  }
+  if (await _isProcessRunning('Resolve')) {
+    return { ok: true, installed: true, running: true, launched: false, state: 'already_running' };
+  }
+  await new Promise((resolve) => {
+    const p = spawn('open', ['-gj', appBundle]);
+    p.on('exit', () => resolve());
+    p.on('error', () => resolve());
+  });
+  return { ok: true, installed: true, running: false, launched: true, state: 'launching' };
 }
 
 // ── Resolve detect (install + scripting + API probe) ────────────────────────
@@ -316,6 +349,23 @@ async function route({ type, payload = {} }) {
 
     case 'resolve.detect':
       return _resolveDetect();
+
+    case 'resolveCheckReady':
+    case 'resolve.checkReady':
+      return _resolveStatusDirect();
+
+    // Launch Resolve in the BACKGROUND (no focus steal, no manual open). The
+    // Node path works even when the Python companion isn't running; the
+    // companion (if up) may also load the current project, so prefer it.
+    case 'resolveStartBackground':
+    case 'resolve.startBackground':
+    case 'resolveStartEngine':
+    case 'resolve.startEngine':
+      if (_companion?.isReady) {
+        try { const r = await _viaCompanion('resolve.startBackground', payload, 15000); return { ok: true, ...r }; }
+        catch (err) { if (err.code !== 'COMPANION_UNAVAILABLE') { /* fall through to Node launch */ } }
+      }
+      return _resolveStartBackground();
 
     case 'resolve.engineStatus': {
       const det = await _resolveDetect();

@@ -2484,6 +2484,13 @@ ${err}`);
           if (ui2.btnCopy){
             ui2.btnCopy.style.display = "inline-flex";
           }
+        }).catch((err) => {
+          // A rejection (vs a resolved {ok:false}) would otherwise leave the UI
+          // stuck at "Downloading… 96%" with an unhandled promise rejection.
+          const m = (err && err.message) ? err.message : String(err);
+          aepSet("Download failed", m, 0, "err");
+          try { window.MPS_setExportStatus?.("err", "❌ Export failed: AE Project (.aep)", m); } catch {}
+          showError(m);
         });
         return;
       }
@@ -3687,7 +3694,7 @@ function setMainTab(key){
         window.__pfxMountAcesLook();
       } catch(err) {
         if (_alRoot && !_alRoot.querySelector('.al2-topbar')) {
-          _alRoot.innerHTML = `<div data-pfx-load-err style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:10px;font-family:system-ui;"><div style="color:#c04050;font-size:14px;font-weight:600;">ACES Look failed to load</div><div style="color:#9a9da3;font-size:11px;max-width:420px;text-align:center;">${String(err?.message || err)}</div></div>`;
+          _alRoot.innerHTML = `<div data-pfx-load-err style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:10px;font-family:system-ui;"><div style="color:#c04050;font-size:14px;font-weight:600;">ACES Look failed to load</div><div style="color:#9a9da3;font-size:11px;max-width:420px;text-align:center;">${escapeHtml(err?.message || err)}</div></div>`;
         }
       }
     }
@@ -9666,6 +9673,36 @@ function wireEDLTimelineTrackResize(){
 
 function _wirePfxTutorials(){
   try{
+  function _wirePlayerTransportDeepDive(){
+    const modal = document.getElementById('playerTransportTutorialModal');
+    if (!modal || modal.dataset.demoWired === '1') return;
+    modal.dataset.demoWired = '1';
+    const demoButtons = Array.from(modal.querySelectorAll('[data-player-demo]'));
+    const clearMotion = () => {
+      demoButtons.forEach((btn) => {
+        const act = btn.getAttribute('data-player-demo');
+        if (act !== 'loop') btn.classList.remove('is-demo-active', 'is-demo-play');
+      });
+    };
+    demoButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const act = btn.getAttribute('data-player-demo');
+        if (act === 'loop') {
+          btn.classList.toggle('is-demo-loop');
+          btn.setAttribute('aria-pressed', btn.classList.contains('is-demo-loop') ? 'true' : 'false');
+          return;
+        }
+        clearMotion();
+        if (act === 'play' || act === 'back') {
+          btn.classList.add(act === 'play' ? 'is-demo-play' : 'is-demo-active');
+          return;
+        }
+        btn.classList.add('is-demo-active');
+        window.setTimeout(() => btn.classList.remove('is-demo-active'), 280);
+      });
+    });
+  }
+
   // ── Pull Prep tutorial language switcher ───────────────────────────────
   const _pptTutorialCopy = {
     eng: {
@@ -11861,6 +11898,7 @@ function _wirePfxTutorials(){
     platelink2:  'plateLinkTutorialModal',
     trlconf:     'tconformTutorialModal',
     imf:         'settingsTutorialModal',
+    aceslook:    'settingsTutorialModal',
     about:       'settingsTutorialModal',
   };
   let _tutCurrentClose = null;
@@ -11870,6 +11908,7 @@ function _wirePfxTutorials(){
     if (!modalId) return;
     const modal = document.getElementById(modalId);
     if (!modal) return;
+    if (modalId === 'playerTransportTutorialModal') _wirePlayerTransportDeepDive();
     if (tabKey === 'edl' || tabKey === 'prepmark') _wirePullPrepTutorialLang();
     if (tabKey === 'cutdiff') _wireSimpleTutorialLang('cutdiff');
     if (tabKey === 'cutdiff2') _wireSimpleTutorialLang('cutdiff2');
@@ -11902,7 +11941,7 @@ function _wirePfxTutorials(){
   });
 
   // Also keep close-button wiring for each modal (fallback)
-  ['pullPrepTutorialModal','cutDiffTutorialModal','cutDiff2TutorialModal','markersTutorialModal','reviewsTutorialModal','plateLinkTutorialModal','settingsTutorialModal'].forEach(id => {
+  ['playerTransportTutorialModal','pullPrepTutorialModal','cutDiffTutorialModal','cutDiff2TutorialModal','markersTutorialModal','reviewsTutorialModal','plateLinkTutorialModal','settingsTutorialModal'].forEach(id => {
     const m = document.getElementById(id);
     if (!m) return;
     m.querySelector('.pfx-tutorial-close')?._tutWired || m.querySelector('[id$="TutorialClose"]')?.addEventListener('click', () => {
@@ -14771,20 +14810,13 @@ async function wireProjectBar(){
 
   // Recent panel toggle
   if (recentBtn && recentPanel){
+    // Unified picker: the project dropdown now opens the same Resolve-style
+    // Project Manager as the Load button (no separate inline recents panel).
     on(recentBtn, 'click', (e) => {
       e.stopPropagation();
-      const wasHidden = recentPanel.hidden;
-      _closeAllProjDropdowns('recent');
-      if (wasHidden){
-        _positionProjMenu(recentBtn, recentPanel, 'left');
-        recentPanel.hidden = false;
-        try{ recentBtn.setAttribute('aria-expanded', 'true'); }catch{}
-        try{ recentSearch.value = ''; recentSearch.focus(); }catch{}
-        _renderRecentList('');
-      } else {
-        recentPanel.hidden = true;
-        try{ recentBtn.setAttribute('aria-expanded', 'false'); }catch{}
-      }
+      _closeAllProjDropdowns();
+      try{ recentPanel.hidden = true; }catch{}
+      try{ bLoad?.click?.(); }catch{}
     });
   }
   if (recentSearch){
@@ -15041,6 +15073,10 @@ async function wireProjectBar(){
     try{ if (__saveRelTimer) clearInterval(__saveRelTimer); __saveRelTimer = 0; }catch{}
     __projSaveStatusTimer = 0;
     saveStatus.textContent = String(message || "Ready");
+    // Only surface the pill for meaningful states (saving / saved / error / loaded);
+    // stay hidden for the neutral idle "Ready" so the bar isn't cluttered.
+    const _idleReady = (state === "idle" && (!message || message === "Ready"));
+    try{ saveStatus.style.display = _idleReady ? "none" : ""; }catch{}
     saveStatus.classList.remove("is-saving", "is-saved", "is-error");
     if (state === "saving") saveStatus.classList.add("is-saving");
     else if (state === "saved") saveStatus.classList.add("is-saved");
@@ -15164,6 +15200,37 @@ async function wireProjectBar(){
 
   on(bLoad, "click", async () => {
     try{ fileInp.value = ""; }catch{}
+
+    // Resolve-style Project Manager: one unified picker (list / open / new /
+    // import) over the configured Project Folder. Additive — Import or a failed
+    // native load falls through to the file picker below.
+    try{
+      const { openProjectManager } = await import('./features/projectManager/projectManager.js');
+      const act = await openProjectManager();
+      if (!act) return;                                  // cancelled
+      if (act.action === 'open' && act.name){
+        const { loadProjectViaNative } = await import('./core/projectFile.js');
+        const r = await loadProjectViaNative(act.name);
+        if (r?.ok){
+          const n = window.__MPS_PROJECT_NAME || act.name;
+          nameInput.value = n;
+          syncProjectNameEverywhere(n);
+          _syncNameToAllScopes(n);
+          _clearAllScopesDirty();
+          await addToRecents(n);
+          setProjectSaveStatus(`Loaded ${n}`, 'idle');
+          _updateRecentBtnLabel(n);
+          return;
+        }
+        showError(`Could not load "${act.name}" — opening file picker.`);
+        // fall through to the file picker below
+      } else if (act.action === 'new'){
+        try{ bNew?.click?.(); }catch{}
+        return;
+      }
+      // act.action === 'browse' (Import) → fall through to the file picker below.
+    }catch{}
+
     try{
       if (typeof window.showOpenFilePicker === 'function'){
         const [handle] = await window.showOpenFilePicker({
@@ -17300,7 +17367,7 @@ function _mbUpdateUI() {
   const list     = document.getElementById('mbFileList');
   const applyBtn = document.getElementById('mbApply');
   const resetBtn = document.getElementById('mbReset');
-  if (!status) return;
+  if (!status || !list || !applyBtn || !resetBtn) return;   // all four are derefed below
   list.innerHTML = _mbFileMeta
     .map(f => `<div class="mb-file-item">📄 ${esc(f.name)} <span>(${f.count} clips)</span></div>`)
     .join('');
@@ -23897,13 +23964,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       cutdiff: 'cutDiffTutorialModal', cutdiff2: 'cutDiff2TutorialModal',
       shotmarker: 'markersTutorialModal', reviews: 'reviewsTutorialModal',
       amf: 'plateLinkTutorialModal', platelink2: 'plateLinkTutorialModal',
-      trlconf: 'settingsTutorialModal', imf: 'settingsTutorialModal', about: 'settingsTutorialModal',
+      trlconf: 'settingsTutorialModal', imf: 'settingsTutorialModal', aceslook: 'settingsTutorialModal', about: 'settingsTutorialModal',
     };
     let _tutClose = null;
     document.getElementById('btnTutorial')?.addEventListener('click', () => {
       const tab = String(document.body?.dataset?.main || '');
       const modal = document.getElementById(_tutMap[tab] || '');
       if (!modal) return;
+      if (modal.id === 'playerTransportTutorialModal') {
+        try { _wirePlayerTransportDeepDive(); } catch (_) {}
+      }
       if (_tutClose) _tutClose();
       modal.style.display = 'flex';
       function close() {

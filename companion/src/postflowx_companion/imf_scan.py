@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from . import safe_xml
+
 
 UL_TRANSFER = {
     "060e2b34.0401010d.04010101.01010000": "Gamma 2.2",
@@ -63,8 +65,8 @@ def _find_first(root: ET.Element, local_name: str) -> ET.Element | None:
 
 
 def _read_xml(path: Path) -> tuple[str, ET.Element]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    return text, ET.fromstring(text)
+    # XXE-hardened: rejects CPL/PKL/ASSETMAP carrying a DOCTYPE/ENTITY decl.
+    return safe_xml.read_xml(path)
 
 
 def _parse_rate(text: str, default: float = 24.0) -> float:

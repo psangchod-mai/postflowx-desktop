@@ -131,8 +131,16 @@ class ProResRawBackend(BaseMediaBackend):
     def __init__(self, ffmpeg_path: str | None = None, ffprobe_path: str | None = None,
                  cache_dir: Path | None = None):
         import shutil
-        self._ffmpeg  = ffmpeg_path  or shutil.which("ffmpeg")
-        self._ffprobe = ffprobe_path or shutil.which("ffprobe")
+        # Bundled ffmpeg/ffprobe (Dev Brief P0#2) win over PATH: a GUI-launched
+        # companion has a stripped PATH and no /opt/homebrew.
+        def _bin(n):
+            try:
+                from ...proxy_service import _resource_bin
+                return _resource_bin(n) or shutil.which(n)
+            except Exception:
+                return shutil.which(n)
+        self._ffmpeg  = ffmpeg_path  or _bin("ffmpeg")
+        self._ffprobe = ffprobe_path or _bin("ffprobe")
         self._cache   = cache_dir or Path(tempfile.gettempdir()) / "pfx_prores_raw_frames"
         self._cache.mkdir(parents=True, exist_ok=True)
         self._caps    = _probe_capabilities(self._ffmpeg, self._ffprobe)

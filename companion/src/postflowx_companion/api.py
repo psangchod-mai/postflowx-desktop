@@ -14,6 +14,8 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 
+from . import safe_xml
+
 from .config import CompanionConfig
 from .engines import AdvancedImfEngine, InternalFastPathEngine
 from .folder_picker import pick_folder, pick_file, pick_files
@@ -82,7 +84,9 @@ def _resolve_export_still(
     resolve = dvr.scriptapp("Resolve")
     if not resolve:
         try:
-            subprocess.run(["open", "-a", str(resolve_app)], timeout=5, check=False)
+            # -g: don't bring to foreground, -j: launch hidden. Resolve has no
+            # headless mode, but this avoids stealing focus / popping its window.
+            subprocess.run(["open", "-gj", str(resolve_app)], timeout=5, check=False)
         except Exception:
             pass
         deadline = time.time() + 45
@@ -381,6 +385,9 @@ class CompanionApi:
             "renderPullExrStart":   self._render_pull_exr_start,
             "renderPullExrStatus":  self._render_pull_exr_status,
             "renderPullExrCancel":  self._render_pull_exr_cancel,
+            # Review proxy movie (Rec.709/P3 with ACES 2.0 ODT baked) from AP0 EXRs
+            "renderReviewProxyStart":  self._render_review_proxy_start,
+            "pull.renderReviewProxy":  self._render_review_proxy_start,
             "qcExrSequence":        self._qc_exr_sequence,
             "writePullSidecars":    self._write_pull_sidecars,
             "openFolder":           self._open_folder,
@@ -408,6 +415,8 @@ class CompanionApi:
             "resolve.engineStatus": self._resolve_engine_status,
             "resolveStartEngine":   self._resolve_start_engine,
             "resolve.startEngine":  self._resolve_start_engine,
+            "resolveStartBackground":  self._resolve_start_background,
+            "resolve.startBackground": self._resolve_start_background,
             "resolveStopEngine":    self._resolve_stop_engine,
             "resolve.stopEngine":   self._resolve_stop_engine,
             "resolveRunJob":        self._resolve_run_job_engine,
@@ -445,6 +454,9 @@ class CompanionApi:
             # ── OCF per-decoder still endpoints (JS-orchestrated tiers) ─────────
             "vfxPreviewResolveStill":      self._vfx_preview_resolve_still,
             "vfx.preview.resolveStill":    self._vfx_preview_resolve_still,
+            "vfxPreviewResolveStillBatch": self._vfx_preview_resolve_still_batch,
+            "vfx.preview.resolveStillBatch": self._vfx_preview_resolve_still_batch,
+            "resolve.previewFrameBatch":   self._vfx_preview_resolve_still_batch,
             "resolve.extractStillFrame":   self._vfx_preview_resolve_still,
             "resolve.previewFrame":        self._vfx_preview_resolve_still,
             "resolve.extract_still_frame": self._vfx_preview_resolve_still,
@@ -455,6 +467,9 @@ class CompanionApi:
             "ocrCapabilities":      self._ocr_capabilities,
             # ── IMF frame thumbnail (companion-mode preview) ───────────────────
             "getImfFrameThumb":     self._get_imf_frame_thumb,
+            # ── ACES 2.0 output transforms (color) ─────────────────────────────
+            "colorAces2OutputTransforms":   self._color_aces2_output_transforms,
+            "color.aces2OutputTransforms":  self._color_aces2_output_transforms,
         }
         handler = handlers.get(action)
         if not handler:
@@ -575,11 +590,14 @@ class CompanionApi:
             "capabilities": {
                 "resolveConnected":        resolve_connected,
                 "resolveExtractStillFrame": True,
+                "resolveStillBatch":       True,
                 "ffmpegFallback":          bool(ffmpeg_path),
             },
             "actions": [
                 "vfxPreviewResolveStill",
                 "vfx.preview.resolveStill",
+                "vfxPreviewResolveStillBatch",
+                "vfx.preview.resolveStillBatch",
                 "resolve.extractStillFrame",
                 "resolve.previewFrame",
                 "resolve.extract_still_frame",
@@ -2345,7 +2363,7 @@ class CompanionApi:
         try:
             source     = job.get("sourcePath", "")
             output_dir = job.get("outputDir", "")
-            pattern    = job.get("outputPattern", "%04d.exr")
+            pattern    = _safe_output_pattern(job.get("outputPattern", "%04d.exr"))
             export_in  = job.get("exportIn", "00:00:00:00")
             export_out = job.get("exportOut", "00:00:00:00")
             fps        = float(job.get("fps", 24))
@@ -2355,8 +2373,15 @@ class CompanionApi:
             exp_frames = int(job.get("expectedRenderedFrameCount",
                                      job.get("frameCount",
                                              job.get("expectedFrameCount", 1))))
-            bit_depth  = job.get("exr", {}).get("bitDepth", "half")
-            pix_fmt    = "gbrpf16le" if bit_depth == "half" else "gbrpf32le"
+            bit_depth  = str(job.get("exr", {}).get("bitDepth", "half") or "half").lower()
+            # FFmpeg's EXR ENCODER only accepts 32-bit-float planar input
+            # (gbrpf32le / gbrapf32le / grayf32le) — `gbrpf16le` is an INPUT-only
+            # (decode) format and some ffmpeg builds reject it outright
+            # ("Unknown pixel format requested: gbrpf16le"). Half vs float EXR is
+            # selected by the encoder's own `-format half|float` option, NOT by the
+            # input pix_fmt. So always feed gbrpf32le and pick depth via exr_format.
+            pix_fmt    = "gbrpf32le"
+            exr_format = "half" if bit_depth == "half" else "float"
 
             # ── Retime guards (spec #10) ──────────────────────────────────────
             # This FFmpeg fallback bakes constant speed via `setpts`, which
@@ -2554,7 +2579,7 @@ class CompanionApi:
                 if _idt_lut_path:
                     _lut_arg_f = _idt_lut_path.replace("\\", "\\\\").replace(":", "\\:")
                     cmd += ["-vf", f"lut3d={_lut_arg_f}"]
-                cmd += ["-c:v", "exr", "-pix_fmt", pix_fmt, out_pattern_abs]
+                cmd += ["-c:v", "exr", "-pix_fmt", pix_fmt, "-format", exr_format, out_pattern_abs]
                 # Clean up the temp PNG after stage B exits — register the
                 # path so the finally block can purge it.
                 state["_freeze_temp_png"] = freeze_png
@@ -2567,7 +2592,7 @@ class CompanionApi:
                     # timing from the filtered PTS — pin the output rate to fps
                     # so the EXR sequence numbers map 1:1 to rendered frames.
                     cmd += ["-vsync", "cfr", "-r", str(fps)]
-                cmd += ["-c:v", "exr", "-pix_fmt", pix_fmt, out_pattern_abs]
+                cmd += ["-c:v", "exr", "-pix_fmt", pix_fmt, "-format", exr_format, out_pattern_abs]
             # Use a stderr buffer thread to prevent OS pipe buffer deadlock on verbose ffmpeg output.
             stderr_lines: list[str] = []
 
@@ -2719,6 +2744,17 @@ class CompanionApi:
 
         return ",".join(parts)
 
+    def _color_aces2_output_transforms(self, request: dict[str, Any]) -> dict[str, Any]:
+        """List the ACES 2.0 output transforms available to the renderer (for the
+        review-proxy ODT picker). Each entry has id/label/display/view/dynamicRange.
+        Empty list means the baked LUTs aren't present (build with
+        tools/gen_aces2_luts.py)."""
+        try:
+            from .color import aces2_luts
+            return self._ok({"transforms": aces2_luts.list_output_transforms()})
+        except Exception as exc:
+            return self._ok({"transforms": [], "warning": f"ACES 2.0 LUTs unavailable: {exc}"})
+
     _OCF_JOBS_MAX = 64  # evict oldest terminal jobs beyond this cap
 
     def _ocf_exr_export_status(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -2861,7 +2897,8 @@ class CompanionApi:
         except Exception:
             return None
 
-    def _ocf_extract_via_resolve(self, file_path: str, timecode: str, width: int, height: int, fmt: str) -> dict:
+    def _ocf_extract_via_resolve(self, file_path: str, timecode: str, width: int, height: int, fmt: str,
+                                 source_frame: Any | None = None) -> dict:
         """Single-frame still via DaVinci Resolve ExportCurrentFrameAsStill.
         Uses CreateTimelineFromClips + SetCurrentTimecode — mirrors the proven _resolve_export_still pattern.
         Falls back to render-queue (Format:JPEG then TIFF) if ExportCurrentFrameAsStill produces nothing.
@@ -2890,7 +2927,26 @@ class CompanionApi:
             stage = "connect"
             app = self._get_resolve_app()
             if app is None:
-                return {"ok": False, "stage": stage, "error": "Resolve scripting API unavailable."}
+                # Resolve may be relaunching (crash recovery, or just opened) and not
+                # scriptable yet — even though PFX's cached "Resolve: Connected"
+                # indicator is still green. Failing here gives the confusing
+                # "connected but stage=connect" state the user saw. Instead, kick a
+                # hidden background launch and wait briefly for it to become scriptable.
+                try:
+                    _rapp = "/Applications/DaVinci Resolve/DaVinci Resolve.app"
+                    if os.path.isdir(_rapp):
+                        subprocess.Popen(["open", "-gj", _rapp])
+                except Exception:
+                    pass
+                for _ in range(24):          # up to ~12s
+                    time.sleep(0.5)
+                    app = self._get_resolve_app()
+                    if app is not None:
+                        break
+            if app is None:
+                return {"ok": False, "stage": stage,
+                        "error": "Resolve is starting up — not scriptable yet. Retry in a moment.",
+                        "resolveAvailable": False, "retryable": True}
             resolve_ver_inner = "unknown"
             try:
                 resolve_ver_inner = str(app.GetVersion() or "unknown")
@@ -2901,15 +2957,28 @@ class CompanionApi:
             stage = "project"
             pm = app.GetProjectManager()
             if not pm:
-                return {"ok": False, "stage": stage, "error": "GetProjectManager() returned None."}
+                # Resolve scriptapp is up but the app is still loading (splash /
+                # "LOADING … PAGE") — the ProjectManager isn't ready yet. Wait.
+                for _ in range(20):          # up to ~10s
+                    time.sleep(0.5)
+                    pm = app.GetProjectManager()
+                    if pm:
+                        break
+            if not pm:
+                return {"ok": False, "stage": stage, "error": "GetProjectManager() returned None.",
+                        "resolveAvailable": True, "retryable": True}
             project = pm.GetCurrentProject()
             if not project:
+                # Resolve is sitting at the Project Manager with nothing open (the
+                # "New Project / 0 timelines" state seen after a relaunch). Open a
+                # throwaway project so we have a media pool to work in.
                 tmp_name = f"pfx_still_{uuid.uuid4().hex[:8]}"
                 project  = pm.CreateProject(tmp_name)
                 created_proj = tmp_name if project else None
             if not project:
                 return {"ok": False, "stage": stage,
-                        "error": "No active project in Resolve and CreateProject failed."}
+                        "error": "No active project in Resolve and CreateProject failed.",
+                        "resolveAvailable": True, "retryable": True}
 
             stage      = "media_pool"
             media_pool = project.GetMediaPool()
@@ -2925,6 +2994,36 @@ class CompanionApi:
             if tl_cache is None:
                 tl_cache = {}
                 self._ocf_tl_cache = tl_cache
+
+            # ── GC orphaned preview timelines ─────────────────────────────────
+            # tl_cache is in-memory and empty at session start, so the eviction
+            # loop below never cleans timelines left by a PRIOR session (or the
+            # resolve_bridge path) — they accumulated (seen: 42 in the scratch
+            # project). Sweep every preview-prefixed timeline that isn't a warm
+            # cache entry or the current timeline. Cheap + idempotent + self-heals.
+            try:
+                _keep = set()
+                for _v in tl_cache.values():
+                    try: _keep.add(_v["timeline"].GetName())
+                    except Exception: pass
+                try:
+                    _cur = project.GetCurrentTimeline()
+                    if _cur and _cur.GetName(): _keep.add(_cur.GetName())
+                except Exception: pass
+                _stale = []
+                _n = int(project.GetTimelineCount() or 0)
+                for _i in range(1, _n + 1):
+                    _t = project.GetTimelineByIndex(_i)
+                    if not _t: continue
+                    _nm = _t.GetName() or ""
+                    if _is_preview_timeline_name(_nm) and _nm not in _keep:
+                        _stale.append(_t)
+                if _stale:
+                    media_pool.DeleteTimelines(_stale)
+                    log.info("[VFX Resolve Preview] GC: removed %d stale preview timeline(s)", len(_stale))
+            except Exception as _gc_exc:
+                log.info("[VFX Resolve Preview] timeline GC skipped: %s", _gc_exc)
+
             cached = tl_cache.get(file_path)
             if cached:
                 try:
@@ -3036,11 +3135,54 @@ class CompanionApi:
             # Settle ONLY for a freshly-built timeline so Resolve resolves the media
             # before the first export (avoids the "Media Offline" card). Reused
             # timelines are already warm → no wait → fast and race-free.
+            #
+            # Camera-RAW (Sony X-OCN) on a JUST-LAUNCHED / background Resolve needs
+            # MORE than the old 1.2s: davinci_resolve.log shows the first frame decode
+            # hitting "SendDataSync() timed out in 3000 ms → Failed to Read and convert
+            # frame 0:0 ... after 0 retries" → a black preview. The Sony RAW decoder
+            # warms up after the first access, so give the cold path a longer settle.
             if not reused:
-                time.sleep(1.2)
+                time.sleep(3.0)
 
             stage = "seek"
-            if timecode:
+            # Timeline frame index of the seeked position (0 = timeline start).
+            # Captured during seek so the render-queue fallback can render ONLY this
+            # single frame (MarkIn/MarkOut) instead of the entire timeline.
+            tl_mark_frame = 0
+            if source_frame is not None:
+                try:
+                    frame_idx = max(0, int(float(source_frame)))
+                    try:
+                        _clip_frames = int(float(clip.GetClipProperty("Frames") or 0))
+                    except (TypeError, ValueError):
+                        _clip_frames = 0
+                    if _clip_frames > 1:
+                        frame_idx = min(frame_idx, _clip_frames - 1)
+                    tl_mark_frame = frame_idx
+                    rel_sec      = frame_idx / max(1.0, fps)
+                    tl_start_tc  = str(timeline.GetCurrentTimecode() or "").strip() or "01:00:00:00"
+                    tl_start_sec = _timecode_to_seconds(tl_start_tc, fps)
+                    target_tl_tc = _seconds_to_timecode(tl_start_sec + rel_sec, fps, drop_frame)
+                    log.info(
+                        "[VFX Resolve Preview] seek by sourceFrame: frame=%s rel=%.3fs target=%s",
+                        frame_idx, rel_sec, target_tl_tc,
+                    )
+                    timeline.SetCurrentTimecode(target_tl_tc)
+                    landed = False
+                    for _ in range(12):
+                        time.sleep(0.1)
+                        try:
+                            if str(timeline.GetCurrentTimecode() or "").strip() == target_tl_tc:
+                                landed = True
+                                break
+                        except Exception:
+                            break
+                    time.sleep(0.5 if reused else 0.25)
+                    if not landed:
+                        log.info("[VFX Resolve Preview] seek playhead did not confirm target=%s", target_tl_tc)
+                except Exception as seek_exc:
+                    log.warning("[VFX Resolve Preview] frame seek failed (non-fatal): %s", seek_exc)
+            elif timecode:
                 try:
                     # GetCurrentTimecode() returns the timeline's current position (its first frame).
                     # CreateTimelineFromClips preserves source timecode, so timeline start ≈ clip start.
@@ -3063,6 +3205,7 @@ class CompanionApi:
                             log.info("[VFX Resolve Preview] seek clamp: rel=%.3fs > clip max=%.3fs → clamped to last frame",
                                      rel_sec, _max_rel)
                             rel_sec = _max_rel
+                    tl_mark_frame = max(0, int(round(rel_sec * fps)))
                     tl_start_sec  = _timecode_to_seconds(tl_start_tc, fps)
                     target_tl_tc  = _seconds_to_timecode(tl_start_sec + rel_sec, fps, drop_frame)
                     log.info(
@@ -3070,7 +3213,26 @@ class CompanionApi:
                         clip_start_tc, tl_start_tc, rel_sec, target_tl_tc,
                     )
                     timeline.SetCurrentTimecode(target_tl_tc)
-                    time.sleep(0.3)
+                    # Wait for the playhead to actually land — a reused (warm)
+                    # timeline lags, and exporting too early grabs the previous
+                    # frame or a black one (the "only the first strip frame shows"
+                    # bug). Poll until the timecode matches, then give Resolve a
+                    # moment to DECODE the ARRIRAW frame before the still export.
+                    landed = False
+                    for _ in range(12):                 # up to ~1.2s for the seek to land
+                        time.sleep(0.1)
+                        try:
+                            if str(timeline.GetCurrentTimecode() or "").strip() == target_tl_tc:
+                                landed = True
+                                break
+                        except Exception:
+                            break
+                    # Brief decode settle once the playhead has landed. Kept small so
+                    # the 7-frame strip stays responsive; landing-confirm above is the
+                    # real guard against grabbing the previous/black frame.
+                    time.sleep(0.5 if reused else 0.25)
+                    if not landed:
+                        log.info("[VFX Resolve Preview] seek playhead did not confirm target=%s", target_tl_tc)
                 except Exception as seek_exc:
                     log.warning("[VFX Resolve Preview] seek failed (non-fatal): %s", seek_exc)
 
@@ -3095,49 +3257,175 @@ class CompanionApi:
                     export_ok, all_out, tmp_dir,
                 )
 
+                # ExportCurrentFrameAsStill grabs the timeline VIEWER frame, which is
+                # often BLACK for camera-RAW (e.g. Sony X-OCN) when the companion runs
+                # Resolve headless/background and the viewer hasn't decoded the frame.
+                # The same clip renders fine via the render queue (a real render forces
+                # a full decode). So if the still is black, discard it and fall through
+                # to the render-queue path below. (PIL-free black check via ffmpeg.)
+                if all_out:
+                    try:
+                        _ff_chk = None
+                        try:
+                            from .proxy_service import _find_ffmpeg as _ff_resolve0
+                            _ff_chk = _ff_resolve0() or "ffmpeg"
+                        except Exception:
+                            _ff_chk = "ffmpeg"
+                        _l0 = _still_avg_luma_ffmpeg(os.path.join(tmp_dir, all_out[0]), _ff_chk)
+                        if _l0 is not None and _l0 < 6.0:
+                            log.info("[VFX Resolve Preview] ExportCurrentFrameAsStill black (luma=%.1f) — using render-queue render instead", _l0)
+                            for _f in all_out:
+                                try: os.remove(os.path.join(tmp_dir, _f))
+                                except Exception: pass
+                            all_out = []
+                    except Exception as _chk_exc:
+                        log.info("[VFX Resolve Preview] black pre-check skipped: %s", _chk_exc)
+
                 if not all_out:
-                    # ExportCurrentFrameAsStill produced nothing — fall back to render queue.
+                    # ExportCurrentFrameAsStill produced nothing (or was black) — render
+                    # queue. A real render forces a full decode of camera-RAW (Sony
+                    # X-OCN) that the headless/background viewer leaves black.
                     stage    = "render_queue"
                     height_q = height or int(width * 9 / 16)
-                    job_id   = None
-                    for fmt_name in ("JPEG", "TIFF"):
-                        project.SetRenderSettings({
-                            "TargetDir":       tmp_dir,
-                            "CustomName":      "pfx_still",
-                            "ExportVideo":     True,
-                            "ExportAudio":     False,
-                            "SelectAllFrames": True,
-                            "Format":          fmt_name,
-                            "Codec":           fmt_name,
-                            "FormatWidth":     width,
-                            "FormatHeight":    height_q,
-                        })
-                        job_id = project.AddRenderJob()
-                        if job_id:
-                            log.info("[VFX Resolve Preview] render queue: Format=%s job=%s", fmt_name, job_id)
-                            break
-                    if not job_id:
-                        return {"ok": False, "stage": stage,
-                                "error": "ExportCurrentFrameAsStill failed and AddRenderJob rejected all formats."}
-                    project.StartRendering([job_id])
-                    _render_done = False
+
+                    # ── Render ONLY the seeked frame, not the whole timeline. ──
+                    # The previous code set SelectAllFrames=True → Resolve rendered all
+                    # 866 frames (a 121 MB H.264 of the entire clip, ~60-90 s). MarkIn ==
+                    # MarkOut renders a single timeline frame instead → fast and small.
+                    render_settings = {
+                        "TargetDir":       tmp_dir,
+                        "CustomName":      "pfx_still",
+                        "ExportVideo":     True,
+                        "ExportAudio":     False,
+                        "SelectAllFrames": False,
+                        "MarkIn":          int(tl_mark_frame),
+                        "MarkOut":         int(tl_mark_frame),
+                        "FormatWidth":     width,
+                        "FormatHeight":    height_q,
+                    }
+                    project.SetRenderSettings(render_settings)
+
+                    # ── Format/Codec must go through SetCurrentRenderFormatAndCodec. ──
+                    # The "Format"/"Codec" KEYS inside SetRenderSettings are IGNORED by
+                    # Resolve (the real root cause of the "renders an .mov but PFX shows
+                    # nothing" bug — the job kept the leftover Custom Export H.264 preset
+                    # and we scanned only for image files). Pick a still-image format
+                    # from GetRenderFormats() so we get a single .tif/.jpg out.
+                    still_format_set = False
                     try:
-                        for _ in range(240):   # up to 120s for a single still
-                            time.sleep(0.5)
-                            st = project.GetRenderJobStatus(job_id) or {}
-                            if st.get("JobStatus") in ("Complete", "Failed", "Cancelled"):
-                                log.info("[VFX Resolve Preview] render status: %s", st.get("JobStatus"))
-                                _render_done = True
+                        formats = project.GetRenderFormats() or {}   # {niceName: ext}
+                        chosen_ext = None
+                        for want in ("tif", "jpg", "jpeg", "png", "dpx"):
+                            if want in (str(v).lower() for v in formats.values()):
+                                chosen_ext = want
                                 break
-                    finally:
-                        # Never leave an orphaned render job running in Resolve's queue.
-                        if not _render_done:
-                            try: project.StopRendering()
+                        if chosen_ext:
+                            codecs = project.GetRenderCodecs(chosen_ext) or {}   # {desc: token}
+                            codec_token = next(iter(codecs.values()), "") if codecs else ""
+                            still_format_set = bool(
+                                project.SetCurrentRenderFormatAndCodec(chosen_ext, codec_token))
+                            log.info("[VFX Resolve Preview] render format=%s codec=%s set=%s",
+                                     chosen_ext, codec_token, still_format_set)
+                    except Exception as _fmt_exc:
+                        log.info("[VFX Resolve Preview] still-format select failed (will use current preset): %s", _fmt_exc)
+
+                    # Resolve the ffmpeg binary once for the in-loop black check /
+                    # video-frame extraction (GUI-launched companion has a stripped PATH).
+                    try:
+                        from .proxy_service import _find_ffmpeg as _ff_loop
+                        _ff_bin = _ff_loop() or "ffmpeg"
+                    except Exception:
+                        _ff_bin = "ffmpeg"
+
+                    # Render with a cold-decode retry. The FIRST render of a Sony X-OCN
+                    # frame on a just-launched / background Resolve can come out BLACK
+                    # ("SendDataSync timed out … Failed to Read and convert frame 0:0 …
+                    # after 0 retries") because the RAW decoder isn't warm yet. The
+                    # decoder warms after that first access, so a black render → wait →
+                    # render again usually succeeds. Doing the retry HERE (inside one
+                    # companion call) keeps Resolve warm and avoids the renderer
+                    # relaunch-loop the user hit ("it always loop open resolve").
+                    all_out = []
+                    for _render_attempt in range(2):
+                        job_id = project.AddRenderJob()
+                        if not job_id:
+                            return {"ok": False, "stage": stage,
+                                    "error": "ExportCurrentFrameAsStill failed and AddRenderJob was rejected."}
+                        log.info("[VFX Resolve Preview] render queue: job=%s markFrame=%s stillFormat=%s attempt=%d",
+                                 job_id, tl_mark_frame, still_format_set, _render_attempt)
+                        project.StartRendering([job_id])
+                        _render_done = False
+                        try:
+                            for _ in range(180):   # up to 90s for a single frame
+                                time.sleep(0.5)
+                                st = project.GetRenderJobStatus(job_id) or {}
+                                if st.get("JobStatus") in ("Complete", "Failed", "Cancelled"):
+                                    log.info("[VFX Resolve Preview] render status: %s", st.get("JobStatus"))
+                                    _render_done = True
+                                    break
+                        finally:
+                            # Never leave an orphaned render job running in Resolve's queue.
+                            if not _render_done:
+                                try: project.StopRendering()
+                                except Exception: pass
+                            # Remove OUR render job so Resolve's queue doesn't accumulate
+                            # one completed "pfx_still" job per preview frame. Delete only
+                            # the job we added — never the whole queue (may be the user's).
+                            try: project.DeleteRenderJob(job_id)
                             except Exception: pass
-                    all_out = sorted(
-                        f for f in os.listdir(tmp_dir)
-                        if f.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff"))
-                    )
+
+                        all_out = sorted(
+                            f for f in os.listdir(tmp_dir)
+                            if f.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff"))
+                        )
+                        # Fallback: if the still-format select failed, the job rendered a
+                        # video (.mov/.mp4) instead — extract its first frame with ffmpeg
+                        # so PFX still gets an image. Guarantees "render → image in PFX"
+                        # even when Resolve ignores the format set.
+                        if not all_out:
+                            vids = sorted(
+                                f for f in os.listdir(tmp_dir)
+                                if f.lower().endswith((".mov", ".mp4", ".mxf"))
+                            )
+                            if vids:
+                                _vsrc = os.path.join(tmp_dir, vids[0])
+                                _vjpg = os.path.join(tmp_dir, f"pfx_still_fromvid{_render_attempt}.jpg")
+                                try:
+                                    rr = subprocess.run(
+                                        [_ff_bin, "-y", "-i", _vsrc, "-frames:v", "1",
+                                         "-vf", f"scale={width}:-2", "-q:v", "2", _vjpg],
+                                        capture_output=True, timeout=30,
+                                    )
+                                    if rr.returncode == 0 and os.path.isfile(_vjpg):
+                                        all_out = [os.path.basename(_vjpg)]
+                                        log.info("[VFX Resolve Preview] extracted still from rendered video %s", vids[0])
+                                    else:
+                                        log.warning("[VFX Resolve Preview] ffmpeg video-extract failed: %s",
+                                                    rr.stderr.decode(errors="replace")[:300])
+                                except Exception as _ve:
+                                    log.warning("[VFX Resolve Preview] ffmpeg video-extract error: %s", _ve)
+                                # Clear the source video so the next attempt's scan is clean.
+                                try: os.remove(_vsrc)
+                                except Exception: pass
+
+                        # Cold-decode black check: if the rendered frame is black and we
+                        # have a retry left, discard it, let the decoder warm, re-render.
+                        if all_out and _render_attempt == 0:
+                            _rl = None
+                            try:
+                                _rl = _still_avg_luma_ffmpeg(os.path.join(tmp_dir, all_out[0]), _ff_bin)
+                            except Exception:
+                                _rl = None
+                            if _rl is not None and _rl < 6.0:
+                                log.info("[VFX Resolve Preview] render frame black (luma=%.1f) — RAW decoder cold, retrying once", _rl)
+                                for _f in all_out:
+                                    try: os.remove(os.path.join(tmp_dir, _f))
+                                    except Exception: pass
+                                all_out = []
+                                time.sleep(3.0)   # let the Sony RAW decoder warm up
+                                continue
+                        break
+
                     if not all_out:
                         return {"ok": False, "stage": stage,
                                 "error": "Render queue completed but produced no image output."}
@@ -3190,6 +3478,46 @@ class CompanionApi:
                                 )
                         except Exception as conv_exc:
                             log.warning("[VFX Resolve Preview] ffmpeg subprocess error: %s", conv_exc)
+
+                # Downscale to the requested preview width. ExportCurrentFrameAsStill
+                # exports at TIMELINE resolution (e.g. 1920×1080 ≈ 1 MB), ignoring
+                # outputWidth — so without this the 7-frame strip ships ~7 MB of
+                # base64 and renders slowly (looks like "0/7 / black" mid-gen).
+                # `sips` is always present on macOS; PIL fallback if not.
+                if width and found_ext in ("jpg", "jpeg", "png"):
+                    try:
+                        subprocess.run(["sips", "--resampleWidth", str(int(width)), found_path],
+                                       timeout=10, check=False,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        try:
+                            from PIL import Image as _PIL2
+                            _im = _PIL2.open(found_path); _r = int(width) / max(1, _im.width)
+                            _im.convert("RGB").resize((int(width), max(1, int(_im.height * _r)))).save(found_path, "JPEG", quality=85)
+                        except Exception:
+                            pass
+
+                # Reject a near-black frame (Resolve's "Media Offline" card during
+                # warmup, or a not-yet-resolved decode). Returning ok:False means the
+                # app does NOT cache it and will retry once the engine is warm —
+                # this is the "OCF strip stuck on black" fix. Genuine dark/night
+                # frames are luma ~20+; the offline card / black render is ~0-3.
+                _mluma = None
+                try:
+                    from PIL import Image as _PILk, ImageStat as _PILks
+                    _mluma = _PILks.Stat(_PILk.open(found_path).convert("L")).mean[0]
+                except Exception:
+                    # PIL often absent in the companion's python → fall back to ffmpeg.
+                    try:
+                        from .proxy_service import _find_ffmpeg as _ff_resolve2
+                        _mluma = _still_avg_luma_ffmpeg(found_path, _ff_resolve2() or "ffmpeg")
+                    except Exception:
+                        _mluma = None
+                if _mluma is not None and _mluma < 6.0:
+                    log.info("[VFX Resolve Preview] rejecting near-black frame (luma=%.1f) — likely media offline / decode not ready; will retry", _mluma)
+                    return {"ok": False, "stage": "black_frame",
+                            "error": "Decoded frame is black (media not ready) — retry.",
+                            "resolveAvailable": True, "retryable": True}
 
                 mime = ("image/jpeg" if found_ext in ("jpg", "jpeg") else
                         "image/png"  if found_ext == "png" else "image/tiff")
@@ -3245,6 +3573,236 @@ class CompanionApi:
             except Exception:
                 pass
 
+    def _vfx_preview_resolve_still_batch(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Batch OCF strip endpoint — renders the contiguous HdlSt→HdlEnd range ONCE
+        and ffmpeg-extracts every requested position from that single render, instead
+        of one Resolve render per frame (the 7× perf TODO). Mirrors the planner in
+        scripts/features/vfxPull/ocfBatchPlan.js.
+
+        request: { ocfPath, width?, picks:[{label, frame}] }
+        returns: { ok, frames:[{label, frame, dataUrl}], stage } or {ok:false, error, stage}
+                 Per-frame failures degrade gracefully (that pick is omitted); the JS
+                 caller falls back to the single-frame path for any missing label.
+        """
+        import os, time, base64 as _b64, shutil, tempfile, subprocess, logging
+        log = logging.getLogger("postflowx.resolve_still")
+
+        ocf_path = str(request.get("ocfPath") or request.get("filePath") or "").strip()
+        width    = int(request.get("outputWidth") or request.get("width") or 480)
+        raw_picks = request.get("picks") or []
+        # Keep label + EITHER an explicit timeline frame (library/by-frame path) OR a
+        # source timecode (editorial path) — the timeline frame for a sourceTc pick is
+        # resolved AFTER import from the clip's Start TC, exactly like the single-frame
+        # endpoint, so batch and per-frame land on the same frame.
+        picks = []
+        for p in raw_picks:
+            if not isinstance(p, dict):
+                continue
+            label = str(p.get("label") or "")
+            f_raw = p.get("frame")
+            tc    = str(p.get("sourceTc") or p.get("timecode") or "").strip()
+            frame = None
+            if f_raw is not None:
+                try: frame = max(0, int(round(float(f_raw))))
+                except (TypeError, ValueError): frame = None
+            if frame is None and not tc:
+                continue
+            picks.append({"label": label or (str(frame) if frame is not None else tc),
+                          "frame": frame, "sourceTc": tc})
+        if not ocf_path or not os.path.isfile(ocf_path):
+            return self._ok({"ok": False, "stage": "validation",
+                             "error": "ocfPath missing or not found.", "resolveAvailable": False})
+        if not picks:
+            return self._ok({"ok": False, "stage": "validation", "error": "No picks provided."})
+
+        app = self._get_resolve_app()
+        if app is None:
+            return self._ok({"ok": False, "stage": "connect",
+                             "error": "Resolve Engine is not running.", "resolveAvailable": False})
+
+        self._ocf_resolve_lock.acquire()
+        cm_saved = None
+        project = None
+        orig_tl = None
+        keep_cached = True
+        timeline = None
+        media_pool = None
+        try:
+            pm = app.GetProjectManager()
+            if not pm:
+                return self._ok({"ok": False, "stage": "project", "error": "No ProjectManager.",
+                                 "resolveAvailable": True, "retryable": True})
+            project = pm.GetCurrentProject()
+            if not project:
+                return self._ok({"ok": False, "stage": "project", "error": "No active project.",
+                                 "resolveAvailable": True, "retryable": True})
+            media_pool = project.GetMediaPool()
+            if not media_pool:
+                return self._ok({"ok": False, "stage": "media_pool", "error": "No MediaPool."})
+
+            # Reuse the warm timeline cache built by the single-frame path (import once).
+            tl_cache = getattr(self, "_ocf_tl_cache", None) or {}
+            self._ocf_tl_cache = tl_cache
+            cached = tl_cache.get(ocf_path)
+            clips = []
+            fps = 24.0
+            if cached:
+                try:
+                    timeline = cached["timeline"]; clips = cached["clips"]; fps = cached["fps"]
+                    _ = timeline.GetName()
+                except Exception:
+                    cached = None
+            if not cached:
+                clips = media_pool.ImportMedia([ocf_path]) or []
+                if not clips:
+                    return self._ok({"ok": False, "stage": "import_media",
+                                     "error": "Resolve could not import the OCF file."})
+                try: fps = float(clips[0].GetClipProperty("FPS") or 24)
+                except (TypeError, ValueError): fps = 24.0
+                import uuid as _uuid
+                timeline = media_pool.CreateTimelineFromClips(f"pfx_still_{_uuid.uuid4().hex[:6]}", clips)
+                if not timeline:
+                    return self._ok({"ok": False, "stage": "timeline_create",
+                                     "error": "CreateTimelineFromClips failed."})
+                tl_cache[ocf_path] = {"timeline": timeline, "clips": clips, "fps": fps, "created_proj": None}
+
+            orig_tl = project.GetCurrentTimeline()
+            project.SetCurrentTimeline(timeline)
+
+            # Color-manage camera log/RAW → Rec.709 for the preview (restore in finally).
+            try:
+                if str(project.GetSetting("colorScienceMode") or "davinciYRGB") == "davinciYRGB":
+                    cm_saved = {k: project.GetSetting(k) for k in
+                                ("colorScienceMode", "colorSpaceInput", "colorSpaceTimeline", "colorSpaceOutput")}
+                    cm_saved["colorScienceMode"] = "davinciYRGB"
+                    _cs = ""
+                    try: _cs = str(clips[0].GetClipProperty("Input Color Space") or "").strip()
+                    except Exception: pass
+                    project.SetSetting("colorScienceMode", "davinciYRGBColorManagedv2")
+                    if _cs and _cs.lower() not in ("", "-", "unknown", "bypass"):
+                        project.SetSetting("colorSpaceInput", _cs)
+                    project.SetSetting("colorSpaceTimeline", "Rec.709 Gamma 2.4")
+                    project.SetSetting("colorSpaceOutput", "Rec.709 Gamma 2.4")
+                    time.sleep(0.5)
+            except Exception as _cm:
+                log.warning("[VFX Batch] color-manage setup failed: %s", _cm)
+                cm_saved = None
+
+            if not cached:
+                time.sleep(3.0)   # cold X-OCN decoder warm-up (see #4 in single-frame path)
+
+            # Resolve each pick's TIMELINE frame. A by-frame pick is already a timeline
+            # frame; a sourceTc pick maps via the clip's Start TC (same math as the
+            # single-frame endpoint), clamped to the clip's media range.
+            _clip_start_tc = ""
+            _clip_frames = 0
+            try: _clip_start_tc = str(clips[0].GetClipProperty("Start TC") or "").strip()
+            except Exception: pass
+            try: _clip_frames = int(float(clips[0].GetClipProperty("Frames") or 0))
+            except (TypeError, ValueError): _clip_frames = 0
+            _drop = fps in (29.97, 59.94, 23.976)
+            for p in picks:
+                if p["frame"] is None and p["sourceTc"]:
+                    try:
+                        rel = max(0.0, _timecode_to_seconds(p["sourceTc"], fps)
+                                       - _timecode_to_seconds(_clip_start_tc or "00:00:00:00", fps))
+                        p["frame"] = max(0, int(round(rel * fps)))
+                    except Exception:
+                        p["frame"] = 0
+                if p["frame"] is None:
+                    p["frame"] = 0
+                if _clip_frames > 1:
+                    p["frame"] = min(p["frame"], _clip_frames - 1)
+            render_start = min(p["frame"] for p in picks)
+            render_end   = max(p["frame"] for p in picks)
+
+            tmp_dir = tempfile.mkdtemp(prefix="pfx_batch_")
+            try:
+                # ── ONE render of the whole HdlSt→HdlEnd range to a single mov. ──
+                project.SetRenderSettings({
+                    "TargetDir": tmp_dir, "CustomName": "pfx_batch",
+                    "ExportVideo": True, "ExportAudio": False,
+                    "SelectAllFrames": False, "MarkIn": int(render_start), "MarkOut": int(render_end),
+                    "FormatWidth": width, "FormatHeight": int(width * 9 / 16),
+                })
+                job_id = project.AddRenderJob()
+                if not job_id:
+                    return self._ok({"ok": False, "stage": "render_queue", "error": "AddRenderJob rejected."})
+                project.StartRendering([job_id])
+                _done = False
+                try:
+                    for _ in range(360):     # up to 180s for the whole range
+                        time.sleep(0.5)
+                        st = project.GetRenderJobStatus(job_id) or {}
+                        if st.get("JobStatus") in ("Complete", "Failed", "Cancelled"):
+                            _done = True; break
+                finally:
+                    if not _done:
+                        try: project.StopRendering()
+                        except Exception: pass
+                    try: project.DeleteRenderJob(job_id)
+                    except Exception: pass
+
+                vids = sorted(f for f in os.listdir(tmp_dir)
+                              if f.lower().endswith((".mov", ".mp4", ".jpg", ".jpeg", ".png", ".tif", ".tiff")))
+                if not vids:
+                    return self._ok({"ok": False, "stage": "render_queue",
+                                     "error": "Batch render produced no output."})
+                src = os.path.join(tmp_dir, vids[0])
+
+                try:
+                    from .proxy_service import _find_ffmpeg as _ff
+                    ffmpeg = _ff() or "ffmpeg"
+                except Exception:
+                    ffmpeg = "ffmpeg"
+
+                frames_out = []
+                for p in picks:
+                    off = max(0, p["frame"] - render_start)
+                    out_jpg = os.path.join(tmp_dir, f"pick_{off}.jpg")
+                    try:
+                        rr = subprocess.run(
+                            [ffmpeg, "-y", "-i", src,
+                             "-vf", f"select=eq(n\\,{off}),scale={width}:-2",
+                             "-vsync", "0", "-frames:v", "1", "-q:v", "2", out_jpg],
+                            capture_output=True, timeout=30,
+                        )
+                        if rr.returncode != 0 or not os.path.isfile(out_jpg):
+                            # Range may be a single still image (mov select failed) — use it directly.
+                            if src.lower().endswith((".jpg", ".jpeg", ".png")):
+                                out_jpg = src
+                            else:
+                                continue
+                        with open(out_jpg, "rb") as fh:
+                            data_url = "data:image/jpeg;base64," + _b64.b64encode(fh.read()).decode()
+                        frames_out.append({"label": p["label"], "frame": p["frame"], "dataUrl": data_url})
+                    except Exception as _ex:
+                        log.warning("[VFX Batch] extract pick %s failed: %s", p["label"], _ex)
+
+                if not frames_out:
+                    return self._ok({"ok": False, "stage": "extract",
+                                     "error": "Batch render produced no extractable frames."})
+                log.info("[VFX Batch] returned %d/%d frames (1 render, range %d-%d)",
+                         len(frames_out), len(picks), render_start, render_end)
+                return self._ok({"ok": True, "stage": "complete", "frames": frames_out,
+                                 "decoder": "Resolve Engine", "resolveAvailable": True})
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception as exc:
+            log.exception("[VFX Batch] exception: %s", exc)
+            return self._ok({"ok": False, "stage": "exception", "error": str(exc)})
+        finally:
+            if cm_saved and project:
+                for _k, _v in cm_saved.items():
+                    if _v is not None:
+                        try: project.SetSetting(_k, _v)
+                        except Exception: pass
+            try:
+                if orig_tl and project: project.SetCurrentTimeline(orig_tl)
+            except Exception: pass
+            try: self._ocf_resolve_lock.release()
+            except Exception: pass
+
     def _vfx_preview_resolve_still(self, request: dict[str, Any]) -> dict[str, Any]:
         """Dedicated Resolve Engine still endpoint — called by JS tier-1 orchestrator.
         Returns {ok, dataUrl, decoder, extractor, resolveAvailable} or {ok:false, error, stage, resolveAvailable}.
@@ -3254,6 +3812,7 @@ class CompanionApi:
 
         ocf_path  = str(request.get("ocfPath") or request.get("filePath") or "").strip()
         source_tc = str(request.get("sourceTc") or request.get("timecode") or "").strip()
+        source_frame = request.get("sourceFrame")
         width     = int(request.get("outputWidth") or request.get("width") or 960)
         height    = int(request.get("outputHeight") or request.get("height") or 0)
         fmt       = str(request.get("format") or "jpg").lower().strip(".")
@@ -3285,7 +3844,8 @@ class CompanionApi:
         log.info("[Resolve Script Connect] ok=True resolveVersion=%s", resolve_ver)
         log.info("[VFX Resolve Preview Request] ocfPath=%s sourceTc=%s width=%d", ocf_path, source_tc, width)
 
-        r = self._ocf_extract_via_resolve(ocf_path, source_tc, width, height, fmt)
+        r = self._ocf_extract_via_resolve(ocf_path, source_tc, width, height, fmt,
+                                          source_frame=source_frame)
 
         log.info("[VFX Resolve Preview Native Response] ok=%s stage=%s error=%s",
                  r.get("ok"), r.get("stage"), r.get("error"))
@@ -3560,8 +4120,16 @@ class CompanionApi:
             if not shot_name or not exr_folder:
                 results.append({"shotName": shot_name or "?", "ok": False, "error": "missing shotName or exrFolder"})
                 continue
-            dst_exr     = os.path.join(output_dir, shot_name, "EXR_Files", shot_name)
-            dst_amf_dir = os.path.join(output_dir, shot_name, "EXR_Files", "Look_Files")
+            # shotName is editorial-derived (EDL/FCPXML clip name) → untrusted.
+            # Sanitize to a single safe segment AND confine the result under
+            # output_dir so a crafted "../" name can't write outside the pull.
+            safe_shot = _safe_name_component(shot_name, "shot")
+            try:
+                dst_exr     = _confined_join(output_dir, safe_shot, "EXR_Files", safe_shot)
+                dst_amf_dir = _confined_join(output_dir, safe_shot, "EXR_Files", "Look_Files")
+            except ValueError:
+                results.append({"shotName": shot_name, "ok": False, "error": "unsafe shotName — path traversal blocked"})
+                continue
             try:
                 os.makedirs(dst_exr, exist_ok=True)
                 copied = 0
@@ -3573,7 +4141,7 @@ class CompanionApi:
                 amf_copied = False
                 if amf_path and os.path.isfile(amf_path):
                     os.makedirs(dst_amf_dir, exist_ok=True)
-                    shutil.copy2(amf_path, os.path.join(dst_amf_dir, f"{shot_name}.amf"))
+                    shutil.copy2(amf_path, os.path.join(dst_amf_dir, f"{safe_shot}.amf"))
                     amf_copied = True
                 results.append({"shotName": shot_name, "ok": True, "frames": copied, "amf": amf_copied, "exrDst": dst_exr})
             except Exception as exc:
@@ -3686,7 +4254,7 @@ class CompanionApi:
 
         source      = job.get("sourcePath", "")
         output_dir  = (job.get("package") or {}).get("exr") or job.get("outputDir", "")
-        pattern     = job.get("outputPattern", "%04d.exr")
+        pattern     = _safe_output_pattern(job.get("outputPattern", "%04d.exr"))
         frame_start = int(job.get("frameStart", 1001))
         color_plan  = job.get("colorPlan") or {}
         ocio_config = color_plan.get("ocioConfig") or ""
@@ -3754,6 +4322,138 @@ class CompanionApi:
                 "warnings": [] if color_plan.get("applyIDT") and idt else ["IDT not applied — verify color"],
             },
         })
+
+    # ── Review proxy movie (ACES 2.0 ODT baked) ───────────────────────────────
+
+    def _render_review_proxy_start(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Start an async review-proxy movie render from an AP0 EXR sequence.
+
+        review_proxy = IDT (+look) already baked into the EXRs (ACES2065-1) → this
+        bakes the ACES 2.0 ODT (display transform) and encodes a viewable movie.
+        Reuses the EXR-pull job registry, so poll with renderPullExrStatus.
+
+        job fields:
+          exrDir | package.exr      directory of the AP0 EXR sequence
+          exrPattern                e.g. "shot.%04d.exr" (default "%04d.exr")
+          frameStart (1001), fps (24)
+          colorPlan.odtId | odtId   ACES 2.0 transform id/name (default rec709_sdr)
+          codec                     "h264" (default) | "prores"
+          output | package.review   output movie path or dir
+        """
+        job = request.get("job") or request
+        job_id = str(uuid.uuid4())[:8]
+        self._ocf_jobs[job_id] = {"state": "running", "progressPct": 0, "result": None, "error": None}
+        t = threading.Thread(target=self._render_review_proxy_run, args=(job_id, job), daemon=True)
+        t.start()
+        return self._ok({"jobId": job_id})
+
+    def _render_review_proxy_run(self, job_id: str, job: dict) -> None:
+        import os, subprocess, glob
+        state = self._ocf_jobs.get(job_id, {})
+        try:
+            from .color import aces2_luts
+            from .proxy_service import _find_ffmpeg
+
+            ff = _find_ffmpeg()
+            if not ff:
+                raise RuntimeError("ffmpeg not available")
+
+            pkg = job.get("package") or {}
+            exr_dir = job.get("exrDir") or pkg.get("exr") or ""
+            if not exr_dir or not os.path.isdir(exr_dir):
+                raise RuntimeError(f"EXR directory not found: {exr_dir!r}")
+            pattern = _safe_output_pattern(job.get("exrPattern"), "%04d.exr")
+            frame_start = int(job.get("frameStart", 1001))
+            fps = float(job.get("fps") or 24.0)
+
+            # The pattern may be just "%04d.exr" or "name.%04d.exr"; if the exact
+            # start frame isn't present, fall back to the first EXR on disk.
+            in_path = os.path.join(exr_dir, pattern)
+            if not os.path.isfile(in_path.replace("%04d", str(frame_start).zfill(4))):
+                found = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
+                if not found:
+                    raise RuntimeError(f"No EXR frames in {exr_dir}")
+                # derive start number from the first file when possible
+                import re
+                m = re.search(r"(\d+)\.exr$", os.path.basename(found[0]))
+                if m:
+                    frame_start = int(m.group(1))
+
+            cp = job.get("colorPlan") or {}
+            odt = job.get("odtId") or cp.get("odtId") or cp.get("odtName") or "rec709_sdr"
+            lut_id = aces2_luts.resolve_lut_id(odt, default="rec709_sdr")
+            if not lut_id:
+                raise RuntimeError("ACES 2.0 ODT LUTs not available (build tools/gen_aces2_luts.py)")
+            odt_vf = aces2_luts.ffmpeg_video_filter(lut_id)
+
+            # Encoder + colour tagging depend on the transform's dynamic range.
+            # The encoder's own -color_* flags aren't always honoured (e.g.
+            # videotoolbox writes 'linear' trc), so stamp via setparams in the
+            # filtergraph too. The bundled ffmpeg is LGPL → no libx264; use
+            # videotoolbox (h264/hevc) or prores.
+            reg = aces2_luts.REGISTRY.get(lut_id, {})
+            is_hdr = reg.get("dynamicRange") == "HDR"
+            if is_hdr:
+                # PQ → smpte2084, HLG → arib-std-b67; both Rec.2020 primaries, 10-bit HEVC.
+                trc = "arib-std-b67" if "HLG" in (reg.get("display", "")) else "smpte2084"
+                prim, mtx = "bt2020", "bt2020nc"
+                tag = f"setparams=color_primaries={prim}:color_trc={trc}:colorspace={mtx}"
+                enc = ["-c:v", "hevc_videotoolbox", "-profile:v", "main10",
+                       "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+                       "-b:v", str(job.get("bitrate") or "30M")]
+                vf = f"{odt_vf},format=yuv420p10le,{tag}"
+                ext = ".mov"
+                col = ["-colorspace", mtx, "-color_primaries", prim, "-color_trc", trc, "-color_range", "tv"]
+            else:
+                prim = mtx = trc = "bt709"
+                tag = f"setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+                codec = str(job.get("codec") or "h264").lower()
+                if codec == "prores":
+                    enc = ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]
+                    vf = f"{odt_vf},format=yuv422p10le,{tag}"
+                    ext = ".mov"
+                else:
+                    enc = ["-c:v", "h264_videotoolbox", "-b:v", str(job.get("bitrate") or "12M")]
+                    vf = f"{odt_vf},format=yuv420p,{tag}"
+                    ext = ".mp4"
+                col = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+            codec = "hevc" if is_hdr else str(job.get("codec") or "h264").lower()
+
+            out = job.get("output") or ""
+            if not out:
+                review_dir = pkg.get("review") or exr_dir
+                os.makedirs(review_dir, exist_ok=True)
+                name = job.get("shotId") or os.path.basename(os.path.normpath(exr_dir)) or "review"
+                out = os.path.join(review_dir, f"{name}_aces2_{lut_id}{ext}")
+            else:
+                os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+
+            cmd = [ff, "-y", "-framerate", f"{fps:g}",
+                   "-start_number", str(frame_start),
+                   "-i", os.path.join(exr_dir, pattern),
+                   "-vf", vf,
+                   *enc,
+                   *col,   # stream colour tags (SDR Rec.709 / HDR Rec.2020 PQ|HLG)
+                   "-movflags", "+faststart" if ext == ".mp4" else "+write_colr",
+                   out]
+            state["progressPct"] = 10
+            r = subprocess.run(cmd, capture_output=True, timeout=3600)
+            if r.returncode != 0 or not (os.path.isfile(out) and os.path.getsize(out) > 0):
+                raise RuntimeError("ffmpeg review render failed: "
+                                   + r.stderr.decode("utf-8", "replace")[-400:])
+            state.update({
+                "state": "done", "progressPct": 100,
+                "result": {
+                    "status": "success",
+                    "output": out,
+                    "odtId": lut_id,
+                    "odtStandard": "ACES 2.0",
+                    "codec": codec,
+                    "colorEngine": "ffmpeg+aces2_lut",
+                },
+            })
+        except Exception as exc:
+            state.update({"state": "failed", "error": str(exc)})
 
     def _render_pull_exr_status(self, request: dict[str, Any]) -> dict[str, Any]:
         job_id = str(request.get("jobId") or "")
@@ -4986,6 +5686,25 @@ class CompanionApi:
         except Exception as exc:
             return self._error("RESOLVE_ENGINE_START_FAILED", str(exc), "Could not start Resolve Engine.")
 
+    def _resolve_start_background(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Launch Resolve HIDDEN in the background and return IMMEDIATELY. The JS
+        caller (_pmEnsureResolveConnected) polls for the connection itself, so we
+        must NOT block here — delegating to _resolve_start_engine waits up to 60s
+        and times out the companion call ("Companion error"). `open -gj` =
+        don't-foreground + launch-hidden; Resolve has no headless mode but this
+        avoids stealing focus."""
+        import os, subprocess
+        app = "/Applications/DaVinci Resolve/DaVinci Resolve.app"
+        try:
+            if not os.path.isdir(app):
+                return self._ok({"ok": False, "installed": False, "launched": False, "state": "not_installed"})
+            if self._get_resolve_app() is not None:
+                return self._ok({"ok": True, "running": True, "launched": False, "state": "connected"})
+            subprocess.Popen(["open", "-gj", app])   # non-blocking, hidden
+            return self._ok({"ok": True, "installed": True, "launched": True, "state": "launching"})
+        except Exception as exc:
+            return self._error("RESOLVE_START_FAILED", str(exc), "Could not launch Resolve.")
+
     def _resolve_stop_engine(self, request: dict[str, Any]) -> dict[str, Any]:
         """Stop a companion-owned Resolve background process, if any."""
         force = bool(request.get("force") or False)
@@ -5768,6 +6487,64 @@ class CompanionApi:
 
 
 
+def _still_avg_luma_ffmpeg(path: str, ffmpeg: str) -> "float | None":
+    """Average luma (0-255) of an image via ffmpeg — PIL-free (the companion's
+    python often lacks Pillow). Scales the whole frame to 1×1 gray = the mean.
+    Returns None if it can't be computed."""
+    try:
+        import subprocess as _sp
+        r = _sp.run([ffmpeg, "-v", "error", "-i", path, "-vf", "scale=1:1",
+                     "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                    capture_output=True, timeout=10)
+        if r.returncode == 0 and r.stdout:
+            return float(r.stdout[0])
+    except Exception:
+        pass
+    return None
+
+
+def _is_preview_timeline_name(name: Any) -> bool:
+    """True for a PostFlowX preview scratch timeline (`pfx_still_*` from the api
+    path, `PFX_Preview_*`/`pfx_preview*` from the resolve_bridge path). These are
+    throwaway — safe to garbage-collect when not the warm one in use."""
+    n = str(name or "").lower()
+    return n.startswith("pfx_still_") or n.startswith("pfx_preview")
+
+
+def _safe_name_component(value: Any, fallback: str = "item") -> str:
+    """One filesystem path SEGMENT with separators/traversal neutralized.
+    '/' '\\' → '_', leading/trailing dots+underscores stripped, so '..' and
+    'A001/C002' can never become path components. Mirrors proxy_service's
+    _safe_filename_component. Legit names (e.g. 'SH010_PL01') pass unchanged."""
+    raw = str(value or "").strip()
+    cleaned = "".join(c if (c.isalnum() or c in ("-", "_", ".")) else "_" for c in raw)
+    cleaned = cleaned.strip(" ._")
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned[:180] or fallback
+
+
+def _confined_join(base: str, *parts: Any) -> str:
+    """Join parts under `base` and verify the result stays inside it.
+    Defends EXR/AMF writes against path traversal (../, absolute paths, symlink
+    escapes) from renderer-supplied shotName / outputPattern. Raises ValueError
+    on escape — callers return a clean error rather than writing outside base."""
+    base_r = os.path.realpath(base)
+    target = os.path.realpath(os.path.join(base, *[str(p) for p in parts]))
+    if base_r != target and os.path.commonpath([base_r, target]) != base_r:
+        raise ValueError(f"path escapes output directory: {parts!r}")
+    return target
+
+
+def _safe_output_pattern(pattern: Any, fallback: str = "%04d.exr") -> str:
+    """Reject a renderer-supplied frame pattern that contains path separators or
+    traversal — a malicious outputPattern must not write outside the output dir."""
+    s = str(pattern or "").strip()
+    if not s or "/" in s or "\\" in s or ".." in s or os.path.isabs(s):
+        return fallback
+    return s
+
+
 def _tc_to_frames(tc: str, fps: float) -> int:
     """Convert HH:MM:SS:FF timecode string to absolute frame count."""
     try:
@@ -5925,18 +6702,49 @@ def _collect_named_nodes(root: ET.Element, node_name: str, attr_name: str) -> li
     return values
 
 
+# Speaker-channel-count → immersive bed layout (Dolby Atmos beds + common SDR).
+_BED_LAYOUT_BY_CH = {
+    1: "1.0", 2: "2.0", 6: "5.1", 7: "5.1.2", 8: "7.1",
+    10: "7.1.2", 12: "7.1.4", 14: "9.1.4", 16: "9.1.6",
+}
+
+
+def _adm_bed_layout(pack: ET.Element) -> tuple[int, str]:
+    """Channel count + layout label for a DirectSpeakers (bed) audioPackFormat.
+
+    The bed's channel count = number of audioChannelFormatIDRef children (BS.2076
+    ADM); 10 → 7.1.2, 12 → 7.1.4, 16 → 9.1.6, etc."""
+    ch = sum(1 for c in pack.iter() if _strip_ns(c.tag) == "audioChannelFormatIDRef")
+    return ch, _BED_LAYOUT_BY_CH.get(ch, f"{ch}ch")
+
+
 def _inspect_iab_asset(path: Path) -> dict[str, Any]:
     xml_text = _extract_embedded_adm_xml(path)
-    root = ET.fromstring(xml_text)
+    root = safe_xml.fromstring(xml_text)
     programme_names = _collect_named_nodes(root, "audioProgramme", "audioProgrammeName")
     content_names = _collect_named_nodes(root, "audioContent", "audioContentName")
     object_names = _collect_named_nodes(root, "audioObject", "audioObjectName")
     pack_names = _collect_named_nodes(root, "audioPackFormat", "audioPackFormatName")
     track_format_names = _collect_named_nodes(root, "audioTrackFormat", "audioTrackFormatName")
-    total_objects = len(object_names)
-    numbered_objects = sum(1 for name in object_names if name.lower().startswith("object "))
-    named_objects = [name for name in object_names if not name.lower().startswith("object ")]
-    bed_objects = sum(1 for name in content_names if "bed" in name.lower())
+
+    # ── Type-based bed/object split (authoritative — not a name heuristic) ──────
+    # ADM typeDefinition="DirectSpeakers" (typeLabel 0001) = a channel bed;
+    # "Objects" (0003) = dynamic objects. Derive bed layout from the bed pack's
+    # channel count.
+    beds: list[dict[str, Any]] = []
+    object_pack_count = 0
+    for node in root.iter():
+        if _strip_ns(node.tag) != "audioPackFormat":
+            continue
+        td = (node.attrib.get("typeDefinition") or "").strip()
+        tl = (node.attrib.get("typeLabel") or "").strip()
+        nm = (node.attrib.get("audioPackFormatName") or "").strip()
+        if td == "DirectSpeakers" or tl == "0001":
+            ch, layout = _adm_bed_layout(node)
+            beds.append({"name": nm or "Bed", "channels": ch, "layout": layout})
+        elif td == "Objects" or tl == "0003":
+            object_pack_count += 1
+
     adm_stats = {
         "audioProgramme": sum(1 for node in root.iter() if _strip_ns(node.tag) == "audioProgramme"),
         "audioContent": sum(1 for node in root.iter() if _strip_ns(node.tag) == "audioContent"),
@@ -5944,6 +6752,26 @@ def _inspect_iab_asset(path: Path) -> dict[str, Any]:
         "audioPackFormat": sum(1 for node in root.iter() if _strip_ns(node.tag) == "audioPackFormat"),
         "audioTrackFormat": sum(1 for node in root.iter() if _strip_ns(node.tag) == "audioTrackFormat"),
     }
+
+    # Count-driven (robust when objects lack name attributes): prefer the ADM
+    # element/type counts over named-list lengths.
+    bed_count = len(beds)
+    dynamic_objects = object_pack_count or max(0, adm_stats["audioObject"] - bed_count)
+    total_objects = adm_stats["audioObject"] or len(object_names)
+    numbered_objects = sum(1 for name in object_names if name.lower().startswith("object "))
+    named_objects = [name for name in object_names
+                     if name and not name.lower().startswith("object ") and "bed" not in name.lower()]
+    bed_layout = beds[0]["layout"] if beds else ""
+
+    # Structured track list for the Resolve-style track view (bed + Object 1..N).
+    tracks: list[dict[str, Any]] = []
+    for b in beds:
+        tracks.append({"type": "bed", "name": b["name"], "layout": b["layout"], "channels": b["channels"]})
+    for name in object_names:
+        if "bed" in name.lower():
+            continue
+        tracks.append({"type": "object", "name": name, "layout": "Object", "channels": 1})
+
     return {
         "xmlRoot": _strip_ns(root.tag),
         "programmeNames": programme_names,
@@ -5952,12 +6780,17 @@ def _inspect_iab_asset(path: Path) -> dict[str, Any]:
         "packNames": pack_names,
         "trackFormatNames": track_format_names,
         "admStats": adm_stats,
+        "beds": beds,
+        "bedLayout": bed_layout,
+        "tracks": tracks,
         "objectSummary": {
             "totalObjects": total_objects,
-            "bedObjects": bed_objects,
+            "bedObjects": bed_count,
+            "dynamicObjects": dynamic_objects,
             "numberedObjects": numbered_objects,
             "namedObjects": len(named_objects),
             "sampleNamedObjects": named_objects[:12],
+            "bedLayout": bed_layout,
         },
         "xmlSize": len(xml_text),
     }

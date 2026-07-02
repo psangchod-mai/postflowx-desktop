@@ -59,6 +59,11 @@ class IMFPlayer {
     this._state       = 'stopped';
     this._currentFrame= 0;
     this._rate        = 1;
+    // Playback quality (C-RT1): full-res can't sustain real-time J2K decode on CPU
+    // (see PostFlowX_CRT0_Audit.md), so the companion can decode at a reduced J2K
+    // level (-lowres) during continuous play. 'auto'=half-res by default for smooth
+    // playback; scrub/pause always render full-res. full|half|quarter|auto.
+    this._quality     = opts.quality || 'auto';
     this._disposed    = false;
 
     this._streamReader  = null;
@@ -129,7 +134,8 @@ class IMFPlayer {
 
     const r = await _pfx().imfEngine.startPlayback(
       this._packageId, this._cplId,
-      { startFrame: this._currentFrame, outputWidth: opts.outputWidth || 1920, ...opts }
+      { startFrame: this._currentFrame, outputWidth: opts.outputWidth || 1920,
+        quality: this._quality, ...opts }
     );
     if (!r.ok) {
       this._emitError(r.code || 'START_FAILED', r.error || 'Playback start failed');
@@ -220,6 +226,20 @@ class IMFPlayer {
       _pfx().imfEngine.controlPlayback(this._sessionId, 'setRate', rate);
     }
   }
+
+  // Playback quality / J2K decode level (C-RT1): 'full' | 'half' | 'quarter' | 'auto'.
+  // Reduced levels let HD/UHD J2K sustain real-time on CPU. Applied live mid-play;
+  // takes effect on the next stream (companion restarts ffmpeg with -lowres N).
+  setQuality(q) {
+    const allowed = new Set(['full', 'half', 'quarter', 'auto']);
+    if (!allowed.has(q)) return;
+    this._quality = q;
+    if (this._sessionId && this._state === 'playing') {
+      _pfx().imfEngine.controlPlayback(this._sessionId, 'quality', q);
+    }
+  }
+
+  getQuality() { return this._quality; }
 
   async dispose() {
     this._disposed = true;

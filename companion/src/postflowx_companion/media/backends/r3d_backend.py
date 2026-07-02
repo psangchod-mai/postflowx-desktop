@@ -266,18 +266,31 @@ class R3dBackend(BaseMediaBackend):
         self._cache.mkdir(parents=True, exist_ok=True)
 
         # Detection results
-        self._sdk_lib    = None     # ctypes lib (official R3DSDK)
+        self._sdk_lib    = None     # ctypes lib (official R3DSDK) — see note in _detect
         self._sdk_path   = None     # path that loaded
         self._dr_path    = None     # DaVinci Resolve R3D library path
         self._has_ffprobe_r3d = False
+        self._helper      = None    # pfx_r3d_decode native helper binary (full decode)
+        self._helper_libdir = None  # folder holding the SDK redistributable dylibs
+        self._helper_ver  = None    # SDK version string reported by the helper
         self._last_error: str | None = None
 
         self._detect()
+        self._detect_helper()
 
     # ── Detection ─────────────────────────────────────────────────────────────
 
     def _find_tool(self, name: str) -> str | None:
         import shutil
+        # Prefer the bundled binary (Dev Brief P0#2): a GUI-launched companion has a
+        # stripped PATH and no /opt/homebrew, so bare shutil.which fails in production.
+        try:
+            from ...proxy_service import _resource_bin
+            b = _resource_bin(name)
+            if b:
+                return b
+        except Exception:
+            pass
         return shutil.which(name)
 
     def _detect(self) -> None:
@@ -308,19 +321,72 @@ class R3dBackend(BaseMediaBackend):
             except Exception:
                 self._has_ffprobe_r3d = False
 
+    def _detect_helper(self) -> None:
+        """Locate the pfx_r3d_decode native helper (Dev Brief P1#4).
+
+        The official R3D SDK on macOS is a C++ static lib, so full decode runs
+        through this helper binary (which links it) rather than ctypes. The
+        helper needs the SDK redistributable dylibs on disk; we point it at
+        them via PFX_R3DSDK_LIBDIR (its own ../r3d_libs by default).
+        Verified by running `pfx_r3d_decode version`.
+        """
+        env_bin = str(os.environ.get("PFX_R3D_HELPER") or "").strip()
+        candidates = []
+        if env_bin:
+            candidates.append(Path(env_bin))
+        base = Path(__file__).resolve().parents[5]   # repo root (dev) / Resources (packaged)
+        for prefix in (base, base / "app.asar.unpacked"):
+            candidates.append(prefix / "electron" / "native" / "pfx_r3d_decode")
+
+        for cand in candidates:
+            try:
+                if not (cand.is_file() and os.access(str(cand), os.X_OK)):
+                    continue
+                libdir = str(os.environ.get("PFX_R3DSDK_LIBDIR") or "").strip() \
+                    or str(cand.parent / "r3d_libs")
+                env = dict(os.environ)
+                env["PFX_R3DSDK_LIBDIR"] = libdir
+                r = subprocess.run([str(cand), "version"],
+                                   capture_output=True, text=True, timeout=15, env=env)
+                if r.returncode == 0 and '"ok":true' in (r.stdout or ""):
+                    import json
+                    try:
+                        info = json.loads(r.stdout.strip().splitlines()[-1])
+                        self._helper_ver = info.get("sdkVersion")
+                    except Exception:
+                        pass
+                    self._helper = str(cand)
+                    self._helper_libdir = libdir
+                    return
+            except Exception as exc:
+                self._last_error = f"r3d helper probe failed: {exc}"
+
+    def _helper_env(self) -> dict:
+        env = dict(os.environ)
+        if self._helper_libdir:
+            env["PFX_R3DSDK_LIBDIR"] = self._helper_libdir
+        return env
+
     # ── Status ────────────────────────────────────────────────────────────────
 
     @property
+    def _helper_ready(self) -> bool:
+        return bool(self._helper)
+
+    @property
     def _sdk_ready(self) -> bool:
+        # ctypes loading of the R3D SDK is not possible on macOS (static C++ lib);
+        # the native helper is the real full-decode path. Kept for the (unused)
+        # ctypes branch / future platforms.
         return bool(self._sdk_lib)
 
     @property
     def _can_metadata(self) -> bool:
-        return self._sdk_ready or bool(self._ffprobe)
+        return self._helper_ready or self._sdk_ready or bool(self._ffprobe)
 
     @property
     def _can_frames(self) -> bool:
-        return self._sdk_ready or bool(self._ffmpeg)
+        return self._helper_ready or self._sdk_ready or bool(self._ffmpeg)
 
     # ── BaseMediaBackend interface ─────────────────────────────────────────────
 
@@ -343,7 +409,7 @@ class R3dBackend(BaseMediaBackend):
         # Check whether ffmpeg can actually decode THIS specific R3D file.
         # Newer generations (NRED2 etc.) use a format ffmpeg's r3d demuxer
         # does not support even though ffmpeg is installed.
-        if self._sdk_ready:
+        if self._helper_ready or self._sdk_ready:
             frames_decodable = True
         elif self._ffmpeg:
             frames_decodable = self._probe_ffmpeg_decodable(path)
@@ -394,7 +460,14 @@ class R3dBackend(BaseMediaBackend):
         fmt     = options.get("format", "jpg")
         width   = int(options.get("width",  1920))
         height  = int(options.get("height", 1080))
+        # Optional ACES 2.0 output transform (display rendering). When set, the
+        # frame is decoded to ACES2065-1 and the ACES 2.0 ODT is baked via ffmpeg
+        # instead of RED's default IPP2 look. Accepts an id ("rec709_sdr") or an
+        # ODT name ("Rec.709"); resolved by color.aces2_luts.
+        odt = options.get("odt") or options.get("outputTransform")
 
+        if self._helper_ready:
+            return self._decode_frame_helper(path, frame_index, fmt, width, height, odt=odt)
         if self._sdk_ready:
             return self._decode_frame_sdk(path, frame_index, fmt, width, height)
         if self._ffmpeg:
@@ -415,6 +488,14 @@ class R3dBackend(BaseMediaBackend):
         }
 
     def get_status(self) -> dict[str, Any]:
+        if self._helper_ready:
+            return {
+                "status":     BackendStatus.READY,
+                "decodeMode": "full",
+                "version":    self._helper_ver or "r3dsdk_native_helper",
+                "lastError":  None,
+                "decodePath": "r3d_native_helper",
+            }
         if self._sdk_ready:
             return {
                 "status":     BackendStatus.READY,
@@ -472,7 +553,12 @@ class R3dBackend(BaseMediaBackend):
             if probe.get("height") and probe["height"] > 0:
                 meta["height"] = probe["height"]
 
-        # Layer 3: R3DSDK (if installed) — rich metadata including color science
+        # Layer 3: native helper probe (authoritative R3D SDK metadata)
+        if self._helper_ready:
+            hm = self._probe_helper(path)
+            meta.update({k: v for k, v in hm.items() if v is not None})
+
+        # Layer 4: R3DSDK ctypes (if ever installed) — rich metadata
         if self._sdk_ready:
             sdk_meta = self._read_metadata_sdk(path)
             meta.update({k: v for k, v in sdk_meta.items() if v is not None})
@@ -507,6 +593,154 @@ class R3dBackend(BaseMediaBackend):
         raise NotImplementedError(
             "R3DSDK frame decode: populate R3DSDK_decode() when SDK is installed and verified"
         )
+
+    # ── Native helper (pfx_r3d_decode) — real full decode path ─────────────────
+
+    def _probe_helper(self, path: str) -> dict[str, Any]:
+        """Authoritative clip metadata via the native helper's `probe`."""
+        try:
+            r = subprocess.run([self._helper, "probe", path],
+                               capture_output=True, text=True, timeout=30,
+                               env=self._helper_env())
+            if r.returncode != 0:
+                return {}
+            import json
+            info = json.loads(r.stdout.strip().splitlines()[-1])
+            if not info.get("ok"):
+                return {}
+            out = {
+                "width":          info.get("width"),
+                "height":         info.get("height"),
+                "durationFrames": info.get("frameCount"),
+                "fps":            info.get("fps"),
+                "timecodeStart":  info.get("startTimecode"),
+            }
+            fc, fps = info.get("frameCount"), info.get("fps")
+            if fc and fps:
+                out["durationSec"] = fc / fps
+            return out
+        except Exception as exc:
+            self._last_error = f"r3d helper probe failed: {exc}"
+            return {}
+
+    def _decode_frame_helper(self, path: str, frame_index: int,
+                             fmt: str, width: int, height: int,
+                             odt: str | None = None) -> dict[str, Any]:
+        """Decode a frame via the native helper → raw pixels → JPEG/PNG via ffmpeg.
+
+        Picks the smallest SDK decode resolution that still covers the requested
+        width (full/half/quarter/eighth) to keep decode fast, then ffmpeg scales
+        to the exact requested size.
+
+        When `odt` resolves to an ACES 2.0 output transform, the frame is decoded
+        to ACES2065-1 (aceshalf) and the ACES 2.0 display transform is baked via
+        ffmpeg (lut1d+lut3d) instead of using RED's default IPP2 look.
+        """
+        meta = self._get_metadata_impl(path)
+        full_w = int(meta.get("width") or 0)
+
+        # choose decode mode by how much downscale the request allows
+        mode = "full"
+        if full_w > 0 and width > 0:
+            ratio = full_w / float(width)
+            if   ratio >= 16: mode = "sixteenth"
+            elif ratio >= 8:  mode = "eighth"
+            elif ratio >= 4:  mode = "quarter"
+            elif ratio >= 2:  mode = "half"
+
+        # Resolve the ACES 2.0 output transform (if any + LUTs present).
+        # This preview path encodes an 8-bit JPEG/PNG (SDR by nature), so an HDR
+        # ODT (PQ/HLG) would bake HDR code values into an SDR container and look
+        # wrong viewed as sRGB. Substitute the matching SDR Rec.709 transform for
+        # the thumbnail; HDR display belongs to the review-movie path.
+        aces2_id = aces2_vf = None
+        if odt:
+            try:
+                from ...color import aces2_luts
+                aces2_id = aces2_luts.resolve_lut_id(odt, default=None)
+                if aces2_id and aces2_luts.REGISTRY.get(aces2_id, {}).get("dynamicRange") == "HDR":
+                    aces2_id = "rec709_sdr" if aces2_luts.cube_path("rec709_sdr") else None
+                if aces2_id:
+                    aces2_vf = aces2_luts.ffmpeg_video_filter(aces2_id)
+            except Exception as exc:
+                self._last_error = f"ACES 2.0 ODT unavailable: {exc}"
+                aces2_id = aces2_vf = None
+
+        tag = aces2_id or "ipp2"
+        cache_key = hashlib.sha256(
+            f"r3dhelper:{path}:{frame_index}:{width}:{height}:{fmt}:{mode}:{tag}".encode()
+        ).hexdigest()
+        out_path = self._cache / f"{cache_key}.{fmt}"
+
+        if not (out_path.is_file() and out_path.stat().st_size > 0):
+            if not self._ffmpeg:
+                raise RuntimeError("ffmpeg unavailable to encode decoded R3D frame")
+            suffix = ".raw"
+            raw_fd, raw_tmp = tempfile.mkstemp(suffix=suffix, dir=str(self._cache))
+            os.close(raw_fd)
+            try:
+                pixfmt = "aceshalf" if aces2_vf else "bgra8"
+                r = subprocess.run(
+                    [self._helper, "decode", path, str(frame_index), mode, pixfmt, raw_tmp],
+                    capture_output=True, text=True, timeout=120, env=self._helper_env())
+                if r.returncode != 0:
+                    raise RuntimeError(f"r3d helper decode failed: {r.stdout or r.stderr}")
+                import json
+                info = json.loads(r.stdout.strip().splitlines()[-1])
+                if not info.get("ok"):
+                    raise RuntimeError(f"r3d helper decode error: {info.get('error')}")
+                dw, dh = int(info["width"]), int(info["height"])
+
+                if aces2_vf:
+                    # aceshalf = interleaved RGB16F (ACES2065-1). Repack to planar
+                    # float32 (G,B,R) so ffmpeg can read it as gbrpf32le, then apply
+                    # the ACES 2.0 shaper+cube and scale.
+                    self._aces_half_to_gbrpf32(raw_tmp, dw, dh)
+                    vf = f"{aces2_vf},scale={width}:{height}:flags=lanczos"
+                    cmd = [self._ffmpeg, "-y", "-f", "rawvideo", "-pix_fmt", "gbrpf32le",
+                           "-s", f"{dw}x{dh}", "-i", raw_tmp,
+                           "-vf", vf, "-frames:v", "1", str(out_path)]
+                else:
+                    # raw BGRA (RED default look) → scaled JPEG/PNG
+                    cmd = [self._ffmpeg, "-y", "-f", "rawvideo", "-pixel_format", "bgra",
+                           "-video_size", f"{dw}x{dh}", "-i", raw_tmp,
+                           "-vf", f"scale={width}:{height}:flags=lanczos",
+                           "-frames:v", "1", str(out_path)]
+                fr = subprocess.run(cmd, capture_output=True, timeout=60)
+                if fr.returncode != 0 or not (out_path.is_file() and out_path.stat().st_size > 0):
+                    raise RuntimeError(f"ffmpeg encode of R3D frame failed: {fr.stderr.decode(errors='replace')[:300]}")
+            finally:
+                try: Path(raw_tmp).unlink(missing_ok=True)
+                except Exception: pass
+
+        import base64
+        mime = "image/jpeg" if fmt == "jpg" else "image/png"
+        with open(str(out_path), "rb") as f:
+            data_url = f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+        return {
+            "previewImagePath": str(out_path),
+            "dataUrl":          data_url,
+            "frameIndex":       frame_index,
+            "backend":          "r3d_native_helper",
+            "decodeMode":       mode,
+            "colorPath":        f"aces2:{aces2_id}" if aces2_id else "ipp2_default",
+            "cacheHit":         False,
+        }
+
+    @staticmethod
+    def _aces_half_to_gbrpf32(raw_path: str, w: int, h: int) -> None:
+        """Repack interleaved RGB16F (ACES2065-1, helper aceshalf output) → planar
+        float32 G,B,R (ffmpeg gbrpf32le) IN PLACE. Preview-sized buffers only."""
+        import struct
+        with open(raw_path, "rb") as f:
+            data = f.read()
+        n = w * h * 3
+        vals = struct.unpack(f"<{n}e", data[:n * 2])     # half-float
+        R = vals[0::3]; G = vals[1::3]; B = vals[2::3]
+        with open(raw_path, "wb") as f:
+            f.write(struct.pack(f"<{len(G)}f", *G))
+            f.write(struct.pack(f"<{len(B)}f", *B))
+            f.write(struct.pack(f"<{len(R)}f", *R))
 
     # ── ffmpeg proxy extraction ────────────────────────────────────────────────
 

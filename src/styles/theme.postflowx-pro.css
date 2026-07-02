@@ -1,70 +1,94 @@
 /* ═══════════════════════════════════════════════════════════════════
-   PostFlowX Pro — Design Token System
-   One accent. Semantic status. Muted surfaces. No neon.
+   Hawkins Professional — PostFlowX design layer
+   One accent. Semantic status. Flat dark surfaces. No neon.
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
+  /* Hawkins Professional dark theme tokens */
+  --hwk-surface:   #161616;
+  --hwk-surface-2: #1f1f1f;
+  --hwk-surface-3: #262626;
+  --hwk-canvas:    #0e0e0e;
+  --hwk-fg:        rgba(255,255,255,.9);
+  --hwk-fg-muted:  rgba(255,255,255,.6);
+  --hwk-fg-subtle: rgba(255,255,255,.4);
+  --hwk-border:    rgba(255,255,255,.12);
+  --hwk-border-2:  rgba(255,255,255,.18);
+  --hwk-border-3:  rgba(255,255,255,.28);
+  --hwk-blue500:   #2172E3;
+  --hwk-blue400:   #4a8ce8;
+  --hwk-green:     #0AA356;
+  --hwk-red:       #E5484D;
+  --hwk-yellow:    #E0B341;
+  --hwk-radius-0:  4px;
+  --hwk-radius-1:  6px;
+  --hwk-radius-pill: 100px;
+  --hwk-shadow-low:  0 1px 2px rgba(0,0,0,.40);
+  --hwk-shadow-mid:  0 4px 12px rgba(0,0,0,.45);
+  --hwk-shadow-high: 0 12px 32px rgba(0,0,0,.55);
+  --hwk-focus-ring: 0 0 0 2px rgba(33,114,227,.55);
+
   /* ── Base surfaces ─────────────────────────────────────────────── */
-  --pfx-bg-app:       #08090c;
-  --pfx-bg-window:    #0b0c10;
-  --pfx-bg-panel:     #111217;
-  --pfx-bg-panel-2:   #15161c;
-  --pfx-bg-card:      #121318;
-  --pfx-bg-elevated:  #191a21;
+  --pfx-bg-app:       var(--hwk-canvas);
+  --pfx-bg-window:    var(--hwk-canvas);
+  --pfx-bg-panel:     var(--hwk-surface);
+  --pfx-bg-panel-2:   var(--hwk-surface-2);
+  --pfx-bg-card:      var(--hwk-surface);
+  --pfx-bg-elevated:  var(--hwk-surface-2);
   --pfx-bg-viewer:    #050609;
 
   /* ── Borders ───────────────────────────────────────────────────── */
-  --pfx-border-subtle:  rgba(255,255,255,0.06);
-  --pfx-border-default: rgba(255,255,255,0.10);
-  --pfx-border-strong:  rgba(255,255,255,0.16);
+  --pfx-border-subtle:  var(--hwk-border);
+  --pfx-border-default: var(--hwk-border-2);
+  --pfx-border-strong:  var(--hwk-border-3);
 
   /* ── Text ──────────────────────────────────────────────────────── */
-  --pfx-text-primary:   rgba(255,255,255,0.88);
-  --pfx-text-secondary: rgba(255,255,255,0.62);
-  --pfx-text-tertiary:  rgba(255,255,255,0.42);
+  --pfx-text-primary:   var(--hwk-fg);
+  --pfx-text-secondary: var(--hwk-fg-muted);
+  --pfx-text-tertiary:  var(--hwk-fg-subtle);
   --pfx-text-disabled:  rgba(255,255,255,0.24);
 
   /* ── Brand accent — active tab, selected button, focus ring ────── */
-  --pfx-accent:        #5aa7ff;
-  --pfx-accent-soft:   rgba(90,167,255,0.16);
-  --pfx-accent-border: rgba(90,167,255,0.38);
+  --pfx-accent:        var(--hwk-blue500);
+  --pfx-accent-soft:   rgba(33,114,227,0.16);
+  --pfx-accent-border: rgba(33,114,227,0.46);
 
   /* ── Semantic — success ────────────────────────────────────────── */
-  --pfx-success:        #4ccf7a;
-  --pfx-success-soft:   rgba(76,207,122,0.14);
-  --pfx-success-border: rgba(76,207,122,0.32);
+  --pfx-success:        var(--hwk-green);
+  --pfx-success-soft:   rgba(10,163,86,0.14);
+  --pfx-success-border: rgba(10,163,86,0.34);
 
   /* ── Semantic — warning ────────────────────────────────────────── */
-  --pfx-warning:        #d6a33a;
-  --pfx-warning-soft:   rgba(214,163,58,0.14);
-  --pfx-warning-border: rgba(214,163,58,0.32);
+  --pfx-warning:        var(--hwk-yellow);
+  --pfx-warning-soft:   rgba(224,179,65,0.14);
+  --pfx-warning-border: rgba(224,179,65,0.34);
 
   /* ── Semantic — danger ─────────────────────────────────────────── */
-  --pfx-danger:        #ff5a6a;
-  --pfx-danger-soft:   rgba(255,90,106,0.14);
-  --pfx-danger-border: rgba(255,90,106,0.34);
+  --pfx-danger:        var(--hwk-red);
+  --pfx-danger-soft:   rgba(229,72,77,0.14);
+  --pfx-danger-border: rgba(229,72,77,0.36);
 
   /* ── Semantic — info ───────────────────────────────────────────── */
-  --pfx-info:        #7aa2c7;
-  --pfx-info-soft:   rgba(122,162,199,0.12);
-  --pfx-info-border: rgba(122,162,199,0.26);
+  --pfx-info:        var(--hwk-blue400);
+  --pfx-info-soft:   rgba(33,114,227,0.12);
+  --pfx-info-border: rgba(33,114,227,0.28);
 
   /* ── Timeline lanes — muted until selected ─────────────────────── */
-  --pfx-lane-video:       #4f6fd6;
-  --pfx-lane-video-soft:  rgba(79,111,214,0.38);
-  --pfx-lane-audio:       #3a9d63;
-  --pfx-lane-audio-soft:  rgba(58,157,99,0.36);
+  --pfx-lane-video:       var(--hwk-blue500);
+  --pfx-lane-video-soft:  rgba(33,114,227,0.34);
+  --pfx-lane-audio:       var(--hwk-green);
+  --pfx-lane-audio-soft:  rgba(10,163,86,0.30);
   --pfx-lane-metadata:    #6e7480;
-  --pfx-lane-selected:    #7fb2ff;
+  --pfx-lane-selected:    var(--hwk-blue400);
 
   /* ── Buttons ───────────────────────────────────────────────────── */
-  --pfx-btn-bg:          rgba(255,255,255,0.055);
-  --pfx-btn-border:      rgba(255,255,255,0.10);
-  --pfx-btn-color:       rgba(255,255,255,0.62);
+  --pfx-btn-bg:          var(--hwk-surface-2);
+  --pfx-btn-border:      var(--hwk-border-2);
+  --pfx-btn-color:       var(--hwk-fg);
 
   /* ── Effects ───────────────────────────────────────────────────── */
-  --pfx-glow-accent:  0 0 0 1px var(--pfx-accent-border);
-  --pfx-shadow-panel: 0 16px 40px rgba(0,0,0,0.34);
+  --pfx-glow-accent:  var(--hwk-focus-ring);
+  --pfx-shadow-panel: var(--hwk-shadow-mid);
 }
 
 /* ── Semantic status pills ──────────────────────────────────────── */
@@ -99,16 +123,16 @@
   background: var(--pfx-btn-bg);
   border: 1px solid var(--pfx-btn-border);
   color: var(--pfx-btn-color);
-  border-radius: 7px;
+  border-radius: var(--hwk-radius-1);
   transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
 }
 .pfx-btn:hover {
-  background: rgba(255,255,255,0.10);
-  border-color: rgba(255,255,255,0.18);
+  background: var(--hwk-surface-3);
+  border-color: var(--hwk-border-3);
 }
 .pfx-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--pfx-accent-border);
+  box-shadow: var(--hwk-focus-ring);
 }
 .pfx-btn-primary {
   background: var(--pfx-accent-soft);
@@ -273,4 +297,1686 @@
 #main-prepmark .pm-vfx-ws-sheet-cell {
   background: var(--pfx-bg-viewer);
   border: 1px solid var(--pfx-border-subtle);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   6. Toolbar de-coloring — neutralize decorative button accents
+   Pull Prep's toolbar buttons each shipped their own neon accent
+   (orange Voice, purple AI, teal ALE, green Marker, amber Export/Smart
+   Import, violet Setup). They override the token system with !important
+   in main.css. Re-neutralize them to one graphite ghost style here (this
+   sheet loads last → wins). Genuine STATUS colors (link/pending/unlinked
+   pills, verify badges, AI model dot, voice-recording state) are kept.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.pm-ctx-btn-voice,
+.pm-ctx-btn-ai,
+.pm-ctx-btn-ale,
+.pm-ctx-btn-markerMatch,
+.pm-ctx-btn-export,
+.pm-ctx-btn-relink,
+.pm-ctx-btn-proxies,
+.pm-smart-btn,
+#pfxSetupBtn {
+  color: var(--pfx-text-secondary) !important;
+  background: var(--pfx-btn-bg) !important;
+  background-image: none !important;
+  border: 1px solid var(--pfx-btn-border) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.pm-ctx-btn-voice:hover,
+.pm-ctx-btn-ai:hover,
+.pm-ctx-btn-ale:hover,
+.pm-ctx-btn-markerMatch:hover,
+.pm-ctx-btn-export:hover,
+.pm-ctx-btn-relink:hover,
+.pm-ctx-btn-proxies:hover,
+.pm-smart-btn:hover,
+#pfxSetupBtn:hover {
+  color: var(--pfx-text-primary) !important;
+  background: rgba(255,255,255,0.09) !important;
+  background-image: none !important;
+  border-color: var(--pfx-border-strong) !important;
+  box-shadow: none !important;
+}
+
+/* Voice recording is a real status — keep it visible but mute the neon
+   pulse to a single restrained danger tint. */
+.pm-ctx-btn-voice.is-active {
+  animation: none !important;
+  color: var(--pfx-danger) !important;
+  border-color: var(--pfx-danger-border) !important;
+  background: var(--pfx-danger-soft) !important;
+  box-shadow: none !important;
+}
+
+/* Quick-setting buttons: collapse the per-mode rainbow active colors
+   (purple/cyan/yellow/aqua incl. the VFX Pull violet) into the single
+   brand accent. 'danger' (reset/clear) stays semantic. */
+.pm-qs-btn.active.theme-edl,
+.pm-qs-btn.active.theme-q1,
+.pm-qs-btn.active.theme-q2,
+.pm-qs-btn.active.theme-q3,
+.pm-qs-btn.active.theme-amf {
+  color: var(--pfx-accent) !important;
+  border-color: var(--pfx-accent-border) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   7. Hawkins Professional app shell
+   Final cascade pass for hard-coded component styles in the desktop UI.
+   ═══════════════════════════════════════════════════════════════════ */
+
+html,
+body,
+#appViewport,
+#appShell {
+  background: var(--hwk-canvas) !important;
+  color: var(--hwk-fg) !important;
+}
+
+.mac-titlebar,
+.mac-workspace-toolbar,
+.project-bar,
+.tabs {
+  background: var(--hwk-surface) !important;
+  border-color: var(--hwk-border) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-title,
+.project-label,
+.card-title,
+.top-aux-pane-title,
+.tb-workspace-section-title,
+.hs-section-title {
+  color: var(--hwk-fg) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-shadow: none !important;
+}
+
+.tab,
+.inner-tab,
+.top-aux-tab,
+.btn,
+.qs-btn,
+.pfx-global-tutorial-btn,
+.titlebar-status,
+.tb-action-card,
+.hs-btn,
+.hs-card,
+#hs-btn-open-site,
+.hs-recent-open,
+.proj-menu-item {
+  background: var(--hwk-surface-2) !important;
+  border: 1px solid var(--hwk-border-2) !important;
+  border-radius: var(--hwk-radius-1) !important;
+  color: var(--hwk-fg) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  transform: none !important;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease !important;
+}
+
+.tab:hover,
+.inner-tab:hover,
+.top-aux-tab:hover,
+.btn:hover,
+.qs-btn:hover,
+.pfx-global-tutorial-btn:hover,
+.titlebar-status:hover,
+.tb-action-card:hover,
+.hs-btn:hover,
+.hs-card:hover,
+#hs-btn-open-site:hover,
+.hs-recent-open:hover,
+.proj-menu-item:hover {
+  background: var(--hwk-surface-3) !important;
+  border-color: var(--hwk-border-3) !important;
+  color: var(--hwk-fg) !important;
+}
+
+.tab.active,
+.inner-tab.active,
+.top-aux-tab.active,
+.btn.active,
+.qs-btn.active,
+.hs-btn.primary,
+.hs-btn.is-primary {
+  background: var(--hwk-blue500) !important;
+  border-color: var(--hwk-blue500) !important;
+  color: #fff !important;
+}
+
+.tab .bar,
+.inner-tab .bar,
+.btn .bar,
+.qs-btn .bar,
+.version-btn .bar {
+  background: var(--hwk-blue500) !important;
+  box-shadow: none !important;
+}
+
+.card,
+.panel,
+.modal,
+.dialog,
+.popover,
+.dropdown,
+.top-aux-panel,
+.proj-recent-panel,
+.proj-dropdown-menu,
+#hs-site-card,
+#hs-status-panel,
+#hs-recents-panel,
+.hs-recent-row,
+.fun-launcher-item,
+.fun-card,
+.kpi,
+.pfx-vfx-ws-left,
+.pfx-vfx-ws-right,
+.pfx-vfx-ws-topbar {
+  background: var(--hwk-surface) !important;
+  border: 1px solid var(--hwk-border) !important;
+  border-radius: var(--hwk-radius-1) !important;
+  box-shadow: var(--hwk-shadow-low) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea,
+.project-name,
+.proj-recent-search,
+.fun-cfg-input {
+  background: var(--hwk-surface) !important;
+  border: 1px solid var(--hwk-border-2) !important;
+  border-radius: var(--hwk-radius-0) !important;
+  color: var(--hwk-fg) !important;
+  box-shadow: none !important;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+select:focus,
+textarea:focus,
+.project-name:focus,
+.proj-recent-search:focus,
+.fun-cfg-input:focus,
+.tab:focus-visible,
+.inner-tab:focus-visible,
+.top-aux-tab:focus-visible,
+.btn:focus-visible,
+.qs-btn:focus-visible,
+.pfx-global-tutorial-btn:focus-visible,
+.titlebar-status:focus-visible,
+.tb-action-card:focus-visible,
+.hs-btn:focus-visible,
+.hs-card:focus-visible,
+#hs-btn-open-site:focus-visible,
+.hs-recent-row:focus-visible,
+.proj-menu-item:focus-visible {
+  outline: none !important;
+  border-color: var(--hwk-blue500) !important;
+  box-shadow: var(--hwk-focus-ring) !important;
+}
+
+.muted,
+small,
+.card-subtitle,
+.hs-card-sub,
+.hs-status-label,
+.hs-recent-meta,
+.fun-launcher-sub,
+#hs-site-card-desc,
+#hs-site-card-url,
+.top-aux-pane-body {
+  color: var(--hwk-fg-muted) !important;
+}
+
+.pfx-status-ok,
+.hs-status-dot.ok,
+.hs-status-value.ok {
+  color: var(--hwk-green) !important;
+}
+
+.pfx-status-warn,
+.hs-status-dot.warn,
+.hs-status-value.warn {
+  color: var(--hwk-yellow) !important;
+}
+
+.pfx-status-error,
+.pfx-status-err,
+.hs-status-dot.error,
+.hs-status-value.error,
+.proj-menu-danger {
+  color: var(--hwk-red) !important;
+}
+
+#eventTable thead th,
+#eventTable tbody td,
+.ins-table th,
+.ins-table td,
+table th,
+table td {
+  border-color: var(--hwk-border) !important;
+}
+
+#eventTable thead th,
+table thead th {
+  background: var(--hwk-surface-2) !important;
+  color: var(--hwk-fg-muted) !important;
+}
+
+#eventTable tbody tr:hover td,
+table tbody tr:hover td,
+.hs-recent-row:hover,
+.fun-launcher-item:hover {
+  background: var(--hwk-surface-2) !important;
+}
+
+.alpha-badge,
+.pfx-project-type-badge,
+.pfx-resolve-pill,
+.hs-version,
+.imf-iab-ch-chip {
+  border-radius: var(--hwk-radius-pill) !important;
+  box-shadow: none !important;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.16);
+  border-radius: var(--hwk-radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,.26);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   8. Hawkins Professional feature normalization
+   The feature modules below ship their own color skins. Keep their
+   layout intact, but force the visual language back to Hawkins.
+   ═══════════════════════════════════════════════════════════════════ */
+
+[class*="theme-"],
+.tab[class*="theme-"],
+.btn[class*="theme-"],
+.qs-btn[class*="theme-"],
+.pm-qs-btn[class*="theme-"],
+.inner-tab[class*="theme-"],
+#qsRow .qs-btn,
+#cutdiffOldBrowse,
+#cutdiffNewBrowse,
+#cutdiffVcmpOldBrowse,
+#cutdiffVcmpNewBrowse,
+#cutdiffAnalyzeBtn,
+#cutdiffExportBtn,
+#cutdiffExportCsvBtn,
+#cutdiffExportPdfBtn,
+#cutdiffExportPackBtn,
+#amfChooseFolder,
+#amfRescan,
+#amfExportJson,
+#amfExportAE,
+#amfExportNuke,
+#amfExportNukeNK,
+#amfFlowConnect {
+  --c-bar: var(--hwk-blue500) !important;
+  --accent: var(--hwk-blue500) !important;
+}
+
+.theme-danger,
+#cutdiffClearBtn,
+.proj-menu-danger,
+.btn.danger,
+.btn.is-danger,
+button.danger,
+button.is-danger {
+  --c-bar: var(--hwk-red) !important;
+  --accent: var(--hwk-red) !important;
+}
+
+.mac-workspace-toolbar .tab.active,
+.tabs .tab.active {
+  background: var(--hwk-surface-2) !important;
+  border-color: var(--hwk-border-3) !important;
+}
+
+.mac-workspace-toolbar .tab.active .bar,
+.tabs .tab.active .bar {
+  height: 2px !important;
+  bottom: -1px !important;
+  background: var(--hwk-blue500) !important;
+  opacity: 1 !important;
+}
+
+.tab .bar,
+.inner-tab .bar,
+.btn .bar,
+.qs-btn .bar,
+.pm-qs-btn .bar {
+  background: var(--hwk-blue500) !important;
+  box-shadow: none !important;
+}
+
+button:not(.pfx-resolve-pill),
+.button,
+.chip,
+.pill,
+.badge,
+.seg,
+.seg-btn,
+.filter-chip,
+.status-pill,
+.top-pill,
+.pm-pill,
+.cd-pill,
+.pl2-pill,
+.al2-badge,
+.al2-mode-btn,
+.al2-output-btn,
+.al2-tab,
+.imf-tab,
+.imf-chip,
+.rq-filter,
+.rq-tab,
+.trl-step,
+.pf-scope-row,
+.pf-filter-chip {
+  border-radius: var(--hwk-radius-1) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+button:not(.pfx-resolve-pill):not(.tab):not(.inner-tab):not(.btn):not(.qs-btn):not(.pm-qs-btn):not(.pfx-tx-btn),
+.button,
+.chip,
+.pill,
+.badge,
+.seg-btn,
+.filter-chip,
+.status-pill,
+.top-pill,
+.pm-pill,
+.cd-pill,
+.pl2-pill,
+.al2-mode-btn,
+.al2-output-btn,
+.al2-tab,
+.imf-tab,
+.imf-chip,
+.rq-filter,
+.rq-tab,
+.pf-filter-chip {
+  background: var(--hwk-surface-2) !important;
+  border: 1px solid var(--hwk-border-2) !important;
+  color: var(--hwk-fg) !important;
+}
+
+button:not(.pfx-resolve-pill):not(.tab):not(.inner-tab):not(.btn):not(.qs-btn):not(.pm-qs-btn):not(.pfx-tx-btn):hover,
+.button:hover,
+.chip:hover,
+.pill:hover,
+.seg-btn:hover,
+.filter-chip:hover,
+.al2-mode-btn:hover,
+.al2-output-btn:hover,
+.al2-tab:hover,
+.imf-tab:hover,
+.rq-filter:hover,
+.rq-tab:hover {
+  background: var(--hwk-surface-3) !important;
+  border-color: var(--hwk-border-3) !important;
+}
+
+button.active,
+button.is-active,
+button[aria-selected="true"],
+.button.active,
+.chip.active,
+.pill.active,
+.seg-btn.active,
+.filter-chip.active,
+.al2-mode-btn.active,
+.al2-output-btn.active,
+.al2-tab.active,
+.imf-tab.active,
+.rq-tab.active,
+.rq-filter.active {
+  background: var(--hwk-blue500) !important;
+  border-color: var(--hwk-blue500) !important;
+  color: #fff !important;
+}
+
+button:disabled,
+.button:disabled,
+.btn:disabled,
+.qs-btn:disabled {
+  background: var(--hwk-surface) !important;
+  border-color: var(--hwk-border) !important;
+  color: var(--hwk-fg-subtle) !important;
+  opacity: .72 !important;
+}
+
+#main-home,
+#main-cutdiff,
+#main-cutdiff2,
+#main-prepmark,
+#main-preflight,
+#main-amf,
+#main-platelink2,
+#main-reviews,
+#main-imf,
+#main-trlconf,
+#main-aceslook,
+#main-renderq,
+#main-about,
+#main-tlconvert,
+[id^="main-"] {
+  background: var(--hwk-canvas) !important;
+  color: var(--hwk-fg) !important;
+}
+
+#main-renderq,
+#main-renderq .rq-shell,
+#main-renderq .rq-stage,
+#main-renderq .rq-empty,
+#main-renderq [class*="rq-"] {
+  background-color: var(--hwk-canvas) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+#main-renderq .rq-shell::before,
+#main-renderq .rq-shell::after,
+#main-renderq [class*="rq-"]::before,
+#main-renderq [class*="rq-"]::after {
+  background: none !important;
+  background-image: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+#main-cutdiff,
+#main-cutdiff2,
+#main-prepmark,
+#main-platelink2,
+#main-reviews,
+#main-imf,
+#main-aceslook,
+#main-tlconvert {
+  --diff-new: var(--hwk-green) !important;
+  --diff-extended: var(--hwk-blue400) !important;
+  --diff-changed: var(--hwk-yellow) !important;
+  --diff-removed: var(--hwk-red) !important;
+}
+
+.card,
+.hs-card,
+.tb-card,
+.pf-card,
+.rq-card,
+.amf-card,
+.trl-card,
+.al2-left-rail,
+.al2-right-panel,
+.al2-topbar,
+.al2-status-rail,
+.al2-rail-section,
+.al2-control-section,
+.al2-bottom-bar,
+.imf-panel,
+.imf-scope-card,
+.imf-sidebar,
+.pm-ctx-bar,
+.pm-subbar,
+.pm-tools,
+.pm-event-table,
+.pf-sidebar,
+.pf-toolbar,
+.pf-table-wrap,
+.rq-shell,
+.review-panel {
+  background-color: var(--hwk-surface) !important;
+  background-image: none !important;
+  border-color: var(--hwk-border) !important;
+  box-shadow: var(--hwk-shadow-low) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[class*="-header"],
+[class*="_header"],
+[class*="-toolbar"],
+[class*="_toolbar"],
+[class*="-topbar"],
+[class*="_topbar"],
+[class*="-subbar"],
+[class*="_subbar"],
+[class*="-footer"],
+[class*="_footer"],
+.pm-ctx-bar,
+.al2-topbar,
+.al2-status-rail,
+.imf-topbar,
+.pf-header,
+.project-bar {
+  background-color: var(--hwk-surface) !important;
+  background-image: none !important;
+  border-color: var(--hwk-border) !important;
+  box-shadow: none !important;
+}
+
+.viewer,
+.al2-viewer-wrap,
+.imf-viewer,
+.pfx-reviews-viewer,
+.pm-vfx-ws-viewer,
+.cd-viewer,
+.pl2-preview,
+.pfx-vfx-viewer-wrap {
+  background-color: #000 !important;
+}
+
+video,
+canvas,
+img {
+  background-color: transparent;
+  opacity: revert;
+  filter: revert;
+}
+
+.hs-card-icon,
+.tb-card-icon,
+.fun-launcher-icon,
+.pm-icon,
+.pl2-icon,
+.al2-icon,
+.imf-icon,
+.rq-icon,
+.trl-icon,
+svg:not(.fun-launcher-arrow) {
+  color: var(--hwk-blue400) !important;
+  stroke: currentColor;
+}
+
+.pfx-status-ok,
+.ok,
+.ready,
+.connected,
+.is-ready,
+.is-connected,
+[class*="success"] {
+  color: var(--hwk-green) !important;
+}
+
+.pfx-status-warn,
+.warn,
+.warning,
+.limited,
+[class*="warning"] {
+  color: var(--hwk-yellow) !important;
+}
+
+.pfx-status-error,
+.pfx-status-err,
+.error,
+.danger,
+.reject,
+.blocker,
+[class*="danger"],
+[class*="error"] {
+  color: var(--hwk-red) !important;
+}
+
+.drop-zone,
+[class*="drop"],
+[class*="upload"],
+#dropZone,
+.al2-drop-zone {
+  background-color: var(--hwk-surface) !important;
+  background-image: none !important;
+  border: 1px dashed var(--hwk-border-3) !important;
+  border-radius: var(--hwk-radius-1) !important;
+  box-shadow: none !important;
+}
+
+.drop-zone:hover,
+[class*="drop"]:hover,
+[class*="upload"]:hover,
+#dropZone.drag,
+.al2-drop-zone.drag {
+  border-color: var(--hwk-blue500) !important;
+  background-color: rgba(33,114,227,.08) !important;
+}
+
+input[type="range"] {
+  accent-color: var(--hwk-blue500) !important;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--hwk-blue500) !important;
+}
+
+table,
+.table,
+[class*="-table"],
+[class*="_table"] {
+  background-color: var(--hwk-surface) !important;
+  border-color: var(--hwk-border) !important;
+}
+
+thead,
+thead tr,
+thead th,
+.table-head,
+[class*="-thead"],
+[class*="_thead"] {
+  background-color: var(--hwk-surface-2) !important;
+  color: var(--hwk-fg-muted) !important;
+  border-color: var(--hwk-border) !important;
+}
+
+tbody tr,
+tbody td,
+.table-row,
+[class*="-row"],
+[class*="_row"] {
+  border-color: var(--hwk-border) !important;
+}
+
+tbody tr:hover,
+.table-row:hover,
+[class*="-row"]:hover,
+[class*="_row"]:hover {
+  background-color: rgba(255,255,255,.035) !important;
+}
+
+#main-aceslook {
+  --al-bg: var(--hwk-canvas);
+  --al-panel: var(--hwk-surface);
+  --al-card: var(--hwk-surface);
+  --al-card-hover: var(--hwk-surface-2);
+  --al-border: var(--hwk-border);
+  --al-text-primary: var(--hwk-fg);
+  --al-text-secondary: var(--hwk-fg-muted);
+  --al-text-muted: var(--hwk-fg-subtle);
+  --al-accent: var(--hwk-blue500);
+  --al-accent-dim: rgba(33,114,227,.16);
+  --al-success: var(--hwk-green);
+  --al-success-bg: rgba(10,163,86,.14);
+  --al-warn: var(--hwk-yellow);
+  --al-warn-bg: rgba(224,179,65,.14);
+  --al-danger: var(--hwk-red);
+  --al-danger-bg: rgba(229,72,77,.14);
+  font-family: 'NetflixSans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.al2-left-rail,
+.al2-right-panel,
+.al2-rail-section,
+.al2-control-section,
+.al2-bottom-bar {
+  background: var(--hwk-surface) !important;
+  border-color: var(--hwk-border) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   9. Hawkins Professional polish pass
+   This layer is intentionally more selective than the normalization
+   above. It restores hierarchy, removes accidental text bands, and
+   gives the dense production screens a calmer finished feel.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --hwk-canvas:    #101010;
+  --hwk-surface:   #171717;
+  --hwk-surface-2: #202020;
+  --hwk-surface-3: #282828;
+  --hwk-hairline:  rgba(255,255,255,.075);
+  --hwk-blue-soft: rgba(33,114,227,.13);
+  --hwk-row-active: rgba(33,114,227,.16);
+  --hwk-row-hover:  rgba(255,255,255,.045);
+  --hwk-shadow-low:  0 1px 2px rgba(0,0,0,.28);
+  --hwk-shadow-mid:  0 8px 24px rgba(0,0,0,.34);
+}
+
+body,
+#appViewport,
+#appShell,
+[id^="main-"] {
+  background: var(--hwk-canvas) !important;
+}
+
+.mac-titlebar {
+  background: #171717 !important;
+  border-bottom: 1px solid var(--hwk-hairline) !important;
+}
+
+.mac-workspace-toolbar,
+.project-bar {
+  background: #090a0d !important;
+  border-bottom: 1px solid var(--hwk-hairline) !important;
+}
+
+.mac-workspace-toolbar .tab,
+.tabs .tab {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: rgba(255,255,255,.42) !important;
+  border-radius: 6px 6px 0 0 !important;
+  min-height: 28px !important;
+}
+
+.mac-workspace-toolbar .tab svg,
+.tabs .tab svg {
+  color: rgba(255,255,255,.30) !important;
+}
+
+.mac-workspace-toolbar .tab:hover,
+.tabs .tab:hover {
+  background: rgba(255,255,255,.045) !important;
+  color: rgba(255,255,255,.76) !important;
+}
+
+.mac-workspace-toolbar .tab.active,
+.tabs .tab.active {
+  background: var(--hwk-surface-2) !important;
+  border-color: var(--hwk-border) !important;
+  color: #fff !important;
+}
+
+.mac-workspace-toolbar .tab.active svg,
+.tabs .tab.active svg {
+  color: var(--hwk-blue400) !important;
+}
+
+.mac-workspace-toolbar .tab.active .bar,
+.tabs .tab.active .bar {
+  background: #e50914 !important;
+  height: 2px !important;
+}
+
+.btn,
+.qs-btn,
+.pm-qs-btn,
+.inner-tab,
+.top-aux-tab,
+button:not(.pfx-resolve-pill):not(.tab):not(.pfx-tx-btn) {
+  background: var(--hwk-surface-2) !important;
+  border-color: rgba(255,255,255,.16) !important;
+  color: rgba(255,255,255,.78) !important;
+}
+
+.btn:hover,
+.qs-btn:hover,
+.pm-qs-btn:hover,
+.inner-tab:hover,
+.top-aux-tab:hover,
+button:not(.pfx-resolve-pill):not(.tab):not(.pfx-tx-btn):hover {
+  background: var(--hwk-surface-3) !important;
+  border-color: rgba(255,255,255,.26) !important;
+}
+
+.btn.active,
+.qs-btn.active,
+.pm-qs-btn.active,
+.inner-tab.active,
+button.active:not(.pfx-resolve-pill):not(.tab),
+button[aria-selected="true"]:not(.pfx-resolve-pill):not(.tab) {
+  background: var(--hwk-blue-soft) !important;
+  border-color: rgba(33,114,227,.62) !important;
+  color: #f5f8ff !important;
+}
+
+.btn .bar,
+.qs-btn .bar,
+.pm-qs-btn .bar,
+.inner-tab .bar {
+  opacity: 0 !important;
+}
+
+.btn.active .bar,
+.qs-btn.active .bar,
+.pm-qs-btn.active .bar,
+.inner-tab.active .bar {
+  opacity: 1 !important;
+  background: var(--hwk-blue500) !important;
+}
+
+.card,
+.hs-card,
+.tb-card,
+.pf-card,
+.rq-card,
+.amf-card,
+.imf-panel,
+.al2-control-panel,
+.al2-rail,
+.pfx-vfx-panel,
+.top-aux-panel,
+.proj-recent-panel,
+.proj-dropdown-menu {
+  background: var(--hwk-surface) !important;
+  border-color: var(--hwk-border) !important;
+  box-shadow: var(--hwk-shadow-low) !important;
+}
+
+/* Text classes that were caught by broad feature normalization. */
+.hs-section-title,
+.cd-left-section-title,
+.tb-workspace-section-title,
+.top-aux-pane-title,
+.card-title,
+.amf-summary-title,
+.al2-rail-section-header,
+.al2-control-section-title {
+  background: transparent !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.hs-card-title,
+.hs-card-sub,
+.hs-section-title,
+#hs-site-card-title,
+#hs-site-card-desc,
+#hs-site-card-url,
+.card-title,
+.muted,
+small {
+  display: revert;
+}
+
+/* Home screen */
+#main-home,
+#hs-root {
+  background: var(--hwk-canvas) !important;
+}
+
+#hs-inner {
+  max-width: 1180px !important;
+  margin: 0 auto !important;
+  padding-top: 72px !important;
+}
+
+#hs-hero {
+  margin-bottom: 30px !important;
+}
+
+#hs-hero h1 {
+  font-size: 34px !important;
+  line-height: 1.05 !important;
+  letter-spacing: 0 !important;
+  color: #f4f4f4 !important;
+}
+
+#hs-hero p {
+  color: rgba(255,255,255,.58) !important;
+  font-size: 15px !important;
+}
+
+.hs-section-title {
+  margin: 28px 0 12px !important;
+  padding: 0 !important;
+  color: rgba(255,255,255,.72) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+}
+
+#hs-quick-actions {
+  gap: 8px !important;
+}
+
+.hs-btn,
+#hs-btn-open-site {
+  min-height: 36px !important;
+  border-radius: 6px !important;
+  background: #1f1f1f !important;
+}
+
+.hs-btn:hover,
+#hs-btn-open-site:hover {
+  background: #292929 !important;
+}
+
+#hs-workspace-grid {
+  gap: 12px !important;
+}
+
+.hs-card {
+  min-height: 136px !important;
+  padding: 18px 20px !important;
+  background: #1c1c1c !important;
+  border-color: rgba(255,255,255,.13) !important;
+  box-shadow: none !important;
+}
+
+.hs-card:hover {
+  background: #202020 !important;
+  border-color: rgba(33,114,227,.58) !important;
+  box-shadow: 0 0 0 1px rgba(33,114,227,.18) !important;
+}
+
+.hs-card-icon,
+#hs-site-card-icon {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 6px !important;
+  background: rgba(33,114,227,.10) !important;
+  color: var(--hwk-blue400) !important;
+}
+
+.hs-card-title,
+#hs-site-card-title {
+  color: rgba(255,255,255,.88) !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+}
+
+.hs-card-sub,
+#hs-site-card-desc,
+#hs-site-card-url {
+  color: rgba(255,255,255,.52) !important;
+  background: transparent !important;
+}
+
+#hs-site-card {
+  min-height: 86px !important;
+  background: #191919 !important;
+  border-color: rgba(255,255,255,.13) !important;
+}
+
+#hs-bottom {
+  gap: 46px !important;
+  margin-top: 30px !important;
+}
+
+.hs-status-row,
+.hs-recent-row {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Dense tool screens */
+#main-prepmark .pm-event-table,
+#main-prepmark .pm-event-table tbody,
+#main-prepmark .pm-event-table tr,
+#main-prepmark .pm-event-table td,
+#main-cutdiff table,
+#main-imf table,
+#main-amf table {
+  background: transparent !important;
+}
+
+#main-prepmark .pm-row:hover,
+#main-prepmark tr:hover,
+#main-cutdiff tr:hover,
+#main-imf tr:hover,
+#main-amf tr:hover {
+  background: var(--hwk-row-hover) !important;
+}
+
+#main-prepmark .pm-row.selected,
+#main-prepmark tr.selected,
+#main-prepmark tr.is-selected,
+#main-cutdiff tr.selected,
+#main-cutdiff tr.is-selected,
+#main-imf tr.selected,
+#main-imf tr.is-selected,
+#main-amf tr.selected,
+#main-amf tr.is-selected,
+.pl2-row.selected,
+.pl2-row.is-selected {
+  background: var(--hwk-row-active) !important;
+  box-shadow: inset 3px 0 0 var(--hwk-blue500) !important;
+}
+
+#main-prepmark .pm-ctx-bar,
+#main-prepmark .pm-subbar,
+#main-prepmark .pm-tools,
+#main-cutdiff .cutdiff-head,
+#main-imf .imf-topbar,
+#main-amf .amf-top-row,
+#main-amf .amf-top-row-secondary,
+#main-platelink2 [class*="toolbar"],
+#main-reviews [class*="toolbar"] {
+  background: #131313 !important;
+  border-color: var(--hwk-hairline) !important;
+}
+
+#main-prepmark .pm-vfx-ws-viewer,
+#main-cutdiff .cd-viewer,
+#main-imf .imf-viewer,
+#main-aceslook .al2-viewer-wrap,
+#main-reviews .pfx-reviews-viewer,
+#main-platelink2 .pl2-preview,
+#main-platelink2 .pfx-vfx-viewer-wrap {
+  background: #000 !important;
+  border-color: rgba(255,255,255,.10) !important;
+}
+
+#main-renderq .rq-shell,
+#main-renderq [class*="rq-card"],
+#main-renderq [class*="job"],
+#main-renderq [class*="render"] {
+  background: #121212 !important;
+}
+
+#main-renderq [class*="job"],
+#main-renderq [class*="render-item"],
+#main-renderq [class*="queue-item"] {
+  border-color: rgba(255,255,255,.13) !important;
+  box-shadow: inset 2px 0 0 rgba(10,163,86,.45) !important;
+}
+
+#main-platelink2 [class*="row"].is-selected,
+#main-platelink2 [class*="row"].selected,
+#main-prepmark .pm-vfx-shot-row.is-selected,
+#main-prepmark .pm-vfx-shot-row.selected {
+  background: rgba(33,114,227,.16) !important;
+  box-shadow: inset 3px 0 0 var(--hwk-blue500) !important;
+}
+
+#main-platelink2 [class*="row"]:hover,
+#main-prepmark .pm-vfx-shot-row:hover {
+  background: rgba(255,255,255,.045) !important;
+}
+
+#main-bwav .pass,
+#main-amf .pass,
+.pass {
+  color: var(--hwk-green) !important;
+}
+
+#main-bwav .reject,
+#main-amf .reject,
+.reject {
+  color: var(--hwk-red) !important;
+}
+
+progress,
+[class*="progress"] {
+  accent-color: var(--hwk-blue500) !important;
+}
+
+/* Visual QC annotation modal */
+.mps-modal-backdrop {
+  background: rgba(0,0,0,.74) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+.sm-anno-modal {
+  background: #131313 !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 24px 80px rgba(0,0,0,.65) !important;
+}
+
+.sm-anno-head,
+.sm-anno-toolbar,
+.sm-anno-meta,
+.sm-anno-group,
+.sm-anno-field,
+.sm-anno-ai-panel,
+.sm-anno-stage {
+  background: #171717 !important;
+  border-color: rgba(255,255,255,.12) !important;
+  box-shadow: none !important;
+}
+
+.sm-anno-iconbtn,
+.sm-anno-track-btn,
+.sm-anno-colorbtn,
+.sm-anno-strokebtn {
+  background: #202020 !important;
+  border-color: rgba(255,255,255,.16) !important;
+  color: rgba(255,255,255,.72) !important;
+}
+
+.sm-anno-iconbtn:hover,
+.sm-anno-iconbtn.is-active,
+.sm-anno-iconbtn.active {
+  background: rgba(33,114,227,.14) !important;
+  border-color: rgba(33,114,227,.62) !important;
+  color: #fff !important;
+}
+
+.sm-anno-stage {
+  background: #000 !important;
+  border-radius: 6px !important;
+}
+
+.sm-anno-corner {
+  border-color: rgba(33,114,227,.55) !important;
+}
+
+/* Do not make every inline SVG blue; keep icons contextual. */
+.mac-workspace-toolbar svg,
+.tabs svg,
+.btn svg,
+button svg,
+.sm-anno-modal svg {
+  color: currentColor !important;
+}
+
+.hs-card-icon svg,
+#hs-site-card-icon svg,
+.viewer > svg[class],
+[class*="empty"] svg {
+  color: var(--hwk-blue400) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   10. Hawkins readability tuning
+   Target only shell and Home hierarchy. Do not touch media/video/canvas.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --hwk-canvas: #0f0f0f;
+  --hwk-surface: #181818;
+  --hwk-surface-2: #232323;
+  --hwk-hairline: rgba(255,255,255,.10);
+}
+
+.mac-titlebar {
+  background: #181818 !important;
+  border-bottom-color: rgba(255,255,255,.14) !important;
+}
+
+.mac-workspace-toolbar,
+.project-bar {
+  background: #08090b !important;
+}
+
+.mac-workspace-toolbar .tab {
+  color: rgba(255,255,255,.54) !important;
+  letter-spacing: .01em !important;
+}
+
+.mac-workspace-toolbar .tab:hover {
+  color: rgba(255,255,255,.78) !important;
+}
+
+.mac-workspace-toolbar .tab.active {
+  color: #fff !important;
+  background: rgba(255,255,255,.075) !important;
+  box-shadow: inset 0 -2px 0 #e50914 !important;
+}
+
+#main-home {
+  background:
+    radial-gradient(circle at 52% -18%, rgba(255,255,255,.055), transparent 36%),
+    #101010 !important;
+}
+
+#hs-inner {
+  max-width: 1260px !important;
+  padding-top: 58px !important;
+}
+
+#hs-hero h1 {
+  font-size: 38px !important;
+  font-weight: 700 !important;
+  color: rgba(255,255,255,.94) !important;
+}
+
+#hs-hero p,
+#hs-hero .muted {
+  color: rgba(214,222,238,.68) !important;
+  font-size: 16px !important;
+}
+
+#hs-hero small,
+#hs-hero .version {
+  color: rgba(120,148,190,.72) !important;
+}
+
+.hs-section-title {
+  color: rgba(255,255,255,.78) !important;
+  font-size: 12px !important;
+  letter-spacing: .08em !important;
+  margin-bottom: 14px !important;
+}
+
+#hs-actions {
+  gap: 10px !important;
+}
+
+#hs-actions .btn,
+#hs-actions button {
+  min-height: 38px !important;
+  padding: 0 18px !important;
+  border-radius: 6px !important;
+  background: #202020 !important;
+  border-color: rgba(255,255,255,.17) !important;
+  color: rgba(255,255,255,.88) !important;
+}
+
+#hs-actions .btn:hover,
+#hs-actions button:hover {
+  background: #2b2b2b !important;
+  border-color: rgba(255,255,255,.28) !important;
+}
+
+#hs-workspaces {
+  gap: 14px !important;
+}
+
+.hs-card {
+  min-height: 126px !important;
+  padding: 22px 24px !important;
+  background: linear-gradient(180deg, #202020 0%, #1b1b1b 100%) !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 26px rgba(0,0,0,.22) !important;
+}
+
+.hs-card:hover {
+  background: linear-gradient(180deg, #272727 0%, #1f1f1f 100%) !important;
+  border-color: rgba(33,114,227,.55) !important;
+  transform: translateY(-1px);
+}
+
+.hs-card-icon,
+#hs-site-card-icon {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 8px !important;
+  background: rgba(33,114,227,.12) !important;
+  border: 1px solid rgba(33,114,227,.22) !important;
+}
+
+.hs-card-title,
+#hs-site-card-title {
+  color: rgba(255,255,255,.92) !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+}
+
+.hs-card-sub,
+#hs-site-card-desc,
+#hs-site-card-url {
+  color: rgba(255,255,255,.58) !important;
+}
+
+#hs-site-card {
+  min-height: 92px !important;
+  background: #181818 !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
+#hs-bottom {
+  margin-top: 40px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   11. IMF IAB Immersive View
+   Resolve/Fairlight-inspired IAB layout: mixer, object lanes, loudness.
+   ═══════════════════════════════════════════════════════════════════ */
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode {
+  grid-template-columns: minmax(760px, 1fr) 300px !important;
+  grid-template-rows: auto auto 1fr !important;
+  background: #111216 !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-col-left {
+  display: none !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-col-main {
+  grid-column: 1 !important;
+  min-width: 0 !important;
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  background: #141519 !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode #imfPlayer,
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-tl-section,
+#main-imf #imfPanelMain.imf-iab-immersive-mode #imfQCDetails {
+  display: none !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-col-right {
+  grid-column: 2 !important;
+  min-width: 280px !important;
+  background: #111216 !important;
+  border-left: 1px solid rgba(255,255,255,.11) !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-pkg-header {
+  height: 30px !important;
+  padding: 4px 12px !important;
+  background: #191a1f !important;
+}
+
+#main-imf #imfPanelMain.imf-iab-immersive-mode .imf-iab-main {
+  display: grid !important;
+  grid-template-rows: 36px 150px 32px minmax(0, 1fr) auto auto !important;
+  min-height: 0 !important;
+  height: 100% !important;
+}
+
+#main-imf .imf-iab-main {
+  background: #15161a !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+}
+
+#main-imf .imf-iab-summary-bar {
+  height: 36px !important;
+  padding: 0 12px !important;
+  background: #1d1e24 !important;
+  border-bottom: 1px solid rgba(255,255,255,.12) !important;
+}
+
+#main-imf .imf-iab-sum-k {
+  color: rgba(255,255,255,.42) !important;
+}
+
+#main-imf .imf-iab-sum-v {
+  color: rgba(255,255,255,.82) !important;
+}
+
+#main-imf .imf-iab-mixer-strip {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 120px 180px;
+  height: 150px;
+  background: #272831;
+  border-bottom: 1px solid rgba(0,0,0,.78);
+}
+
+#main-imf .imf-iab-meter-bank {
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+  padding: 12px 18px 10px;
+  overflow: hidden;
+}
+
+#main-imf .imf-iab-meter-channel {
+  position: relative;
+  width: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,.36);
+}
+
+#main-imf .imf-iab-meter-channel::before {
+  content: "";
+  width: 10px;
+  flex: 1;
+  min-height: 88px;
+  border-radius: 2px;
+  background: linear-gradient(to top, #0c0d10, #171920);
+  border: 1px solid rgba(0,0,0,.72);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+  order: 1;
+}
+
+#main-imf .imf-iab-meter-fill {
+  width: 8px;
+  max-height: 88px;
+  margin-bottom: 21px;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(to top, #129d62 0%, #29c981 76%, #e0b341 92%, #e5484d 100%);
+  box-shadow: 0 0 8px rgba(18,157,98,.35);
+  position: absolute;
+  align-self: center;
+}
+
+#main-imf .imf-iab-meter-label {
+  order: 2;
+  font-size: 10px;
+  font-family: "SF Mono", Menlo, monospace;
+  color: rgba(255,255,255,.42);
+}
+
+#main-imf .imf-iab-control-room,
+#main-imf .imf-iab-loudness-mini {
+  padding: 10px 12px;
+  border-left: 1px solid rgba(0,0,0,.55);
+  background: #22232a;
+}
+
+#main-imf .imf-iab-meter-title {
+  font-size: 11px;
+  color: rgba(255,255,255,.72);
+  margin-bottom: 8px;
+}
+
+#main-imf .imf-iab-cr-value,
+#main-imf .imf-iab-loud-row b {
+  color: #8fb5ff;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+#main-imf .imf-iab-mini-meter {
+  height: 92px;
+  width: 28px;
+  border: 1px solid rgba(0,0,0,.7);
+  background: #101116;
+  display: flex;
+  align-items: flex-end;
+}
+
+#main-imf .imf-iab-mini-meter span {
+  width: 100%;
+  height: 44%;
+  background: #158f5c;
+}
+
+#main-imf .imf-iab-loud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 9px 0;
+  color: rgba(255,255,255,.62);
+  font-size: 12px;
+}
+
+#main-imf .imf-iab-track-hdr {
+  height: 32px !important;
+  display: grid !important;
+  grid-template-columns: 260px 1fr !important;
+  align-items: center !important;
+  padding: 0 !important;
+  background: #202128 !important;
+  border-top: 1px solid rgba(255,255,255,.06) !important;
+  border-bottom: 1px solid rgba(0,0,0,.8) !important;
+}
+
+#main-imf .imf-iab-track-hdr > * {
+  display: none !important;
+}
+
+#main-imf .imf-iab-track-hdr::before {
+  content: "Tracks";
+  padding-left: 14px;
+  color: rgba(255,255,255,.72);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+#main-imf .imf-iab-track-hdr::after {
+  content: "00:00:00:00     00:00:21:00     00:00:42:00     00:01:03:00     00:01:24:00     00:01:45:00     00:02:06:00";
+  overflow: hidden;
+  white-space: nowrap;
+  padding-left: 16px;
+  color: rgba(255,255,255,.42);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  background:
+    repeating-linear-gradient(to right, transparent 0 118px, rgba(255,255,255,.10) 119px 120px);
+}
+
+#main-imf .imf-iab-track-body {
+  background: #26272e !important;
+  overflow: auto !important;
+}
+
+#main-imf .imf-iab-track-row {
+  display: grid !important;
+  grid-template-columns: 74px 186px minmax(560px, 1fr) !important;
+  min-height: 35px !important;
+  padding: 0 !important;
+  border-bottom: 1px solid rgba(0,0,0,.46) !important;
+  background: #2a2b31 !important;
+}
+
+#main-imf .imf-iab-track-row:nth-child(even) {
+  background: #25262c !important;
+}
+
+#main-imf .imf-iab-track-row:hover {
+  background: #30323a !important;
+}
+
+#main-imf .imf-iab-track-index {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: rgba(255,255,255,.74);
+  border-right: 1px solid rgba(0,0,0,.65);
+  background: rgba(0,0,0,.10);
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+#main-imf .imf-iab-visibility {
+  color: rgba(255,255,255,.76);
+  font-size: 10px;
+}
+
+#main-imf .imf-iab-lane-id {
+  font-size: 13px;
+}
+
+#main-imf .imf-iab-track-control {
+  display: grid;
+  grid-template-columns: 1fr repeat(3, 20px);
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 12px;
+  border-right: 1px solid rgba(0,0,0,.65);
+  background: #222329;
+}
+
+#main-imf .imf-iab-track-name {
+  grid-column: 1;
+  color: rgba(255,255,255,.83);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#main-imf .imf-iab-track-meta {
+  display: none;
+}
+
+#main-imf .imf-iab-mini-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,.10);
+  color: rgba(255,255,255,.58);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#main-imf .imf-iab-lane {
+  position: relative;
+  min-width: 560px;
+  background:
+    repeating-linear-gradient(to right, transparent 0 118px, rgba(255,255,255,.08) 119px 120px),
+    #24252b;
+  display: flex;
+  align-items: stretch;
+  padding: 3px 0;
+}
+
+#main-imf .imf-iab-clip {
+  width: calc(100% - 20px);
+  margin-left: 6px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: #149c62;
+  border: 1px solid rgba(0,0,0,.34);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+  color: rgba(255,255,255,.90);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+}
+
+#main-imf .imf-iab-clip.is-object {
+  background: #15965c;
+}
+
+#main-imf .imf-iab-clip.is-bed {
+  background: #188064;
+}
+
+#main-imf .imf-iab-clip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#main-imf .imf-iab-right-panel {
+  background: #15161a !important;
+}
+
+#main-imf .imf-iab-rp-section {
+  padding: 12px 14px !important;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+#main-imf .imf-iab-rp-title {
+  color: rgba(255,255,255,.68) !important;
+}
+
+#main-imf .imf-iab-ld-row,
+#main-imf .imf-iab-rt-item {
+  background: #1b1c21 !important;
+  border-color: rgba(255,255,255,.10) !important;
+}
+
+#main-imf .imf-iab-adm-tree {
+  color: rgba(255,255,255,.64) !important;
+}
+
+#main-imf .imf-iab-adm-node b {
+  color: rgba(255,255,255,.86);
 }

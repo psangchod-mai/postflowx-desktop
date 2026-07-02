@@ -25,6 +25,8 @@ import traceback
 import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
+
+from .. import safe_xml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -165,8 +167,8 @@ def parse_fcpxml(text: str) -> list[ConformEvent]:
     """Parse FCP 7 XML or FCPXML sequence into ConformEvent list."""
     events: list[ConformEvent] = []
     try:
-        root = ET.fromstring(text)
-    except ET.ParseError:
+        root = safe_xml.fromstring(text)
+    except (ET.ParseError, safe_xml.UnsafeXMLError):
         return events
 
     # Try FCP 7 style (<sequence>/<media>/<video>/<track>/<clipitem>)
@@ -1051,7 +1053,9 @@ def _match_events(
                     "duration": round(dur_score, 3),
                     "audio": round(audio_score, 3),
                 },
-                "suggestedSourceIn": _frames_to_tc(audio_offset_sec, event.fps),
+                # audio_offset_sec is in SECONDS (1 fps RMS envelope); convert to
+                # frames before formatting as timecode, else the suggestion is off by ~fps×.
+                "suggestedSourceIn": _frames_to_tc(int(round(audio_offset_sec * max(1.0, event.fps))), event.fps),
                 "sourceDurationFrames": px.get("durationFrames", 0),
             })
 

@@ -474,6 +474,21 @@ export async function nativeRenderPullExrCancel(jobId) {
 }
 
 /**
+ * Start an async review-proxy movie render (Rec.709/P3 with the ACES 2.0 ODT
+ * baked) from an AP0 EXR sequence. job: { exrDir, exrPattern, frameStart, fps,
+ * colorPlan:{odtId}, codec:'h264'|'prores', output? }.
+ * Returns { jobId }; poll with nativeRenderPullExrStatus (shared job registry).
+ */
+export async function nativeRenderReviewProxyStart(job) {
+  return _sendAction('renderReviewProxyStart', { job }, 10_000);
+}
+
+/** List the ACES 2.0 output transforms the companion can bake (for the ODT picker). */
+export async function nativeAces2OutputTransforms() {
+  return _sendAction('colorAces2OutputTransforms', {}, 8_000);
+}
+
+/**
  * Run QC on a completed EXR sequence.
  * job.package.exr — folder containing the frames.
  * Returns { pass, warnings, errors, frameCount, firstFrame, lastFrame, ... }.

@@ -19,8 +19,10 @@ export const PFX_SHORTCUT_ACTIONS = [
   { id: 'step_forward_fine', name: 'Fine Step Forward',    group: 'Timeline', contexts: ['viewer','timeline'], defaults: ['Period'] },
   { id: 'nav_prev',          name: 'Previous Item',        group: 'Timeline', contexts: ['timeline'],          defaults: ['ArrowUp'] },
   { id: 'nav_next',          name: 'Next Item',            group: 'Timeline', contexts: ['timeline'],          defaults: ['ArrowDown'] },
-  { id: 'nav_prev_marker',   name: 'Previous Marker',      group: 'Markers',  contexts: ['markers','timeline'],defaults: ['KeyJ','SHIFT+ArrowUp'] },
-  { id: 'nav_next_marker',   name: 'Next Marker',          group: 'Markers',  contexts: ['markers','timeline'],defaults: ['KeyK','SHIFT+ArrowDown'] },
+  // J/K are reserved for the global JKL transport shuttle (pfxTransportKeys.js);
+  // marker nav uses Shift+Arrows so the two don't collide.
+  { id: 'nav_prev_marker',   name: 'Previous Marker',      group: 'Markers',  contexts: ['markers','timeline'],defaults: ['SHIFT+ArrowUp'] },
+  { id: 'nav_next_marker',   name: 'Next Marker',          group: 'Markers',  contexts: ['markers','timeline'],defaults: ['SHIFT+ArrowDown'] },
   { id: 'home',              name: 'Go to Start',          group: 'Timeline', contexts: ['timeline'],          defaults: ['Home'] },
   { id: 'end',               name: 'Go to End',            group: 'Timeline', contexts: ['timeline'],          defaults: ['End'] },
 

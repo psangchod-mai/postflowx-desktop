@@ -9976,6 +9976,7 @@ const __rvCtxTargetOk = (target) => {
   function _rvJklStop() {
     _rvStopReverse(); _rvFwdSpeed = 0; _rvShuttleIdx = _RV_MID;
     try { player.pause(); } catch {}
+    try { if (player.active) player.active.playbackRate = 1; } catch {}   // clear leftover shuttle rate
     _rvUpdateHud('⏹ Stop');
   }
 
@@ -10459,40 +10460,43 @@ const __rvCtxTargetOk = (target) => {
     // Marker hotkey removed (notes are auto-created on V2 overlay add).
 
 
+    // Single-letter QC shortcuts must NOT fire with Cmd/Ctrl/Alt held, or they
+    // hijack OS/browser combos (Cmd+V paste, Cmd+N, Cmd+F, Cmd+W, Cmd+G…).
+    const _qcPlain = !e.metaKey && !e.ctrlKey && !e.altKey;
     // QC tools: D=Diff, W=Wipe, X=Blink, G=Gamma
-    if (e.key.toLowerCase() === 'd') {
+    if (_qcPlain && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       try { btnDiff.click(); } catch {}
       return;
     }
-    if (e.key.toLowerCase() === 'w') {
+    if (_qcPlain && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       try { btnWipe.click(); } catch {}
       return;
     }
-    if (e.key.toLowerCase() === 'x') {
+    if (_qcPlain && e.key.toLowerCase() === 'x') {
       e.preventDefault();
       try { btnBlink.click(); } catch {}
       return;
     }
-    if (e.key.toLowerCase() === 'g') {
+    if (_qcPlain && e.key.toLowerCase() === 'g') {
       e.preventDefault();
       try { btnGamma.click(); } catch {}
       return;
     }
-    if (e.key.toLowerCase() === 'f') {
+    if (_qcPlain && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       await toggleFullscreen();
       try { timeline.jumpToTime(store.state.globalTimeSec); } catch {}
     }
 
-    if (e.key.toLowerCase() === 'p') {
+    if (_qcPlain && e.key.toLowerCase() === 'p') {
       // Panel hiding disabled in Visual QC.
       e.preventDefault();
       return;
     }
 
-    if (e.key.toLowerCase() === 'b') {
+    if (_qcPlain && e.key.toLowerCase() === 'b') {
       e.preventDefault();
       setPanelsHidden(false);
       setBinOpen(true);
@@ -10500,7 +10504,7 @@ const __rvCtxTargetOk = (target) => {
       return;
     }
 
-    if (e.key.toLowerCase() === 'n') {
+    if (_qcPlain && e.key.toLowerCase() === 'n') {
       e.preventDefault();
       setPanelsHidden(false);
       setNotesOpen(true);
@@ -10509,7 +10513,7 @@ const __rvCtxTargetOk = (target) => {
     }
 
     // View toggle: v = Timeline-only, Shift+v = Source-only
-    if (e.key.toLowerCase() === 'v') {
+    if (_qcPlain && e.key.toLowerCase() === 'v') {
       e.preventDefault();
       if (isUiLocked()) return;
       if (e.shiftKey) {

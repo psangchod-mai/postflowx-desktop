@@ -101,6 +101,7 @@ export function updateLookItem(id, partial) {
 }
 
 export function setClipId(clipId) { patch({ clipId }); }
+export function setOcfMeta(ocfMeta) { patch({ ocfMeta: ocfMeta || null }); }
 
 export function setValidation({ warnings = [], errors = [] }) {
   patch({ warnings, errors });

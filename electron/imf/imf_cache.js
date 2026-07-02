@@ -56,8 +56,13 @@ class IMFPreviewCache {
     if (!this._ready) return null;
     const safeHash  = _safe(packageHash);
     const safeCpl   = _safe(cplId);
+    // mxfFrame and variant are renderer-controlled (variant derives from displayMode).
+    // Coerce/sanitise both so a malicious value like "../../.." can't escape the cache dir.
+    const safeFrame = Math.max(0, parseInt(mxfFrame, 10) || 0);
+    const safeVar   = _safeVariant(variant);
+    const safeExt   = /^[a-z0-9]{1,8}$/i.test(ext) ? ext : 'png';
     const dir = path.join(this._baseDir, safeHash, safeCpl);
-    return path.join(dir, `${mxfFrame}_${variant}.${ext}`);
+    return path.join(dir, `${safeFrame}_${safeVar}.${safeExt}`);
   }
 
   // ── Read / Write ───────────────────────────────────────────────────────────
@@ -119,6 +124,12 @@ class IMFPreviewCache {
 
 function _safe(s) {
   return (s || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+}
+
+// Like _safe but keeps '.' so legitimate variant keys such as "sdr.lr2" survive;
+// path separators are stripped, so no value can introduce a directory segment.
+function _safeVariant(s) {
+  return String(s || 'sdr').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 48);
 }
 
 function _dirSize(dir) {

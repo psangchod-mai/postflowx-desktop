@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+from . import safe_xml
+
 # ── JAR / Java discovery ──────────────────────────────────────────────────────
 
 _PHOTON_SEARCH_PATHS = [
@@ -62,7 +64,7 @@ def _parse_photon_output(raw: str) -> list[dict[str, Any]]:
     # XML format: <ErrorObject severity="..." errorcode="...">message</ErrorObject>
     if "<ErrorObject" in raw:
         try:
-            root = ET.fromstring(f"<root>{raw}</root>")
+            root = safe_xml.fromstring(f"<root>{raw}</root>")
             for el in root.iter("ErrorObject"):
                 sev  = (el.get("severity") or "ERROR").upper()
                 code = el.get("errorcode") or el.get("code") or ""
@@ -70,7 +72,7 @@ def _parse_photon_output(raw: str) -> list[dict[str, Any]]:
                 if msg:
                     findings.append({"severity": sev, "code": code, "message": msg})
             return findings
-        except ET.ParseError:
+        except (ET.ParseError, safe_xml.UnsafeXMLError):
             pass  # fall through to plain-text parsing
 
     # Plain-text: "ERROR : code : message" or "ERROR: message"

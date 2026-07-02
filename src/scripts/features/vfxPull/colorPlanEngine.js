@@ -22,6 +22,7 @@
 //   }
 
 import { resolveIdtUrn } from './amfVfxPullGenerator.js';
+import { resolveIdtFromOCFMeta, resolveIdtFromProbe } from '../aceslook/services/ocfIdtResolver.js';
 
 export const PULL_MODE = {
   OCF_NATIVE:      'ocf_native',
@@ -142,8 +143,29 @@ export function buildColorPlan(job = {}, pullMode = PULL_MODE.OCF_NATIVE, projec
   // ── IDT ─────────────────────────────────────────────────────────────────────
   // Do not apply IDT if AMF already marks it applied=true.
   const cameraProfile = inferCameraProfile(job);
-  const idtName  = job.color?.idtName || cameraProfile.idtName || '';
-  const idtUrn   = job.color?.idtUrn  || cameraProfile.idtUrn || resolveIdtUrn(idtName) || null;
+  // OCF auto-detect: when the clip carries OCF metadata and the user hasn't
+  // overridden the IDT, resolve it straight from the camera format. Priority:
+  // user override (job.color.idtName) > OCF auto-detect > heuristic profile.
+  // Source the camera metadata for auto-IDT. `job.ocfMeta` is the ideal shape but
+  // the live pull-job builder (pullJobModel) never sets it — the camera format
+  // actually arrives on `job.ocf` (matched OCF) and `job.metadata` (codec /
+  // cameraModel from the probe). Adapt whichever is present via resolveIdtFromProbe
+  // so auto-IDT actually fires for camera-RAW instead of silently no-op'ing.
+  const _ocfProbe = job.ocfMeta || ((job.ocf || job.metadata) ? {
+    colorSpace:     job.ocf?.colorSpace || job.ocf?.gamut || job.metadata?.colorSpace || '',
+    codec:          job.ocf?.codec || job.ocf?.format || job.metadata?.codec || '',
+    cameraType:     job.ocf?.cameraModel || job.ocf?.cameraType || job.metadata?.cameraModel || '',
+    container:      job.ocf?.container || job.ocf?.format || '',
+    defaultAcesIdt: job.ocf?.defaultAcesIdt || null,
+    source:         'ocf',
+  } : null);
+  const ocfIdt   = job.ocfMeta ? resolveIdtFromOCFMeta(job.ocfMeta)
+                 : (_ocfProbe ? resolveIdtFromProbe(_ocfProbe) : null);
+  const ocfAuto  = (ocfIdt && ocfIdt.isAutoDetected && !job.color?.idtName) ? ocfIdt : null;
+  const idtName  = job.color?.idtName || (ocfAuto ? ocfAuto.colorSpaceLabel : '') || cameraProfile.idtName || '';
+  const idtUrn   = job.color?.idtUrn  || (ocfAuto ? ocfAuto.acesIdtUrn : null) || cameraProfile.idtUrn || resolveIdtUrn(idtName) || null;
+  const idtAutoDetected = !!ocfAuto;
+  const idtWarning = ocfAuto ? (ocfAuto.warningMsg || null) : null;
   const applyIDT = !amfAppliedIDT && !cameraProfile.alreadyAces && !cameraProfile.displayReferred;
 
   if (!idtName && applyIDT) {
@@ -169,14 +191,25 @@ export function buildColorPlan(job = {}, pullMode = PULL_MODE.OCF_NATIVE, projec
     }
   }
 
-  // ── ODT ─────────────────────────────────────────────────────────────────────
+  // ── ODT (ACES 2.0 output transform) ───────────────────────────────────────────
+  // Review proxies bake an ACES 2.0 output transform. odtId is the companion's
+  // baked-LUT id (color/aces2_luts.py); odtName is the human label. The companion
+  // resolves odtId → shaper+cube LUTs applied via bundled ffmpeg.
   const applyODT = pullMode === PULL_MODE.REVIEW_PROXY && !amfAppliedODT;
-  const odtName  = pullMode === PULL_MODE.REVIEW_PROXY
-    ? (projectConfig.odtName || 'Rec.709 100-nits')
+  const ACES2_ODT = {
+    [COLOR_SPACE.REC709]: { id: 'rec709_sdr', name: 'ACES 2.0 — SDR Rec.709 (BT.1886) 100 nits' },
+    sRGB:                 { id: 'srgb_sdr',   name: 'ACES 2.0 — SDR sRGB 100 nits' },
+    'P3-D65':             { id: 'p3d65_sdr',  name: 'ACES 2.0 — SDR P3-D65 100 nits' },
+  };
+  const _odtTarget = pullMode === PULL_MODE.REVIEW_PROXY
+    ? (projectConfig.outputColorSpace || COLOR_SPACE.REC709)
     : '';
+  const _odt = ACES2_ODT[_odtTarget] || ACES2_ODT[COLOR_SPACE.REC709];
+  const odtId   = pullMode === PULL_MODE.REVIEW_PROXY ? (projectConfig.odtId || _odt.id) : '';
+  const odtName = pullMode === PULL_MODE.REVIEW_PROXY ? (projectConfig.odtName || _odt.name) : '';
 
   if (pullMode === PULL_MODE.REVIEW_PROXY) {
-    warnings.push('Review Proxy: ODT will be baked — do not use for VFX final plate');
+    warnings.push('Review Proxy: ACES 2.0 ODT will be baked — do not use for VFX final plate');
   }
 
   // ── Output color space ──────────────────────────────────────────────────────
@@ -211,11 +244,15 @@ export function buildColorPlan(job = {}, pullMode = PULL_MODE.OCF_NATIVE, projec
     applyODT,
     idtName,
     idtUrn,
-    cameraFamily:  cameraProfile.cameraFamily,
+    idtAutoDetected,
+    idtWarning,
+    cameraFamily:  ocfAuto ? ocfAuto.cameraFamily : cameraProfile.cameraFamily,
     cameraProfile: cameraProfile.cameraProfile,
     alreadyAces:   cameraProfile.alreadyAces,
     displayReferred: cameraProfile.displayReferred,
+    odtId,
     odtName,
+    odtStandard: applyODT ? 'ACES 2.0' : '',
     amfPath,
     amfAppliedIDT,
     amfAppliedLook,

@@ -13,6 +13,8 @@ import time
 import uuid
 import wave
 import xml.etree.ElementTree as ET
+
+from . import safe_xml
 from typing import Callable
 
 from .service_state import create_session, get_session, remove_session, update_session
@@ -540,34 +542,51 @@ def _restore_running_proxy_session(session_id: str, cache_path: Path, folder_pat
     threading.Thread(target=_watch, daemon=True).start()
     return True
 
-def _find_ffmpeg() -> str | None:
-    candidates = [
-        shutil.which("ffmpeg"),
-        "/opt/homebrew/bin/ffmpeg",
-        "/usr/local/bin/ffmpeg",
-    ]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return candidate
+def _resource_bin(name: str) -> str | None:
+    """Locate a helper binary (ffmpeg/ffprobe), preferring a binary BUNDLED in the
+    .app over the dev machine's Homebrew/PATH copy (Dev Brief P0#2).
+
+    Priority:
+      1. PFX_<NAME>_BIN env override (explicit)
+      2. A bundled binary under any ancestor's bin/ or Resources/bin/ — packaged
+         layout is .app/Contents/Resources/bin/<name>; this file lives at
+         .app/Contents/Resources/companion/src/postflowx_companion/proxy_service.py,
+         so climbing parents finds Resources/bin/. Production must NOT depend on
+         /opt/homebrew — a GUI-launched companion inherits a stripped PATH.
+      3. PATH (shutil.which)
+      4. Common Homebrew / local install locations (dev fallback)
+    """
+    env = str(os.environ.get(f"PFX_{name.upper()}_BIN") or "").strip()
+    if env and os.path.isfile(env) and os.access(env, os.X_OK):
+        return env
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        for cand in (parent / "bin" / name, parent / "Resources" / "bin" / name):
+            if cand.is_file() and os.access(str(cand), os.X_OK):
+                return str(cand)
+    on_path = shutil.which(name)
+    if on_path:
+        return on_path
+    for p in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}", f"/usr/bin/{name}"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
     return None
+
+
+def _find_ffmpeg() -> str | None:
+    return _resource_bin("ffmpeg")
 
 
 def _find_ffprobe(ffmpeg_path: str | None = None) -> str | None:
-    candidates = []
+    # A sibling next to a resolved ffmpeg wins (keeps bundled ffmpeg + ffprobe paired).
     if ffmpeg_path:
         try:
-            candidates.append(str(Path(ffmpeg_path).with_name("ffprobe")))
+            sib = Path(ffmpeg_path).with_name("ffprobe")
+            if sib.is_file() and os.access(str(sib), os.X_OK):
+                return str(sib)
         except Exception:
             pass
-    candidates += [
-        shutil.which("ffprobe"),
-        "/opt/homebrew/bin/ffprobe",
-        "/usr/local/bin/ffprobe",
-    ]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    return None
+    return _resource_bin("ffprobe")
 
 
 def _find_art_cmd() -> str | None:
@@ -1186,7 +1205,7 @@ def _build_asset_path_map(folder: Path, *, include_siblings: bool = False) -> di
         for assetmap_path in _find_assetmaps(search_dir):
             base_dir = assetmap_path.parent
             try:
-                root = ET.parse(assetmap_path).getroot()
+                root = safe_xml.parse_path(assetmap_path).getroot()
             except Exception:
                 continue
             for asset in root.iter():
@@ -1218,7 +1237,7 @@ def _build_asset_path_map(folder: Path, *, include_siblings: bool = False) -> di
 
 def _parse_cpl_video_segments(cpl_path: Path) -> list[dict[str, float | int | str]]:
     segments: list[dict[str, float | int | str]] = []
-    root = ET.parse(cpl_path).getroot()
+    root = safe_xml.parse_path(cpl_path).getroot()
     top_rate = _parse_rate(_text(root, "EditRate"), 24.0)
     for seq in root.iter():
         if _lname(seq.tag) not in ("MainImageSequence", "ImageSequence"):
@@ -1343,7 +1362,7 @@ def _parse_cpl_audio_segments(cpl_path: Path, pcm_track_ids: set[str] | None = N
     When pcm_track_ids is provided, only resources whose trackFileId is in the set
     are included (used to exclude IAB by track ID rather than sequence name).
     """
-    root = ET.parse(cpl_path).getroot()
+    root = safe_xml.parse_path(cpl_path).getroot()
     top_rate = _parse_rate(_text(root, "EditRate"), 24.0)
 
     _SKIP_IMAGE = {"MainImageSequence", "ImageSequence"}
@@ -1434,7 +1453,7 @@ def _parse_cpl_iab_audio_segments(cpl_path: Path, iab_track_ids: set[str] | None
 
     When iab_track_ids is None (fallback), sequence-name keyword matching is used.
     """
-    root = ET.parse(cpl_path).getroot()
+    root = safe_xml.parse_path(cpl_path).getroot()
     top_rate = _parse_rate(_text(root, "EditRate"), 24.0)
 
     _SKIP_IMAGE = {"MainImageSequence", "ImageSequence"}
@@ -1772,7 +1791,7 @@ def _dovi_parse_shot(shot_el: ET.Element) -> dict:
 def _extract_dovi_from_xml_text(xml_text: str, source_path: str = '') -> dict:
     """Parse Dolby Vision CM XML from a string (e.g. embedded in MXF)."""
     try:
-        root = ET.fromstring(xml_text)
+        root = safe_xml.fromstring(xml_text)
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -1828,7 +1847,7 @@ def _extract_dovi(cpl_path: Path, folder: Path) -> dict:
         return {}
 
     try:
-        tree = ET.parse(str(dovi_xml_path))
+        tree = safe_xml.parse_path(str(dovi_xml_path))
         root = tree.getroot()
     except Exception as exc:
         return {"error": str(exc)}
@@ -2020,7 +2039,7 @@ def extract_frame_interleaved_dovi_from_mxf(mxf_path: Path) -> dict | None:
             # ElementTree needs a proper root
             if not xml_str.rstrip().endswith('>'):
                 xml_str += '>'
-            root = ET.fromstring(xml_str)
+            root = safe_xml.fromstring(xml_str)
             rec  = root.find('Record')
             if rec is None:
                 return None
@@ -2107,7 +2126,7 @@ def extract_frame_interleaved_dovi_from_mxf(mxf_path: Path) -> dict | None:
 
     if global_xml:
         try:
-            gr = ET.fromstring(global_xml)
+            gr = safe_xml.fromstring(global_xml)
             cm_v = gr.find('.//CMVersion')
             if cm_v is not None and cm_v.text:
                 cm_version = cm_v.text.strip().replace(' ', '.')

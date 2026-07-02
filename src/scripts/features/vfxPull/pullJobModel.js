@@ -177,7 +177,9 @@ export function buildFrameMapCSV(job) {
     let srcFrame, speed, retimeType;
 
     if (retime.freeze) {
-      srcFrame = Math.round(srcStart);
+      // Hold the editorial freeze frame (carried by the planner), not the
+      // handle-extended in-point.
+      srcFrame = Math.round(Number.isFinite(retime.freezeSourceFrame) ? retime.freezeSourceFrame : srcStart);
       speed = 0;
       retimeType = 'freeze';
     } else if (retime.reversed) {
@@ -212,11 +214,13 @@ export function buildFrameMapCSV(job) {
   return rows.join('\n');
 }
 
-// _frameMapRows — single source of truth for per-output-frame retime resolution.
-// Returns [{ outFrame, srcFrame, srcExact, speed, retimeType }] in output order.
-// Prefers the planner's explicit retime.sourceFrameMap (dynamic ramps resolved
-// by buildDynamicSourceFrameMap); otherwise derives constant/reverse/freeze/normal
-// the same way buildFrameMapCSV does, so the CSV and JSON never disagree.
+// buildFrameMapRows / _frameMapRows — single source of truth for per-output-frame
+// retime resolution. Returns [{ outFrame, srcFrame, srcExact, speed, retimeType }]
+// in output order. Prefers the planner's explicit retime.sourceFrameMap (dynamic
+// ramps resolved by buildDynamicSourceFrameMap); otherwise derives
+// constant/reverse/freeze/normal — every frame-map artifact (CSV, JSON, Nuke, AE)
+// must consume THIS so they never disagree.
+export function buildFrameMapRows(job, opts = {}) { return _frameMapRows(job, opts); }
 function _frameMapRows(job, { frameStart, count, fps } = {}) {
   const retime = job.retime || {};
   const start  = Math.round(Number(frameStart ?? job.frameStart ?? 1001));
@@ -254,7 +258,8 @@ function _frameMapRows(job, { frameStart, count, fps } = {}) {
     }
     let srcFrame = srcStart + i, speed = retime.speedPercent ?? 100, retimeType = 'normal';
     if (retime.freeze) {
-      srcFrame = Math.round(srcStart); speed = 0; retimeType = 'freeze';
+      srcFrame = Math.round(Number.isFinite(retime.freezeSourceFrame) ? retime.freezeSourceFrame : srcStart);
+      speed = 0; retimeType = 'freeze';
     } else if (retime.reversed) {
       const srcSpan = job.expectedFrameCount || n;
       const factor  = retime.speed > 0 ? retime.speed : 1;

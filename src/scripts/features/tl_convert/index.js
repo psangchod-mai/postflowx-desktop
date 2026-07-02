@@ -1623,8 +1623,10 @@ Write-Host "  3. Click Re-check Helper."
     panel.querySelectorAll('.aaf-root-remove').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.idx, 10);
+        if (!Number.isInteger(idx) || idx < 0) return;
         if (isNLE) _aafMediaRoots.splice(idx, 1);
         else       _aafAudioRoots.splice(idx, 1);
+        _saveSettings();   // persist removal (add/suggest paths already do)
         _renderAAFPanel();
       });
     });

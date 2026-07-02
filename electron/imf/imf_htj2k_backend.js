@@ -30,7 +30,13 @@ function _resolveBin(name, candidates) {
   for (const p of candidates) { if (fs.existsSync(p)) return p; }
   return name;
 }
-const FFMPEG  = _resolveBin('ffmpeg',  ['/opt/homebrew/bin/ffmpeg',  '/usr/local/bin/ffmpeg',  '/usr/bin/ffmpeg']);
+// Prefer the BUNDLED ffmpeg (only it has the IMF demuxer + libxml2) via
+// ffbins.js (bundled → PFX_*_BIN env → Homebrew, Dev Brief P0#2).
+let FFMPEG;
+try { ({ FFMPEG } = require('../native/ffbins')); }
+catch {
+  FFMPEG = _resolveBin('ffmpeg', [process.env.PFX_FFMPEG_BIN, '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'].filter(Boolean));
+}
 
 let _availability = null;
 

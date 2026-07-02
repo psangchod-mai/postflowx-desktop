@@ -59,14 +59,20 @@ _ARRI_SDK_PATHS_WINDOWS = [
     r"C:\Program Files\ARRI\SDK\ArriRawSdk.dll",
 ]
 
-# ARRI Reference Tool / ARRIRAW Converter (command-line decode)
+# ARRI Reference Tool CMD (art-cmd, modern) / legacy ARRIRAW Converter.
+# art-cmd is the current free CLI (process/export/copy/verify); it needs its
+# sibling lib/ (dylibs via @rpath), so point at the real bin/art-cmd in place.
 _ARRI_TOOL_PATHS_MACOS = [
+    "/usr/local/bin/art-cmd",
+    "/Applications/ARRI Reference Tool CMD/bin/art-cmd",
+    "/Applications/art-cmd/bin/art-cmd",
     "/usr/local/bin/arrirawconverter",
     "/usr/local/bin/ArriRawConverter",
     "/Applications/ARRIRAW Converter.app/Contents/MacOS/ArriRawConverter",
     "/Applications/ARRI Reference Tool.app/Contents/MacOS/ARRI Reference Tool",
 ]
 _ARRI_TOOL_PATHS_WINDOWS = [
+    r"C:\Program Files\ARRI\Reference Tool CMD\bin\art-cmd.exe",
     r"C:\Program Files\ARRI\ARRIRAW Converter\ArriRawConverter.exe",
     r"C:\Program Files\ARRI\Reference Tool\ArriReferenceTool.exe",
 ]
@@ -92,18 +98,26 @@ def _detect_arri_sdk() -> str | None:
 
 
 def _detect_arri_tool() -> str | None:
-    """Find an ARRI command-line converter tool."""
+    """Find an ARRI command-line decode tool (modern art-cmd preferred)."""
     import shutil
+    env = str(os.environ.get("PFX_ART_CMD") or "").strip()
+    if env and os.path.isfile(env) and os.access(env, os.X_OK):
+        return env
     paths = _ARRI_TOOL_PATHS_MACOS if platform.system() == "Darwin" else _ARRI_TOOL_PATHS_WINDOWS
     for p in paths:
         if os.path.isfile(p):
             return p
-    # Also check PATH
-    for name in ("arrirawconverter", "ArriRawConverter", "arri_convert"):
+    # Also check PATH (art-cmd first — it's the current tool)
+    for name in ("art-cmd", "arrirawconverter", "ArriRawConverter", "arri_convert"):
         found = shutil.which(name)
         if found:
             return found
     return None
+
+
+def _is_art_cmd(tool_path: str | None) -> bool:
+    """True if the resolved tool is the modern ARRI Reference Tool CMD (art-cmd)."""
+    return bool(tool_path) and "art-cmd" in os.path.basename(tool_path).lower()
 
 
 def _detect_arri_image_sdk() -> str | None:
@@ -151,8 +165,16 @@ class ArriBackend(BaseMediaBackend):
     def __init__(self, ffmpeg_path: str | None = None, ffprobe_path: str | None = None,
                  cache_dir: Path | None = None):
         import shutil, tempfile
-        self._ffmpeg  = ffmpeg_path  or shutil.which("ffmpeg")
-        self._ffprobe = ffprobe_path or shutil.which("ffprobe")
+        # Bundled ffmpeg/ffprobe (Dev Brief P0#2) win over PATH: a GUI-launched
+        # companion has a stripped PATH and no /opt/homebrew.
+        def _bin(n):
+            try:
+                from ...proxy_service import _resource_bin
+                return _resource_bin(n) or shutil.which(n)
+            except Exception:
+                return shutil.which(n)
+        self._ffmpeg  = ffmpeg_path  or _bin("ffmpeg")
+        self._ffprobe = ffprobe_path or _bin("ffprobe")
         self._cache   = cache_dir or Path(tempfile.gettempdir()) / "pfx_arri_frames"
         self._cache.mkdir(parents=True, exist_ok=True)
 
@@ -276,6 +298,16 @@ class ArriBackend(BaseMediaBackend):
                 "decodeMode": "full",
                 "version":    "+".join(details),
                 "lastError":  None,
+            }
+
+        if _is_art_cmd(self._tool_path):
+            # ARRI Reference Tool CMD decodes ARRIRAW → AP0/ACES2065-1 (GPU). Full decode.
+            return {
+                "status":     BackendStatus.READY,
+                "decodeMode": "full",
+                "version":    "+".join(["art_cmd"] + details),
+                "lastError":  None,
+                "decodePath": "arri_art_cmd",
             }
 
         if self._tool_path:
@@ -498,14 +530,86 @@ class ArriBackend(BaseMediaBackend):
         )
 
     def _decode_frame_tool(self, path: str, frame_index: int, options: dict) -> dict[str, Any]:
-        """Decode ARRIRAW frame via CLI tool bridge."""
-        # TODO Phase 7: subprocess call to arrirawconverter / ARRI Reference Tool
-        # Typical command:
-        #   arrirawconverter --input clip.ari --frame N --output /tmp/frame.tif
-        # Then convert .tif → JPEG via PIL or ffmpeg
-        raise NotImplementedError(
-            "ARRIRAW tool-bridge decode: implement when ARRI Reference Tool is installed."
-        )
+        """Decode an ARRIRAW frame via the ARRI Reference Tool CMD (art-cmd).
+
+        art-cmd `process` decodes ARRIRAW/ARRICORE/ProRes to an AP0/D60/linear
+        (ACES2065-1) EXR on GPU (Metal/CUDA/OpenCL). We then bake the ACES 2.0
+        output transform via bundled ffmpeg (same path as RED) to a preview JPEG.
+        """
+        if not _is_art_cmd(self._tool_path):
+            raise NotImplementedError(
+                "Legacy ARRI converter not supported — install ARRI Reference Tool CMD "
+                "(art-cmd) from arri.com, or set PFX_ART_CMD."
+            )
+        import hashlib, json, base64, tempfile
+        fmt    = str(options.get("format", "jpg")).lower().lstrip(".")
+        width  = int(options.get("width",  1920))
+        height = int(options.get("height", 1080))
+        odt    = options.get("odt") or options.get("outputTransform")
+
+        # ACES 2.0 output transform for the preview (8-bit → SDR; HDR→SDR fallback)
+        aces2_id = aces2_vf = None
+        try:
+            from ...color import aces2_luts
+            aces2_id = aces2_luts.resolve_lut_id(odt, default="rec709_sdr")
+            if aces2_id and aces2_luts.REGISTRY.get(aces2_id, {}).get("dynamicRange") == "HDR":
+                aces2_id = "rec709_sdr"
+            if aces2_id:
+                aces2_vf = aces2_luts.ffmpeg_video_filter(aces2_id)
+        except Exception as exc:
+            self._last_error = f"ACES 2.0 ODT unavailable: {exc}"
+            aces2_id = aces2_vf = None
+
+        cache_key = hashlib.sha256(
+            f"arri:{path}:{frame_index}:{width}:{height}:{fmt}:{aces2_id}".encode()
+        ).hexdigest()
+        out_path = self._cache / f"{cache_key}.{fmt}"
+
+        if not (out_path.is_file() and out_path.stat().st_size > 0):
+            if not self._ffmpeg:
+                raise RuntimeError("ffmpeg unavailable to encode decoded ARRI frame")
+            tmp = Path(tempfile.mkdtemp(prefix="pfx_arri_", dir=str(self._cache)))
+            try:
+                exr_pat = str(tmp / "arri_%07d.exr")
+                cmd = [self._tool_path, "process",
+                       "--input", path,
+                       "--start", str(int(frame_index)), "--duration", "1",
+                       "--target-colorspace", "AP0/D60/linear",
+                       "--output-width", str(width),
+                       "--video-codec", "exr_zip/f16",
+                       "--output", exr_pat]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+                exrs = sorted(tmp.glob("*.exr"))
+                if r.returncode != 0 or not exrs:
+                    raise RuntimeError(f"art-cmd decode failed: {(r.stderr or r.stdout)[-300:]}")
+                exr = str(exrs[0])
+
+                if aces2_vf:
+                    vf = f"{aces2_vf},scale={width}:{height}:flags=lanczos"
+                else:
+                    # No ACES 2.0 LUT available — straight EXR→image (AP0 looks flat).
+                    vf = f"scale={width}:{height}:flags=lanczos"
+                fr = subprocess.run(
+                    [self._ffmpeg, "-y", "-i", exr, "-vf", vf, "-frames:v", "1", str(out_path)],
+                    capture_output=True, timeout=60)
+                if fr.returncode != 0 or not (out_path.is_file() and out_path.stat().st_size > 0):
+                    raise RuntimeError(f"ffmpeg encode of ARRI frame failed: {fr.stderr.decode(errors='replace')[:300]}")
+            finally:
+                import shutil as _sh
+                try: _sh.rmtree(tmp, ignore_errors=True)
+                except Exception: pass
+
+        mime = "image/jpeg" if fmt == "jpg" else "image/png"
+        with open(str(out_path), "rb") as f:
+            data_url = f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+        return {
+            "previewImagePath": str(out_path),
+            "dataUrl":          data_url,
+            "frameIndex":       frame_index,
+            "backend":          "arri_art_cmd",
+            "colorPath":        f"aces2:{aces2_id}" if aces2_id else "ap0_linear",
+            "cacheHit":         False,
+        }
 
 
 # ---------------------------------------------------------------------------

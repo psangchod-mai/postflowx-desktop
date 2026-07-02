@@ -19,6 +19,7 @@ import base64
 import logging
 import traceback
 import tempfile
+import subprocess
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -61,7 +62,9 @@ def _tc_to_frame(tc: str, fps: float = 24.0) -> int:
         parts = tc.replace(';', ':').split(':')
         if len(parts) == 4:
             h, m, s, f = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-            return ((h * 3600) + (m * 60) + s) * int(fps) + f
+            # Use the nominal integer frame rate (round, not truncate): 23.976→24,
+            # 29.97→30. Truncating with int() drifts ~1 frame/sec on fractional rates.
+            return ((h * 3600) + (m * 60) + s) * round(fps) + f
     except Exception:
         pass
     return 0
@@ -161,6 +164,15 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
         return {'ok': False, 'stage': 'project', 'error': 'No project available.'}
     log.info('Project: %s', project.GetName())
 
+    # Defensive: a render left "in progress" by a prior crash/abort blocks
+    # CreateEmptyTimeline (and thus every future preview). Clear it up front.
+    try:
+        if project.IsRenderingInProgress():
+            project.StopRendering()
+        project.DeleteAllRenderJobs()
+    except Exception:
+        pass
+
     media_pool = project.GetMediaPool()
 
     # ── Find or import the clip ───────────────────────────────────────────────
@@ -193,17 +205,30 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
     except Exception:
         fps = 24.0
 
+    # Camera OCF (ARRIRAW/X-OCN/R3D) runs FREE-RUN timecode — e.g. the clip's
+    # first frame is at 09:45:08:00, not 00:00:00:00. So the requested editorial
+    # source TC must be made RELATIVE to the clip's own Start TC (which Resolve
+    # reports), otherwise tcToFrame() yields a huge absolute frame (e.g. 807511)
+    # that's nowhere inside an 80-second clip and the append/seek fails.
+    clip_start_tc = ''
+    try:
+        clip_start_tc = target_clip.GetClipProperty('Start TC') or ''
+    except Exception:
+        pass
+
     if source_frame is not None:
         target_frame = int(source_frame)
+    elif clip_start_tc and ':' in clip_start_tc:
+        target_frame = _tc_to_frame(source_tc, fps) - _tc_to_frame(clip_start_tc, fps)
     else:
         target_frame = _tc_to_frame(source_tc, fps)
-    log.info('Target frame: %d (tc=%s fps=%.3f)', target_frame, source_tc, fps)
+    log.info('Target frame: %d (tc=%s startTC=%s fps=%.3f)', target_frame, source_tc, clip_start_tc or '?', fps)
 
     try:
         total_frames = int(target_clip.GetClipProperty('Frames') or 1)
-        target_frame = max(0, min(target_frame, total_frames - 1))
+        target_frame = max(0, min(target_frame, max(0, total_frames - 1)))
     except Exception:
-        pass
+        target_frame = max(0, target_frame)
 
     # ── Create a one-frame timeline ───────────────────────────────────────────
     tl_name = f'PFX_Preview_{int(time.time())}'
@@ -212,17 +237,55 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
         return {'ok': False, 'stage': 'create_timeline',
                 'error': 'Could not create temp timeline.'}
 
+    # Cleanup helper: delete the render job + temp timeline so the scratch project
+    # doesn't accumulate them on EVERY failure path (not just success).
+    _job_id = [None]
+    def _drop_temp():
+        try:
+            if _job_id[0]:
+                project.DeleteRenderJob(_job_id[0])
+        except Exception:
+            pass
+        try:
+            media_pool.DeleteTimelines([timeline])
+        except Exception:
+            pass
+
+    # Append a short WINDOW that begins at the target frame — a zero-length
+    # [N,N] single-frame range is rejected on several Resolve builds (the
+    # original "Could not append clip" failure). We render the window's first
+    # timeline frame (= target_frame) via MarkIn/MarkOut below.
+    try:
+        _tot = max(1, int(target_clip.GetClipProperty('Frames') or 1))
+    except Exception:
+        _tot = 1
+    win_start = max(0, min(target_frame, _tot - 1))
+    win_end   = min(win_start + 9, _tot - 1)
+    if win_end <= win_start:                      # clip too short / target at end
+        win_start = max(0, win_end - 1)
+    target_offset = target_frame - win_start      # frames from window start to target
+
     appended = media_pool.AppendToTimeline([{
         'mediaPoolItem': target_clip,
-        'startFrame':   target_frame,
-        'endFrame':     target_frame,  # single frame
-        'mediaType':    1,             # video
+        'startFrame':   win_start,
+        'endFrame':     win_end,
+        'mediaType':    1,             # video only
     }])
+    if not appended:                              # last resort: whole clip
+        appended = media_pool.AppendToTimeline([{ 'mediaPoolItem': target_clip, 'mediaType': 1 }])
+        target_offset = target_frame
     if not appended:
+        _drop_temp()
         return {'ok': False, 'stage': 'build_timeline',
                 'error': 'Could not append clip to timeline.'}
 
     project.SetCurrentTimeline(timeline)
+    # Render frame = timeline start + offset to the target within the appended window.
+    try:
+        _tl_start = int(timeline.GetStartFrame())
+    except Exception:
+        _tl_start = 0
+    _mark = _tl_start + max(0, target_offset)
 
     # ── Compute output dimensions ─────────────────────────────────────────────
     try:
@@ -235,12 +298,16 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
     except Exception:
         output_height = int(output_width * 9 / 16)
 
-    # ── Set render settings ───────────────────────────────────────────────────
+    # ── Render the window to H.264, then pull frame 0 (= target) with ffmpeg ──
+    # GrabStill+ExportStills fails headless on Resolve 21 (ExportStills→False) and
+    # the JPEG render preset isn't honoured. Rendering the appended window to a
+    # normal H.264 .mp4 IS reliable (Resolve debayers the ARRIRAW), and the first
+    # rendered frame is the target. ffmpeg/avfoundation decode H.264 trivially.
     os.makedirs(cache_dir, exist_ok=True)
     job_name = f'pfx_preview_{int(time.time())}'
+    start_t = time.time()
 
-    # Try to select a JPEG render preset
-    for codec_pair in [('JPEG', 'JPEGData'), ('jpg', ''), ('jpeg', '')]:
+    for codec_pair in [('mp4', 'H264'), ('mov', 'H264'), ('mp4', 'H265')]:
         try:
             if project.SetCurrentRenderFormatAndCodec(*codec_pair):
                 break
@@ -248,72 +315,81 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
             pass
 
     render_ok = project.SetRenderSettings({
-        'SelectAllFrames': False,
-        'MarkIn':  0,
-        'MarkOut': 0,
+        'SelectAllFrames': True,          # render the whole (short) window timeline
         'TargetDir':   cache_dir,
         'CustomName':  job_name,
         'ExportVideo': True,
         'ExportAudio': False,
         'FormatWidth':  output_width,
         'FormatHeight': output_height,
-        'VideoQuality': 85,
     })
     if not render_ok:
-        return {'ok': False, 'stage': 'render_settings',
-                'error': 'SetRenderSettings returned False.'}
+        _drop_temp()
+        return {'ok': False, 'stage': 'render_settings', 'error': 'SetRenderSettings returned False.'}
 
     job_id = project.AddRenderJob()
+    _job_id[0] = job_id
     if not job_id:
-        return {'ok': False, 'stage': 'render_job',
-                'error': 'AddRenderJob returned None.'}
-
+        _drop_temp()
+        return {'ok': False, 'stage': 'render_job', 'error': 'AddRenderJob returned None.'}
     project.StartRendering([job_id])
-    log.info('Rendering job %s …', job_id)
-
-    # ── Wait for render ───────────────────────────────────────────────────────
-    start_t = time.time()
+    log.info('Rendering window job %s …', job_id)
     while project.IsRenderingInProgress():
         if time.time() - start_t > 60:
             project.StopRendering()
-            return {'ok': False, 'stage': 'render_timeout',
-                    'error': 'Render did not complete within 60 s.'}
-        time.sleep(0.25)
+            _drop_temp()
+            return {'ok': False, 'stage': 'render_timeout', 'error': 'Render did not complete within 60 s.'}
+        time.sleep(0.2)
 
-    # ── Locate the output file ────────────────────────────────────────────────
-    output_file = None
-    for suffix in ('', '_000000', '_000001'):
-        for ext in ('.jpg', '.jpeg'):
-            candidate = os.path.join(cache_dir, f'{job_name}{suffix}{ext}')
-            if os.path.exists(candidate):
-                output_file = candidate
-                break
-        if output_file:
-            break
-
-    if not output_file:
-        # Broader scan for recently-created jpegs
-        cutoff = start_t - 2
-        try:
-            for fname in sorted(os.listdir(cache_dir)):
-                if fname.startswith(job_name) and fname.lower().endswith('.jpg'):
-                    fp = os.path.join(cache_dir, fname)
-                    if os.path.getmtime(fp) > cutoff:
-                        output_file = fp
-                        break
-        except Exception:
-            pass
-
-    if not output_file:
+    # Locate the rendered video.
+    video_file = None
+    try:
+        cands = []
+        for fname in os.listdir(cache_dir):
+            if fname.startswith(job_name) and fname.lower().endswith(('.mp4', '.mov')):
+                fp = os.path.join(cache_dir, fname)
+                if os.path.getmtime(fp) >= start_t - 2 and os.path.getsize(fp) > 1024:
+                    cands.append((os.path.getmtime(fp), fp))
+        if cands:
+            cands.sort(reverse=True)
+            video_file = cands[0][1]
+    except Exception:
+        pass
+    if not video_file:
+        _drop_temp()
         return {'ok': False, 'stage': 'render_output',
-                'error': 'Render completed but no JPEG output was found.',
+                'error': 'Render completed but no video output was found.',
                 'details': {'cacheDir': cache_dir, 'jobName': job_name}}
+
+    # Extract frame 0 (the target) as a JPEG with ffmpeg.
+    output_file = os.path.join(cache_dir, f'{job_name}.jpg')
+    ffmpeg = next((p for p in ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg']
+                   if p == 'ffmpeg' or os.path.exists(p)), 'ffmpeg')
+    try:
+        subprocess.run([ffmpeg, '-y', '-nostdin', '-loglevel', 'error', '-i', video_file,
+                        '-frames:v', '1', '-vf', f'scale={int(output_width)}:-1', output_file],
+                       timeout=30, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        _drop_temp()
+        return {'ok': False, 'stage': 'frame_extract', 'error': f'ffmpeg frame extract failed: {e}'}
+    if not (os.path.exists(output_file) and os.path.getsize(output_file) > 0):
+        _drop_temp()
+        return {'ok': False, 'stage': 'frame_extract',
+                'error': 'ffmpeg produced no frame from the Resolve render.'}
+    try:
+        os.remove(video_file)
+    except Exception:
+        pass
 
     with open(output_file, 'rb') as fh:
         raw = fh.read()
 
     data_url = 'data:image/jpeg;base64,' + base64.b64encode(raw).decode('utf-8')
     log.info('Still ready: %s (%d bytes)', output_file, len(raw))
+
+    # ── Clean up so Resolve's render queue + timeline list don't accumulate ───
+    _drop_temp()
 
     return {
         'ok':           True,

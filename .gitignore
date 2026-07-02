@@ -20,6 +20,12 @@ electron/authConfig.local.json
 .build/
 electron/native/**/.build/
 
+# RED R3D helper build output: the binary links the R3D SDK and r3d_libs/ holds
+# RED's redistributable dylibs — do NOT commit vendor SDK binaries. Rebuild on
+# the Mac via `npm run build:r3d` (needs R3DSDK_DIR). See electron/native/r3d_helper/.
+electron/native/pfx_r3d_decode
+electron/native/r3d_libs/
+
 # Built installer / packaging output
 companion/output/
 *.pkg

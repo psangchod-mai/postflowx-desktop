@@ -57,7 +57,7 @@ class NativeEngineManager {
           this._port  = parseInt(match[1], 10);
           this._ready = true;
           console.log(`[NativeEngine] Ready on http://127.0.0.1:${this._port}`);
-          this._readyWaiters.forEach(fn => fn());
+          this._readyWaiters.forEach(w => w.resolve());
           this._readyWaiters = [];
           resolve(true);
         }
@@ -73,10 +73,12 @@ class NativeEngineManager {
         this._proc  = null;
         this._ready = false;
         this._port  = null;
+        this._rejectWaiters(new Error(`NativeEngine exited (code ${code}) before ready`));
       });
 
       this._proc.on('error', (err) => {
         console.error('[NativeEngine] spawn error:', err.message);
+        this._rejectWaiters(new Error(`NativeEngine spawn error: ${err.message}`));
         resolve(false);
       });
 
@@ -96,6 +98,15 @@ class NativeEngineManager {
       this._ready = false;
       this._port  = null;
     }
+    this._rejectWaiters(new Error('NativeEngine stopped'));
+  }
+
+  // Fail every pending command() that is blocked waiting for the engine to become
+  // ready, so a crash/stop during startup rejects promptly instead of hanging forever.
+  _rejectWaiters(err) {
+    const waiters = this._readyWaiters;
+    this._readyWaiters = [];
+    waiters.forEach(w => { try { w.reject(err); } catch {} });
   }
 
   // ── Command routing ─────────────────────────────────────────────────────────
@@ -103,10 +114,29 @@ class NativeEngineManager {
   async command(type, payload = {}, timeoutMs = 60_000) {
     if (!this._ready) {
       if (!this._proc) throw new Error('NativeEngine not started');
-      await new Promise((res) => this._readyWaiters.push(res));
+      await new Promise((resolve, reject) => {
+        const waiter = { resolve, reject };
+        this._readyWaiters.push(waiter);
+        setTimeout(() => {
+          const i = this._readyWaiters.indexOf(waiter);
+          if (i >= 0) {
+            this._readyWaiters.splice(i, 1);
+            reject(new Error('NativeEngine ready timeout'));
+          }
+        }, timeoutMs);
+      });
     }
     return this._http({ type, payload }, timeoutMs);
   }
+
+  // ── Media database (PFXMAC Sprint 3 — SQLite store in the native engine) ──────
+  // record: { id, path, filename?, format?, codec?, width?, height?, fps?,
+  //           durationFrames?, sizeBytes?, modified? }  (id + path required)
+  async dbUpsert(record)            { return this.command('db.upsert', record); }
+  async dbGet(id)                   { return this.command('db.get', { id }); }
+  async dbSearch(term, limit = 100) { return this.command('db.search', { term, limit }); }
+  async dbDelete(id)                { return this.command('db.delete', { id }); }
+  async dbCount()                   { return this.command('db.count', {}); }
 
   async health() {
     if (!this._ready) return false;

@@ -291,7 +291,9 @@ def launch_resolve(resolve_path: str) -> tuple[bool, str]:
     try:
         if platform.system() == "Darwin":
             app_bundle = str(path.parents[2])  # .../DaVinci Resolve.app
-            subprocess.Popen(["open", "-a", app_bundle])
+            # -g: don't bring to foreground, -j: launch hidden. Resolve has no
+            # headless mode but this avoids stealing focus / popping its window.
+            subprocess.Popen(["open", "-gj", app_bundle])
         else:
             subprocess.Popen([resolve_path])
         return True, ""

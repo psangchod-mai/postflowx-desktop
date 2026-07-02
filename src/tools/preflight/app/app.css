@@ -3,43 +3,45 @@
    ============================================================ */
 
 :root {
-  --bg:           #040108;
-  --surface:      rgba(22, 14, 30, 0.72);
-  --surface-hi:   rgba(30, 20, 42, 0.80);
-  --surface-lo:   rgba(14, 8, 20, 0.55);
-  --stroke:       rgba(255, 255, 255, 0.09);
-  --stroke-hi:    rgba(255, 255, 255, 0.16);
+  /* Themed to match the Home tab (homeScreen.js): flat #1a1a1a surfaces,
+     #e4ebff/#8a96b0/#606880 text ramp, single green accent #37b573. */
+  --bg:           #1a1a1a;
+  --surface:      #222222;
+  --surface-hi:   #272c3a;
+  --surface-lo:   #1c1c1c;
+  --stroke:       #2a2e3d;
+  --stroke-hi:    #3a4257;
 
-  --text:         #F0EEF5;
-  --text-2:       rgba(240, 238, 245, 0.72);
-  --text-3:       rgba(240, 238, 245, 0.42);
+  --text:         #e4ebff;
+  --text-2:       #8a96b0;
+  --text-3:       #606880;
 
-  --accent:       #C8192A;
-  --accent-glow:  rgba(200, 25, 42, 0.30);
-  --accent2:      #E83040;
+  --accent:       #37b573;
+  --accent-glow:  rgba(55, 181, 115, 0.30);
+  --accent2:      #42c585;
 
-  --danger:       #FF3B3B;
-  --danger-dim:   rgba(255, 59, 59, 0.12);
-  --danger-line:  rgba(255, 59, 59, 0.38);
-  --warn:         #F5B800;
-  --warn-dim:     rgba(245, 184, 0, 0.10);
-  --warn-line:    rgba(245, 184, 0, 0.36);
-  --ok:           #0EC068;
-  --ok-dim:       rgba(14, 192, 104, 0.10);
-  --ok-line:      rgba(14, 192, 104, 0.34);
+  --danger:       #e05252;
+  --danger-dim:   rgba(224, 82, 82, 0.12);
+  --danger-line:  rgba(224, 82, 82, 0.38);
+  --warn:         #e8a940;
+  --warn-dim:     rgba(232, 169, 64, 0.10);
+  --warn-line:    rgba(232, 169, 64, 0.36);
+  --ok:           #37b573;
+  --ok-dim:       rgba(55, 181, 115, 0.10);
+  --ok-line:      rgba(55, 181, 115, 0.34);
   --miss:         rgba(200, 198, 210, 0.45);
   --miss-line:    rgba(200, 198, 210, 0.18);
 
-  --purple:       #7B5AF0;
-  --purple-dim:   rgba(123, 90, 240, 0.12);
+  --purple:       #7aa2c7;
+  --purple-dim:   rgba(122, 162, 199, 0.12);
 
   --shadow-sm:    0 4px 16px rgba(0, 0, 0, 0.35);
   --shadow:       0 12px 40px rgba(0, 0, 0, 0.50);
   --shadow-lg:    0 24px 64px rgba(0, 0, 0, 0.65);
-  --radius:       14px;
-  --radius-sm:    9px;
+  --radius:       10px;
+  --radius-sm:    8px;
   --radius-xs:    6px;
-  --font:         ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font:         -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --mono:         ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
 }
 
@@ -49,11 +51,7 @@ html, body { height: 100%; margin: 0 }
 body {
   font-family: var(--font);
   color: var(--text);
-  background:
-    radial-gradient(ellipse 900px 600px at 85% 92%, rgba(180, 20, 42, 0.48), transparent 62%),
-    radial-gradient(ellipse 700px 500px at 15% 8%,  rgba(60, 30, 100, 0.32), transparent 60%),
-    radial-gradient(ellipse 1000px 700px at 50% 50%, rgba(30, 10, 50, 0.28), transparent 70%),
-    var(--bg);
+  background: var(--bg);   /* flat, matching the Home tab (no ambient glows) */
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
@@ -62,9 +60,7 @@ body {
 .deliveryBar {
   display: flex; align-items: center; gap: 16px;
   padding: 9px 20px;
-  background: linear-gradient(90deg,
-    rgba(10, 6, 18, 0.96) 0%,
-    rgba(18, 10, 26, 0.94) 100%);
+  background: var(--surface-lo);   /* flat dark strip, Home-style */
   border-bottom: 1px solid var(--stroke);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -94,9 +90,9 @@ body {
 .deliveryBarFill {
   height: 100%; border-radius: 3px; width: 0; transition: width .5s ease;
 }
-.deliveryBarFill.green { background: linear-gradient(90deg, var(--ok), rgba(14,192,104,.55)) }
-.deliveryBarFill.amber { background: linear-gradient(90deg, var(--warn), rgba(245,184,0,.55)) }
-.deliveryBarFill.red   { background: linear-gradient(90deg, var(--danger), rgba(255,59,59,.55)) }
+.deliveryBarFill.green { background: var(--ok) }
+.deliveryBarFill.amber { background: var(--warn) }
+.deliveryBarFill.red   { background: var(--danger) }
 
 .deliveryBarStats {
   font-size: 10.5px; color: var(--text-3); font-weight: 600; letter-spacing: .01em;
@@ -113,8 +109,8 @@ body {
 .deliveryBarChip.chip-warn{ color: var(--warn);   border-color: var(--warn-line);   background: var(--warn-dim) }
 
 @keyframes chipPulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(255,59,59,0) }
-  50%      { box-shadow: 0 0 0 3px rgba(255,59,59,.18) }
+  0%,100% { box-shadow: 0 0 0 0 rgba(224, 82, 82,0) }
+  50%      { box-shadow: 0 0 0 3px rgba(224, 82, 82,.18) }
 }
 
 /* ── Scrollbar ───────────────────────────────────────────── */
@@ -128,10 +124,7 @@ body {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 16px; height: 52px;
-  background: linear-gradient(90deg,
-    rgba(8, 4, 14, 0.94) 0%,
-    rgba(28, 10, 22, 0.90) 50%,
-    rgba(50, 12, 24, 0.88) 100%);
+  background: var(--surface-lo);   /* flat, Home-style (was red/purple gradient) */
   border-bottom: 1px solid var(--stroke);
   backdrop-filter: blur(24px) saturate(1.2);
   -webkit-backdrop-filter: blur(24px) saturate(1.2);
@@ -205,7 +198,7 @@ body {
 .btn:disabled { opacity: .38; cursor: not-allowed; pointer-events: none }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+  background: var(--accent);
   border: none; color: #fff; font-weight: 800; letter-spacing: .01em;
   box-shadow: 0 4px 16px var(--accent-glow);
 }
@@ -224,7 +217,7 @@ body {
   background: var(--danger-dim); border-color: var(--danger-line);
   color: var(--danger); font-weight: 700;
 }
-.btn.danger:hover { background: rgba(255,59,59,.18); border-color: rgba(255,59,59,.55) }
+.btn.danger:hover { background: rgba(224, 82, 82,.18); border-color: rgba(224, 82, 82,.55) }
 
 .btn.small { height: 26px; padding: 0 9px; font-size: 10.5px }
 .btn.tiny  { height: 24px; padding: 0 8px; font-size: 10px; font-weight: 600 }
@@ -261,8 +254,7 @@ body {
 
 /* ── Panel ───────────────────────────────────────────────── */
 .panel {
-  background: linear-gradient(160deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%),
-              var(--surface);
+  background: var(--surface);
   border: 1px solid var(--stroke);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -291,8 +283,7 @@ body {
 }
 
 .kpi {
-  background: linear-gradient(160deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%),
-              var(--surface);
+  background: var(--surface);
   border: 1px solid var(--stroke); border-radius: var(--radius);
   padding: 11px 12px;
   box-shadow: var(--shadow);
@@ -303,7 +294,7 @@ body {
 .kpi::before {
   content: ''; position: absolute;
   inset: 0; border-radius: inherit; pointer-events: none;
-  background: linear-gradient(180deg, rgba(255,255,255,.04) 0%, transparent 60%);
+  background: transparent;
 }
 
 .kpi .label {
@@ -331,14 +322,13 @@ body {
 .kpiScoreFill {
   height: 100%; border-radius: 2px; transition: width .5s ease;
 }
-.kpiScoreFill.score-green { background: linear-gradient(90deg, var(--ok), rgba(14,192,104,.5)) }
-.kpiScoreFill.score-amber { background: linear-gradient(90deg, var(--warn), rgba(245,184,0,.5)) }
-.kpiScoreFill.score-red   { background: linear-gradient(90deg, var(--danger), rgba(255,59,59,.5)) }
+.kpiScoreFill.score-green { background: var(--ok) }
+.kpiScoreFill.score-amber { background: var(--warn) }
+.kpiScoreFill.score-red   { background: var(--danger) }
 
 /* ── Views — pill tabs ───────────────────────────────────── */
 .viewTabsWrap {
-  background: linear-gradient(160deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%),
-              var(--surface);
+  background: var(--surface);
   border: 1px solid var(--stroke); border-radius: var(--radius);
   padding: 7px 8px;
   backdrop-filter: blur(28px) saturate(1.12);
@@ -405,8 +395,7 @@ body {
 
 /* KPI color variants */
 .kpi.kpi-danger {
-  background: linear-gradient(160deg, rgba(255,59,59,.16) 0%, rgba(255,59,59,.06) 100%),
-              var(--surface);
+  background: var(--surface);
   border-color: var(--danger-line);
 }
 .kpi.kpi-danger .value { color: var(--danger) }
@@ -467,8 +456,7 @@ body {
 .content { display: flex; flex-direction: column; gap: 8px }
 
 .contentHeader {
-  background: linear-gradient(160deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.03) 100%),
-              var(--surface);
+  background: var(--surface);
   border: 1px solid var(--stroke); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 9px 12px;
   backdrop-filter: blur(28px) saturate(1.12);
@@ -520,7 +508,7 @@ body {
 .progressBar {
   margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
   border: 1px solid var(--stroke);
-  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  background: rgba(255,255,255,.04);
 }
 .progressInfo {
   display: flex; align-items: center; justify-content: space-between;
@@ -533,7 +521,7 @@ body {
 .progressTrack { height: 4px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,.08) }
 .progressFill {
   height: 100%; width: 0%; border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  background: var(--accent);
   transition: width .15s ease;
 }
 .progressBar.indeterminate .progressFill {
@@ -543,8 +531,7 @@ body {
 
 /* ── Asset table container ───────────────────────────────── */
 .assets {
-  background: linear-gradient(160deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%),
-              var(--surface);
+  background: var(--surface);
   border: 1px solid var(--stroke); border-radius: var(--radius);
   box-shadow: var(--shadow); overflow: auto; position: relative; z-index: 1;
 }
@@ -584,19 +571,19 @@ body {
 
 /* Row status background tint — subtle top glow */
 .reqRow[data-status="BLOCKED"] td {
-  background-image: linear-gradient(180deg, rgba(255,59,59,.14) 0%, rgba(255,59,59,0) 100%);
+  background-image: none;
 }
 .reqRow[data-status="ISSUES"] td {
-  background-image: linear-gradient(180deg, rgba(245,184,0,.12) 0%, rgba(245,184,0,0) 100%);
+  background-image: none;
 }
 .reqRow[data-status="PASSED"] td {
-  background-image: linear-gradient(180deg, rgba(14,192,104,.10) 0%, rgba(14,192,104,0) 100%);
+  background-image: none;
 }
 .reqRow[data-status="SCANNING"] td {
-  background-image: linear-gradient(180deg, rgba(123,90,240,.12) 0%, rgba(123,90,240,0) 100%);
+  background-image: none;
 }
 .reqRow[data-status="NOT_ADDED"] td {
-  background-image: linear-gradient(180deg, rgba(200,198,210,.06) 0%, rgba(200,198,210,0) 100%);
+  background-image: none;
 }
 
 /* Expanded detail row */
@@ -605,7 +592,7 @@ body {
 }
 .reqDetailsBox {
   padding: 10px 20px 12px;
-  background: linear-gradient(180deg, rgba(30, 16, 48, 0.55), rgba(12, 8, 20, 0.50));
+  background: rgba(30, 30, 30, 0.55);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
 }
 .reqDetailsGrid {
@@ -614,9 +601,9 @@ body {
 @media (max-width: 980px) { .reqDetailsGrid { grid-template-columns: 1fr } }
 
 /* Status-tinted detail row */
-.reqRow[data-status="BLOCKED"]   + .reqDetails .reqDetailsBox { background: linear-gradient(180deg, rgba(255,59,59,.12), rgba(14,8,24,.46)) }
-.reqRow[data-status="ISSUES"]    + .reqDetails .reqDetailsBox { background: linear-gradient(180deg, rgba(245,184,0,.10), rgba(14,8,24,.46)) }
-.reqRow[data-status="PASSED"]    + .reqDetails .reqDetailsBox { background: linear-gradient(180deg, rgba(14,192,104,.08), rgba(14,8,24,.46)) }
+.reqRow[data-status="BLOCKED"]   + .reqDetails .reqDetailsBox { background: var(--danger-dim) }
+.reqRow[data-status="ISSUES"]    + .reqDetails .reqDetailsBox { background: var(--warn-dim) }
+.reqRow[data-status="PASSED"]    + .reqDetails .reqDetailsBox { background: var(--ok-dim) }
 
 /* ── Name cell ───────────────────────────────────────────── */
 .reqName { display: flex; align-items: flex-start; gap: 8px; min-width: 0 }
@@ -663,9 +650,9 @@ body {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   flex-shrink: 0;
 }
-.dot-ok   { background: var(--ok);     box-shadow: 0 0 5px rgba(14,192,104,.6) }
-.dot-warn { background: var(--warn);   box-shadow: 0 0 5px rgba(245,184,0,.5) }
-.dot-bad  { background: var(--danger); box-shadow: 0 0 5px rgba(255,59,59,.6) }
+.dot-ok   { background: var(--ok);     box-shadow: 0 0 5px rgba(55, 181, 115,.6) }
+.dot-warn { background: var(--warn);   box-shadow: 0 0 5px rgba(232, 169, 64,.5) }
+.dot-bad  { background: var(--danger); box-shadow: 0 0 5px rgba(224, 82, 82,.6) }
 .dot-muted{ background: rgba(200,198,210,.40) }
 
 /* ── Issues cell mini-badges ─────────────────────────────── */
@@ -698,15 +685,15 @@ body {
 
 /* View / Fix CTA */
 .btn.link {
-  background: linear-gradient(135deg, rgba(200,25,42,.18), rgba(200,25,42,.10));
-  border-color: rgba(200,25,42,.44); color: #fff; font-weight: 800;
+  background: rgba(55, 181, 115, .14);
+  border-color: rgba(55, 181, 115,.44); color: #fff; font-weight: 800;
   letter-spacing: .01em; white-space: nowrap; min-width: 82px;
-  box-shadow: 0 2px 10px rgba(200,25,42,.16);
+  box-shadow: 0 2px 10px rgba(55, 181, 115,.16);
 }
 .btn.link:hover {
-  background: linear-gradient(135deg, rgba(200,25,42,.28), rgba(200,25,42,.18));
-  border-color: rgba(200,25,42,.65);
-  box-shadow: 0 3px 14px rgba(200,25,42,.28);
+  background: rgba(55, 181, 115, .14);
+  border-color: rgba(55, 181, 115,.65);
+  box-shadow: 0 3px 14px rgba(55, 181, 115,.28);
 }
 
 /* ── Badge / status chip ─────────────────────────────────── */
@@ -753,8 +740,7 @@ body {
 
 /* ── Unassigned panel ────────────────────────────────────── */
 .unassigned {
-  background: linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.02)),
-              var(--surface-lo);
+  background: var(--surface-lo);
 }
 .unassignedList { margin-top: 7px; display: flex; flex-direction: column; gap: 6px }
 .urow {
@@ -800,12 +786,12 @@ body {
 .tab.active { color: #fff; border-color: transparent }
 
 #tabFix.active {
-  background: linear-gradient(135deg, rgba(200,25,42,.90), rgba(232,48,64,.72));
-  box-shadow: 0 6px 20px rgba(200,25,42,.24), inset 0 1px 0 rgba(255,255,255,.18);
+  background: var(--accent);
+  box-shadow: 0 6px 20px rgba(55, 181, 115,.24), inset 0 1px 0 rgba(255,255,255,.18);
 }
 #tabEvidence.active {
-  background: linear-gradient(135deg, rgba(96,165,250,.82), rgba(167,139,250,.62));
-  box-shadow: 0 6px 20px rgba(96,165,250,.18), inset 0 1px 0 rgba(255,255,255,.16);
+  background: var(--accent);
+  box-shadow: 0 6px 20px rgba(55, 181, 115,.18), inset 0 1px 0 rgba(255,255,255,.16);
 }
 
 .drawerBody { padding: 12px 16px; overflow: auto; display: flex; flex-direction: column; gap: 8px }
@@ -820,16 +806,16 @@ body {
 }
 .drawerActions .btn.actionPill:hover { border-color: var(--stroke-hi); background: rgba(255,255,255,.06) }
 .drawerActions .btn.actionRescan {
-  background: linear-gradient(135deg, rgba(14,192,104,.16), rgba(96,165,250,.12));
-  border-color: rgba(14,192,104,.36);
+  background: rgba(55, 181, 115, .14);
+  border-color: rgba(55, 181, 115,.36);
 }
 .drawerActions .btn.actionReupload {
-  background: linear-gradient(135deg, rgba(200,25,42,.18), rgba(255,80,90,.12));
-  border-color: rgba(200,25,42,.40);
+  background: var(--accent);
+  border-color: rgba(55, 181, 115,.40);
 }
 .drawerActions .btn.actionReopen {
-  background: linear-gradient(135deg, rgba(245,184,0,.18), rgba(255,140,60,.12));
-  border-color: rgba(245,184,0,.36);
+  background: rgba(232, 169, 64, .15);
+  border-color: rgba(232, 169, 64,.36);
 }
 
 /* Drawer issue cards */
@@ -883,7 +869,7 @@ body {
   transition: background .2s, border-color .2s; position: relative;
 }
 .pfx-np-toggle input:checked ~ .pfx-np-toggle-track {
-  background: rgba(123,90,240,.40); border-color: rgba(123,90,240,.65);
+  background: rgba(122, 162, 199,.40); border-color: rgba(122, 162, 199,.65);
 }
 .pfx-np-toggle-thumb {
   position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
@@ -950,8 +936,8 @@ body {
   animation: dotPulse 2s ease-in-out infinite;
 }
 @keyframes dotPulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(255,59,59,0) }
-  50%      { box-shadow: 0 0 0 4px rgba(255,59,59,.22) }
+  0%,100% { box-shadow: 0 0 0 0 rgba(224, 82, 82,0) }
+  50%      { box-shadow: 0 0 0 4px rgba(224, 82, 82,.22) }
 }
 
 /* ── Responsive ──────────────────────────────────────────── */

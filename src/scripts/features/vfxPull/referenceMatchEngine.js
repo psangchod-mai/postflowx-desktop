@@ -382,6 +382,12 @@ export function detectLetterboxPillarbox(imageData, width, height) {
     else break;
   }
 
+  // An all-black frame (fade, slate, black handle) makes both directional scans
+  // count the full dimension, which would yield a negative active crop and a
+  // negative reformat scale downstream. Treat it as "no bars" / full frame.
+  if (topBlackRows + bottomBlackRows >= height) { topBlackRows = 0; bottomBlackRows = 0; }
+  if (leftBlackCols + rightBlackCols >= width)  { leftBlackCols = 0; rightBlackCols = 0; }
+
   const hasLetterbox = (topBlackRows + bottomBlackRows) > height * 0.05;
   const hasPillarbox = (leftBlackCols + rightBlackCols) > width * 0.05;
 
