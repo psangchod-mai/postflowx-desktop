@@ -5,7 +5,7 @@
 import { parseAssetMap, parsePKL, parseCPL, fmtDuration, fmtFrames } from './imf_parser.js';
 import { computeCplResourceDiff } from './imf_timeline_diff.js';
 import { mountMediaSearch } from '../../features/mediaSearch/mediaSearchBox.js';
-import { validateStructure, verifySHA1, verifyHash, detectHashAlgorithm, SEV } from './imf_validator.js';
+import { validateStructure, validateSchema, verifySHA1, verifyHash, detectHashAlgorithm, SEV } from './imf_validator.js';
 import { extractIabAdmLabelQC, inspectIabAdm, inspectIabAdmFromNames, extractAdmProgrammeTree, extractAdmProgrammeTreeFromCompanion } from './imf_iab_labels.js';
 import { initIMFPlayer, playerLoadReel, playerSeekToFrame, playerGetState, playerStartProxyMode, playerStopProxyMode, playerSetCompanionThumb, playerGetCompanionThumbKey, playerClearCompanionThumb, playerSetDoviShots, playerToggleTrim, playerToggleHdr, playerSetPreviewMode, playerShowTestFrame, playerGetDecodeInputs, playerSetCompare, playerSetCompareFrame, playerGetCompareState, playerExportCompareStill, audStop } from './imf_player.js';
 import { readAudioMXF, extractEmbeddedDoviXml } from './imf_mxf.js';
@@ -1724,6 +1724,7 @@ function _refreshValidationResults() {
   // operator's hash pass/fail results from the panel and exports.
   const hashRows = _valResults.filter(r => r && r.code === 'HASH');
   _valResults = [
+    ...collect('Schema validation', () => validateSchema(_pkg.rawXml)),
     ...collect('Structural validation', () => validateStructure(_pkg.assetMap, _pkg.pkl, _pkg.cpl, _pkg.fileMap)),
     ...collect('Label QC', () => _labelResultsToValidation()),
     ...collect('Dolby Vision extraction', () => _doviExtractionToValidation()),
@@ -2440,6 +2441,7 @@ async function applyCompositionByKey(key) {
     assetMap: entry.assetMap,
     pkl: entry.pkl,
     cpl: entry.cpl,
+    rawXml: entry.rawXml || null,
     fileMap: entry.fileMap,
     extFileMap: _extFileMap,
     resolveFile: resolveAssetFile,
@@ -2678,12 +2680,14 @@ async function discoverImfPackages(files, globalFileMap) {
 
     const amFile = localFiles.find(f => isAssetMap(relPathOf(f)));
     if (!amFile) continue;
-    const assetMap = parseAssetMap(await amFile.text());
+    const assetMapXml = await amFile.text();
+    const assetMap = parseAssetMap(assetMapXml);
     const pklEntry = Object.values(assetMap.assets).find(a => a.isPKL);
     let pklFile = pklEntry ? (fmGet(pklEntry.path) || fmGet(pklEntry.id)) : null;
     if (!pklFile) pklFile = localFiles.find(f => /(^|\/).*pkl.*\.xml$/i.test(relPathOf(f))) || localFiles.find(f => /(^|\/)(packinglist)(\.xml)?$/i.test(relPathOf(f)));
     if (!pklFile) continue;
-    const pkl = parsePKL(await pklFile.text());
+    const pklXml = await pklFile.text();
+    const pkl = parsePKL(pklXml);
     for (const [id, asset] of Object.entries(pkl.assets)) {
       const am = assetMap.assets[id];
       if (am?.path && !asset.assetMapPath) asset.assetMapPath = am.path;
@@ -2699,6 +2703,7 @@ async function discoverImfPackages(files, globalFileMap) {
       const text = await cplFile.text();
       if (!text.includes('CompositionPlaylist')) continue;
       const cpl = parseCPL(text);
+      const cplXml = text;
       const missingVideoRefs = cpl.videoResources.filter(r => !pkl.assets[r.trackFileId]).length;
       const missingAudioRefs = cpl.audioResources.filter(r => !pkl.assets[r.trackFileId]).length;
       const playableReels = cpl.videoResources.filter(r => !!(fmGet((pkl.assets[r.trackFileId] || {}).file) || fmGet((pkl.assets[r.trackFileId] || {}).assetMapPath) || fmGet(r.trackFileId))).length;
@@ -2706,6 +2711,7 @@ async function discoverImfPackages(files, globalFileMap) {
       cpls.push({
         key: `${root || '.'}::${cpl.id}`,
         root, packageName, assetMap, pkl, cpl, fileMap: globalFileMap, fmGet, assetIndex,
+        rawXml: { cpl: cplXml, pkl: pklXml, assetMap: assetMapXml },
         isSupplemental: (missingVideoRefs + missingAudioRefs) > 0 || /supplement/i.test(packageName),
         missingVideoRefs, missingAudioRefs, playableReels, shortLabel,
       });
@@ -3289,6 +3295,7 @@ function _applyValFilter() {
   const txt  = (_valFilterText || '').toLowerCase().trim();
 
   const groups = [
+    { prefix: 'SCHEMA', label: 'Schema / Namespace Conformance' },
     { prefix: 'AM',   label: 'Asset Map' },
     { prefix: 'PKL',  label: 'Packing List' },
     { prefix: 'CPL',  label: 'Composition Playlist' },
@@ -5317,6 +5324,7 @@ async function exportReport() {
   })();
 
   const groups = [
+    { prefix: 'SCHEMA', label: 'Schema / Namespace Conformance' },
     { prefix: 'AM',   label: 'Asset Map' },
     { prefix: 'PKL',  label: 'Packing List' },
     { prefix: 'CPL',  label: 'Composition Playlist' },

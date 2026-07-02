@@ -1003,6 +1003,211 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   return results;
 }
 
+// ── SCHEMA: namespace + application-version conformance (P0-SCHEMA) ────────────
+//
+// A full XSD/RelaxNG validation of multi-GB packages requires a libxml2 path in
+// Electron main; that is a large surface. This function delivers the highest-value
+// slice of Photon-parity schema conformance WITHOUT a Java/libxml2 dependency and
+// WITHOUT loading essence bytes (XML-only, streams fine):
+//
+//   1. XML well-formedness of each document (DOMParser when available, otherwise a
+//      structural fallback that catches the common breakages).
+//   2. Root element correctness for the declared document type.
+//   3. Presence of a RECOGNISED SMPTE namespace for that document type, and
+//      reporting of the concrete namespace version (2013 / 2016 / 2020…).
+//   4. Application identification (App2 / App2E) recognition for CPLs.
+//
+// Documents that are malformed, have the wrong root element, or declare an
+// unrecognised/absent SMPTE namespace produce SEV.FAIL findings citing the
+// offending element + the schema id. Conformant documents PASS and report the
+// detected version so a real IMP does not false-FAIL.
+
+// Recognised SMPTE namespace URIs → { label, version } keyed by the doc kind.
+// (Namespace URIs, not schema files — these are the authoritative identifiers a
+// validating parser keys XSD selection off of.)
+// Real SMPTE-RA IMF namespace URIs look like:
+//   http://www.smpte-ra.org/schemas/429-9/2007/AM
+//   http://www.smpte-ra.org/schemas/2067-2/2016/PKL
+//   http://www.smpte-ra.org/schemas/2067-3/2016  (CPL)
+//   http://www.smpte-ra.org/schemas/2067-100/2016  (OPL)
+// Match on the spec number segment (429-9 / 429-8 / 2067-2 / 2067-3 / 2067-100)
+// with an optional trailing /AM|/PKL|/CPL discriminator and a 4-digit year.
+const SMPTE_NS = {
+  assetmap: [
+    { re: /schemas\/429-9\/(\d{4})(?:\/AM)?/i, label: 'ST 429-9 AssetMap', schema: 'st429-9' },
+  ],
+  pkl: [
+    { re: /schemas\/429-8\/(\d{4})(?:\/PKL)?/i,  label: 'ST 429-8 PackingList', schema: 'st429-8' },
+    { re: /schemas\/2067-2\/(\d{4})\/PKL/i,      label: 'ST 2067-2 PackingList', schema: 'st2067-2' },
+  ],
+  cpl: [
+    { re: /schemas\/2067-3\/(\d{4})/i,  label: 'ST 2067-3 CPL', schema: 'st2067-3' },
+  ],
+  opl: [
+    { re: /schemas\/2067-100\/(\d{4})/i, label: 'ST 2067-100 OPL', schema: 'st2067-100' },
+  ],
+};
+
+// Expected root local-name per document kind.
+const SCHEMA_ROOT = {
+  assetmap: 'AssetMap',
+  pkl:      'PackingList',
+  cpl:      'CompositionPlaylist',
+  opl:      'OutputProfileList',
+};
+
+// Application identification namespaces / URNs recognised for CPLs (ST 2067-21 /-20).
+const APP_ID = [
+  { re: /2067-21|app#?2e|application#?2e/i, label: 'App #2E (ST 2067-21, HDR)' },
+  { re: /2067-20|app#?2\b|application#?2\b/i, label: 'App #2 (ST 2067-20)' },
+  { re: /2067-40/i, label: 'App #4 (ST 2067-40)' },
+  { re: /2067-50/i, label: 'App #5 (ACES, ST 2067-50)' },
+];
+
+// Parse XML text and return { ok, rootLocalName, error }. Uses DOMParser when
+// present (renderer/jsdom) else a lightweight structural check for Node/tests.
+export function parseXmlDoc(xml) {
+  const text = String(xml || '');
+  if (!text.trim()) return { ok: false, error: 'empty document' };
+  if (typeof DOMParser !== 'undefined') {
+    try {
+      const doc = new DOMParser().parseFromString(text, 'application/xml');
+      const perr = doc.getElementsByTagName('parsererror')[0];
+      if (perr) return { ok: false, error: (perr.textContent || 'parse error').trim().split('\n')[0] };
+      const root = doc.documentElement;
+      if (!root) return { ok: false, error: 'no root element' };
+      return { ok: true, rootLocalName: root.localName, root: text };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || 'parse error' };
+    }
+  }
+  // Fallback (Node/tests, no DOMParser): tag-balance well-formedness check +
+  // root-element extraction. Catches unclosed/mismatched tags and stray
+  // DOCTYPE/entity declarations (defence-in-depth vs XXE-shaped input).
+  if (/<!DOCTYPE/i.test(text) || /<!ENTITY/i.test(text))
+    return { ok: false, error: 'DOCTYPE/ENTITY declaration not permitted' };
+  // Strip prolog, comments, CDATA, processing instructions so only element
+  // tags remain for the balance walk.
+  const stripped = text
+    .replace(/<\?[\s\S]*?\?>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  const tagRe = /<\s*(\/?)\s*([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)\s*>/g;
+  const stack = [];
+  let rootLocal = null;
+  let m;
+  while ((m = tagRe.exec(stripped)) !== null) {
+    const closing = m[1] === '/';
+    const qName = m[2];
+    const selfClose = m[4] === '/';
+    const local = qName.includes(':') ? qName.split(':')[1] : qName;
+    if (closing) {
+      if (!stack.length || stack[stack.length - 1] !== qName)
+        return { ok: false, error: `mismatched closing tag </${qName}>` };
+      stack.pop();
+    } else {
+      if (rootLocal === null) rootLocal = local;
+      if (!selfClose) stack.push(qName);
+    }
+  }
+  if (rootLocal === null) return { ok: false, error: 'no root element found' };
+  if (stack.length) return { ok: false, error: `unclosed element <${stack[stack.length - 1]}>` };
+  return { ok: true, rootLocalName: rootLocal, root: text };
+}
+
+// Extract namespace URIs declared anywhere on the document (xmlns / xmlns:pfx).
+// Both double- and single-quoted attribute values are legal XML, so match either
+// (double-quoted → group 1, single-quoted → group 2).
+function collectNamespaces(xml) {
+  const out = [];
+  const re = /xmlns(?::[\w.-]+)?\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) out.push(m[1] !== undefined ? m[1] : m[2]);
+  return out;
+}
+
+// Validate a single document. kind ∈ {assetmap,pkl,cpl,opl}. Emits SCHEMA* rows.
+function validateOneSchema(results, kind, xml) {
+  const codeBase = { assetmap: 'SCHEMA-AM', pkl: 'SCHEMA-PKL', cpl: 'SCHEMA-CPL', opl: 'SCHEMA-OPL' }[kind];
+  const kindLabel = { assetmap: 'ASSETMAP', pkl: 'PKL', cpl: 'CPL', opl: 'OPL' }[kind];
+  const smpteRef = { assetmap: 'SMPTE ST 429-9', pkl: 'SMPTE ST 429-8 / ST 2067-2', cpl: 'SMPTE ST 2067-3', opl: 'SMPTE ST 2067-100' }[kind];
+
+  if (!xml || !String(xml).trim()) {
+    // Missing OPL is normal (OPL is optional); missing AM/PKL/CPL is a real gap
+    // but structural checks already cover it — schema stays quiet to avoid dupes.
+    return;
+  }
+
+  // 1) Well-formedness.
+  const parsed = parseXmlDoc(xml);
+  if (!parsed.ok) {
+    results.push(result(SEV.FAIL, `${codeBase}-WF`,
+      `${kindLabel} is not well-formed XML`,
+      `${parsed.error} — ${smpteRef}`));
+    return;
+  }
+
+  // 2) Root element.
+  const expectRoot = SCHEMA_ROOT[kind];
+  if (parsed.rootLocalName !== expectRoot) {
+    results.push(result(SEV.FAIL, `${codeBase}-ROOT`,
+      `${kindLabel} root element is <${parsed.rootLocalName}>, expected <${expectRoot}>`,
+      `${smpteRef} requires the document root local-name to be ${expectRoot}`));
+    return;
+  }
+
+  // 3) Namespace / version recognition.
+  const namespaces = collectNamespaces(xml);
+  const nsBlob = namespaces.join(' ');
+  const known = (SMPTE_NS[kind] || []).find(v => v.re.test(nsBlob));
+  if (!known) {
+    results.push(result(SEV.FAIL, `${codeBase}-NS`,
+      `${kindLabel} declares no recognised ${smpteRef} namespace`,
+      namespaces.length
+        ? `Declared namespaces: ${namespaces.slice(0, 4).join(' | ')}`
+        : 'No xmlns declarations found on the document'));
+  } else {
+    const verMatch = nsBlob.match(known.re);
+    const year = verMatch && verMatch[1] ? verMatch[1] : '';
+    results.push(result(SEV.PASS, `${codeBase}-NS`,
+      `${kindLabel} conforms to ${known.label}${year ? ` (${year})` : ''}`,
+      `Schema: ${known.schema} · root <${expectRoot}> · well-formed`));
+  }
+
+  // 4) Application identification (CPL only). Scope detection to the declared
+  // namespaces plus the ApplicationIdentification element's own content — NOT the
+  // whole document text (arbitrary content like a title "promo app 2" would else
+  // false-match a constraint set that was never declared).
+  if (kind === 'cpl') {
+    const appElMatch = String(xml).match(
+      /<([\w.-]+:)?ApplicationIdentification\b[^>]*>([\s\S]*?)<\/([\w.-]+:)?ApplicationIdentification>/i);
+    const appScope = (nsBlob + ' ' + (appElMatch ? appElMatch[2] : '')).trim();
+    const appMatch = APP_ID.find(a => a.re.test(appScope));
+    if (appMatch) {
+      results.push(result(SEV.PASS, 'SCHEMA-CPL-APP',
+        `CPL application identification: ${appMatch.label}`,
+        'Recognised SMPTE IMF application constraint set'));
+    } else {
+      results.push(result(SEV.INFO, 'SCHEMA-CPL-APP',
+        'CPL declares no recognised IMF application identification (App #2 / #2E)',
+        'ApplicationIdentification absent or unrecognised — App-level image constraints cannot be checked'));
+    }
+  }
+}
+
+// Public: validate the raw XML of a package's core documents against SMPTE
+// namespace/root/application conformance. `rawXml` = { cpl, pkl, assetMap, opl? }.
+// Returns an array of SCHEMA* findings (empty if rawXml is unavailable).
+export function validateSchema(rawXml) {
+  const results = [];
+  if (!rawXml || typeof rawXml !== 'object') return results;
+  validateOneSchema(results, 'assetmap', rawXml.assetMap);
+  validateOneSchema(results, 'pkl',      rawXml.pkl);
+  validateOneSchema(results, 'cpl',      rawXml.cpl);
+  if (rawXml.opl) validateOneSchema(results, 'opl', rawXml.opl);
+  return results;
+}
+
 // ── Hash algorithm detection ──────────────────────────────────────────────────
 // PKL hashes are base64: SHA-1 = 20 bytes → 28 chars, SHA-256 = 32 bytes → 44
 // chars. Detect from the declared hash length so SHA-256 deliverables are verified

@@ -61,6 +61,25 @@ let   _imfDemuxAvail = null;
 let   _photonPath    = null;
 let   _photonChecked = false;
 
+// Real-time playback instrumentation (P0-RT-PERSIST). The architectural
+// invariant is: continuous play uses ONE long-lived ffmpeg (_startFFmpegStream);
+// per-frame ffmpeg spawns (_extractSingleFrame) are confined to scrub/step ONLY.
+// _perFrameSpawns counts single-frame spawns; _perFrameSpawnsDuringPlay counts
+// any that fire while a session is 'playing' (should stay 0). Exposed via
+// diagnostics() and asserted by tests-js/imfDirectEngineRealtime.test.mjs.
+let   _perFrameSpawns = 0;
+let   _perFrameSpawnsDuringPlay = 0;
+const _rtLog = (...a) => { if (process.env.PFX_LOG_IMF_RT) console.log('[imf-rt]', ...a); };
+// Bounded decode-ahead: max bytes buffered from the ffmpeg mpjpeg stream before
+// we apply backpressure (pause stdout). Keeps memory bounded for UHD frames.
+const _MPJPEG_BUFFER_CAP = 24 * 1024 * 1024; // ~24 MB (several UHD MJPEG frames)
+// Low-water mark: once a buffer-cap pause fires, we only resume the decoder after
+// the reassembly buffer has drained back below this AND no sink is still saturated.
+const _MPJPEG_BUFFER_LOWATER = Math.floor(_MPJPEG_BUFFER_CAP / 2); // ~12 MB
+// Safety net: if 'drain' never fires (slow/half-open socket) re-check periodically
+// so a buffer-cap pause can never wedge playback forever.
+const _RESUME_WATCHDOG_MS = 250;
+
 // ── HTTP MJPEG server ─────────────────────────────────────────────────────────
 
 function _ensureHttpServer() {
@@ -86,7 +105,10 @@ function _ensureHttpServer() {
         // -lowres makes UHD/HD sustain real-time on CPU (full-res can't — see
         // PostFlowX_CRT0_Audit.md). Scrub/pause stay full-res for a crisp frame.
         const qMatch = url.match(/[?&]q=([a-z0-9]+)/i);
-        if (qMatch) session.lowres = _qualityToLowres(qMatch[1]);
+        if (qMatch) {
+          session.quality = qMatch[1];
+          session.lowres = _qualityToLowres(qMatch[1], session.resolution);
+        }
         _attachMJPEGStream(session, req, res);
         return;
       }
@@ -119,15 +141,31 @@ function _ensureHttpServer() {
 }
 
 // Map a quality label to a J2K reduce-level (ffmpeg -lowres power-of-two).
-// 'auto' picks half-res — measured real-time at HD/UHD where full-res can't keep up.
-function _qualityToLowres(q) {
+// 'auto' is RESOLUTION-AWARE (P0-RT-REDUCED): HD (≤~2K) → lowres 1 (~40fps, clears
+// 23.976); UHD/4K → lowres 2 (per CRT0 UHD full ~5fps, lowres1 ~20fps still misses
+// 24, lowres2 ~149fps HD-equivalent clears cadence). Pass the source resolution
+// (a {w,h} object or a numeric long-edge px) so Auto can pick the level.
+function _qualityToLowres(q, resolution) {
   switch (String(q || '').toLowerCase()) {
     case 'full':    return 0;   // full resolution (decode-bound; may drop below realtime)
     case 'half':    return 1;   // 1/2 each axis — verified ~40fps HD IMF (clears 23.976)
     case 'quarter': return 2;   // 1/4 each axis — fastest preview
-    case 'auto':    return 1;
+    case 'auto':    return _autoLowresForResolution(resolution);
     default:        return 0;
   }
+}
+
+// Pick the Auto reduce-level from source resolution. Long edge > 2560px (i.e. UHD
+// / 4K and above) → level 2; anything HD/2K and below → level 1.
+function _autoLowresForResolution(resolution) {
+  let longEdge = 0;
+  if (resolution && typeof resolution === 'object') {
+    longEdge = Math.max(Number(resolution.w) || 0, Number(resolution.h) || 0);
+  } else if (typeof resolution === 'number') {
+    longEdge = resolution;
+  }
+  if (longEdge > 2560) return 2;  // UHD / 4K+ → quarter-res decode
+  return 1;                        // HD / 2K and unknown → half-res decode
 }
 
 function _attachMJPEGStream(session, _req, res) {
@@ -167,14 +205,84 @@ function _broadcastFrame(session, jpegBuf) {
   ].join('\r\n');
   const headerBuf = Buffer.from(header, 'ascii');
 
+  // Track HTTP-sink backpressure: res.write() returns false when the socket
+  // buffer is full. If any sink is saturated we pause the ffmpeg stdout (bounded
+  // decode-ahead) and resume once ALL sinks have drained.
+  let anyBackpressure = false;
   for (const sink of sinks) {
     if (sink.closed) continue;
     try {
-      sink.res.write(Buffer.concat([headerBuf, jpegBuf, Buffer.from('\r\n', 'ascii')]));
+      const ok = sink.res.write(Buffer.concat([headerBuf, jpegBuf, Buffer.from('\r\n', 'ascii')]));
+      if (ok === false) anyBackpressure = true;
     } catch {}
   }
   session.lastFrameBuf = jpegBuf;
   session.frameCount = (session.frameCount || 0) + 1;
+  if (anyBackpressure) _pauseStream(session);
+}
+
+// True while any open sink's socket write buffer is still full (write() would
+// return false). A drain event on any sink flips it back.
+function _anySinkSaturated(session) {
+  for (const sink of (session.sinks || [])) {
+    if (sink.closed) continue;
+    // res.writableNeedDrain is set by Node once a write() returned false and stays
+    // true until 'drain' fires — a reliable per-sink saturation flag.
+    if (sink.res && sink.res.writableNeedDrain) return true;
+  }
+  return false;
+}
+
+// Backpressure control for the persistent mpjpeg stream (bounded decode-ahead).
+// The pause can be triggered by EITHER a saturated sink (write()===false) OR the
+// reassembly buffer exceeding the cap (a giant partial frame / slow socket that
+// has not yet reported drain). Because a buffer-cap pause may fire WITHOUT any
+// sink having returned false, we cannot rely solely on a 'drain' handler to
+// resume — so we (a) arm a drain listener on every open sink and (b) run a
+// watchdog timer that re-checks and resumes so playback can never wedge.
+function _pauseStream(session) {
+  const p = session && session.ffmpegProc;
+  if (!p || !p.stdout || session._stdoutPaused) return;
+  session._stdoutPaused = true;
+  try { p.stdout.pause(); } catch {}
+  _rtLog('backpressure → paused ffmpeg stdout');
+
+  // Arm a one-shot drain listener on each open sink.
+  for (const sink of (session.sinks || [])) {
+    if (sink.closed || sink._drainWired) continue;
+    sink._drainWired = true;
+    try {
+      sink.res.once('drain', () => { sink._drainWired = false; _resumeStream(session); });
+    } catch { sink._drainWired = false; }
+  }
+
+  // Watchdog: guarantees a resume even if no sink ever emits 'drain'.
+  if (!session._resumeWatchdog) {
+    session._resumeWatchdog = setInterval(() => _resumeStream(session), _RESUME_WATCHDOG_MS);
+    if (session._resumeWatchdog.unref) session._resumeWatchdog.unref();
+  }
+}
+function _resumeStream(session) {
+  const p = session && session.ffmpegProc;
+  if (!p || !p.stdout || !session._stdoutPaused) {
+    _clearResumeWatchdog(session);
+    return;
+  }
+  // Only resume once memory has drained below the low-water mark AND no sink is
+  // still saturated — otherwise we would immediately re-pause and thrash.
+  const bufLen = session._mpjpegBufLen || 0;
+  if (bufLen > _MPJPEG_BUFFER_LOWATER || _anySinkSaturated(session)) return;
+
+  session._stdoutPaused = false;
+  _clearResumeWatchdog(session);
+  try { p.stdout.resume(); } catch {}
+  _rtLog('drain → resumed ffmpeg stdout');
+}
+function _clearResumeWatchdog(session) {
+  if (session && session._resumeWatchdog) {
+    clearInterval(session._resumeWatchdog);
+    session._resumeWatchdog = null;
+  }
 }
 
 function _serveFrame(session, frameNum, res) {
@@ -528,7 +636,8 @@ async function startPlayback(packageId, cplId, opts = {}) {
     primaries:   cpl.primaries || '–',
     audioInfo:   null,
     outputWidth: opts.outputWidth || 1920,
-    lowres:      _qualityToLowres(opts.quality || 'full'),  // continuous-play reduce level
+    quality:     (opts.quality || 'full'),                  // last requested quality label
+    lowres:      _qualityToLowres(opts.quality || 'full', cpl.resolution),  // continuous-play reduce level
   };
   _sessions.set(sessionId, session);
 
@@ -591,8 +700,9 @@ async function controlPlayback(sessionId, command, value) {
     case 'quality': {
       // Reduced-resolution continuous-play level (C-RT1). Restart the stream so
       // the new -lowres takes effect mid-playback.
-      const lowres = _qualityToLowres(value);
+      const lowres = _qualityToLowres(value, session.resolution);
       const changed = lowres !== session.lowres;
+      session.quality = value;
       session.lowres = lowres;
       if (changed && session.state === 'playing') {
         _killFFmpegProc(session);
@@ -797,8 +907,25 @@ async function diagnostics() {
     httpPort:           _httpPort,
     activeSessions:     _sessions.size,
     loadedPackages:     _packages.size,
+    // Real-time playback invariant counters (P0-RT-PERSIST). During continuous
+    // play, perFrameSpawnsDuringPlay MUST stay 0 (all frames come from the
+    // persistent stream); a non-zero value means a scrub/step path leaked into
+    // the play loop and would break real-time cadence.
+    perFrameSpawns:            _perFrameSpawns,
+    perFrameSpawnsDuringPlay:  _perFrameSpawnsDuringPlay,
+    mpjpegBufferCapBytes:      _MPJPEG_BUFFER_CAP,
   };
 }
+
+// Test/diagnostic hooks for the real-time invariant counters.
+function _rtStats() {
+  return {
+    perFrameSpawns: _perFrameSpawns,
+    perFrameSpawnsDuringPlay: _perFrameSpawnsDuringPlay,
+    mpjpegBufferCapBytes: _MPJPEG_BUFFER_CAP,
+  };
+}
+function _rtResetStats() { _perFrameSpawns = 0; _perFrameSpawnsDuringPlay = 0; }
 
 // ── FFmpeg subprocess management ──────────────────────────────────────────────
 
@@ -834,6 +961,7 @@ function _startFFmpegStream(session, startFrame) {
   const proc = spawn(FFMPEG,args, { stdio: ['ignore', 'pipe', 'pipe'] });
   session.ffmpegProc = proc;
   session.state = 'playing';
+  session._stdoutPaused = false;
 
   proc.stdout.on('data', (chunk) => {
     buf = Buffer.concat([buf, chunk]);
@@ -852,6 +980,16 @@ function _startFFmpegStream(session, startFrame) {
       start = eoi + 2;
     }
     buf = buf.slice(start);
+
+    // Publish the reassembly buffer size so _resumeStream can gate on the
+    // low-water mark (see backpressure notes above).
+    session._mpjpegBufLen = buf.length;
+
+    // Bounded decode-ahead: if the reassembly buffer exceeds the cap (a partial
+    // frame plus a saturated sink), pause the decoder so memory never balloons on
+    // UHD. Resume is driven by sink 'drain' + a watchdog, gated on the low-water
+    // mark, so a buffer-cap pause can never wedge playback.
+    if (buf.length > _MPJPEG_BUFFER_CAP) _pauseStream(session);
   });
 
   proc.stderr.on('data', d => {
@@ -863,6 +1001,9 @@ function _startFFmpegStream(session, startFrame) {
 
   proc.on('close', (code) => {
     session.ffmpegProc = null;
+    session._stdoutPaused = false;
+    session._mpjpegBufLen = 0;
+    _clearResumeWatchdog(session);
     if (session.state === 'playing') {
       session.state = code === 0 ? 'ended' : 'error';
     }
@@ -884,6 +1025,14 @@ function _startFFmpegStream(session, startFrame) {
 }
 
 async function _extractSingleFrame(session, frameNum) {
+  // Real-time invariant guard (P0-RT-PERSIST): a per-frame ffmpeg spawn during
+  // continuous play would break real-time cadence (CRT0 §3e). Scrub/step set
+  // state to 'paused' BEFORE calling this; a spawn while 'playing' is a defect.
+  _perFrameSpawns++;
+  if (session && session.state === 'playing') {
+    _perFrameSpawnsDuringPlay++;
+    _rtLog('WARN per-frame ffmpeg spawned during PLAY (breaks real-time)', { frame: frameNum });
+  }
   const fps    = session.fps || 24;
   const seekTs = frameNum > 0 ? (frameNum / fps).toFixed(6) : '0';
   const outW   = session.outputWidth || 1920;
@@ -931,6 +1080,9 @@ function _killFFmpegProc(session) {
     try { session.ffmpegProc.kill('SIGTERM'); } catch {}
     session.ffmpegProc = null;
   }
+  session._stdoutPaused = false;
+  session._mpjpegBufLen = 0;
+  _clearResumeWatchdog(session);
 }
 
 // ── Command dispatcher ────────────────────────────────────────────────────────
@@ -1019,4 +1171,4 @@ function _serializeIndex(idx) {
   return j;
 }
 
-module.exports = { handles, route };
+module.exports = { handles, route, _rtStats, _rtResetStats, _qualityToLowres, _autoLowresForResolution };
