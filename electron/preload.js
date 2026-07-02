@@ -676,6 +676,19 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
     diagnostics() {
       return invoke('pfx:imf-engine', { command: 'diagnostics', payload: {} });
     },
+    // P1-PROGRESS: poll-based cancellable long-pass jobs. The renderer's
+    // runImfEngineJob() driver (imf_ui.js) calls startJob(kind, params) →
+    // polls jobProgress(jobId) → cancelJob(jobId). Signatures mirror the
+    // in-process engine API so imf_player_engine and tests share one shape.
+    startJob(kind, params) {
+      return invoke('pfx:imf-engine', { command: 'startJob', payload: { kind, params: params || {} } });
+    },
+    jobProgress(jobId) {
+      return invoke('pfx:imf-engine', { command: 'jobProgress', payload: { jobId } });
+    },
+    cancelJob(jobId) {
+      return invoke('pfx:imf-engine', { command: 'cancelJob', payload: { jobId } });
+    },
   },
 });
 

@@ -46,6 +46,7 @@ try {
   FFPROBE = _resolveBin('ffprobe', ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']);
 }
 
+const crypto              = require('crypto');
 const { IMFPackageIndex } = require('./imf_package_index');
 const nativeDecoder       = require('./imf_native_decoder');
 
@@ -53,13 +54,116 @@ const nativeDecoder       = require('./imf_native_decoder');
 
 const _packages  = new Map();   // packageId → { index: IMFPackageIndex, path }
 const _sessions  = new Map();   // sessionId → PlaybackSession
+const _jobs      = new Map();   // jobId → ProgressJob (long IMF passes)
 let   _httpServer = null;
 let   _httpPort   = 0;
 let   _sessionSeq = 0;
+let   _jobSeq     = 0;
 let   _ffmpegAvail  = null;
 let   _imfDemuxAvail = null;
 let   _photonPath    = null;
 let   _photonChecked = false;
+
+// ── P1-PROGRESS: progress reporting + cooperative cancellation ─────────────────
+// Long IMF passes (validation / PKL hashing / essence probe / decode warm-up) can
+// run for tens of seconds on large UHD packages. A ProgressJob carries:
+//   - a CancellationToken (cooperative: checked at safe points; kills any child
+//     ffmpeg/hash stream in flight),
+//   - a progress callback path (fraction 0..1 + stage label + message),
+// so callers can drive a UI progress bar and a Cancel affordance.
+//
+// This is an IN-PROCESS API surfaced via route() as 'startJob' / 'jobProgress' /
+// 'cancelJob' (poll-based, since the existing pfx:imf-engine IPC channel is
+// request/response and cannot stream). It is additive and non-breaking: the
+// legacy validatePackage(packageId, cplId) call still works unchanged.
+
+class CancellationError extends Error {
+  constructor(msg = 'cancelled') { super(msg); this.name = 'CancellationError'; this.code = 'CANCELLED'; }
+}
+
+// Cooperative cancellation token. cancel() flips the flag, runs any registered
+// abort callbacks (e.g. kill a spawned ffmpeg), and resolves waiters.
+class CancellationToken {
+  constructor() {
+    this._cancelled = false;
+    this._callbacks = new Set();
+  }
+  get cancelled() { return this._cancelled; }
+  // Register a cleanup/abort callback. If already cancelled, runs immediately.
+  onCancel(fn) {
+    if (typeof fn !== 'function') return () => {};
+    if (this._cancelled) { try { fn(); } catch {} return () => {}; }
+    this._callbacks.add(fn);
+    return () => this._callbacks.delete(fn);
+  }
+  cancel() {
+    if (this._cancelled) return;
+    this._cancelled = true;
+    for (const fn of this._callbacks) { try { fn(); } catch {} }
+    this._callbacks.clear();
+  }
+  // Throw at a cooperative checkpoint. Callers wrap stages with this.
+  throwIfCancelled() { if (this._cancelled) throw new CancellationError(); }
+}
+
+// A tracked long-running pass. Holds the token, the latest progress snapshot,
+// and (for poll-based consumers) the terminal result once settled.
+class ProgressJob {
+  constructor(id, kind) {
+    this.id     = id;
+    this.kind   = kind;                 // 'validate' | 'warmup' | …
+    this.token  = new CancellationToken();
+    this.state  = 'running';            // running | done | error | cancelled
+    this.progress = { fraction: 0, stage: 'init', message: '', done: false };
+    this.result = null;                 // terminal payload for pollers
+    this.error  = null;
+    this._onProgress = new Set();        // in-process subscribers
+    this.startedAt = Date.now();
+  }
+  // Emit a progress update. fraction is clamped to [0,1]; stage/message describe
+  // the current pass. Never throws (subscriber errors are swallowed).
+  emit(fraction, stage, message) {
+    const f = Math.max(0, Math.min(1, Number(fraction) || 0));
+    this.progress = { fraction: f, stage: stage || this.progress.stage, message: message || '', done: false };
+    for (const fn of this._onProgress) { try { fn(this.progress); } catch {} }
+  }
+  onProgress(fn) {
+    if (typeof fn !== 'function') return () => {};
+    this._onProgress.add(fn);
+    try { fn(this.progress); } catch {}   // fire current snapshot immediately
+    return () => this._onProgress.delete(fn);
+  }
+  settle(state, resultOrError) {
+    this.state = state;
+    const done = { fraction: state === 'done' ? 1 : this.progress.fraction, stage: state, message: '', done: true };
+    this.progress = done;
+    if (state === 'error')     this.error  = resultOrError;
+    else                       this.result = resultOrError;
+    for (const fn of this._onProgress) { try { fn(this.progress); } catch {} }
+    this._onProgress.clear();
+  }
+  snapshot() {
+    return {
+      id: this.id, kind: this.kind, state: this.state,
+      progress: this.progress,
+      result: this.result, error: this.error,
+      elapsedMs: Date.now() - this.startedAt,
+    };
+  }
+}
+
+function _newJob(kind) {
+  const id = `job-${++_jobSeq}-${Date.now().toString(36)}`;
+  const job = new ProgressJob(id, kind);
+  _jobs.set(id, job);
+  return job;
+}
+
+// GC settled jobs after a grace period so pollers can read the terminal result.
+function _reapJob(jobId, graceMs = 60000) {
+  const t = setTimeout(() => { _jobs.delete(jobId); }, graceMs);
+  if (t.unref) t.unref();
+}
 
 // Real-time playback instrumentation (P0-RT-PERSIST). The architectural
 // invariant is: continuous play uses ONE long-lived ffmpeg (_startFFmpegStream);
@@ -405,9 +509,21 @@ async function openPackage(inputPath) {
 
 // ── validatePackage ───────────────────────────────────────────────────────────
 
-async function validatePackage(packageId, cplId) {
+// validatePackage(packageId, cplId[, opts])
+//   opts.job    — optional ProgressJob to report progress into and honour
+//                 cancellation from (P1-PROGRESS). Omitted → legacy behaviour
+//                 (runs to completion, no progress, cannot be cancelled).
+//   opts.hash   — when true (or a PKL Hash is present), verify essence SHA-1
+//                 against the PKL. Off by default (can be slow on UHD reels).
+async function validatePackage(packageId, cplId, opts = {}) {
   const pkg = _packages.get(packageId);
   if (!pkg) return { ok: false, error: 'Package not loaded', code: 'NOT_FOUND' };
+
+  const job   = opts.job || null;
+  const token = job ? job.token : null;
+  // Cooperative checkpoint helper: throws CancellationError if cancelled.
+  const ck = () => { if (token) token.throwIfCancelled(); };
+  const step = (f, stage, msg) => { if (job) job.emit(f, stage, msg); };
 
   const idx = pkg.index;
   const cpl = cplId ? idx.cplById.get(cplId) : idx.activeCpl;
@@ -422,89 +538,203 @@ async function validatePackage(packageId, cplId) {
     encryptedAssets:[],
     codecWarnings:  [],
     checksumStatus: 'not_checked',
+    checksumResults:[],
     ffprobeResult:  null,
     photonResult:   null,
     errors:         [...idx.errors],
     warnings:       [],
     canPlay:        false,
+    cancelled:      false,
   };
 
-  if (!v.assetmapFound) {
-    v.errors.push('ASSETMAP.xml missing or unreadable');
-  }
-  if (!v.pklFound) {
-    v.warnings.push('No Packing List (PKL) found. Hash verification unavailable.');
-  }
-  if (!cpl) {
-    v.errors.push('No Composition Playlist (CPL) selected or found');
-    return { ok: true, validation: v };
-  }
+  try {
+    step(0.02, 'assetmap', 'Checking ASSETMAP / PKL…');
+    if (!v.assetmapFound) {
+      v.errors.push('ASSETMAP.xml missing or unreadable');
+    }
+    if (!v.pklFound) {
+      v.warnings.push('No Packing List (PKL) found. Hash verification unavailable.');
+    }
+    if (!cpl) {
+      v.errors.push('No Composition Playlist (CPL) selected or found');
+      if (job) job.settle('done', v);
+      return { ok: true, validation: v };
+    }
+    ck();
 
-  // Count track types and check file existence
-  const seenMXFs = new Set();
-  for (const seg of (cpl.segments || [])) {
-    for (const seq of (seg.sequences || [])) {
-      const isPicture = seq.seqType === 'MainImageSequence' || seq.seqType?.toLowerCase().includes('image');
-      const isAudio   = seq.seqType === 'MainAudioSequence' || seq.seqType === 'IABSequence' || seq.seqType?.toLowerCase().includes('audio');
-      if (isPicture) v.pictureTrackCount++;
-      if (isAudio)   v.audioTrackCount++;
+    // ── Stage: track census + MXF existence ──────────────────────────────────
+    step(0.08, 'tracks', 'Enumerating tracks…');
+    const seenMXFs = new Set();
+    for (const seg of (cpl.segments || [])) {
+      for (const seq of (seg.sequences || [])) {
+        const isPicture = seq.seqType === 'MainImageSequence' || seq.seqType?.toLowerCase().includes('image');
+        const isAudio   = seq.seqType === 'MainAudioSequence' || seq.seqType === 'IABSequence' || seq.seqType?.toLowerCase().includes('audio');
+        if (isPicture) v.pictureTrackCount++;
+        if (isAudio)   v.audioTrackCount++;
 
-      for (const res of (seq.resources || [])) {
-        if (!res.trackFileId || seenMXFs.has(res.trackFileId)) continue;
-        seenMXFs.add(res.trackFileId);
-        const mxfPath = idx.resolveMXFPath(res.trackFileId);
-        if (!mxfPath) {
-          v.missingMXFs.push({
-            uuid: res.trackFileId,
-            friendlyName: `${isPicture ? 'Picture' : isAudio ? 'Audio' : 'Unknown'} track MXF not found`,
-            seqType: seq.seqType,
-          });
+        for (const res of (seq.resources || [])) {
+          if (!res.trackFileId || seenMXFs.has(res.trackFileId)) continue;
+          seenMXFs.add(res.trackFileId);
+          const mxfPath = idx.resolveMXFPath(res.trackFileId);
+          if (!mxfPath) {
+            v.missingMXFs.push({
+              uuid: res.trackFileId,
+              friendlyName: `${isPicture ? 'Picture' : isAudio ? 'Audio' : 'Unknown'} track MXF not found`,
+              seqType: seq.seqType,
+            });
+          }
         }
       }
     }
-  }
+    ck();
 
-  // Encryption check: look for KLVFill / CryptographicContext in CPL text
-  if (cpl.videoResources?.some(r => r.descriptor?.pecUL?.includes('encrypt'))) {
-    v.encryptedAssets.push('Encrypted picture essence detected — direct playback not supported');
-  }
-
-  // Codec support check
-  const picDesc = cpl.picDesc || {};
-  if (picDesc.isHTJ2K) {
-    const imfDemux = await _checkIMFDemux();
-    if (!imfDemux) {
-      v.codecWarnings.push('HTJ2K (JPEG 2000 Part 15): FFmpeg IMF demuxer not available. Install FFmpeg ≥5.1 with OpenJPH support.');
+    // Encryption check: look for KLVFill / CryptographicContext in CPL text
+    if (cpl.videoResources?.some(r => r.descriptor?.pecUL?.includes('encrypt'))) {
+      v.encryptedAssets.push('Encrypted picture essence detected — direct playback not supported');
     }
-  }
 
-  // ffprobe validation (if ffmpeg available)
-  const ffOk = await _checkFFmpeg();
-  if (ffOk && idx.assetMapPath && cpl.cplPath) {
-    try {
-      v.ffprobeResult = await _ffprobeIMF(idx.assetMapPath, cpl.cplPath);
-    } catch (e) {
-      v.warnings.push(`ffprobe validation failed: ${e.message}`);
+    // Codec support check
+    const picDesc = cpl.picDesc || {};
+    if (picDesc.isHTJ2K) {
+      const imfDemux = await _checkIMFDemux();
+      if (!imfDemux) {
+        v.codecWarnings.push('HTJ2K (JPEG 2000 Part 15): FFmpeg IMF demuxer not available. Install FFmpeg ≥5.1 with OpenJPH support.');
+      }
     }
+    ck();
+
+    // ── Stage: PKL hash verification (optional, cancellable) ─────────────────
+    // Reads per-asset SHA-1 from the PKL <Hash> and streams each essence file to
+    // verify it. This is the heaviest pass on UHD reels, so it is cooperatively
+    // cancellable at both the per-file boundary AND mid-stream (kills the hash
+    // read). Skipped unless opts.hash and a PKL is present.
+    if (opts.hash && v.pklFound) {
+      step(0.20, 'hashing', 'Verifying essence checksums…');
+      v.checksumResults = await _verifyPKLHashes(idx, {
+        token,
+        onProgress: (frac, msg) => step(0.20 + frac * 0.45, 'hashing', msg),
+      });
+      const bad = v.checksumResults.filter(r => r.status === 'mismatch');
+      const okc = v.checksumResults.filter(r => r.status === 'ok');
+      if (v.checksumResults.length === 0)      v.checksumStatus = 'no_hashes_in_pkl';
+      else if (bad.length > 0)                 { v.checksumStatus = 'mismatch'; for (const b of bad) v.errors.push(`Checksum mismatch: ${b.name}`); }
+      else if (okc.length > 0)                 v.checksumStatus = 'verified';
+      else                                     v.checksumStatus = 'incomplete';
+    }
+    ck();
+
+    // ── Stage: essence probe (ffprobe over the IMF demuxer) ──────────────────
+    step(0.68, 'probe', 'Probing essence with ffprobe…');
+    const ffOk = await _checkFFmpeg();
+    if (ffOk && idx.assetMapPath && cpl.cplPath) {
+      try {
+        v.ffprobeResult = await _ffprobeIMF(idx.assetMapPath, cpl.cplPath, token);
+      } catch (e) {
+        if (e instanceof CancellationError) throw e;
+        v.warnings.push(`ffprobe validation failed: ${e.message}`);
+      }
+    }
+    ck();
+
+    // ── Stage: Photon (if available) ─────────────────────────────────────────
+    step(0.85, 'photon', 'Running Photon (if available)…');
+    const photonJar = await _checkPhoton();
+    if (photonJar && idx.folderPath) {
+      try {
+        v.photonResult = await _runPhoton(photonJar, idx.folderPath, token);
+      } catch (e) { if (e instanceof CancellationError) throw e; }
+    }
+    ck();
+
+    // Determine playability
+    v.canPlay = v.assetmapFound && !!cpl && v.missingMXFs.length === 0 &&
+                v.encryptedAssets.length === 0 && v.errors.length === 0 && ffOk;
+
+    step(1, 'done', 'Validation complete');
+    if (job) job.settle('done', v);
+    return { ok: true, validation: v };
+  } catch (e) {
+    if (e instanceof CancellationError) {
+      v.cancelled = true;
+      v.warnings.push('Validation cancelled before completion.');
+      if (job) job.settle('cancelled', v);
+      return { ok: true, validation: v, cancelled: true, code: 'CANCELLED' };
+    }
+    if (job) job.settle('error', e.message);
+    return { ok: false, error: e.message, code: 'VALIDATE_ERROR' };
   }
-
-  // Photon validation (if available)
-  const photonJar = await _checkPhoton();
-  if (photonJar && idx.folderPath) {
-    try {
-      v.photonResult = await _runPhoton(photonJar, idx.folderPath);
-    } catch {}
-  }
-
-  // Determine playability
-  v.canPlay = v.assetmapFound && !!cpl && v.missingMXFs.length === 0 &&
-              v.encryptedAssets.length === 0 && v.errors.length === 0 && ffOk;
-
-  return { ok: true, validation: v };
 }
 
-async function _ffprobeIMF(assetMapPath, cplPath) {
-  return new Promise((resolve) => {
+// Stream each PKL-listed essence file and compare its SHA-1 to the PKL <Hash>.
+// Cooperatively cancellable: honours token at file boundaries AND kills the
+// in-flight read stream if cancelled mid-file. Returns per-asset results.
+async function _verifyPKLHashes(idx, { token, onProgress } = {}) {
+  const results = [];
+  // Collect { uuid, name, expectedHash, path } from every PKL, reading the raw
+  // XML for <Hash> (the package index intentionally drops it).
+  const assets = [];
+  for (const pklPath of (idx.pklPaths || [])) {
+    let text;
+    try { text = fs.readFileSync(pklPath, 'utf8'); } catch { continue; }
+    for (const m of text.matchAll(/<[\w:]*Asset\b[\s\S]*?<\/[\w:]*Asset>/g)) {
+      const block = m[0];
+      const id   = (block.match(/<[\w:]*Id>\s*(?:urn:uuid:)?([0-9a-fA-F-]+)\s*<\/[\w:]*Id>/) || [])[1];
+      const hash = (block.match(/<[\w:]*Hash>\s*([A-Za-z0-9+/=\s]+?)\s*<\/[\w:]*Hash>/) || [])[1];
+      const name = (block.match(/<[\w:]*OriginalFileName[^>]*>\s*([\s\S]*?)\s*<\/[\w:]*OriginalFileName>/) || [])[1];
+      if (!id || !hash) continue;
+      const p = idx.resolveMXFPath(id) || (idx.assetMap && idx.assetMap.get(_normUuid(id))?.absPath) || null;
+      assets.push({ uuid: id, name: (name || '').trim() || id, expectedHash: hash.replace(/\s+/g, ''), path: p });
+    }
+  }
+  const total = assets.length;
+  for (let i = 0; i < total; i++) {
+    if (token) token.throwIfCancelled();
+    const a = assets[i];
+    if (onProgress) onProgress(total ? i / total : 0, `Hashing ${a.name} (${i + 1}/${total})`);
+    if (!a.path || !fs.existsSync(a.path)) {
+      results.push({ uuid: a.uuid, name: a.name, status: 'missing' });
+      continue;
+    }
+    try {
+      const actual = await _sha1File(a.path, token);
+      results.push({
+        uuid: a.uuid, name: a.name,
+        status: actual === a.expectedHash ? 'ok' : 'mismatch',
+        expected: a.expectedHash, actual,
+      });
+    } catch (e) {
+      if (e instanceof CancellationError) throw e;
+      results.push({ uuid: a.uuid, name: a.name, status: 'error', error: e.message });
+    }
+  }
+  if (onProgress && total) onProgress(1, `Hashed ${total} asset${total > 1 ? 's' : ''}`);
+  return results;
+}
+
+// SHA-1 of a file as base64 (PKL <Hash> encoding). Cancellable mid-stream.
+function _sha1File(filePath, token) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha1');
+    const rs = fs.createReadStream(filePath, { highWaterMark: 1 << 20 });
+    let unregister = () => {};
+    if (token) {
+      unregister = token.onCancel(() => { try { rs.destroy(); } catch {} reject(new CancellationError()); });
+    }
+    rs.on('data', (chunk) => {
+      if (token && token.cancelled) { try { rs.destroy(); } catch {} return; }
+      h.update(chunk);
+    });
+    rs.on('error', (e) => { unregister(); reject(e); });
+    rs.on('end', () => { unregister(); resolve(h.digest('base64')); });
+  });
+}
+
+function _normUuid(u) {
+  return String(u || '').replace(/^urn:uuid:/i, '').toLowerCase();
+}
+
+async function _ffprobeIMF(assetMapPath, cplPath, token) {
+  return new Promise((resolve, reject) => {
     const args = [
       '-v', 'quiet',
       '-f', 'imf',
@@ -516,13 +746,17 @@ async function _ffprobeIMF(assetMapPath, cplPath) {
     let out = ''; let err = '';
     const p = spawn(FFPROBE,args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const timer = setTimeout(() => { p.kill(); resolve({ ok: false, error: 'ffprobe timeout' }); }, 30000);
+    let unregister = () => {};
+    if (token) {
+      unregister = token.onCancel(() => { clearTimeout(timer); try { p.kill('SIGKILL'); } catch {} reject(new CancellationError()); });
+    }
+    const _done = (r) => { clearTimeout(timer); unregister(); resolve(r); };
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });
     p.on('close', code => {
-      clearTimeout(timer);
       if (code !== 0 || !out.trim()) {
         // ffprobe returned error — this is still informative
-        resolve({ ok: false, error: err.slice(-300), supportsIMFDemux: false });
+        _done({ ok: false, error: err.slice(-300), supportsIMFDemux: false });
         return;
       }
       try {
@@ -530,7 +764,7 @@ async function _ffprobeIMF(assetMapPath, cplPath) {
         const streams = parsed.streams || [];
         const videoStream = streams.find(s => s.codec_type === 'video');
         const audioStream = streams.find(s => s.codec_type === 'audio');
-        resolve({
+        _done({
           ok: true,
           supportsIMFDemux: true,
           streams: streams.length,
@@ -551,22 +785,26 @@ async function _ffprobeIMF(assetMapPath, cplPath) {
           duration: parseFloat(parsed.format?.duration || '0') || 0,
         });
       } catch {
-        resolve({ ok: false, error: 'ffprobe JSON parse failed' });
+        _done({ ok: false, error: 'ffprobe JSON parse failed' });
       }
     });
-    p.on('error', () => { clearTimeout(timer); resolve({ ok: false, error: 'ffprobe not found' }); });
+    p.on('error', () => { _done({ ok: false, error: 'ffprobe not found' }); });
   });
 }
 
-async function _runPhoton(jarPath, folderPath) {
-  return new Promise((resolve) => {
+async function _runPhoton(jarPath, folderPath, token) {
+  return new Promise((resolve, reject) => {
     let out = ''; let err = '';
     const p = spawn('java', ['-jar', jarPath, folderPath], { stdio: ['ignore', 'pipe', 'pipe'] });
     const timer = setTimeout(() => { p.kill(); resolve({ ok: false, error: 'photon timeout' }); }, 60000);
+    let unregister = () => {};
+    if (token) {
+      unregister = token.onCancel(() => { clearTimeout(timer); try { p.kill('SIGKILL'); } catch {} reject(new CancellationError()); });
+    }
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });
     p.on('close', code => {
-      clearTimeout(timer);
+      clearTimeout(timer); unregister();
       resolve({
         ok: code === 0,
         errors:   _parsePhotonOutput(out + err, 'ERROR'),
@@ -574,7 +812,7 @@ async function _runPhoton(jarPath, folderPath) {
         rawOutput: (out + err).slice(0, 2000),
       });
     });
-    p.on('error', () => { clearTimeout(timer); resolve({ ok: false, error: 'java not found' }); });
+    p.on('error', () => { clearTimeout(timer); unregister(); resolve({ ok: false, error: 'java not found' }); });
   });
 }
 
@@ -927,6 +1165,96 @@ function _rtStats() {
 }
 function _rtResetStats() { _perFrameSpawns = 0; _perFrameSpawnsDuringPlay = 0; }
 
+// ── P1-PROGRESS: decode warm-up pass (cancellable) ─────────────────────────────
+// Decode the first N frames through the IMF demuxer so the first real play/scrub
+// is instant (primes ffmpeg + the reduced-decode ladder). Reports progress and
+// honours cancellation by killing the ffmpeg child. Uses the mpjpeg reassembly
+// path (same as continuous play) to count decoded frames.
+async function warmUpDecode(packageId, cplId, opts = {}, job = null) {
+  const pkg = _packages.get(packageId);
+  if (!pkg) return { ok: false, error: 'Package not loaded', code: 'NOT_FOUND' };
+  const idx = pkg.index;
+  const cpl = cplId ? idx.cplById.get(cplId) : idx.activeCpl;
+  if (!cpl || !idx.assetMapPath) return { ok: false, error: 'CPL or ASSETMAP not found', code: 'NO_CPL' };
+
+  const token = job ? job.token : null;
+  const frames = Math.max(1, Math.min(240, opts.frames || 24));
+  const fps    = (typeof cpl.editRate === 'number' && cpl.editRate > 0) ? cpl.editRate : 24;
+  const outW   = opts.outputWidth || 1280;
+  const lowres = _qualityToLowres(opts.quality || 'auto', cpl.resolution);
+
+  const args = ['-v', 'warning', '-f', 'imf', '-assetmaps', idx.assetMapPath];
+  if (lowres > 0) args.push('-lowres', String(lowres));
+  args.push('-i', cpl.cplPath, '-frames:v', String(frames), '-an',
+            '-vf', `scale=${outW}:-2`, '-c:v', 'mjpeg', '-q:v', '5', '-f', 'mpjpeg', 'pipe:1');
+
+  return new Promise((resolve, reject) => {
+    const ffOk = _checkFFmpeg();
+    Promise.resolve(ffOk).then((avail) => {
+      if (!avail) return resolve({ ok: false, error: 'FFmpeg not found', code: 'NO_FFMPEG' });
+      const p = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let decoded = 0;
+      const asm = createMpjpegReassembler((frame) => {
+        decoded++;
+        if (job) job.emit(Math.min(1, decoded / frames), 'warmup', `Warmed ${decoded}/${frames} frames`);
+      });
+      let unregister = () => {};
+      if (token) unregister = token.onCancel(() => { try { p.kill('SIGKILL'); } catch {} reject(new CancellationError()); });
+      const timer = setTimeout(() => { try { p.kill(); } catch {} }, 60000);
+      p.stdout.on('data', (chunk) => asm.push(chunk));
+      p.on('close', () => {
+        clearTimeout(timer); unregister();
+        const res = { ok: true, framesDecoded: decoded, requested: frames, lowres };
+        if (job) job.settle('done', res);
+        resolve(res);
+      });
+      p.on('error', (e) => { clearTimeout(timer); unregister(); if (job) job.settle('error', e.message); resolve({ ok: false, error: e.message }); });
+    });
+  });
+}
+
+// ── P1-PROGRESS: public start / onProgress / cancel job surface ────────────────
+// Poll-based (the pfx:imf-engine IPC channel is request/response). A caller does:
+//   startJob('validate', {...})  → { ok, jobId }
+//   jobProgress(jobId)           → { ok, snapshot }   (poll)
+//   cancelJob(jobId)             → { ok }
+// In-process callers (tests, other main-process modules) can instead grab the
+// ProgressJob directly via _getJob(jobId).onProgress(cb) for push updates.
+function startJob(kind, params = {}) {
+  const job = _newJob(kind);
+  let runner;
+  if (kind === 'validate') {
+    runner = validatePackage(params.packageId, params.cplId, { job, hash: !!params.hash });
+  } else if (kind === 'warmup') {
+    runner = warmUpDecode(params.packageId, params.cplId, params.opts || {}, job);
+  } else {
+    _jobs.delete(job.id);
+    return { ok: false, error: `Unknown job kind: ${kind}`, code: 'UNKNOWN_JOB' };
+  }
+  // Detach: pollers read progress/result via jobProgress(); ensure settle on throw.
+  Promise.resolve(runner)
+    .then((r) => { if (job.state === 'running') job.settle(r && r.ok === false ? 'error' : 'done', r && r.ok === false ? r.error : (r && r.validation ? r.validation : r)); })
+    .catch((e) => { if (job.state === 'running') job.settle(e instanceof CancellationError ? 'cancelled' : 'error', e && e.message); })
+    .finally(() => _reapJob(job.id));
+  return { ok: true, jobId: job.id, kind };
+}
+
+function jobProgress(jobId) {
+  const job = _jobs.get(jobId);
+  if (!job) return { ok: false, error: 'Job not found (may have been reaped)', code: 'NOT_FOUND' };
+  return { ok: true, snapshot: job.snapshot() };
+}
+
+function cancelJob(jobId) {
+  const job = _jobs.get(jobId);
+  if (!job) return { ok: false, error: 'Job not found', code: 'NOT_FOUND' };
+  job.token.cancel();
+  return { ok: true, jobId, state: job.state };
+}
+
+// In-process handle (tests / other main-process modules): push-based onProgress.
+function _getJob(jobId) { return _jobs.get(jobId) || null; }
+
 // ── FFmpeg subprocess management ──────────────────────────────────────────────
 
 function _startFFmpegStream(session, startFrame) {
@@ -957,39 +1285,30 @@ function _startFFmpegStream(session, startFrame) {
     'pipe:1',
   );
 
-  let buf = Buffer.alloc(0);
   const proc = spawn(FFMPEG,args, { stdio: ['ignore', 'pipe', 'pipe'] });
   session.ffmpegProc = proc;
   session.state = 'playing';
   session._stdoutPaused = false;
 
-  proc.stdout.on('data', (chunk) => {
-    buf = Buffer.concat([buf, chunk]);
+  // Shared mpjpeg framing (createMpjpegReassembler) — identical to the warm-up
+  // and benchmark paths. Each complete JPEG is broadcast to all sinks.
+  const asm = createMpjpegReassembler((frame) => {
+    _broadcastFrame(session, frame);
+    session.currentFrame++;
+  });
 
-    // Extract complete JPEG frames from the mpjpeg stream.
-    // Each JPEG starts with 0xFF 0xD8 and ends with 0xFF 0xD9.
-    let start = 0;
-    while (true) {
-      const soi = _findMarker(buf, start, 0xFF, 0xD8);
-      if (soi < 0) break;
-      const eoi = _findMarker(buf, soi + 2, 0xFF, 0xD9);
-      if (eoi < 0) break;
-      const frame = buf.slice(soi, eoi + 2);
-      _broadcastFrame(session, frame);
-      session.currentFrame++;
-      start = eoi + 2;
-    }
-    buf = buf.slice(start);
+  proc.stdout.on('data', (chunk) => {
+    asm.push(chunk);
 
     // Publish the reassembly buffer size so _resumeStream can gate on the
     // low-water mark (see backpressure notes above).
-    session._mpjpegBufLen = buf.length;
+    session._mpjpegBufLen = asm.bufferLength();
 
     // Bounded decode-ahead: if the reassembly buffer exceeds the cap (a partial
     // frame plus a saturated sink), pause the decoder so memory never balloons on
     // UHD. Resume is driven by sink 'drain' + a watchdog, gated on the low-water
     // mark, so a buffer-cap pause can never wedge playback.
-    if (buf.length > _MPJPEG_BUFFER_CAP) _pauseStream(session);
+    if (asm.bufferLength() > _MPJPEG_BUFFER_CAP) _pauseStream(session);
   });
 
   proc.stderr.on('data', d => {
@@ -1091,6 +1410,8 @@ const _COMMANDS = new Set([
   'openPackage', 'validatePackage', 'startPlayback', 'controlPlayback',
   'stopPlayback', 'getFrame', 'stepFrame', 'grabThumbnail',
   'getPackageInfo', 'listPackages', 'diagnostics',
+  // P1-PROGRESS: poll-based long-pass job control.
+  'startJob', 'jobProgress', 'cancelJob',
 ]);
 
 function handles(command) {
@@ -1110,6 +1431,11 @@ async function route({ command, payload = {} }) {
     case 'getPackageInfo':  return getPackageInfo(payload.packageId);
     case 'listPackages':    return listPackages();
     case 'diagnostics':     return diagnostics();
+    // P1-PROGRESS: start a cancellable, progress-reporting long pass; poll it;
+    // cancel it. Additive to the existing request/response IPC channel.
+    case 'startJob':        return startJob(payload.kind, payload.params || {});
+    case 'jobProgress':     return jobProgress(payload.jobId);
+    case 'cancelJob':       return cancelJob(payload.jobId);
     default:
       return { ok: false, error: `Unknown command: ${command}`, code: 'UNKNOWN_COMMAND' };
   }
@@ -1132,6 +1458,47 @@ function _findMarker(buf, fromOffset, b0, b1) {
     if (buf[i] === b0 && buf[i + 1] === b1) return i;
   }
   return -1;
+}
+
+// mpjpeg reassembler — the SINGLE source of truth for carving complete JPEG
+// frames (SOI 0xFFD8 … EOI 0xFFD9) out of the byte stream that ffmpeg's `-f
+// mpjpeg` muxer writes to pipe:1. Used by BOTH continuous playback
+// (_startFFmpegStream) and the decode warm-up pass so the runtime path and the
+// FPS benchmark exercise identical framing. push(chunk) returns the number of
+// complete frames emitted from that chunk; bufferLength() exposes the pending
+// (partial-frame) bytes for backpressure gating. Deterministic + synchronous →
+// unit-testable on synthetic byte streams without spawning ffmpeg.
+function createMpjpegReassembler(onFrame) {
+  let buf = Buffer.alloc(0);
+  return {
+    push(chunk) {
+      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+      let start = 0;
+      let count = 0;
+      let lastSoi = -1;
+      while (true) {
+        const soi = _findMarker(buf, start, 0xFF, 0xD8);
+        if (soi < 0) break;
+        lastSoi = soi;
+        const eoi = _findMarker(buf, soi + 2, 0xFF, 0xD9);
+        if (eoi < 0) break;   // partial frame: SOI seen, EOI not yet — keep from SOI
+        const frame = buf.slice(soi, eoi + 2);
+        try { onFrame(frame); } catch {}
+        count++;
+        start = eoi + 2;
+        lastSoi = -1;
+      }
+      // Keep the trailing partial frame (from the last SOI). If NO SOI is pending,
+      // drop consumed bytes but retain the final byte so an 0xFF split across the
+      // chunk boundary still resolves against the next chunk.
+      if (lastSoi >= 0)      buf = buf.slice(lastSoi);
+      else if (start > 0)    buf = buf.slice(start);
+      else                   buf = buf.slice(Math.max(0, buf.length - 1));
+      return count;
+    },
+    bufferLength() { return buf.length; },
+    reset() { buf = Buffer.alloc(0); },
+  };
 }
 
 function _serializeIndex(idx) {
@@ -1171,4 +1538,12 @@ function _serializeIndex(idx) {
   return j;
 }
 
-module.exports = { handles, route, _rtStats, _rtResetStats, _qualityToLowres, _autoLowresForResolution };
+module.exports = {
+  handles, route,
+  _rtStats, _rtResetStats, _qualityToLowres, _autoLowresForResolution,
+  // P1-PROGRESS surface (in-process + poll-based).
+  startJob, jobProgress, cancelJob, _getJob,
+  CancellationToken, CancellationError,
+  // Shared mpjpeg framing (runtime + benchmark + tests).
+  createMpjpegReassembler,
+};

@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from . import safe_xml
+from . import imf_mic
+from . import imf_conform
+from . import imf_scan
 
 # ── JAR / Java discovery ──────────────────────────────────────────────────────
 
@@ -156,6 +159,151 @@ def _plain_language(finding: dict[str, Any]) -> str:
     return msg
 
 
+# ── Embedded essence-hash (MIC) verification ────────────────────────────────────
+
+def _find_mxf_files(folder_path: str, limit: int = 512) -> list[str]:
+    """Return MXF track files inside an IMF package folder (bounded)."""
+    root = Path(folder_path)
+    if not root.is_dir():
+        return []
+    found: list[str] = []
+    try:
+        for p in sorted(root.rglob("*")):
+            if p.is_file() and p.suffix.lower() == ".mxf":
+                found.append(str(p))
+                if len(found) >= limit:
+                    break
+    except OSError:
+        pass
+    return found
+
+
+def verify_essence_mic(folder_path: str) -> dict[str, Any]:
+    """Verify the embedded EssenceIntegrityPack (MIC) of every MXF in the package.
+
+    This complements the PKL SHA hash checks (which compare each file against an
+    *external* hash in the Packing List) by verifying the essence digest that is
+    *embedded inside* the MXF itself. Gates cleanly (never raises) so a package
+    without embedded MICs simply reports overallStatus="skip".
+    """
+    mxf_files = _find_mxf_files(folder_path)
+    roll = imf_mic.verify_mic_for_assets(mxf_files)
+    roll["mxfFileCount"] = len(mxf_files)
+    if roll["failed"] > 0:
+        roll["summary"] = (
+            f"{roll['failed']} MXF essence integrity failure(s) "
+            f"({roll['passed']} verified OK)."
+        )
+    elif roll["checked"] > 0:
+        roll["summary"] = f"{roll['passed']} MXF essence MIC(s) verified OK."
+    elif not mxf_files:
+        roll["summary"] = "No MXF track files found — MIC check skipped."
+    else:
+        roll["summary"] = "No embedded essence MICs present — MIC check skipped."
+    return roll
+
+
+def _mic_findings(mic: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert a MIC rollup into Photon-style finding dicts (only failures)."""
+    findings: list[dict[str, Any]] = []
+    for res in mic.get("results", []):
+        # Only failed, present MICs become ERROR findings; absent/unreadable are
+        # not conformance errors here (external PKL hash covers presence/corruption).
+        if res.get("present") and res.get("ok") is False:
+            name = Path(str(res.get("path") or "")).name
+            findings.append({
+                "severity":    "ERROR",
+                "code":        "ESSENCE_MIC_ERROR",
+                "message":     f"{name}: {res.get('error') or 'essence integrity check failed'}",
+                "userMessage": (
+                    "An MXF file's embedded essence hash (MIC) does not match the "
+                    "essence data. The file may be corrupt or was modified after "
+                    "packaging."
+                ),
+            })
+    return findings
+
+
+def verify_essence_conformance(folder_path: str) -> dict[str, Any]:
+    """Compare each CPL's essence descriptor to the actual probed codestream.
+
+    Complements the MIC/PKL hash checks by catching a descriptor that disagrees
+    with the real J2K/MXF essence (wrong dimensions, frame rate, or codec family).
+    Gates cleanly (never raises): if the essence can't be probed (e.g. no
+    IMF-capable ffprobe), each CPL reports status="skip".
+    """
+    out: dict[str, Any] = {
+        "overallStatus": "skip", "checked": 0, "passed": 0,
+        "failed": 0, "skipped": 0, "results": [], "summary": "",
+    }
+    try:
+        folder = Path(folder_path).expanduser()
+        assetmaps = [str(p) for p in folder.rglob("*.xml")
+                     if p.name.upper().startswith("ASSETMAP")]
+        cpl_paths: list[Path] = []
+        for p in folder.rglob("*.xml"):
+            try:
+                head = p.read_text(encoding="utf-8", errors="ignore")[:4096]
+            except Exception:
+                continue
+            if "CompositionPlaylist" in head and "PackingList" not in head and "AssetMap" not in head:
+                cpl_paths.append(p)
+    except Exception as exc:
+        out["reason"] = str(exc)
+        return out
+
+    for cpl_path in cpl_paths:
+        try:
+            cpl = imf_scan._parse_cpl(cpl_path)
+        except Exception:
+            continue
+        try:
+            res = imf_conform.check_cpl_conformance(cpl, str(cpl_path), assetmaps)
+        except Exception as exc:
+            res = {"status": "skip", "cplId": cpl.get("id", ""), "reason": str(exc), "findings": []}
+        out["results"].append(res)
+        status = res.get("overallStatus")
+        if status == "fail":
+            out["failed"] += 1; out["checked"] += 1
+        elif status in ("pass", "warn"):
+            out["passed"] += 1; out["checked"] += 1
+        else:
+            out["skipped"] += 1
+
+    if out["failed"] > 0:
+        out["overallStatus"] = "fail"
+        out["summary"] = f"{out['failed']} CPL descriptor/codestream mismatch(es) ({out['passed']} conform)."
+    elif out["checked"] > 0:
+        out["overallStatus"] = "pass"
+        out["summary"] = f"{out['checked']} CPL(s) conform to the probed essence."
+    else:
+        out["summary"] = "Essence could not be probed — conformance check skipped."
+    return out
+
+
+def _conform_findings(conf: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert a conformance rollup into Photon-style finding dicts (only mismatches)."""
+    findings: list[dict[str, Any]] = []
+    for res in conf.get("results", []):
+        if res.get("overallStatus") != "fail":
+            continue
+        cid = res.get("cplId") or ""
+        for f in res.get("findings", []):
+            if f.get("severity") != "error":
+                continue
+            findings.append({
+                "severity":    "ERROR",
+                "code":        "ESSENCE_DESCRIPTOR_MISMATCH",
+                "message":     f"{cid}: {f.get('message') or 'descriptor does not match codestream'}",
+                "userMessage": (
+                    "A CPL essence descriptor (dimensions, frame rate, or codec) does "
+                    "not match the actual media. The descriptor may be wrong or the "
+                    "essence was re-encoded after the CPL was authored."
+                ),
+            })
+    return findings
+
+
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
@@ -168,6 +316,12 @@ def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
     java = find_java()
     jar  = find_photon_jar()
 
+    # Embedded essence-hash (MIC) verification and essence-descriptor conformance
+    # both run independently of Photon so they are always attempted, even when
+    # Java / photon.jar are unavailable.
+    mic  = verify_essence_mic(folder_path)
+    conf = verify_essence_conformance(folder_path)
+
     base: dict[str, Any] = {
         "ok":              False,
         "javaAvailable":   java is not None,
@@ -177,11 +331,20 @@ def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
         "summary":         "",
         "rawOutput":       "",
         "error":           None,
+        "mic":             mic,
+        "conformance":     conf,
     }
+
+    # Surface embedded-MIC failures AND descriptor/codestream mismatches as
+    # first-class findings regardless of Photon availability.
+    mic_findings = _mic_findings(mic) + _conform_findings(conf)
 
     if not java:
         base["error"]   = "Java not found. Install a JRE (e.g. brew install openjdk)."
         base["summary"] = "Java runtime not available — Photon validation skipped."
+        base["findings"] = mic_findings
+        if mic.get("overallStatus") == "fail":
+            base["summary"] += f" {mic.get('summary', '')}".rstrip()
         return base
 
     if not jar:
@@ -190,6 +353,9 @@ def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
             "or set the PFX_PHOTON_JAR environment variable."
         )
         base["summary"] = "Photon JAR not found — validation skipped."
+        base["findings"] = mic_findings
+        if mic.get("overallStatus") == "fail":
+            base["summary"] += f" {mic.get('summary', '')}".rstrip()
         return base
 
     try:
@@ -203,14 +369,18 @@ def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         base["error"]   = f"Photon timed out after {timeout_s}s."
         base["summary"] = "Photon validation timed out."
+        base["findings"] = mic_findings
         return base
     except Exception as exc:
         base["error"]   = f"Photon failed to start: {exc}"
         base["summary"] = "Photon could not be launched."
+        base["findings"] = mic_findings
         return base
 
     findings_raw = _parse_photon_output(raw)
     findings = [{**f, "userMessage": _plain_language(f)} for f in findings_raw]
+    # Fold embedded-MIC findings into the same list so the UI shows one unified set.
+    findings = findings + mic_findings
 
     errors   = [f for f in findings if f["severity"] in ("ERROR", "FATAL")]
     warnings = [f for f in findings if f["severity"] == "WARNING"]

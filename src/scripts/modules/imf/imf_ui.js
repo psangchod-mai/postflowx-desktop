@@ -15,6 +15,7 @@ import { analyzeDolbyVisionFromImfPackage, DOVI_STATUS, DOVI_SOURCE, doviStatusL
 import { storeNamedHandle, loadNamedHandle, clearNamedHandle } from '../../core/projectFile.js';
 import { runAllUgChecks } from './imf_ug_checks.js';
 import { validateApp2E, parseDeliverySchema, validateAgainstSchema, APP2E_PRESET } from './imf_delivery_schema.js';
+import { toCSV as buildReportCSV, toJSON as buildReportJSON } from './imfReport.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let _pkg      = null;   // active composition context
@@ -22,6 +23,7 @@ let _valResults = [];
 let _extFiles = [];
 let _extFileMap = new Map();
 let _hashVerifying = false;
+let _imfHashJobCtl = null;   // active P1-PROGRESS engine hash job controller (for cancel)
 let _imfPackages = [];
 let _cplEntries = [];
 let _currentCplKey = '';
@@ -1278,6 +1280,109 @@ async function _runPhoton() {
     if (runBtn) runBtn.disabled = false;
   }
 }
+
+// ── P1-PROGRESS: cancellable long-pass runner (progress + Cancel affordance) ──
+// Drives the IMF Direct Engine's poll-based job API (startJob → jobProgress →
+// cancelJob) exposed on window.pfxPlatform.imfEngine. It renders a small progress
+// bar + Cancel button into `containerEl` and resolves with the job's terminal
+// snapshot. Fully guarded + non-breaking: if the engine/job bridge is absent
+// (older preload), it degrades to a single no-progress call where possible and
+// otherwise returns a soft "unavailable" result without throwing.
+//
+// Usage:
+//   const ctl = runImfEngineJob('validate', { packageId, cplId, hash:true },
+//                               { container: document.getElementById('imfJobProgress') });
+//   const snap = await ctl.done;           // terminal snapshot
+//   ctl.cancel();                          // user hit Cancel
+let _imfJobPollTimer = null;
+function runImfEngineJob(kind, params = {}, { container, pollMs = 300, label } = {}) {
+  const eng = (typeof window !== 'undefined') && window.pfxPlatform && window.pfxPlatform.imfEngine;
+  let cancelled = false;
+  let jobId = null;
+
+  // Build (or reuse) the progress UI. Uses DOM APIs (no untrusted innerHTML).
+  function ensureUI() {
+    if (!container) return null;
+    let bar = container.querySelector('.imf-job-progress');
+    if (!bar) {
+      bar = el('div', 'imf-job-progress');
+      bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;font-size:9px;';
+      const track = el('div', 'imf-job-progress-track');
+      track.style.cssText = 'flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;';
+      const fill = el('div', 'imf-job-progress-fill');
+      fill.style.cssText = 'height:100%;width:0%;background:#7c9cff;transition:width .15s linear;';
+      track.appendChild(fill);
+      const msg = el('span', 'imf-job-progress-msg');
+      msg.style.cssText = 'min-width:120px;color:rgba(255,255,255,.6);';
+      const btn = el('button', 'imf-job-cancel-btn');
+      btn.type = 'button';
+      btn.textContent = 'Cancel';
+      btn.style.cssText = 'font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.2);background:transparent;color:rgba(255,255,255,.8);cursor:pointer;';
+      btn.addEventListener('click', () => { api.cancel(); });
+      bar.append(msg, track, btn);
+      container.appendChild(bar);
+    }
+    return {
+      fill: bar.querySelector('.imf-job-progress-fill'),
+      msg:  bar.querySelector('.imf-job-progress-msg'),
+      btn:  bar.querySelector('.imf-job-cancel-btn'),
+      root: bar,
+    };
+  }
+  function render(progress) {
+    const ui = ensureUI();
+    if (!ui) return;
+    const pct = Math.round((progress?.fraction || 0) * 100);
+    ui.fill.style.width = pct + '%';
+    ui.msg.textContent = (progress?.message) || (label ? `${label}…` : `${progress?.stage || 'working'}…`);
+  }
+  function teardown() {
+    if (_imfJobPollTimer) { clearInterval(_imfJobPollTimer); _imfJobPollTimer = null; }
+    const ui = ensureUI();
+    if (ui && ui.root && ui.root.parentNode) ui.root.parentNode.removeChild(ui.root);
+  }
+
+  const api = {
+    jobId: null,
+    cancel() {
+      cancelled = true;
+      if (jobId && eng && typeof eng.cancelJob === 'function') {
+        try { eng.cancelJob(jobId); } catch {}
+      }
+    },
+    done: null,
+  };
+
+  api.done = (async () => {
+    if (!eng || typeof eng.startJob !== 'function' || typeof eng.jobProgress !== 'function') {
+      // Bridge unavailable — soft fail (non-breaking on older preload builds).
+      return { ok: false, unavailable: true, error: 'IMF engine job bridge unavailable' };
+    }
+    let started;
+    try { started = await eng.startJob(kind, params); } catch (e) { return { ok: false, error: e.message }; }
+    if (!started || !started.ok) return started || { ok: false, error: 'startJob failed' };
+    jobId = started.jobId; api.jobId = jobId;
+    if (cancelled) { try { eng.cancelJob(jobId); } catch {} }   // cancelled before start returned
+
+    return await new Promise((resolve) => {
+      if (_imfJobPollTimer) clearInterval(_imfJobPollTimer);
+      _imfJobPollTimer = setInterval(async () => {
+        let snap;
+        try { snap = await eng.jobProgress(jobId); } catch { return; }
+        if (!snap || !snap.ok) { teardown(); resolve({ ok: false, error: (snap && snap.error) || 'job lost' }); return; }
+        render(snap.snapshot.progress);
+        if (snap.snapshot.progress.done || snap.snapshot.state !== 'running') {
+          teardown();
+          resolve({ ok: true, snapshot: snap.snapshot });
+        }
+      }, Math.max(50, pollMs));
+      if (_imfJobPollTimer.unref) _imfJobPollTimer.unref();
+    });
+  })();
+
+  return api;
+}
+if (typeof window !== 'undefined') { window.__pfxRunImfEngineJob = runImfEngineJob; }
 
 // ── Plugfest-style test suite ─────────────────────────────────────────────────
 // Each test checks a structural aspect of the loaded package against known
@@ -3435,11 +3540,104 @@ function _wireValFilters() {
 }
 
 // ── SHA-1 hash verification ───────────────────────────────────────────────────
+// P1-PROGRESS caller: run the essence-hash pass through the IMF Direct Engine's
+// poll-based job API (openPackage → startJob('validate',{hash:true}) → poll →
+// cancel) via runImfEngineJob(). Returns true if the engine handled the pass and
+// its results were merged into _valResults; false when the engine/bridge/package
+// path is unavailable so the caller can fall back to legacy in-renderer hashing.
+async function _runHashVerificationViaEngine() {
+  const eng = (typeof window !== 'undefined') && window.pfxPlatform && window.pfxPlatform.imfEngine;
+  if (!eng || typeof eng.openPackage !== 'function' ||
+      typeof eng.startJob !== 'function' || typeof eng.jobProgress !== 'function') {
+    return false;                                   // older/absent bridge
+  }
+  const folderPath = _imfSourceFolderPath;
+  if (!folderPath) return false;                    // no real package path (browser drop)
+
+  // Open (or re-open) the package in the direct engine to obtain a packageId.
+  let opened;
+  try { opened = await eng.openPackage(folderPath); } catch { return false; }
+  if (!opened || !opened.ok || !opened.packageId) return false;
+  const packageId = opened.packageId;
+  const cplId = (_pkg && _pkg.cpl && _pkg.cpl.id) ||
+                opened.package?.activeCplId ||
+                opened.package?.cpls?.[0]?.id || '';
+
+  const container = $('imfValList');
+  const ctl = runImfEngineJob('validate', { packageId, cplId, hash: true },
+    { container, label: 'Verifying essence checksums' });
+
+  // Expose the active controller so a Stop/teardown path could cancel it, and
+  // so the poll driver's Cancel button is reachable.
+  _imfHashJobCtl = ctl;
+  let res;
+  try { res = await ctl.done; } finally { _imfHashJobCtl = null; }
+  if (!res || res.unavailable) return false;        // bridge said "unavailable" → fall back
+  if (!res.ok) {
+    // Engine ran but the job errored/lost — surface it rather than silently
+    // falling back to a slower path that would likely hit the same failure.
+    const hashRows = _valResults.filter(r => r.code !== 'HASH');
+    hashRows.push({ sev: SEV.WARN, code: 'HASH', msg: `Hash verification could not complete: ${res.error || 'engine error'}`, detail: '' });
+    _valResults = hashRows;
+    renderValidation();
+    return true;
+  }
+
+  // User hit Cancel (poll driver resolved with a non-running terminal state and
+  // no result) — leave existing rows untouched and report the cancellation.
+  if (res.snapshot && res.snapshot.state === 'cancelled') {
+    const hashRows = _valResults.filter(r => r.code !== 'HASH');
+    hashRows.push({ sev: SEV.INFO, code: 'HASH', msg: 'Hash verification cancelled', detail: '' });
+    _valResults = hashRows;
+    renderValidation();
+    return true;
+  }
+
+  const validation = res.snapshot && res.snapshot.result;
+  const checks = Array.isArray(validation?.checksumResults) ? validation.checksumResults : [];
+  const hashRows = _valResults.filter(r => r.code !== 'HASH');
+  if (checks.length === 0) {
+    // No <Hash> present in the PKL (or none to verify) — informative, not a fail.
+    const why = validation?.checksumStatus === 'no_hashes_in_pkl'
+      ? 'PKL contains no essence Hash values — nothing to verify.'
+      : 'No essence checksums were verified.';
+    hashRows.push({ sev: SEV.INFO, code: 'HASH', msg: 'Hash verification', detail: why });
+  } else {
+    for (const c of checks) {
+      const ok = c.status === 'ok' ? true : c.status === 'mismatch' ? false : null;
+      hashRows.push({
+        sev:  ok === true ? SEV.PASS : ok === false ? SEV.FAIL : SEV.WARN,
+        code: 'HASH',
+        msg:  ok === true ? `SHA-1 OK: ${c.name}` : ok === false ? `SHA-1 MISMATCH: ${c.name}` : `SHA-1 could not be verified: ${c.name}`,
+        detail: ok === false && c.expected ? `expected ${c.expected}` : (c.error || ''),
+      });
+    }
+  }
+  _valResults = hashRows;
+  renderValidation();
+  return true;
+}
+
 async function runHashVerification() {
   if (_hashVerifying || !_pkg) return;
   _hashVerifying = true;
   const btn = $('imfHashBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+
+  // Prefer the IMF Direct Engine's cancellable, progress-reporting hash pass
+  // (P1-PROGRESS) when the desktop bridge + a real package folder are present.
+  // It streams each essence file in the main process (no in-renderer GB reads),
+  // renders a progress bar + Cancel affordance, and returns per-asset SHA-1
+  // results we map into HASH rows. Any unavailability/failure falls through to
+  // the legacy in-renderer hashing below so behaviour never regresses.
+  try {
+    const engineOk = await _runHashVerificationViaEngine();
+    if (engineOk) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Verify Hashes'; }
+      _hashVerifying = false;
+      return;
+    }
+  } catch { /* fall through to in-renderer hashing */ }
 
   const { pkl, resolveFile, assetLabel } = _pkg;
   const hashResults = [];
@@ -5405,17 +5603,16 @@ async function exportReport() {
   await saveBlob(`${baseName}.txt`, new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' }));
 
   // ── Structured (JSON) report for pipeline ingestion ─────────────────────────
-  // Machine-readable artifact with the same grouping map + overall verdict as the
-  // text report. groupOf() reuses the same prefix table so a row's group label
-  // matches the text section it appears under.
-  const groupOf = (code) => (groups.find(g => code.startsWith(g.prefix))?.label) || 'Other';
-  const report = {
+  // Uses the shared, unit-tested imfReport.toJSON() serializer so the JSON artifact
+  // carries the schemaVersion, the authoritative SMPTE reference per finding, and
+  // any remediation/resourceRef — deterministically FAIL-sorted. The rich package
+  // metadata (codec/resolution/HDR/DV/verdict) is passed through meta.package.
+  const jsonStr = buildReportJSON(_valResults, {
     generatedAt: new Date().toISOString(),
-    overall,
-    counts: { fail: counts.fail, warn: counts.warn, info: counts.info, pass: counts.pass },
+    packageName: cpl.contentTitle || cpl.annotation || '',
+    cplId: cpl.id || '',
+    pklId: pkl.id || '',
     package: {
-      cplId:      cpl.id || '',
-      pklId:      pkl.id || '',
       title:      cpl.contentTitle || cpl.annotation || '',
       codec:      cpl.codec || '',
       resolution: resStr === '—' ? '' : resStr.replace(/\s/g, ''),
@@ -5424,16 +5621,30 @@ async function exportReport() {
       primaries:  cpl.primaries || '',
       hdr:        hdrDesc === '—' ? '' : hdrDesc,
       dv:         cpl.isDolbyVision ? `Profile ${cpl.dvProfile || '?'}, Level ${cpl.dvLevel || '?'}` : '',
+      overall,
+      counts: { fail: counts.fail, warn: counts.warn, info: counts.info, pass: counts.pass },
     },
-    results: _valResults.map(r => ({
-      code:   r.code,
-      sev:    r.sev,
-      msg:    r.msg,
-      detail: r.detail || '',
-      group:  groupOf(r.code),
-    })),
-  };
-  await saveBlob(`${baseName}.json`, new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' }));
+  });
+  await saveBlob(`${baseName}.json`, new Blob([jsonStr], { type: 'application/json;charset=utf-8' }));
+
+  // ── Spreadsheet-friendly (CSV) report ──────────────────────────────────────
+  // Uses the shared, unit-tested imfReport.toCSV() serializer so the CSV carries
+  // the authoritative SMPTE reference per finding (RFC 4180 quoting/CRLF). The
+  // validator rows (_valResults: { code, sev, msg, detail }) are exactly the row
+  // shape imfReport.normalizeRow() consumes. Guarded so a serializer error can't
+  // block the already-written txt+json artifacts.
+  try {
+    const csv = buildReportCSV(_valResults, {
+      generatedAt: new Date().toISOString(),
+      packageName: cpl.contentTitle || cpl.annotation || '',
+      cplId: cpl.id || '',
+      pklId: pkl.id || '',
+    });
+    // Prepend a UTF-8 BOM so Excel opens the file with correct encoding.
+    await saveBlob(`${baseName}.csv`, new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  } catch (e) {
+    console.warn('[imf] CSV report export failed:', e && e.message);
+  }
 }
 
 function clearPackage() {

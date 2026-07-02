@@ -2919,6 +2919,10 @@ function _streamQuality() {
   return 'auto';
 }
 
+// If the realtime MJPEG stream hasn't painted a new frame within this window while
+// the clock is running, treat it as stalled and fall back to per-frame playback.
+const _STREAM_STALL_MS = 1500;
+
 function _ensureStreamImg() {
   if (S.streamImgEl && document.body.contains(S.streamImgEl)) return S.streamImgEl;
   let img = document.getElementById('imfStreamImg');
@@ -2932,10 +2936,26 @@ function _ensureStreamImg() {
     stage.appendChild(img);
   }
   S.streamImgEl = img;
+  if (!img._pfxStallWired) {
+    img._pfxStallWired = true;
+    // multipart/x-mixed-replace fires a 'load' per received part in Chromium — this
+    // is our frame-arrival heartbeat that the stall watchdog checks against.
+    img.addEventListener('load', () => {
+      S.streamFramesSeen = (S.streamFramesSeen || 0) + 1;
+      S.streamLastFrameTs = performance.now();
+    });
+    // A hard stream error (server gone, decoder died) — bail immediately.
+    // Guarded by streamSessionId so tearing the src down in _stopRealtimeStream
+    // (which nulls the session first) can't trigger a spurious fallback.
+    img.addEventListener('error', () => {
+      if (S.streamMode && S.streamSessionId) _fallbackToPerFrame('stream <img> error');
+    });
+  }
   return img;
 }
 
 async function _startRealtimeStream() {
+  if (S.streamStallFallback) return false;   // this media already fell back to per-frame
   const eng = (typeof window !== 'undefined') && window.pfxPlatform && window.pfxPlatform.imfEngine;
   if (!eng || typeof eng.startPlayback !== 'function' || typeof eng.openPackage !== 'function') return false;
   if (!S.cplPath) return false;          // need the IMF-demux (CPL) path
@@ -2960,6 +2980,8 @@ async function _startRealtimeStream() {
     S.streamSessionId  = r.sessionId;
     S.streamStartFrame = startFrame;
     S.streamStartTs    = performance.now();
+    S.streamLastFrameTs = performance.now();   // stall-watchdog heartbeat baseline
+    S.streamFramesSeen  = 0;
     const canvas = document.getElementById('imfCanvas');
     if (canvas) canvas.style.visibility = 'hidden';
     img.style.display = 'block';
@@ -2989,12 +3011,41 @@ function _stopRealtimeStream() {
   S.streamMode = false;
 }
 
+// The realtime MJPEG stream started but isn't delivering frames (e.g. the bundled
+// ffmpeg lacks the IMF demuxer, or the decoder stalled under backpressure). The
+// wall-clock TC in _streamClockTick would keep advancing while the <img> stays
+// frozen. Bail to the per-frame decode loop, which draws every frame it advances
+// so the picture can never desync from the timecode.
+function _fallbackToPerFrame(reason) {
+  console.warn('[IMF] realtime stream stalled (' + reason + ') — falling back to per-frame playback');
+  _stopRealtimeStream();
+  S.streamStallFallback = true;   // don't retry the stream for this media
+  if (!S.isPlaying) return;
+  try { _setPreviewScale(_predictInitialPlaybackScale(), 'stream-fallback'); } catch {}
+  S.lastTs          = performance.now();
+  S.playBaseTs      = S.lastTs;
+  S.playBaseFrame   = (S.displayFrame ?? S.currentFrame);
+  S.currentFrame    = (S.displayFrame ?? S.currentFrame);
+  S.droppedFrames   = 0;
+  S.lastFrameAdvance = 0;
+  S.scaleRecoveryScore = 0;
+  if (S.raf) cancelAnimationFrame(S.raf);
+  S.raf = requestAnimationFrame(playLoop);
+}
+
 // Clock-driven TC/scrubber update while the MJPEG stream paints the <img>.
 // The engine advances frames on its own ffmpeg clock; we estimate the playhead
 // from wall-clock for the timecode + scrubber (monitor-accurate, not the
 // authority for decode). Honors loop + multi-reel auto-advance like playLoop.
 function _streamClockTick() {
   if (!S.streamMode || !S.isPlaying) return;
+  // Stall watchdog: if the <img> hasn't painted a new frame within the window, the
+  // stream is dead — fall back to per-frame so the picture can't freeze while this
+  // clock keeps advancing the timecode.
+  if (performance.now() - (S.streamLastFrameTs || 0) > _STREAM_STALL_MS) {
+    _fallbackToPerFrame('no frame within ' + _STREAM_STALL_MS + 'ms');
+    return;
+  }
   const fps = S.fps || (S.frameInterval ? 1000 / S.frameInterval : 24) || 24;
   // Prefer the audio clock for the displayed playhead/TC when PCM audio is
   // actively playing (presentation-accurate, matches the per-frame A/V lock).
@@ -4747,6 +4798,7 @@ export function playerLoadReel(file, reelInfo = {}) {
   pausePlayer();
 
   S.loadSeq++;       // invalidate any in-flight frame loads
+  S.streamStallFallback = false;   // let a fresh media retry the realtime stream
   const mySeq = S.loadSeq;
 
   // In companion mode the path-based main-process backend decodes (cplPath/mxfPath).

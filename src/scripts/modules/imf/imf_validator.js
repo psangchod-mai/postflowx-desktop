@@ -6,9 +6,25 @@ export const SEV = { PASS: 'pass', WARN: 'warn', FAIL: 'fail', INFO: 'info' };
 
 // ref (optional): { trackFileId?, reelIndex? } — lets resource-scoped findings be
 // wired to a "jump to timeline" affordance in the UI (imf_ui _applyValFilter).
-function result(sev, code, msg, detail = '', ref = null) {
+//
+// P2-ACTIONABLE: rows MAY carry two extra fields (backward-compatible — only ADDED,
+// existing consumers that read {sev,code,msg,detail,ref} are unaffected):
+//   remediation  — a short human hint on how to fix the finding.
+//   resourceRef  — { kind:'cpl'|'pkl'|'assetmap'|'opl'|'asset'|'resource',
+//                    id?, file?, trackFileId?, reelIndex? } describing WHICH
+//                    document/asset the finding points at, so a UI can jump to it.
+// Both are passed via the options bag (5th arg). When the 5th arg has trackFileId /
+// reelIndex it is ALSO treated as the legacy `ref` for existing call-sites.
+function result(sev, code, msg, detail = '', opts = null) {
   const r = { sev, code, msg, detail };
-  if (ref && (ref.trackFileId || ref.reelIndex != null)) r.ref = ref;
+  if (opts) {
+    // Legacy ref shape: bare { trackFileId?, reelIndex? } (no explicit kind).
+    if (opts.trackFileId || opts.reelIndex != null) {
+      r.ref = { trackFileId: opts.trackFileId, reelIndex: opts.reelIndex };
+    }
+    if (opts.remediation) r.remediation = opts.remediation;
+    if (opts.resourceRef) r.resourceRef = opts.resourceRef;
+  }
   return r;
 }
 
@@ -1000,6 +1016,553 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
       'IMF plugfests (2024): RPCL is required for streaming; CPRL or LRCP will fail on-demand players. Check with a J2K codestream inspector.'));
   }
 
+  // ── P1-TIMELINE: segment/timeline continuity (composed here so it actually
+  // runs on every loaded package). validateTimeline() consumes the SAME parsed
+  // CPL object and is self-guarding (returns [] when there are no sequences), so
+  // this is a pure additive integration with no new inputs and no false findings
+  // on CPLs that carry no timeline resources.
+  try {
+    for (const r of validateTimeline(cpl)) results.push(r);
+  } catch { /* never let a timeline check crash the whole structural pass */ }
+
+  return results;
+}
+
+// ── XML element helpers (regex, ns-agnostic; no DOM dependency) ────────────────
+// These operate on raw XML text and ignore namespace prefixes. They are deliberately
+// lightweight (the validator must stream-friendly parse XML-only docs without a DOM
+// on the Node/test path) and are only used for the semantic P1 passes below.
+
+// All occurrences of <local ...>inner</local> (or self-closing). Returns
+// [{ attrs, inner }]. `local` matched ns-agnostically (optional prefix).
+function findElements(xml, local) {
+  const out = [];
+  const text = String(xml || '');
+  const openRe = new RegExp(
+    `<(?:[\\w.-]+:)?${local}\\b([^>]*?)(/?)>`, 'gi');
+  let m;
+  while ((m = openRe.exec(text)) !== null) {
+    const attrs = m[1] || '';
+    if (m[2] === '/') { out.push({ attrs, inner: '' }); continue; }
+    // Find the matching close tag (non-nested assumption is fine for the flat IMF
+    // elements we inspect; for safety we do a depth walk over same-local tags).
+    const closeRe = new RegExp(`</(?:[\\w.-]+:)?${local}\\s*>`, 'gi');
+    const openAgain = new RegExp(`<(?:[\\w.-]+:)?${local}\\b[^>]*?(?<!/)>`, 'gi');
+    closeRe.lastIndex = openRe.lastIndex;
+    openAgain.lastIndex = openRe.lastIndex;
+    let depth = 1, searchFrom = openRe.lastIndex, endIdx = -1;
+    while (depth > 0) {
+      closeRe.lastIndex = searchFrom;
+      const c = closeRe.exec(text);
+      if (!c) break;
+      openAgain.lastIndex = searchFrom;
+      let nestedOpens = 0, o;
+      while ((o = openAgain.exec(text)) !== null && o.index < c.index) nestedOpens++;
+      depth += nestedOpens - 1;
+      searchFrom = c.index + c[0].length;
+      if (depth === 0) endIdx = c.index;
+    }
+    const inner = endIdx >= 0 ? text.slice(openRe.lastIndex, endIdx) : '';
+    out.push({ attrs, inner });
+    if (endIdx >= 0) openRe.lastIndex = searchFrom;
+  }
+  return out;
+}
+
+// First element only (or null).
+function firstElement(xml, local) {
+  const all = findElements(xml, local);
+  return all.length ? all[0] : null;
+}
+
+// Value of an attribute (ns-agnostic local name) from an attrs string.
+function attrVal(attrs, name) {
+  const re = new RegExp(`(?:[\\w.-]+:)?${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
+  const m = re.exec(String(attrs || ''));
+  if (!m) return null;
+  return m[1] !== undefined ? m[1] : m[2];
+}
+
+// Text content of first <local>…</local> (trimmed) or null.
+function elementText(xml, local) {
+  const el = firstElement(xml, local);
+  if (!el) return null;
+  return el.inner.replace(/<[^>]*>/g, '').trim();
+}
+
+// ── P1-OPL: OutputProfileList SEMANTIC validation (SMPTE ST 2067-100) ──────────
+//
+// Namespace/root/well-formedness are already handled by validateSchema(). This pass
+// adds the SEMANTICS an XSD cannot express:
+//   OPL001 — OPL declares an <Id> (UUID) and it is a urn:uuid.
+//   OPL002 — OPL references a CPL via <CompositionPlaylistId>, and (if a CPL id is
+//            supplied) that reference RESOLVES to the loaded CPL.
+//   OPL003 — <MacroList> present with ≥1 <Macro>; each Macro has a name + ≥1
+//            Handle (input/output). Empty MacroList or nameless macros → findings.
+//   OPL004 — Handle references: every Handle referenced by a Macro must resolve to
+//            an alias/handle defined in the OPL (AliasList) or the well-known
+//            "cpl:" pseudo-handle. Dangling handles → FAIL.
+//   OPL005 — Scale/alias sanity: any <Scale> / ScaleFactor must be a positive
+//            rational; alias names must be unique.
+//
+// `opts.cplId` — the loaded CPL's id (to verify OPL→CPL resolution). Optional.
+export function validateOPL(oplXml, opts = {}) {
+  const results = [];
+  const xml = String(oplXml || '');
+  if (!xml.trim()) return results;
+
+  const parsed = parseXmlDoc(xml);
+  if (!parsed.ok || parsed.rootLocalName !== 'OutputProfileList') {
+    // Well-formedness / root already reported by validateSchema — stay quiet here.
+    return results;
+  }
+
+  // OPL001 — Id present + urn:uuid shape.
+  const oplId = elementText(xml, 'Id');
+  const isUuid = /^urn:uuid:[0-9a-fA-F-]{36}$/.test(oplId || '');
+  if (!oplId) {
+    results.push(result(SEV.FAIL, 'OPL001', 'OutputProfileList is missing its <Id> element',
+      'SMPTE ST 2067-100 §5: every OPL SHALL carry a unique Id (urn:uuid).',
+      { resourceRef: { kind: 'opl' }, remediation: 'Add a <Id>urn:uuid:…</Id> element to the OPL root.' }));
+  } else if (!isUuid) {
+    results.push(result(SEV.WARN, 'OPL001', `OutputProfileList Id "${oplId}" is not a urn:uuid`,
+      'ST 2067-100 Ids SHALL be RFC 4122 UUID URNs.',
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Encode the OPL Id as urn:uuid:XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.' }));
+  } else {
+    results.push(result(SEV.PASS, 'OPL001', 'OPL declares a valid urn:uuid Id',
+      oplId, { resourceRef: { kind: 'opl', id: oplId } }));
+  }
+
+  // OPL002 — CPL reference present + resolves.
+  const cplRef = elementText(xml, 'CompositionPlaylistId');
+  if (!cplRef) {
+    results.push(result(SEV.FAIL, 'OPL002',
+      'OPL does not reference a CompositionPlaylistId',
+      'ST 2067-100 §6.1: an OPL SHALL identify exactly one CPL it applies to.',
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Add <CompositionPlaylistId>urn:uuid:…</CompositionPlaylistId> referencing the target CPL.' }));
+  } else if (opts.cplId && normKey(cplRef) !== normKey(opts.cplId)) {
+    results.push(result(SEV.FAIL, 'OPL002',
+      'OPL CompositionPlaylistId does not resolve to the loaded CPL',
+      `OPL references ${cplRef} but the loaded CPL Id is ${opts.cplId}`,
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Point CompositionPlaylistId at the CPL Id in this IMP, or load the matching CPL.' }));
+  } else {
+    results.push(result(SEV.PASS, 'OPL002',
+      opts.cplId ? 'OPL CompositionPlaylistId resolves to the loaded CPL' : 'OPL references a CompositionPlaylistId',
+      cplRef, { resourceRef: { kind: 'cpl', id: cplRef } }));
+  }
+
+  // Collect alias definitions (AliasList → Alias handle="…"/@name).
+  const aliasListEl = firstElement(xml, 'AliasList');
+  const aliasEls = aliasListEl ? findElements(aliasListEl.inner, 'Alias') : [];
+  const aliasNames = [];
+  for (const a of aliasEls) {
+    const name = attrVal(a.attrs, 'handle') || attrVal(a.attrs, 'name') || (a.inner.replace(/<[^>]*>/g, '').trim());
+    if (name) aliasNames.push(name);
+  }
+  const definedHandles = new Set(aliasNames.map(normKey));
+
+  // OPL003 — MacroList / Macro structure.
+  const macroListEl = firstElement(xml, 'MacroList');
+  const macroEls = macroListEl ? findElements(macroListEl.inner, 'Macro') : [];
+  if (!macroListEl || macroEls.length === 0) {
+    results.push(result(SEV.WARN, 'OPL003',
+      'OPL has no MacroList / contains no <Macro> elements',
+      'ST 2067-100: the transform pipeline is expressed as an ordered list of Macros; an empty OPL performs no transform.',
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Declare at least one <Macro> (e.g. a colour-transform or scaling macro) inside <MacroList>.' }));
+  } else {
+    const namelessMacros = macroEls.filter(mc =>
+      !attrVal(mc.attrs, 'name') && !elementText(mc.inner, 'Name'));
+    if (namelessMacros.length) {
+      results.push(result(SEV.FAIL, 'OPL003',
+        `${namelessMacros.length} OPL Macro(s) have no name`,
+        'Each ST 2067-100 Macro SHALL carry a name/annotation identifying its transform.',
+        { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Give every <Macro> a name attribute or <Name> child.' }));
+    } else {
+      results.push(result(SEV.PASS, 'OPL003',
+        `OPL MacroList: ${macroEls.length} named macro(s)`,
+        '', { resourceRef: { kind: 'opl', id: oplId } }));
+    }
+
+    // OPL004 — Handle resolution. A Macro's InputList/OutputList Handle elements
+    // reference either an alias defined above, another macro's output, or the
+    // "cpl" pseudo-source. Collect macro output handles first.
+    const macroOutputs = new Set();
+    for (const mc of macroEls) {
+      const outList = firstElement(mc.inner, 'OutputList');
+      const outs = outList ? findElements(outList.inner, 'Handle') : [];
+      for (const h of outs) {
+        const hv = h.inner.replace(/<[^>]*>/g, '').trim() || attrVal(h.attrs, 'handle');
+        if (hv) macroOutputs.add(normKey(hv));
+      }
+    }
+    const dangling = [];
+    for (const mc of macroEls) {
+      const inList = firstElement(mc.inner, 'InputList');
+      const ins = inList ? findElements(inList.inner, 'Handle') : [];
+      for (const h of ins) {
+        const hv = (h.inner.replace(/<[^>]*>/g, '').trim() || attrVal(h.attrs, 'handle') || '');
+        if (!hv) continue;
+        const key = normKey(hv);
+        const isCplSource = /^cpl[:/]/.test(key) || key === 'cpl' || key.startsWith('cpl.');
+        if (isCplSource) continue;
+        if (definedHandles.has(key) || macroOutputs.has(key)) continue;
+        dangling.push(hv);
+      }
+    }
+    if (dangling.length) {
+      results.push(result(SEV.FAIL, 'OPL004',
+        `${unique(dangling).length} OPL Macro input handle(s) do not resolve`,
+        `Dangling handle(s): ${unique(dangling).slice(0, 3).join(', ')} — not defined in AliasList, produced by a Macro, or a cpl: source`,
+        { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Define the referenced handle in <AliasList>, wire it to a preceding Macro output, or use a cpl: source handle.' }));
+    } else if (macroEls.length) {
+      results.push(result(SEV.PASS, 'OPL004',
+        'All OPL Macro input handles resolve to a defined source',
+        '', { resourceRef: { kind: 'opl', id: oplId } }));
+    }
+  }
+
+  // OPL005 — Scale sanity + unique alias names.
+  const scaleEls = findElements(xml, 'ScaleFactor').concat(findElements(xml, 'Scale'));
+  const badScales = [];
+  for (const s of scaleEls) {
+    const txt = s.inner.replace(/<[^>]*>/g, '').trim();
+    if (!txt) continue;
+    // Accept "n d" rational or a decimal.
+    let val = NaN;
+    const rat = txt.split(/\s+/);
+    if (rat.length === 2) { const n = Number(rat[0]), d = Number(rat[1]); val = d ? n / d : NaN; }
+    else val = Number(txt);
+    if (!Number.isFinite(val) || val <= 0) badScales.push(txt);
+  }
+  const dupeAliases = aliasNames.map(normKey).filter((n, i, arr) => arr.indexOf(n) !== i);
+  if (badScales.length) {
+    results.push(result(SEV.FAIL, 'OPL005',
+      `${badScales.length} OPL Scale value(s) are not a positive rational`,
+      `Offending: ${unique(badScales).slice(0, 3).join(', ')}`,
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Scale/ScaleFactor must be a positive number or "numerator denominator" rational with a non-zero denominator.' }));
+  } else if (unique(dupeAliases).length) {
+    results.push(result(SEV.FAIL, 'OPL005',
+      `OPL AliasList contains ${unique(dupeAliases).length} duplicate alias name(s)`,
+      unique(dupeAliases).slice(0, 3).join(', '),
+      { resourceRef: { kind: 'opl', id: oplId }, remediation: 'Alias handle names must be unique within the OPL.' }));
+  } else if (scaleEls.length || aliasNames.length) {
+    results.push(result(SEV.PASS, 'OPL005',
+      'OPL scale factors and alias names are structurally sane',
+      '', { resourceRef: { kind: 'opl', id: oplId } }));
+  }
+
+  return results;
+}
+
+// ── P1-TTML: TTML / IMSC subtitle document validation (beyond namespace) ───────
+//
+// TTML1 (W3C) / IMSC 1.x (SMPTE ST 2052-1 profile). Namespace/root already covered
+// by schema; this adds structural semantics:
+//   TT001  — root is <tt> (ns-agnostic).
+//   TT002  — xml:lang present on <tt> (IMSC / EBU-TT-D REQUIRE it).
+//   TT003  — timing model: either ttp:timeBase / frameRate declared, OR the doc
+//            uses clock-time (00:00:00.000) begin/end — bare frame counts without a
+//            frameRate are ambiguous.
+//   TT004  — <body> present, and every <region>/@style referenced by content is
+//            actually defined in <layout>/<styling>. Dangling region/style refs FAIL.
+//   TT005  — no obvious structural errors: at least one timed element (<p>/<div>),
+//            begin ≤ end where both parse.
+export function validateTTML(ttmlXml, opts = {}) {
+  const results = [];
+  const xml = String(ttmlXml || '');
+  const label = opts.file || 'subtitle document';
+  const ref = { resourceRef: { kind: 'asset', file: opts.file || '' } };
+  if (!xml.trim()) return results;
+
+  const parsed = parseXmlDoc(xml);
+  if (!parsed.ok) {
+    results.push(result(SEV.FAIL, 'TT001', `${label} is not well-formed XML`,
+      parsed.error || '', { ...ref, remediation: 'Fix the XML so it parses (balanced tags, valid prolog).' }));
+    return results;
+  }
+  if (parsed.rootLocalName !== 'tt') {
+    results.push(result(SEV.FAIL, 'TT001',
+      `${label} root element is <${parsed.rootLocalName}>, expected <tt>`,
+      'TTML / IMSC documents SHALL have a <tt> document element (W3C TTML1 §6.1).',
+      { ...ref, remediation: 'Use <tt xmlns="http://www.w3.org/ns/ttml"> as the root.' }));
+    return results;
+  }
+  results.push(result(SEV.PASS, 'TT001', `${label}: <tt> document element present`, '', ref));
+
+  const ttEl = firstElement(xml, 'tt');
+  const ttAttrs = ttEl ? ttEl.attrs : '';
+
+  // TT002 — xml:lang.
+  const lang = attrVal(ttAttrs, 'lang'); // matches xml:lang (ns-agnostic local 'lang')
+  if (!lang) {
+    results.push(result(SEV.FAIL, 'TT002', `${label} is missing xml:lang on <tt>`,
+      'IMSC 1.x / EBU-TT-D REQUIRE xml:lang on the root <tt> element.',
+      { ...ref, remediation: 'Add xml:lang="<BCP-47 tag>" (e.g. xml:lang="en") to <tt>.' }));
+  } else if (!/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(lang)) {
+    results.push(result(SEV.WARN, 'TT002', `${label} xml:lang "${lang}" is not a valid BCP-47 tag`,
+      '', { ...ref, remediation: 'Use a BCP-47 language tag such as en, en-US, or es-419.' }));
+  } else {
+    results.push(result(SEV.PASS, 'TT002', `${label} declares xml:lang="${lang}"`, '', ref));
+  }
+
+  // TT003 — timing model.
+  const nsBlob = ttAttrs; // ttp:* params live as attrs on <tt> in IMSC
+  const hasFrameRate = /(?:[\w.-]+:)?frameRate\s*=/.test(nsBlob) || /(?:[\w.-]+:)?frameRate\s*=/.test(xml);
+  const hasTimeBase = /(?:[\w.-]+:)?timeBase\s*=/.test(nsBlob) || /(?:[\w.-]+:)?timeBase\s*=/.test(xml);
+  // Clock-time expressions HH:MM:SS(.fff) used in begin/end anywhere.
+  const hasClockTime = /(?:begin|end)\s*=\s*(?:"|')\s*\d{2,}:\d{2}:\d{2}(?:[.,]\d+)?/.test(xml);
+  // Bare offset/frame expressions like begin="10f" or begin="100" (frames) need a frameRate.
+  const hasFrameOffset = /(?:begin|end)\s*=\s*(?:"|')\s*\d+f\b/.test(xml);
+  if (hasFrameRate || hasTimeBase || hasClockTime) {
+    const parts = [];
+    if (hasTimeBase) parts.push('timeBase');
+    if (hasFrameRate) parts.push('frameRate');
+    if (hasClockTime) parts.push('clock-time expressions');
+    results.push(result(SEV.PASS, 'TT003', `${label} declares a resolvable timing model`,
+      parts.join(', '), ref));
+  } else if (hasFrameOffset) {
+    results.push(result(SEV.FAIL, 'TT003',
+      `${label} uses frame-based time expressions but declares no ttp:frameRate`,
+      'Frame-count begin/end (e.g. "100f") are ambiguous without ttp:frameRate on <tt>.',
+      { ...ref, remediation: 'Declare ttp:frameRate (and ttp:timeBase) on <tt>, or use clock-time (HH:MM:SS.mmm) expressions.' }));
+  } else {
+    results.push(result(SEV.WARN, 'TT003',
+      `${label} declares no explicit timing model (ttp:timeBase / ttp:frameRate)`,
+      'Presentation timing may be interpreter-dependent.',
+      { ...ref, remediation: 'Declare ttp:timeBase="media" and, for frame timing, ttp:frameRate on <tt>.' }));
+  }
+
+  // TT004 — body + region/style reference resolution.
+  const bodyEl = firstElement(xml, 'body');
+  if (!bodyEl) {
+    results.push(result(SEV.FAIL, 'TT004', `${label} has no <body> element`,
+      'A TTML document body carries the timed content; without it nothing renders.',
+      { ...ref, remediation: 'Add a <body> containing at least one timed <div>/<p>.' }));
+  } else {
+    const headEl = firstElement(xml, 'head');
+    const headInner = headEl ? headEl.inner : '';
+    const layoutEl = firstElement(headInner, 'layout');
+    const stylingEl = firstElement(headInner, 'styling');
+    const regionIds = new Set();
+    if (layoutEl) for (const r of findElements(layoutEl.inner, 'region')) {
+      const id = attrVal(r.attrs, 'id'); if (id) regionIds.add(id);
+    }
+    // Also regions can be defined at top-level of <tt> in some profiles.
+    for (const r of findElements(xml, 'region')) {
+      const id = attrVal(r.attrs, 'id'); if (id) regionIds.add(id);
+    }
+    const styleIds = new Set();
+    if (stylingEl) for (const s of findElements(stylingEl.inner, 'style')) {
+      const id = attrVal(s.attrs, 'id'); if (id) styleIds.add(id);
+    }
+    for (const s of findElements(xml, 'style')) {
+      const id = attrVal(s.attrs, 'id'); if (id) styleIds.add(id);
+    }
+
+    // Collect region="X" / style="X Y" references from the body content.
+    const danglingRegions = new Set();
+    const danglingStyles = new Set();
+    const regionRefRe = /\bregion\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+    const styleRefRe = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+    let rm;
+    while ((rm = regionRefRe.exec(bodyEl.inner)) !== null) {
+      const id = (rm[1] !== undefined ? rm[1] : rm[2]).trim();
+      if (id && !regionIds.has(id)) danglingRegions.add(id);
+    }
+    let sm;
+    while ((sm = styleRefRe.exec(bodyEl.inner)) !== null) {
+      const ids = (sm[1] !== undefined ? sm[1] : sm[2]).trim().split(/\s+/).filter(Boolean);
+      for (const id of ids) if (!styleIds.has(id)) danglingStyles.add(id);
+    }
+    if (danglingRegions.size || danglingStyles.size) {
+      const bits = [];
+      if (danglingRegions.size) bits.push(`region(s): ${[...danglingRegions].slice(0, 3).join(', ')}`);
+      if (danglingStyles.size) bits.push(`style(s): ${[...danglingStyles].slice(0, 3).join(', ')}`);
+      results.push(result(SEV.FAIL, 'TT004',
+        `${label} references undefined ${bits.join(' and ')}`,
+        'Content references a region/style id that is not defined in <layout>/<styling>.',
+        { ...ref, remediation: 'Define every referenced region in <layout> and every style in <styling>, or correct the id.' }));
+    } else {
+      results.push(result(SEV.PASS, 'TT004',
+        `${label}: body present; all region/style references resolve`,
+        `${regionIds.size} region(s), ${styleIds.size} style(s) defined`, ref));
+    }
+
+    // TT005 — at least one timed element + begin ≤ end sanity.
+    const paras = findElements(bodyEl.inner, 'p');
+    const divs = findElements(bodyEl.inner, 'div');
+    if (paras.length === 0 && divs.length === 0) {
+      results.push(result(SEV.WARN, 'TT005',
+        `${label} <body> contains no <div>/<p> timed elements`,
+        'The subtitle document defines no caption content.',
+        { ...ref, remediation: 'Add timed <p> elements (with begin/end) inside <div>.' }));
+    } else {
+      // begin ≤ end where both are clock-time.
+      const toSec = (v) => {
+        const m = /^(\d+):(\d{2}):(\d{2})(?:[.,](\d+))?$/.exec(String(v || '').trim());
+        if (!m) return null;
+        return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + (m[4] ? Number('0.' + m[4]) : 0);
+      };
+      let inverted = 0;
+      for (const p of paras) {
+        const b = toSec(attrVal(p.attrs, 'begin'));
+        const e = toSec(attrVal(p.attrs, 'end'));
+        if (b != null && e != null && e < b) inverted++;
+      }
+      if (inverted) {
+        results.push(result(SEV.FAIL, 'TT005',
+          `${label} has ${inverted} caption(s) with end before begin`,
+          'A timed element whose end precedes its begin will never display.',
+          { ...ref, remediation: 'Ensure every <p> has end ≥ begin.' }));
+      } else {
+        results.push(result(SEV.PASS, 'TT005',
+          `${label}: ${paras.length} caption(s) with consistent begin/end timing`, '', ref));
+      }
+    }
+  }
+
+  return results;
+}
+
+// ── P1-TIMELINE: CPL segment/timeline continuity ──────────────────────────────
+//
+// A CPL is an ordered list of Segments; each Segment contains one Sequence per
+// virtual track; each Sequence is an ordered list of Resources. For a given virtual
+// track the resources must tile the segment CONTIGUOUSLY (no gaps, no overlaps) and
+// every resource's [EntryPoint, EntryPoint+SourceDuration) must lie within its
+// essence's IntrinsicDuration. This pass detects:
+//   TL001 — per-track resource source-range out of bounds (EntryPoint+Duration >
+//           IntrinsicDuration, or negative values).
+//   TL002 — overlap: two resources in the SAME track+segment cover overlapping
+//           composition time (only meaningful if authoring encodes explicit offsets;
+//           for pure ordered tiling we detect zero/negative-duration resources that
+//           break monotonic advance).
+//   TL003 — gap: a resource with zero effective duration, or a video/audio track
+//           whose summed duration differs from the CPL total (coverage gap).
+//   TL004 — cross-track duration continuity: each virtual track's total edit-units
+//           equals the composition duration (within rounding).
+//
+// Consumes the SAME parsed CPL object validateStructure() uses. `cpl.segments` is
+// optional (an array of { tracks: { <trackId>: [resources] } }); when absent we fall
+// back to the flat videoSequences/audioSequences the parser already provides.
+export function validateTimeline(cpl) {
+  const results = [];
+  if (!cpl || typeof cpl !== 'object') return results;
+
+  const videoSequences = cpl.videoSequences || [];
+  const audioSequences = cpl.audioSequences || [];
+  const allSeqs = [
+    ...videoSequences.map(s => ({ ...s, family: 'video' })),
+    ...audioSequences.map(s => ({ ...s, family: 'audio' })),
+  ];
+  if (allSeqs.length === 0 && !(cpl.videoResources || []).length) return results;
+
+  const num = (v) => Number(v || 0);
+
+  // TL001 — source range bounds, per resource.
+  let outOfRange = 0;
+  const firstBad = [];
+  for (const seq of allSeqs) {
+    for (const r of (seq.resources || [])) {
+      const ent = num(r.entryPoint);
+      const dur = num(r.sourceDuration);
+      const intr = num(r.intrinsicDuration);
+      if (ent < 0 || dur < 0 || intr < 0) { outOfRange++; if (firstBad.length < 3) firstBad.push(r.trackFileId || '?'); continue; }
+      if (intr > 0 && (ent + (dur || 0)) > intr) { outOfRange++; if (firstBad.length < 3) firstBad.push(r.trackFileId || '?'); }
+    }
+  }
+  if (outOfRange) {
+    results.push(result(SEV.FAIL, 'TL001',
+      `${outOfRange} timeline resource(s) have a source range outside the essence`,
+      `EntryPoint+SourceDuration exceeds IntrinsicDuration (or negative). First: ${firstBad.join(', ')}`,
+      { resourceRef: { kind: 'resource', trackFileId: firstBad[0] || '' }, trackFileId: firstBad[0] || '',
+        remediation: 'Clamp EntryPoint and SourceDuration so EntryPoint+SourceDuration ≤ IntrinsicDuration.' }));
+  } else if (allSeqs.length) {
+    results.push(result(SEV.PASS, 'TL001', 'All timeline resource source ranges are within essence bounds'));
+  }
+
+  // Per-track ordered tiling: detect zero/negative effective duration (overlap/gap
+  // surrogate) and compute each track's total duration in composition edit units.
+  const cplRate = num(cpl.editRate) || 24;
+  const trackTotals = new Map(); // trackId → composition edit-units
+  let brokenAdvance = 0;
+  const brokenTracks = [];
+  for (const seq of allSeqs) {
+    const tid = seq.trackId || `${seq.family}:${seq.seqType || 'seq'}`;
+    let total = trackTotals.get(tid) || 0;
+    for (const r of (seq.resources || [])) {
+      const eff = (num(r.sourceDuration) || num(r.intrinsicDuration)) * (num(r.repeatCount) || 1);
+      if (eff <= 0) {
+        brokenAdvance++;
+        if (brokenTracks.length < 3) brokenTracks.push(tid);
+        continue;
+      }
+      // Scale a resource's own-edit-unit duration into composition edit units:
+      // compUnits = resourceUnits × (compositionRate / resourceRate).
+      const rate = num(r.editRate);
+      const scale = rate && cplRate ? cplRate / rate : 1;
+      total += eff * scale;
+    }
+    trackTotals.set(tid, total);
+  }
+
+  // TL002 / TL003 — zero-duration resources break contiguous tiling (gap/overlap).
+  if (brokenAdvance) {
+    results.push(result(SEV.FAIL, 'TL002',
+      `${brokenAdvance} timeline resource(s) have zero or negative effective duration`,
+      `A resource that does not advance the playhead creates a gap/overlap. Track(s): ${unique(brokenTracks).join(', ')}`,
+      { resourceRef: { kind: 'resource', trackFileId: '' },
+        remediation: 'Every Resource SHALL have SourceDuration (or IntrinsicDuration) > 0.' }));
+  } else if (allSeqs.length) {
+    results.push(result(SEV.PASS, 'TL002', 'Timeline resources tile without zero-duration gaps/overlaps'));
+  }
+
+  // TL004 — cross-track continuity: all virtual tracks span the same composition
+  // duration (within a 1 edit-unit rounding tolerance).
+  const totals = [...trackTotals.entries()].filter(([, t]) => t > 0);
+  if (totals.length > 1) {
+    const rounded = totals.map(([, t]) => Math.round(t));
+    const maxT = Math.max(...rounded);
+    const minT = Math.min(...rounded);
+    if (maxT - minT > 1) {
+      const detail = totals
+        .map(([tid, t]) => `${tid}: ${Math.round(t)}`)
+        .slice(0, 4).join(' | ');
+      results.push(result(SEV.FAIL, 'TL004',
+        `Virtual tracks do not span the same composition duration (Δ ${maxT - minT} edit units)`,
+        detail,
+        { resourceRef: { kind: 'cpl', id: cpl.id || '' },
+          remediation: 'Align every virtual track to the composition duration; pad short tracks or trim long ones.' }));
+    } else {
+      results.push(result(SEV.PASS, 'TL004',
+        `All ${totals.length} virtual tracks span the composition duration (${maxT} edit units)`,
+        '', { resourceRef: { kind: 'cpl', id: cpl.id || '' } }));
+    }
+  }
+
+  // TL003 — coverage vs declared total frames (video track).
+  if (cpl.totalFrames > 0 && videoSequences.length) {
+    const vidTotal = videoSequences.reduce((n, seq) => {
+      let t = 0;
+      for (const r of (seq.resources || [])) {
+        t += (num(r.sourceDuration) || num(r.intrinsicDuration)) * (num(r.repeatCount) || 1);
+      }
+      return Math.max(n, t);
+    }, 0);
+    const diff = Math.abs(Math.round(vidTotal) - Math.round(cpl.totalFrames));
+    if (vidTotal > 0 && diff > 1) {
+      results.push(result(SEV.FAIL, 'TL003',
+        `Video timeline coverage (${Math.round(vidTotal)} frames) does not match CPL total (${cpl.totalFrames} frames)`,
+        `Gap/overrun of ${diff} frame(s) across the picture track`,
+        { resourceRef: { kind: 'cpl', id: cpl.id || '' },
+          remediation: 'Ensure picture resources tile the full composition with no gaps or overruns.' }));
+    } else if (vidTotal > 0) {
+      results.push(result(SEV.PASS, 'TL003',
+        `Video timeline fully covers the composition (${Math.round(vidTotal)} frames)`,
+        '', { resourceRef: { kind: 'cpl', id: cpl.id || '' } }));
+    }
+  }
+
   return results;
 }
 
@@ -1195,9 +1758,29 @@ function validateOneSchema(results, kind, xml) {
   }
 }
 
+// Extract a CPL Id (urn:uuid) from raw CPL XML so the OPL→CPL reference check can
+// resolve against the loaded composition. Returns '' when unavailable.
+function cplIdFromRaw(cplXml) {
+  const id = elementText(cplXml, 'Id');
+  return id || '';
+}
+
 // Public: validate the raw XML of a package's core documents against SMPTE
-// namespace/root/application conformance. `rawXml` = { cpl, pkl, assetMap, opl? }.
-// Returns an array of SCHEMA* findings (empty if rawXml is unavailable).
+// namespace/root/application conformance, and run the P1 SEMANTIC passes that an
+// XSD cannot express (OPL macro/handle graph, TTML/IMSC structure). This is the
+// single entry point the renderer QC flow already calls with `_pkg.rawXml`, so
+// composing the semantic validators here is what wires them into the running app.
+//
+//   `rawXml` = {
+//      cpl, pkl, assetMap,          // core documents (schema conformance)
+//      opl?,                        // OutputProfileList XML  → validateOPL()
+//      timedText? | ttml?,          // one XML string OR an array of
+//                                   //   { file?, xml } / raw XML strings → validateTTML()
+//   }
+//
+// All semantic passes are self-guarding (empty/absent input → no findings) and are
+// wrapped so a single malformed sidecar can never crash the whole schema pass.
+// Returns an array of SCHEMA*/OPL*/TT* findings (empty if rawXml is unavailable).
 export function validateSchema(rawXml) {
   const results = [];
   if (!rawXml || typeof rawXml !== 'object') return results;
@@ -1205,6 +1788,37 @@ export function validateSchema(rawXml) {
   validateOneSchema(results, 'pkl',      rawXml.pkl);
   validateOneSchema(results, 'cpl',      rawXml.cpl);
   if (rawXml.opl) validateOneSchema(results, 'opl', rawXml.opl);
+
+  // ── P1-OPL semantic pass ────────────────────────────────────────────────────
+  // Beyond the schema-level namespace/root check above, run the macro/handle graph
+  // semantics and resolve the OPL→CPL reference against the loaded CPL Id.
+  if (rawXml.opl) {
+    try {
+      const cplId = cplIdFromRaw(rawXml.cpl);
+      for (const r of validateOPL(rawXml.opl, cplId ? { cplId } : {})) results.push(r);
+    } catch { /* a malformed OPL must not crash the schema pass */ }
+  }
+
+  // ── P1-TTML semantic pass ────────────────────────────────────────────────────
+  // Accept either a single timed-text XML string or an array of documents. Each
+  // entry may be a raw XML string or { file?, xml }. validateTTML() self-guards on
+  // empty input, so absent sidecars contribute nothing.
+  const ttmlDocs = [];
+  const ttmlSrc = rawXml.timedText != null ? rawXml.timedText : rawXml.ttml;
+  if (Array.isArray(ttmlSrc)) {
+    for (const d of ttmlSrc) {
+      if (typeof d === 'string') ttmlDocs.push({ xml: d, file: '' });
+      else if (d && typeof d === 'object' && typeof d.xml === 'string') ttmlDocs.push({ xml: d.xml, file: d.file || '' });
+    }
+  } else if (typeof ttmlSrc === 'string') {
+    ttmlDocs.push({ xml: ttmlSrc, file: '' });
+  }
+  for (const d of ttmlDocs) {
+    try {
+      for (const r of validateTTML(d.xml, d.file ? { file: d.file } : {})) results.push(r);
+    } catch { /* one bad subtitle doc must not crash the schema pass */ }
+  }
+
   return results;
 }
 

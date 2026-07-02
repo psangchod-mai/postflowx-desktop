@@ -25,9 +25,20 @@ const CPL = `<?xml version="1.0"?>
   <cpl:ApplicationIdentification>http://www.smpte-ra.org/schemas/2067-21/2020</cpl:ApplicationIdentification>
 </cpl:CompositionPlaylist>`;
 
+// Semantically conformant OPL: carries an Id, resolves to the CPL Id above, and
+// declares a named Macro whose input handle resolves to a cpl: pseudo-source. This
+// exercises the P1-OPL semantic pass now composed into validateSchema() without
+// producing a (correct) false-fail on the "conformant IMP" assertion below.
 const OPL = `<?xml version="1.0"?>
 <opl:OutputProfileList xmlns:opl="http://www.smpte-ra.org/schemas/2067-100/2016">
   <opl:Id>urn:uuid:0004</opl:Id>
+  <opl:CompositionPlaylistId>urn:uuid:0003</opl:CompositionPlaylistId>
+  <opl:MacroList>
+    <opl:Macro name="colour-transform">
+      <opl:InputList><opl:Handle>cpl:MainImage</opl:Handle></opl:InputList>
+      <opl:OutputList><opl:Handle>out0</opl:Handle></opl:OutputList>
+    </opl:Macro>
+  </opl:MacroList>
 </opl:OutputProfileList>`;
 
 // ── parseXmlDoc (fallback path in Node — no DOMParser) ──
