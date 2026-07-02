@@ -3195,6 +3195,8 @@ class CompanionApi:
                     # otherwise seek beyond the timeline end and Resolve renders a pure
                     # BLACK still. Clamp to the last frame so we show the nearest real
                     # frame instead of black.
+                    _raw_rel_sec = rel_sec          # pre-clamp, for the mismatch diagnostic
+                    _out_of_range = False
                     try:
                         _clip_frames = int(float(clip.GetClipProperty("Frames") or 0))
                     except (TypeError, ValueError):
@@ -3202,6 +3204,7 @@ class CompanionApi:
                     if _clip_frames > 1 and fps > 0:
                         _max_rel = (_clip_frames - 1) / fps
                         if rel_sec > _max_rel:
+                            _out_of_range = True
                             log.info("[VFX Resolve Preview] seek clamp: rel=%.3fs > clip max=%.3fs → clamped to last frame",
                                      rel_sec, _max_rel)
                             rel_sec = _max_rel
@@ -3209,21 +3212,25 @@ class CompanionApi:
                     tl_start_sec  = _timecode_to_seconds(tl_start_tc, fps)
                     target_tl_tc  = _seconds_to_timecode(tl_start_sec + rel_sec, fps, drop_frame)
                     log.info(
-                        "[VFX Resolve Preview] seek: clip_start=%s tl_start=%s rel=%.3fs target=%s",
-                        clip_start_tc, tl_start_tc, rel_sec, target_tl_tc,
+                        "[VFX Resolve Preview] seek: clip_start=%s tl_start=%s rel=%.3fs target=%s outOfRange=%s",
+                        clip_start_tc, tl_start_tc, rel_sec, target_tl_tc, _out_of_range,
                     )
-                    # Diagnostic snapshot surfaced back to the renderer so we can see,
-                    # live, whether the editorial requestedTc and the OCF's embedded
-                    # clipStartTc share a clock (relFrames small = same clock; huge =
-                    # different clock → the Resolve tier seeks to the wrong frame).
+                    # Diagnostic snapshot surfaced back to the renderer. outOfRange=True
+                    # (rawRelFrames far beyond clipFrames) means the editorial requestedTc
+                    # and the OCF's embedded clipStartTc are on DIFFERENT clocks — the seek
+                    # was clamped to the last frame, which is the "wrong later frame" the
+                    # user sees. Small in-range rawRelFrames = same clock, seek is correct.
                     self._last_ocf_seek_diag = {
-                        "requestedTc": timecode,
-                        "clipStartTc": clip_start_tc,
-                        "tlStartTc":   tl_start_tc,
-                        "fps":         fps,
-                        "relSec":      round(rel_sec, 3),
-                        "relFrames":   int(round(rel_sec * fps)),
-                        "targetTc":    target_tl_tc,
+                        "requestedTc":  timecode,
+                        "clipStartTc":  clip_start_tc,
+                        "tlStartTc":    tl_start_tc,
+                        "fps":          fps,
+                        "relSec":       round(rel_sec, 3),
+                        "relFrames":    int(round(rel_sec * fps)),
+                        "rawRelFrames": int(round(_raw_rel_sec * fps)),
+                        "clipFrames":   _clip_frames,
+                        "outOfRange":   _out_of_range,
+                        "targetTc":     target_tl_tc,
                     }
                     timeline.SetCurrentTimecode(target_tl_tc)
                     # Wait for the playhead to actually land — a reused (warm)

@@ -13515,6 +13515,12 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
             ocf_matched_tcIn:   ocf.ocfStartTc || '(none)',
             resolve_seekDiag:   _sd || '(companion did not report — update/restart companion)',
           }));
+          if (_sd?.outOfRange) {
+            console.warn('[OCF TC DIAG] ⚠ TC-DOMAIN MISMATCH: editorial requestedTc ' +
+              `${_sd.requestedTc} is ${_sd.rawRelFrames} frames past clip start ${_sd.clipStartTc} ` +
+              `(clip is only ${_sd.clipFrames} frames) → seek was clamped to the last frame. ` +
+              'Editorial TC and the OCF embedded TC are on different clocks.');
+          }
 
           // Always store result so verify panel reflects actual preview outcome.
           // Include dataUrl + provenance so classifyBackendStatus() can reach READY —
