@@ -69,6 +69,26 @@ export function sourceTcAtRecord({ srcIn, recIn, recordFrame, sourceFps, timelin
   return framesToTC(Math.max(0, f), sFps);
 }
 
+/**
+ * Native SOURCE frame corresponding to a timeline (record) frame, accounting for
+ * the editorial retime speed. The plate we pull is NATIVE (100%), so to show the
+ * OCF frame that a RETIMED editorial frame was sampled from, the record offset must
+ * be scaled by speed%: a 200% (2×) clip advances the source twice as fast, a 1608%
+ * clip ~16×. speedPercent is a percent where 100 == native.
+ *
+ * Regression-safe: speedPercent 100 (or missing) reduces to the 1:1 offset
+ * `srcInF + (recordFrame − recInF)` — identical to the non-retimed path.
+ */
+export function sourceFrameAtRecord({ srcInF, recInF, recordFrame, speedPercent } = {}) {
+  const sIn = Math.max(0, Math.round(Number(srcInF) || 0));
+  const rIn = Math.round(Number(recInF) || 0);
+  const recF = Math.round(Number(recordFrame) || 0);
+  let pct = Number(speedPercent);
+  if (!Number.isFinite(pct) || pct === 0) pct = 100;
+  const srcF = sIn + Math.round((recF - rIn) * (pct / 100));
+  return Math.max(0, srcF);
+}
+
 /** Frames in a dissolve/wipe transition token ("D025"→25, "W012"→12, "C"/""→0). */
 export function parseTransitionFrames(transition) {
   const m = /^([DW])\s*0*(\d+)$/i.exec(String(transition || '').trim());

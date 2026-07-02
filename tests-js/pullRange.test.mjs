@@ -2,6 +2,7 @@
 // Run: node tests-js/pullRange.test.mjs
 import {
   normalizeSpeedPercent, readSpeedPercent, parseTransitionFrames, computePullRange, sourceTcAtRecord,
+  sourceFrameAtRecord,
 } from '../src/scripts/modules/pullRange.js';
 
 let passed = 0, failed = 0;
@@ -113,6 +114,23 @@ eq(parseTransitionFrames('D 024'), 24, 'spaced "D 024" → 24f');
   // srcInF(@30)=10*3600*30=1080000; +30 -recInF(@24=86400) ... recordFrame-recInF=30 → 1080030 → @30 = 10:00:01:00
   eq(r, '10:00:01:00', '30p clip in 24p timeline: source TC formatted at 30fps');
 }
+
+// ── sourceFrameAtRecord (speed-aware record→native source mapping) ──
+// 100% == 1:1 (regression-safe, identical to the old srcInF + (recF - recInF)).
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 100, speedPercent: 100 }), 1000, 'speed 100% at in-point → srcIn');
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 150, speedPercent: 100 }), 1050, 'speed 100% +50 rec → +50 src (1:1)');
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 150, speedPercent: undefined }), 1050, 'missing speed → 1:1');
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 150, speedPercent: 0 }), 1050, 'zero speed → 1:1 (no-op)');
+// 200% (2×): source advances twice as fast as record.
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 150, speedPercent: 200 }), 1100, 'speed 200%: +50 rec → +100 src');
+// 50% (half): source advances half as fast.
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 200, speedPercent: 50 }), 1050, 'speed 50%: +100 rec → +50 src');
+// 1608% overcrank (the reported shot): +10 rec frames → +161 native source frames.
+eq(sourceFrameAtRecord({ srcInF: 1000, recInF: 100, recordFrame: 110, speedPercent: 1608 }), 1161, 'speed 1608%: +10 rec → +161 src');
+// In-point always maps to srcIn regardless of speed (so HdlSt/In line up).
+eq(sourceFrameAtRecord({ srcInF: 5000, recInF: 300, recordFrame: 300, speedPercent: 1608 }), 5000, 'retimed in-point still maps to srcIn');
+// Never negative.
+eq(sourceFrameAtRecord({ srcInF: 10, recInF: 100, recordFrame: 0, speedPercent: 200 }), 0, 'clamped to >= 0');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

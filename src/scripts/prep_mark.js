@@ -3,7 +3,7 @@
 // Reads data from existing window APIs — does NOT modify shot_marker.js or ui.js data stores.
 
 import { tcToFrames, framesToTC } from './modules/utils_time.js';
-import { sourceTcAtRecord } from './modules/pullRange.js';
+import { sourceTcAtRecord, sourceFrameAtRecord } from './modules/pullRange.js';
 import { createRadialMenu, RadialIcons } from './components/radialMenu/index.js';
 import { openAnnotateModal } from './components/annotateModal/index.js';
 import { getShortcutsConfig, resolveShortcutAction, comboToDisplay, isTypingTarget } from './core/shortcuts.js';
@@ -13909,9 +13909,11 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
 
   // OCF strip: one extracted frame per position via getOcfStillPreview (sequential).
   if (isLinked && ocf.sourcePath && typeof window._pmGetOcfStillPreview === 'function') {
-    // Map absolute record-frame position to source timecode:
-    // offsetF = absF - recInF, then srcF = srcInF + offsetF.
+    // Map absolute record-frame position to the NATIVE source frame, scaled by the
+    // editorial retime speed (100% == 1:1) so a retimed shot's OCF frames line up
+    // with the QT reference instead of drifting.
     const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, fps) : 0;
+    const _spdPct = _pmExtractSpeedPercent(ev) || 100;
     (async () => {
       const ocfCells = ocfContainer.querySelectorAll('.pfx-vfx-strip-frame');
       // Library OCF carries no container timecode → editorial-TC seeking is
@@ -13937,8 +13939,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
       if (resolveConnected && typeof window._pmVfxResolveStillBatch === 'function') {
         try {
           const picks = POSITIONS.map(pos => {
-            const off = pos.absF - recInF;
-            const srcF = Math.max(0, srcInF + off);
+            const srcF = sourceFrameAtRecord({ srcInF, recInF, recordFrame: pos.absF, speedPercent: _spdPct });
             const ratio2 = POSITIONS.length > 1 ? POSITIONS.indexOf(pos) / (POSITIONS.length - 1) : 0;
             return useFrames
               ? { label: pos.label, frame: Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio2))) }
@@ -13968,8 +13969,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
         if (filledByBatch[idx]) continue;
         if (token.cancelled) return;
         const pos      = POSITIONS[idx];
-        const offsetF  = pos.absF - recInF;
-        const srcF     = Math.max(0, srcInF + offsetF);
+        const srcF     = sourceFrameAtRecord({ srcInF, recInF, recordFrame: pos.absF, speedPercent: _spdPct });
         const srcTc    = framesToTC(srcF, fps);
         const ratio    = POSITIONS.length > 1 ? idx / (POSITIONS.length - 1) : 0;
         const fileFrame = useFrames
@@ -14182,7 +14182,12 @@ function _pfxPlrClamp(f) {
 }
 
 function _pfxPlrRecToSrc(recF) {
-  return _pfxPlr.srcInF + (recF - _pfxPlr.recInF);
+  // Speed-aware: the OCF plate is NATIVE, so a retimed editorial frame maps to a
+  // source frame scaled by the editorial speed% (100 == 1:1, unchanged).
+  return sourceFrameAtRecord({
+    srcInF: _pfxPlr.srcInF, recInF: _pfxPlr.recInF,
+    recordFrame: recF, speedPercent: _pfxPlr.speedPct || 100,
+  });
 }
 
 // Update TC display + slider position
@@ -14485,7 +14490,14 @@ async function _pfxPlrGenOcfFrames() {
 
   const fps       = _pfxPlr.fps || 24;
   const positions = _pfxPlrHeroPositions();
-  if (progEl) { progEl.textContent = `OCF Preview: 0/${positions.length} frames ready`; progEl.hidden = false; }
+  // Surface the OCF's native fps + the editorial speed applied, so a retimed shot's
+  // QT-vs-OCF frame difference reads as expected (QT retimed, OCF native) not a bug.
+  const _spd = _pfxPlr.speedPct || 100;
+  const _ocfFps = ocf.ocfFps || fps;
+  const _retimeNote = Math.abs(_spd - 100) > 0.01
+    ? ` · OCF native @ ${(_ocfFps % 1 ? _ocfFps.toFixed(3) : _ocfFps)}fps · QT retimed ${Math.round(_spd)}%`
+    : '';
+  if (progEl) { progEl.textContent = `OCF Preview: 0/${positions.length} frames ready${_retimeNote}`; progEl.hidden = false; }
   let ready = 0;
 
   for (const pos of positions) {
@@ -14500,7 +14512,7 @@ async function _pfxPlrGenOcfFrames() {
     } catch (_) {}
     if (token.cancelled) break;
     ready++;
-    if (progEl) progEl.textContent = `OCF Preview: ${ready}/${positions.length} frames ready`;
+    if (progEl) progEl.textContent = `OCF Preview: ${ready}/${positions.length} frames ready${_retimeNote}`;
   }
 
   if (!token.cancelled) {
@@ -14518,6 +14530,9 @@ function _pfxPlrInit(ev, mk0) {
   _pfxPlr.recInF  = ev?.recIn  ? tcToFrames(ev.recIn,  fps) : 0;
   _pfxPlr.recOutF = ev?.recOut ? tcToFrames(ev.recOut, fps) : _pfxPlr.recInF + 1;
   _pfxPlr.srcInF  = ev?.srcIn  ? tcToFrames(ev.srcIn,  fps) : 0;
+  // Editorial retime speed (percent, 100 == native) — used to map record→native
+  // source frame for the OCF preview so a retimed shot's frames line up.
+  _pfxPlr.speedPct = _pmExtractSpeedPercent(ev) || 100;
   _pfxPlr.currentRecF = _pfxPlr.recInF;
 
   const sliderEl = document.getElementById('pfxVfxPlrSlider');
