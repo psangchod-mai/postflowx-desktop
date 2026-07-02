@@ -2898,7 +2898,7 @@ class CompanionApi:
             return None
 
     def _ocf_extract_via_resolve(self, file_path: str, timecode: str, width: int, height: int, fmt: str,
-                                 source_frame: Any | None = None) -> dict:
+                                 source_frame: Any | None = None, source_start_tc: str = "") -> dict:
         """Single-frame still via DaVinci Resolve ExportCurrentFrameAsStill.
         Uses CreateTimelineFromClips + SetCurrentTimecode — mirrors the proven _resolve_export_still pattern.
         Falls back to render-queue (Format:JPEG then TIFF) if ExportCurrentFrameAsStill produces nothing.
@@ -3187,7 +3187,16 @@ class CompanionApi:
                     # GetCurrentTimecode() returns the timeline's current position (its first frame).
                     # CreateTimelineFromClips preserves source timecode, so timeline start ≈ clip start.
                     tl_start_tc  = str(timeline.GetCurrentTimecode() or "").strip() or "01:00:00:00"
-                    clip_start_tc = str(clip.GetClipProperty("Start TC") or tl_start_tc).strip()
+                    embedded_start_tc = str(clip.GetClipProperty("Start TC") or tl_start_tc).strip()
+                    # Prefer the caller-supplied OCF start TC (the value the MATCHER read
+                    # from the OCF, i.e. the same clock as the editorial `timecode`). The
+                    # embedded GetClipProperty("Start TC") can be a DIFFERENT clock than
+                    # editorial (e.g. reel/record-run TC vs the editorial source TC), which
+                    # makes `timecode − embedded` a nonsense offset that clamps to the last
+                    # frame — the "wrong later frame" bug. Fall back to embedded when the
+                    # caller didn't pass one (library OCF with no known container TC).
+                    _passed_start = str(source_start_tc or "").strip()
+                    clip_start_tc = _passed_start or embedded_start_tc
                     rel_sec       = max(0.0, _timecode_to_seconds(timecode, fps)
                                            - _timecode_to_seconds(clip_start_tc, fps))
                     # Clamp to the clip's media range. A hero position whose source TC
@@ -3221,16 +3230,19 @@ class CompanionApi:
                     # was clamped to the last frame, which is the "wrong later frame" the
                     # user sees. Small in-range rawRelFrames = same clock, seek is correct.
                     self._last_ocf_seek_diag = {
-                        "requestedTc":  timecode,
-                        "clipStartTc":  clip_start_tc,
-                        "tlStartTc":    tl_start_tc,
-                        "fps":          fps,
-                        "relSec":       round(rel_sec, 3),
-                        "relFrames":    int(round(rel_sec * fps)),
-                        "rawRelFrames": int(round(_raw_rel_sec * fps)),
-                        "clipFrames":   _clip_frames,
-                        "outOfRange":   _out_of_range,
-                        "targetTc":     target_tl_tc,
+                        "requestedTc":     timecode,
+                        "clipStartTc":     clip_start_tc,
+                        "embeddedStartTc": embedded_start_tc,
+                        "passedStartTc":   _passed_start or None,
+                        "usedStart":       "passed" if _passed_start else "embedded",
+                        "tlStartTc":       tl_start_tc,
+                        "fps":             fps,
+                        "relSec":          round(rel_sec, 3),
+                        "relFrames":       int(round(rel_sec * fps)),
+                        "rawRelFrames":    int(round(_raw_rel_sec * fps)),
+                        "clipFrames":      _clip_frames,
+                        "outOfRange":      _out_of_range,
+                        "targetTc":        target_tl_tc,
                     }
                     timeline.SetCurrentTimecode(target_tl_tc)
                     # Wait for the playhead to actually land — a reused (warm)
@@ -3720,6 +3732,12 @@ class CompanionApi:
             except Exception: pass
             try: _clip_frames = int(float(clips[0].GetClipProperty("Frames") or 0))
             except (TypeError, ValueError): _clip_frames = 0
+            # Prefer the caller-supplied OCF start TC (matcher's clock, same as the
+            # per-pick editorial sourceTc) over the embedded Start TC, which may be a
+            # different clock — see the single-frame endpoint for the full rationale.
+            _passed_start = str(request.get("sourceStartTc") or request.get("source_start_tc") or "").strip()
+            if _passed_start:
+                _clip_start_tc = _passed_start
             _drop = fps in (29.97, 59.94, 23.976)
             for p in picks:
                 if p["frame"] is None and p["sourceTc"]:
@@ -3832,6 +3850,7 @@ class CompanionApi:
 
         ocf_path  = str(request.get("ocfPath") or request.get("filePath") or "").strip()
         source_tc = str(request.get("sourceTc") or request.get("timecode") or "").strip()
+        source_start_tc = str(request.get("sourceStartTc") or request.get("source_start_tc") or "").strip()
         source_frame = request.get("sourceFrame")
         width     = int(request.get("outputWidth") or request.get("width") or 960)
         height    = int(request.get("outputHeight") or request.get("height") or 0)
@@ -3865,7 +3884,7 @@ class CompanionApi:
         log.info("[VFX Resolve Preview Request] ocfPath=%s sourceTc=%s width=%d", ocf_path, source_tc, width)
 
         r = self._ocf_extract_via_resolve(ocf_path, source_tc, width, height, fmt,
-                                          source_frame=source_frame)
+                                          source_frame=source_frame, source_start_tc=source_start_tc)
 
         log.info("[VFX Resolve Preview Native Response] ok=%s stage=%s error=%s",
                  r.get("ok"), r.get("stage"), r.get("error"))

@@ -13945,7 +13945,8 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
               ? { label: pos.label, frame: Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio2))) }
               : { label: pos.label, sourceTc: framesToTC(srcF, fps) };
           });
-          const br = await window._pmVfxResolveStillBatch(ocf.sourcePath, picks, { width: 320 })
+          const br = await window._pmVfxResolveStillBatch(ocf.sourcePath, picks,
+              { width: 320, sourceStartTc: ocf.ocfStartTc || '' })
             .catch(() => null);
           if (token.cancelled) return;
           const frames = (br?.data ?? br)?.frames || [];

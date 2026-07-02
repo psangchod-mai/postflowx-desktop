@@ -81,6 +81,9 @@ async function _nativeOcfResolveStillBatch(ocfPath, picks, opts = {}) {
   return _sendCompanionAction('vfx.preview.resolveStillBatch', {
     ocfPath,
     outputWidth: opts.width || 480,
+    // OCF's own start TC (matcher's clock) so the batch seek subtracts the same
+    // base as the per-frame path instead of the possibly-different embedded Start TC.
+    sourceStartTc: opts.sourceStartTc || '',
     picks: picks || [],
   }, 200000);
 }
