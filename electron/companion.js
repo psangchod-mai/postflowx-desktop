@@ -18,6 +18,10 @@ const fs             = require('fs');
 const { EventEmitter } = require('events');
 
 const COMPANION_READY_TIMEOUT_MS = 15000;
+// Upper bound on a single length-prefixed message. Generous enough for large
+// base64 frame payloads, but far below the ~GB values a random/desynced 4-byte
+// prefix produces — used to detect and recover from protocol desync.
+const MAX_COMPANION_MSG_BYTES = 256 * 1024 * 1024;
 const CALL_TIMEOUT_MS            = 60000;
 
 class CompanionBridge extends EventEmitter {
@@ -159,6 +163,15 @@ class CompanionBridge extends EventEmitter {
 
     while (this._readBuf.length >= 4) {
       const msgLen = this._readBuf.readUInt32LE(0);
+      // Sanity-cap the length prefix. A desync (garbled/partial frame) can yield a
+      // huge value; without this the loop breaks forever waiting for bytes that
+      // never arrive, wedging the channel and growing _readBuf unbounded. On an
+      // implausible length, drop the buffer to resynchronise instead of hanging.
+      if (msgLen > MAX_COMPANION_MSG_BYTES) {
+        console.error('[Companion] implausible message length', msgLen, '— resetting read buffer');
+        this._readBuf = Buffer.alloc(0);
+        break;
+      }
       if (this._readBuf.length < 4 + msgLen) break;
 
       const raw = this._readBuf.slice(4, 4 + msgLen).toString('utf8');

@@ -276,6 +276,7 @@ function _startMPVPath(videoEl, file, nativePath, info, token, {
   videoEl.style.visibility = 'hidden';
   const canvas = mountNativeCanvas(videoEl);
   const engine = new MPVPlayerEngine(canvas, {
+    fps:          Number(info?.fps) || 24,
     onStatus:     (label) => { if (videoEl[_K.token] === token) onStatus?.(label); },
     onTimeUpdate: () => {},
     onError:      (msg) => console.error('[MPVPlayer]', msg),

@@ -178,8 +178,13 @@ def _resolve_media_path(ev, media_roots, cache):
 
 
 def _extract_mono_wav(src, ch, start_sec, dur_sec, handles_sec, out_path, ffmpeg, sr=48000):
-    actual_start = max(0.0, start_sec - handles_sec)
-    actual_dur = dur_sec + handles_sec * 2.0
+    # Head handle is limited by how much source exists before the in-point. If the
+    # in-point is within a handle of the file start, capture only what's available
+    # and shrink the requested duration to match — otherwise the WAV would be short
+    # a head while claiming a full head, pushing audio out of sync downstream.
+    head_sec = min(handles_sec, max(0.0, start_sec))
+    actual_start = start_sec - head_sec            # >= 0
+    actual_dur = head_sec + dur_sec + handles_sec  # actual head + body + full tail
     cmd = [
         ffmpeg, '-y',
         '-ss', f'{actual_start:.6f}',
@@ -521,8 +526,12 @@ def export_protools_aaf(payload):
                 if not ok:
                     report['warnings'].append(f'Event {i} ch{ch_idx}: {err}')
                     continue
-                handle_start_samp = max(0, rec_in_samp - handle_samp)
-                actual_dur_samp = dur_samp + handle_samp * 2
+                # Use the actual available head (matches _extract_mono_wav) so the
+                # timeline placement and WAV content stay aligned when the source
+                # in-point is within a handle of the file start.
+                head_samp = round(min(handles_sec, max(0.0, src_start_sec)) * sr)
+                handle_start_samp = max(0, rec_in_samp - head_samp)
+                actual_dur_samp = head_samp + dur_samp + handle_samp
                 track_clips.setdefault(slot_idx, []).append({
                     'rec_in_samp': handle_start_samp,
                     'dur_samp': actual_dur_samp,

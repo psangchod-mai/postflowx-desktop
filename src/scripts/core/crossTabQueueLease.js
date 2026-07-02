@@ -144,6 +144,11 @@
         _isLeader = false;
         _stopHeartbeat();
       }
+      if (msg?.type === 'leader_released' && msg.tabId !== _myTabId()) {
+        // Previous leader is gone — race to take over now instead of waiting the
+        // full LEASE_TTL for the (possibly unwritten) IDB lease to expire.
+        acquireLease().catch(() => {});
+      }
       if (msg?.type === 'submit_jobs') {
         // Non-leader tabs receive this and do nothing — leader handles it
       }
@@ -170,6 +175,10 @@
 
   // Release lease on tab close
   window.addEventListener('beforeunload', () => {
+    // postMessage is synchronous and gets delivered even as this tab tears down,
+    // so peers learn immediately. The async IDB write in releaseLease() usually
+    // won't finish before unload, which is why we broadcast here directly.
+    if (_isLeader) _broadcast({ type: 'leader_released', tabId: _myTabId() });
     releaseLease().catch(() => {});
     _stopHeartbeat();
   });

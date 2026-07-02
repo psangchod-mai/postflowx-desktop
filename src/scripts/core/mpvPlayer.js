@@ -33,9 +33,10 @@ export class MPVPlayerEngine {
     this._playing    = false;
     this._cachedTime = 0;
     this._cachedDur  = 0;
+    this._fps        = Number(opts.fps) > 0 ? Number(opts.fps) : 24;
   }
 
-  get currentFrame()  { return Math.round(this._cachedTime * 24); }
+  get currentFrame()  { return Math.round(this._cachedTime * this._fps); }
   get currentTime()   { return this._cachedTime; }
   get duration()      { return this._cachedDur; }
   get isPlaying()     { return this._playing; }
@@ -58,7 +59,7 @@ export class MPVPlayerEngine {
 
     this._opts.onStatus?.('Playing via MPV ↗');
     _drawLabel(this._canvas, '▶  Playing in MPV window  ↗');
-    this._opts.onTimeUpdate?.(0, 24);
+    this._opts.onTimeUpdate?.(0, this._fps);
     return { ok: true };
   }
 
@@ -76,9 +77,10 @@ export class MPVPlayerEngine {
     this._opts.onStatus?.('Paused — MPV ↗');
   }
 
-  async seekFrame(frame, fps = 24) {
+  async seekFrame(frame, fps) {
     if (!this._sessionId) return;
-    const secs = fps > 0 ? frame / fps : 0;
+    const rate = fps > 0 ? fps : this._fps;
+    const secs = rate > 0 ? frame / rate : 0;
     await this.seekTime(secs);
   }
 
@@ -87,7 +89,7 @@ export class MPVPlayerEngine {
     await _call('media.mpv.seek', { sessionId: this._sessionId, position: seconds });
     this._cachedTime = seconds;
     _drawLabel(this._canvas, `▶  Playing in MPV window  ↗\n${seconds.toFixed(2)}s`);
-    this._opts.onTimeUpdate?.(Math.round(seconds * 24), 24);
+    this._opts.onTimeUpdate?.(Math.round(seconds * this._fps), this._fps);
   }
 
   async stepForward(n = 1) {
