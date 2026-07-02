@@ -12910,6 +12910,12 @@ function _pmResolveVfxOcfState(ev, mk0) {
     ? (mst === 'SAFE' ? 'linked' : 'review')
     : 'unlinked';
   const tcIn   = matched.tcIn || evSrcIn;
+  // OCF container's OWN free-run start TC + fps, read during matching. The preview
+  // ladder seeks RELATIVE to this (timecode − sourceStartTc); the wizard passes it
+  // and previews correctly — prep_mark historically dropped it, so the ffmpeg tier
+  // seeked absolute-from-zero and the strip/viewer landed on the wrong frame.
+  const ocfStartTc = matched.ocf?.tcIn || '';
+  const ocfFps     = Number(matched.ocf?.fps) || 0;
   // Sprint 4: per-shot link provenance.
   const source = _deriveSource(sp, matched.ocf, !!matched.match?._manualLink);
 
@@ -12923,7 +12929,7 @@ function _pmResolveVfxOcfState(ev, mk0) {
     matchStatus: mst,
   });
 
-  return { sourcePath: sp, status, tcIn, source };
+  return { sourcePath: sp, status, tcIn, source, ocfStartTc, ocfFps };
 }
 
 function _pmVfxOcfSourceTcAt(ev, fallbackOcf = null, recordFrame = null) {
@@ -13321,8 +13327,14 @@ async function _pmRunResolveStillDiagnostic(ev, mk0, slot) {
       error: d.error,
     });
 
-    // Store result on mk0 so the verify panel can read it.
-    if (mk0) mk0._ocfPreviewResult = { ok: !!dataUrl, stage: d.stage, decoder: d.decoder, error: d.error };
+    // Store result on mk0 so the verify panel can read it. Include dataUrl +
+    // provenance so classifyBackendStatus() can classify BACKEND as READY (without
+    // a frame it always falls through to Unavailable).
+    if (mk0) mk0._ocfPreviewResult = {
+      ok: !!dataUrl, stage: d.stage, decoder: d.decoder, error: d.error,
+      dataUrl, extractor: d.extractor, backend: d.backend,
+      requiresResolve: d.requiresResolve, resolveAvailable: d.resolveAvailable,
+    };
     _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0);
 
     if (dataUrl) {
@@ -13480,6 +13492,7 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
       _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0);
 
       window._pmGetOcfStillPreview?.({ ocfPath: ocf.sourcePath, sourceTc: tcStr,
+                                        sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || 0,
                                         resolveConnected, width: 960 })
         .then(r => {
           // Bail if the user moved to another shot while this decode was in flight —
@@ -13491,11 +13504,18 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
           }));
 
           // Always store result so verify panel reflects actual preview outcome.
+          // Include dataUrl + provenance so classifyBackendStatus() can reach READY —
+          // without dataUrl it has no frame and always classifies BACKEND as Unavailable.
           if (mk0) mk0._ocfPreviewResult = {
             ok:      !!r.dataUrl,
             stage:   r.stage,
             decoder: r.decoder,
             error:   r.error,
+            dataUrl: r.dataUrl,
+            extractor: r.extractor,
+            backend: r.backend,
+            requiresResolve: r.requiresResolve,
+            resolveAvailable: r.resolveAvailable,
           };
 
           if (r.dataUrl) {
@@ -13938,7 +13958,9 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
         const r = await window._pmGetOcfStillPreview(
           useFrames
             ? { ocfPath: ocf.sourcePath, sourceFrame: fileFrame, width: 320, height: 180, resolveConnected }
-            : { ocfPath: ocf.sourcePath, sourceTc: srcTc, width: 320, height: 180, resolveConnected }
+            : { ocfPath: ocf.sourcePath, sourceTc: srcTc,
+                sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || fps,
+                width: 320, height: 180, resolveConnected }
         ).catch(e => ({ dataUrl: null, error: e?.message || String(e), decoder: 'Unsupported',
                          extractor: 'none', backend: '', requiresResolve: false, resolveAvailable: true,
                          ocfPath: ocf.sourcePath, sourceTc: srcTc }));
@@ -14265,7 +14287,9 @@ function _pfxPlrScheduleOcfSeek(recF) {
     const resConn = !!(window._pmVfxPullResolveConnected?.());
     try {
       const r = await window._pmGetOcfStillPreview?.({
-        ocfPath: ocf.sourcePath, sourceTc: srcTc, width: 960, height: 0, resolveConnected: resConn,
+        ocfPath: ocf.sourcePath, sourceTc: srcTc,
+        sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || fps,
+        width: 960, height: 0, resolveConnected: resConn,
       });
       if (_pfxPlr.scrubSeq !== seq) return;
       _pfxPlrUpdateOcfSlot(r);
@@ -14450,7 +14474,9 @@ async function _pfxPlrGenOcfFrames() {
     const srcTc = framesToTC(Math.max(0, _pfxPlrRecToSrc(pos.absF)), fps);
     try {
       await window._pmGetOcfStillPreview?.({
-        ocfPath: ocf.sourcePath, sourceTc: srcTc, width: 320, height: 180, resolveConnected: true,
+        ocfPath: ocf.sourcePath, sourceTc: srcTc,
+        sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || fps,
+        width: 320, height: 180, resolveConnected: true,
       });
     } catch (_) {}
     if (token.cancelled) break;
