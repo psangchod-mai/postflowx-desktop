@@ -563,3 +563,42 @@ A second false positive, earlier in the same iteration: the source guard `!/new 
 
 - **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1). The staged tree was materialised to a scratch directory with `git checkout-index` and tested there, so the four sibling J2K suites (36 + 77 + 43 + 10 assertions) are green against exactly what was committed, not against the worktree.
 - **Files:** `src/scripts/modules/imf/j2kCodestream.js`, `src/scripts/modules/imf/imf_player.js`, `src/scripts/modules/imf/imf_mxf.js`, `tests-js/j2kSizDims.test.mjs`. `imf_mxf.js` carried a pre-existing 644→755 mode flip that is **not** mine; the content hunks were staged via `git apply --cached` with the mode lines stripped, leaving the flip in the worktree.
+
+### Iteration 9 — the ALE importer, and a format the app claims to read
+
+**Research.** Every previous iteration this run has been inside the IMF/J2K stack. This one moved to `src/scripts/parsers/`, on the reasoning that a delivery-format reader with no tests is worth more attention than a ninth pass over one that now has plenty. `src/scripts/parsers/ale.js` — Avid Log Exchange, 243 lines, reachable from two places in `ui.js` — had **no test file anywhere in the repo**.
+
+Reading it turned up one line worth stopping on:
+
+```js
+const m = s.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+```
+
+No `;`. NTSC drop-frame timecode is written with semicolons, and Avid — the tool whose format this is — most commonly writes the mixed form `01:00:00;00`, semicolon on the last separator only. A runtime probe against the real parser rather than a reading of it:
+
+| Input | Events | Result |
+|---|---|---|
+| `01:00:00:00` (non-drop) | 1 | `srcIn = 01:00:00:00` |
+| `01;00;00;00` (drop-frame) | **0** | silently dropped |
+| `01:00:00;00` (Avid's usual form) | **0** | silently dropped |
+| `01:00:00:00.5` (Resolve 21 subframe) | **0** | silently dropped |
+| `00:00:00:00120` (5-digit frames) | 1 | `00:00:00:20` — wrong |
+
+**Why rejection deleted the row.** `parseTC` returning null is not confined to one field. All four timecode columns of a drop-frame row fail together, so `buildEventFromRow` reaches `if (!srcIn && !srcOut && !recIn && !recOut) return null;` and the row is discarded. **Every row of an NTSC drop-frame ALE, so the whole file imports as an empty timeline.**
+
+And nothing says so. `ui.js:13648` is `if (parsed?.events?.length) break;` — a zero-event parse simply doesn't stop the file loop. `ui.js:17397` is `if (!parsed?.events?.length) continue;` — the match-back modal skips the file with no entry in `_mbFileMeta`. No error, no warning, no console line. The operator sees an import that did nothing.
+
+**Code.** The separator class becomes `[:;]` in all three positions and a trailing `(?:\.\d+)?` strips the Resolve subframe suffix. Drop-frame is normalised to colons and thereafter treated as non-drop — which is **lossy**, and chosen anyway: `utils_time.js::tcToFrames` says "DF treated as NDF" in its own signature, `xml.js:652` strips `;` before calling it, `edl.js:45` matches `/[:;]/` and reads the frame field straight. `ale.js` was the one parser in the codebase that disagreed with that convention, and it disagreed by *discarding data* rather than by counting it differently. A ninth reading of drop-frame invented inside one importer would be a worse outcome than a known-lossy one shared by all of them.
+
+The `ffInt % 100` on the frame field is deleted. This file's own header has always advertised `HH:MM:SS:FFFFF`, and the modulo silently rewrote `00120` as `20` — wrong, plausible, and unannounced. Passing the digits through to `tcToFrames` is not a guess about what a five-digit field means; it is the absence of one.
+
+**Testing.** `tests-js/aleParser.test.mjs`, 37 assertions, all through the public `parseALE` — `parseTC` is private, and the event-drop is the part that actually hurt, so the entry point is also the right observation point. 11 mutations, all caught.
+
+Two things went wrong first, both familiar:
+
+- The source guard `!/ffInt % 100/` **fired on my own comment in `ale.js`**, which names the modulo while explaining its removal. Iteration 8 hit this exact shape and narrowed the pattern; here it recurred anyway, so the guards now strip comments before matching rather than being hand-narrowed each time.
+- A mutation **survived**: changing `let fps = 24` in `detectFPSFromHeading`. The suite had an assertion labelled "the documented 24 fps default" — but it tested `parseALE('')`, which returns early with its *own* hardcoded 24 and never calls `detectFPSFromHeading`. Two copies of one constant, one of them untested, and a test whose name covered both while its mechanism covered one. Fixed on both sides: `DEFAULT_FPS` is now a single constant, and a new case exercises a heading with no `FPS` line.
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `npm run test:js` exit 0 across all suites. `build:renderer` PASS (367 files, v2026.6.1).
+- **Files:** `src/scripts/parsers/ale.js`, `tests-js/aleParser.test.mjs`. Both clean of pre-existing changes; no mode flips.
+- **Next:** the zero-event silence itself is untouched and is now the more interesting defect — with drop-frame fixed, an empty ALE import means something genuinely went wrong, and both call sites still say nothing. Logged as area 13 finding #4. Also noted: `src/scripts/parsers/fcpxm.js` (23.7K) has **no importers** — it is the dead twin of the live `fcpxml.js` and must not be tested or "fixed" as though it were live (iteration 3's lesson).

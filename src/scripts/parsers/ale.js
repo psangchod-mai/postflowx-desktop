@@ -3,24 +3,54 @@
 // ALE (Avid Log Exchange) parser for PostFlowX
 // - รองรับรูปแบบ Heading / Column / Data (เช่น demo_ale_day005.ale)
 // - Header จริงมาจากบรรทัดหลังคำว่า "Column"
-// - Timecode: HH:MM:SS:FF หรือ HH:MM:SS:FFFFF ก็ได้
+// - Timecode: HH:MM:SS:FF, HH:MM:SS:FFFFF และ drop-frame HH;MM;SS;FF
 // - Reel name ใช้จาก Tape name ก่อน แล้วค่อย fallback เป็น filename stem
 // -----------------------------------------------------------------------------
 
+/**
+ * Normalise one ALE timecode field to "HH:MM:SS:FF", or null if it is not a
+ * timecode at all.
+ *
+ * Separators may be ':' or ';' in any position. NTSC drop-frame uses ';', and
+ * Avid most often writes the mixed form "HH:MM:SS;FF" — semicolon on the last
+ * separator only. Both are accepted and normalised to colons, after which the
+ * value is treated as non-drop. That is the convention every other timecode
+ * reader in this codebase already follows (utils_time.js::tcToFrames, which
+ * says so in as many words; xml.js:652; edl.js's /[:;]/ field regex), and
+ * matching it is the point: ale.js was the only parser here that did not.
+ *
+ * Rejecting ';' was not a harmless gap. All four timecode fields of a
+ * drop-frame row failed together, buildEventFromRow's "no usable timecode"
+ * guard returned null, and the row vanished — so a 29.97 DF ALE imported as an
+ * empty timeline. Neither call site in ui.js reports an empty parse: the import
+ * loop treats it as "not this file" and the match-back modal `continue`s past
+ * it. There was no error, no warning, and no console line.
+ *
+ * A trailing subframe (".5") is stripped, as tcToFrames does for DaVinci
+ * Resolve 21 exports.
+ */
 function parseTC(tc) {
   if (!tc || typeof tc !== "string") return null;
   const s = tc.trim();
-  const m = s.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  const m = s.match(/^(\d+)[:;](\d+)[:;](\d+)[:;](\d+)(?:\.\d+)?$/);
   if (!m) return null;
   const [, h, m2, s2, f] = m;
-  const ffInt = parseInt(f, 10);
-  const ff = Number.isFinite(ffInt) ? (ffInt % 100) : 0;
+  // No modulo on the frame field. `ffInt % 100` silently rewrote the
+  // HH:MM:SS:FFFFF form this file's own header claims to accept — 00120 frames
+  // came back as 20 — which is wrong and looks right. Whatever a five-digit
+  // frame field means, it is not "the last two digits of itself"; the value is
+  // passed through for tcToFrames to turn into a frame count.
   const pad2 = (v) => String(parseInt(v, 10) || 0).padStart(2, "0");
-  return `${pad2(h)}:${pad2(m2)}:${pad2(s2)}:${pad2(ff)}`;
+  return `${pad2(h)}:${pad2(m2)}:${pad2(s2)}:${pad2(f)}`;
 }
 
+// Written twice before this: once here-by-way-of detectFPSFromHeading and once
+// in parseALE's empty-input return. A mutation sweep changed one and every test
+// still passed, which is the only warning two copies of a constant ever give.
+const DEFAULT_FPS = 24;
+
 function detectFPSFromHeading(headingLines) {
-  let fps = 24;
+  let fps = DEFAULT_FPS;
   for (const line of headingLines) {
     const trimmed = line.trim();
     if (/^FPS\b/i.test(trimmed)) {
@@ -153,7 +183,7 @@ function buildEventFromRow(row, headerMap, defaults) {
 
 export function parseALE(text, filename = "ALE_Import") {
   if (!text || typeof text !== "string") {
-    return { projectName: getStem(filename) || "ALE_Import", fps: 24, events: [] };
+    return { projectName: getStem(filename) || "ALE_Import", fps: DEFAULT_FPS, events: [] };
   }
 
   const lines = text.split(/\r\n|\n|\r/);
