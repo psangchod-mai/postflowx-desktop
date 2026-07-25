@@ -7,17 +7,54 @@
 import { fmtDuration } from './imf_parser.js';
 import { scanMXF, readMXFFrame } from './imf_mxf.js';
 import { diffStats } from './imf_layer_compare.js';
+import { createImfGlPresenter } from './imf_gl_present.js';
+
+// GPU (WebGL2/Metal-via-ANGLE) present path for the WASM-decode "Path B".
+// Lazily initialized on first present; `undefined` = not yet tried, `null` =
+// unavailable (fall back to the CPU 2D-canvas + render-worker path).
+let _glPresenter; // undefined until first _getGlPresenter()
+function _getGlPresenter() {
+  if (_glPresenter !== undefined) return _glPresenter;
+  try {
+    _glPresenter = createImfGlPresenter();
+  } catch (e) {
+    console.warn('[IMF] GL presenter init threw, using CPU path', e);
+    _glPresenter = null;
+  }
+  if (_glPresenter && _glPresenter.available) {
+    console.log('[IMF] GPU present path ACTIVE (WebGL2 / Metal via ANGLE)');
+  } else {
+    console.log('[IMF] GPU present path unavailable — using CPU worker/2D path');
+    _glPresenter = _glPresenter || null;
+  }
+  return _glPresenter;
+}
+// Render a decoded frame on the GPU. Returns the presenter's reusable canvas
+// (already color-processed at native decoded dims) or null to fall back to CPU.
+function _presentDecodedFrameGL(decoded, colorInfo) {
+  const p = _getGlPresenter();
+  if (!p || !p.available) return null;
+  return p.render(decoded, colorInfo);
+}
 
 // J2K decoder loaded dynamically so a WASM failure doesn't break the player
 let _decodeHTJ2K    = null;
 let _frameToImageData = null;
 let _getDecoderPoolInfo = () => ({ configured: 1, ready: 0, hardware: 0 });
 let _prewarmJ2KDecoders = () => Promise.resolve(_getDecoderPoolInfo());
+// Which decoder is serving frames (C-RT2). Null-object defaults so the HUD draws
+// normally if the J2K module never loads.
+let _getDecodeRouteStats = () => null;
+let _summarizeDecodeRoute = () => null;
+let _resetDecodeRouteStats = () => {};
 import('./imf_j2k.js').then(m => {
   _decodeHTJ2K      = m.decodeHTJ2K;
   _frameToImageData = m.frameToImageData;
   if (typeof m.getDecoderPoolInfo === 'function') _getDecoderPoolInfo = m.getDecoderPoolInfo;
   if (typeof m.prewarmJ2KDecoders === 'function') _prewarmJ2KDecoders = m.prewarmJ2KDecoders;
+  if (typeof m.getDecodeRouteStats === 'function') _getDecodeRouteStats = m.getDecodeRouteStats;
+  if (typeof m.summarizeDecodeRoute === 'function') _summarizeDecodeRoute = m.summarizeDecodeRoute;
+  if (typeof m.resetDecodeRouteStats === 'function') _resetDecodeRouteStats = m.resetDecodeRouteStats;
   _prewarmJ2KDecoders().then((info) => {
     console.log('[IMF] J2K decoder module loaded (sandbox bridge)', info);
   }).catch(() => console.log('[IMF] J2K decoder module loaded (sandbox bridge)'));
@@ -49,6 +86,7 @@ const S = {
   frameBitmap:  null,     // ImageBitmap if browser decoded the J2K (fast path)
   frameImageData:null,    // Decoded frame as ImageData for direct draw fallback
   frameSurface: null,     // Canvas/OffscreenCanvas fallback surface for scaled draw
+  frameGLCanvas: null,    // GPU-presented canvas (WebGL2 color pipeline) — playback fast path
   framePixels:  null,     // Uint8ClampedArray RGBA from last decoded frame (for scope)
   framePixW:    0,        // width of framePixels source
   framePixH:    0,        // height of framePixels source
@@ -558,6 +596,7 @@ export function playerSetPreviewMode(mode) {
   // will complete successfully, store its old-mode pixels back into S.decodedCache,
   // and the next pending decode will find them in cache and return early → no change.
   S.loadSeq++;
+  S._lastPrefetchFrame = -1;   // reel/mode change: force prefetch guard to re-run
 
   // Clear both pixel cache layers:
   //   Layer 1: S.decodedCache  — persistent LRU cache (per-frame rendered bitmaps)
@@ -576,6 +615,7 @@ export function playerSetPreviewMode(mode) {
   S.frameBitmap    = null;
   S.frameImageData = null;
   S.frameSurface   = null;
+  S.frameGLCanvas  = null;
   S.framePixels    = null;
   S.framePixW      = 0;
   S.framePixH      = 0;
@@ -891,11 +931,48 @@ function drawFrame() {
   // ── Center: frame data or timecode ──────────────────────────────────────────
   const tc = fmtTC(S.currentFrame, S.fps, _tcOpts());
 
-  if (!S.frameImageData && !S.frameBitmap && S.displayFrame == null) {
+  if (!S.frameGLCanvas && !S.frameImageData && !S.frameBitmap && S.displayFrame == null) {
     _restoreAnyUsefulCachedFrame(S.currentFrame);
   }
 
-  if (S.frameImageData) {
+  if (S.frameGLCanvas) {
+    // ── GPU-presented frame: WebGL2 color pipeline already applied ────────────
+    // The presenter's canvas holds the color-processed picture at native decoded
+    // dimensions; composite it with the same aspect/letterbox math as the other
+    // branches. _trimFilter / _toneMapCtx are no-ops for the WASM-decode path
+    // (SVG trim is proxy-video-only; _toneMapCtx only fires for rawHDR backends).
+    const g = S.frameGLCanvas;
+    const scale = Math.min(W / g.width, H / g.height);
+    const dw = g.width * scale;
+    const dh = g.height * scale;
+    const dx = (W - dw) / 2;
+    const dy = (H - dh) / 2;
+    try {
+      ctx.filter = _trimFilter;
+      ctx.drawImage(g, dx, dy, dw, dh);
+      ctx.filter = 'none';
+    } catch (e) {
+      ctx.filter = 'none';
+      console.warn('[IMF] drawImage failed for GL canvas', e);
+    }
+    _toneMapCtx(ctx, dx, dy, dw, dh);
+
+    const tc2 = fmtTC((S.displayFrame ?? S.currentFrame), S.fps, _tcOpts());
+    ctx.font = 'bold 13px monospace';
+    const tw = ctx.measureText(tc2).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(8, H - 36, tw + 16, 24);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillText(tc2, 16, H - 18);
+    if (S.displayFrame != null && S.displayFrame !== S.currentFrame) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(255,255,120,0.75)';
+      const waitBits = [`buffering → fr ${(S.currentFrame + 1).toLocaleString()}`, _playbackModeLabel()];
+      if (S.previewScale < 1) waitBits.push(_previewLabel());
+      ctx.fillText(waitBits.join('  '), 16, H - 48);
+    }
+
+  } else if (S.frameImageData) {
     // ── Decoded ImageData: browser-safe preview path ─────────────────────────
     const img = S.frameImageData;
     let surface = S.frameSurface;
@@ -1107,6 +1184,12 @@ function drawFrame() {
       `${Math.round(S.decodeAvgMs || 0)}ms`,
     ];
     if (_avLockActive()) bits.push(`A/V ${S.avOffsetMs >= 0 ? '+' : ''}${Math.round(S.avOffsetMs)}ms`);
+    // Which decoder is actually producing these pixels. A slow rung and a fast
+    // one look identical on screen, so "why is this 6 fps" was previously
+    // unanswerable without a console — name the backend and flag it when the
+    // ladder is falling through to something it shouldn't be on.
+    const route = _summarizeDecodeRoute(_getDecodeRouteStats());
+    if (route) bits.push(route.text);
     const text = bits.join('  ·  ');
     ctx.font = 'bold 10px monospace';
     const tw = ctx.measureText(text).width;
@@ -1116,7 +1199,10 @@ function drawFrame() {
     ctx.fill();
     const targetFps = S.fps || 24;
     const cadenceOk = (S.rtHudFps || 0) >= targetFps * 0.9 && S.previewScale >= 1;
-    ctx.fillStyle = cadenceOk ? '#4caf80' : (S.previewScale < 1 ? '#f7a26a' : '#e5c07b');
+    // A degraded decode rung outranks cadence: hitting 24 fps on the pure-JS
+    // fallback is still a finding, so it must not be painted green.
+    ctx.fillStyle = route?.degraded ? '#e06c75'
+      : (cadenceOk ? '#4caf80' : (S.previewScale < 1 ? '#f7a26a' : '#e5c07b'));
     ctx.textAlign = 'left';
     ctx.fillText(text, bx + padX, by + 13);
   }
@@ -2357,6 +2443,7 @@ function _restoreCachedFrame(frame) {
   S.frameImageData = cached.imageData || null;
   S.frameSurface = cached.surface || null;
   S.frameBitmap = cached.bitmap || null;
+  S.frameGLCanvas = null;  // cached frames use the CPU imageData/bitmap present path
   S.framePixels = cached.pixels || null;
   S.framePixW = cached.pixW || 0;
   S.framePixH = cached.pixH || 0;
@@ -2973,7 +3060,7 @@ async function _startRealtimeStream() {
     if (!S.isPlaying) return false;      // user paused while opening
     const startFrame = (S.displayFrame ?? S.currentFrame ?? 0) | 0;
     const r = await eng.startPlayback(S.streamPackageId, S.cplId || '', {
-      startFrame, quality: _streamQuality()
+      startFrame, quality: _streamQuality(), assetMaps: S.assetMaps || []
     });
     if (!r || !r.ok || !r.streamUrl) return false;
     if (!S.isPlaying) { try { eng.stopPlayback(r.sessionId); } catch {} return false; }
@@ -3031,6 +3118,31 @@ function _fallbackToPerFrame(reason) {
   S.scaleRecoveryScore = 0;
   if (S.raf) cancelAnimationFrame(S.raf);
   S.raf = requestAnimationFrame(playLoop);
+}
+
+function _startPerFramePlaybackLoop(reason = 'fallback') {
+  try { _setPreviewScale(_predictInitialPlaybackScale(), reason); } catch {}
+  S.lastTs = performance.now();
+  S.playBaseTs = S.lastTs;
+  S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
+  S.currentFrame = (S.displayFrame ?? S.currentFrame);
+  S.droppedFrames = 0;
+  S.lastFrameAdvance = 0;
+  S.scaleRecoveryScore = 0;
+  if (S.raf) cancelAnimationFrame(S.raf);
+  S.raf = requestAnimationFrame(playLoop);
+}
+
+function _beginRealtimeFirstPlayback(reason = 'play') {
+  _audPlay(S.currentFrame);
+  _startRealtimeStream().then((streaming) => {
+    if (streaming || !S.isPlaying) return;
+    // Warm-start the decode resolution from the media's dimensions so heavy
+    // media (HD/UHD) plays smoothly from frame 1 rather than stuttering at
+    // full-res until the reactive controller catches up. Auto/Realtime only;
+    // scrub/pause stay full-res (decodeScale forces 1 when not playing).
+    _startPerFramePlaybackLoop(reason);
+  });
 }
 
 // Clock-driven TC/scrubber update while the MJPEG stream paints the <img>.
@@ -3146,10 +3258,15 @@ function playLoop(ts) {
     }
   }
 
-  // Measured presented-FPS: count advances over a rolling 1-second wall window.
-  if (target !== S.currentFrame && S.isPlaying) {
+  // Measured presented-FPS: accumulate SOURCE FRAMES COVERED (delta), not advance
+  // events, so stride/reduced realtime reports true cadence; publish every tick so
+  // a stall decays rtHudFps toward 0 instead of freezing.
+  if (S.isPlaying) {
     if (!S._rtFpsWinTs) S._rtFpsWinTs = ts;
-    S._rtFpsCount++;
+    if (target !== S.currentFrame) {
+      const _prevF = S.currentFrame | 0;
+      S._rtFpsCount += (target > _prevF) ? (target - _prevF) : 1; // wrap/loop -> count 1
+    }
     if (ts - S._rtFpsWinTs >= 1000) {
       S.rtHudFps = (S._rtFpsCount * 1000) / (ts - S._rtFpsWinTs);
       S._rtFpsCount = 0;
@@ -3244,6 +3361,10 @@ function playLoop(ts) {
   } else if (!_anyDecodeInflight(requestFrame) && !S.decodedCache.has(requestFrame)) {
     _loadFrameBytes(requestFrame, S.loadSeq);
   }
+  // NOTE: reverted the per-tick "skip when anchor unchanged" prefetch guard — it
+  // was implicated in a playback freeze. Call prefetch unconditionally (original
+  // behavior). The redundant-rescan optimization can be re-attempted with live
+  // fps verification once realtime is measured.
   _prefetchAroundFrame(requestFrame, S.loadSeq);
 
   if (!drew) drawFrame();
@@ -3302,6 +3423,7 @@ function seekTo(frame) {
     }
   }
   S.currentFrame = Math.max(0, Math.min(frame, S.totalFrames - 1));
+  S._lastPrefetchFrame = -1;   // re-prime prefetch on next tick after a seek/re-visit
   S.frameBytes   = null;
   S.frameJ2K     = null;
   // Track scrub recency so _previewLowres() decodes reduced-res while dragging,
@@ -3389,7 +3511,7 @@ async function _loadFrameBytes(frame, seq, opts = {}) {
     }
 
     const soc = bytes[0].toString(16).padStart(2,'0') + bytes[1].toString(16).padStart(2,'0');
-    console.log(`[IMF] fr${frame} → ${bytes.length} bytes  SOC=0x${soc.toUpperCase()}`);
+    if (window.PFX_DEBUG_IMF) console.log(`[IMF] fr${frame} → ${bytes.length} bytes  SOC=0x${soc.toUpperCase()}`);
 
     if (!isPrefetch) {
       S.frameBytes  = bytes;
@@ -3411,9 +3533,8 @@ async function _loadFrameBytes(frame, seq, opts = {}) {
       if (seq !== S.loadSeq) return;
 
       if (decoded) {
-        console.log(`[IMF] fr${frame} decoded via ${decoded.decoderKind || 'unknown'}: ${decoded.width}×${decoded.height}  ${decoded.componentCount}ch  ${decoded.bitsPerSample}bpp`);
-        let rendered = null;
-        // Build colorInfo once so both paths (worker and fallback) use the same settings.
+        if (window.PFX_DEBUG_IMF) console.log(`[IMF] fr${frame} decoded via ${decoded.decoderKind || 'unknown'}: ${decoded.width}×${decoded.height}  ${decoded.componentCount}ch  ${decoded.bitsPerSample}bpp`);
+        // Build colorInfo once so all paths (GPU, worker, fallback) share settings.
         const _colorInfo = {
           transfer: S.transfer || '–',
           primaries: S.primaries || '–',
@@ -3423,65 +3544,111 @@ async function _loadFrameBytes(frame, seq, opts = {}) {
           dvTrim: S.previewMode === 'trim' ? _activeTrimForFrame() : null,
           previewHdr: S.previewHdr,
         };
-        try {
-          rendered = await _renderDecodedFrame(decoded, renderScale, { needScope: !S.isPlaying });
-        } catch (renderErr) {
-          console.warn('[IMF] worker render failed, falling back to main-thread ImageData', renderErr);
-          rendered = { imageData: _frameToImageData ? _frameToImageData(decoded, renderScale, _colorInfo) : null, bitmap: null, scopePixels: null, scopeW: 0, scopeH: 0, mode: 'main-fallback' };
-        }
-        const imageData = rendered.imageData || (_frameToImageData ? _frameToImageData(decoded, renderScale, _colorInfo) : null);
-        const shouldPresent = allowPresent && (!S.isPlaying || S.currentFrame === frame || S.displayFrame == null || !S.frameBitmap && !S.frameImageData || Math.abs(frame - S.currentFrame) <= Math.max(1, S.playbackStride * 2) || frame > (S.displayFrame ?? -1));
-        let localSurface = null;
-        let localBitmap = rendered.bitmap || null;
-        let localPixels = rendered.scopePixels || null;
-        let localPixW = rendered.scopeW || 0;
-        let localPixH = rendered.scopeH || 0;
 
-        if (imageData && !localBitmap) {
+        // ── GPU present fast-path (playback) ──────────────────────────────────
+        // During continuous playback run the full color pipeline on the GPU
+        // (WebGL2 → Metal via ANGLE) and present directly, skipping the per-pixel
+        // CPU render worker. Scopes/compare/disk-persist are paused-only features,
+        // so they aren't needed here. Any GL failure (or an unsupported layout)
+        // returns null and falls through to the CPU worker/2D path below.
+        //
+        // CRITICAL: the presenter draws into ONE reusable canvas, so render() must
+        // only run for a frame we will actually present. Prefetch decodes
+        // (isPrefetch / present:false) and stale/behind frames must NOT call it —
+        // otherwise a future/other frame's pixels would land in S.frameGLCanvas
+        // and the next drawFrame() would paint the wrong picture. So we compute the
+        // present decision FIRST and gate the render() call on it.
+        let _glPresented = false;
+        const _glEligible = S.isPlaying && !isPrefetch && allowPresent
+          && (decoded.sampleLayout || 'interleaved') === 'interleaved'
+          && (decoded.componentCount | 0) >= 3;
+        const _glShouldPresent = _glEligible && (S.currentFrame === frame || S.displayFrame == null || (!S.frameBitmap && !S.frameImageData && !S.frameGLCanvas) || Math.abs(frame - S.currentFrame) <= Math.max(1, S.playbackStride * 2) || frame > (S.displayFrame ?? -1));
+        if (_glShouldPresent) {
+          let glCanvas = null;
           try {
-            localSurface = _createFrameSurface(imageData.width, imageData.height);
-            const sctx = localSurface.getContext('2d', { alpha: false });
-            sctx.putImageData(imageData, 0, 0);
-            if (!S.isPlaying) {
-              localBitmap = await createImageBitmap(localSurface);
-            }
-          } catch (ce) {
-            console.warn('[IMF] decoded frame surface create failed', ce);
-            localSurface = null;
+            glCanvas = _presentDecodedFrameGL(decoded, _colorInfo);
+          } catch (glErr) {
+            console.warn('[IMF] GL present threw, using CPU path', glErr);
+            glCanvas = null;
           }
-        }
-
-        if (shouldPresent) {
-          S.frameImageData = imageData;
-          S.frameSurface = localSurface;
-          S.frameBitmap = localBitmap;
-          S.framePixels = localPixels;
-          S.framePixW = localPixW;
-          S.framePixH = localPixH;
-          S.displayFrame = frame;
-          const lumaClass = localPixels ? _classifyFrameLuma(localPixels, localPixW || 1, localPixH || 1) : 'unknown';
-          if (lumaClass === 'valid_black' || lumaClass === 'black_clip_warning') {
-            S.decodeInfo.blackFrames = (S.decodeInfo.blackFrames || 0) + 1;
-          }
-          S.previewStatus = {
-            status: 'REAL_FRAME',
-            engine: rendered.mode === 'worker' ? 'j2k-worker' : rendered.mode === 'main-fallback' ? 'j2k-main' : 'j2k',
-            diagnostic: lumaClass !== 'normal_frame' && lumaClass !== 'unknown' ? lumaClass : '',
-            canRunScopes: lumaClass !== 'valid_black',
-          };
-          if (S.isPlaying) {
+          if (glCanvas) {
+            S.frameGLCanvas  = glCanvas;
+            S.frameImageData = null;
+            S.frameSurface   = null;
+            S.frameBitmap    = null;
+            S.framePixels    = null;
+            S.framePixW      = 0;
+            S.framePixH      = 0;
+            S.displayFrame   = frame;
+            S.previewStatus  = { status: 'REAL_FRAME', engine: 'j2k-gl', diagnostic: '', canRunScopes: false };
             if (S.currentFrame === frame) syncSeek();
+            _glPresented = true;
           }
-          // Persist to main-process disk cache so future sessions skip re-decode
-          _persistFrameToCache(frame, imageData);
         }
 
-        _cacheDecodedFrame(frame, imageData, localSurface, localBitmap, localPixels, localPixW, localPixH);
+        if (!_glPresented) {
+          let rendered = null;
+          try {
+            rendered = await _renderDecodedFrame(decoded, renderScale, { needScope: !S.isPlaying });
+          } catch (renderErr) {
+            console.warn('[IMF] worker render failed, falling back to main-thread ImageData', renderErr);
+            rendered = { imageData: _frameToImageData ? _frameToImageData(decoded, renderScale, _colorInfo) : null, bitmap: null, scopePixels: null, scopeW: 0, scopeH: 0, mode: 'main-fallback' };
+          }
+          const imageData = rendered.imageData || (_frameToImageData ? _frameToImageData(decoded, renderScale, _colorInfo) : null);
+          const shouldPresent = allowPresent && (!S.isPlaying || S.currentFrame === frame || S.displayFrame == null || !S.frameBitmap && !S.frameImageData || Math.abs(frame - S.currentFrame) <= Math.max(1, S.playbackStride * 2) || frame > (S.displayFrame ?? -1));
+          let localSurface = null;
+          let localBitmap = rendered.bitmap || null;
+          let localPixels = rendered.scopePixels || null;
+          let localPixW = rendered.scopeW || 0;
+          let localPixH = rendered.scopeH || 0;
+
+          if (imageData && !localBitmap) {
+            try {
+              localSurface = _createFrameSurface(imageData.width, imageData.height);
+              const sctx = localSurface.getContext('2d', { alpha: false });
+              sctx.putImageData(imageData, 0, 0);
+              if (!S.isPlaying) {
+                localBitmap = await createImageBitmap(localSurface);
+              }
+            } catch (ce) {
+              console.warn('[IMF] decoded frame surface create failed', ce);
+              localSurface = null;
+            }
+          }
+
+          if (shouldPresent) {
+            S.frameImageData = imageData;
+            S.frameSurface = localSurface;
+            S.frameBitmap = localBitmap;
+            S.frameGLCanvas = null;  // CPU present path — supersede any stale GL frame
+            S.framePixels = localPixels;
+            S.framePixW = localPixW;
+            S.framePixH = localPixH;
+            S.displayFrame = frame;
+            const lumaClass = localPixels ? _classifyFrameLuma(localPixels, localPixW || 1, localPixH || 1) : 'unknown';
+            if (lumaClass === 'valid_black' || lumaClass === 'black_clip_warning') {
+              S.decodeInfo.blackFrames = (S.decodeInfo.blackFrames || 0) + 1;
+            }
+            S.previewStatus = {
+              status: 'REAL_FRAME',
+              engine: rendered.mode === 'worker' ? 'j2k-worker' : rendered.mode === 'main-fallback' ? 'j2k-main' : 'j2k',
+              diagnostic: lumaClass !== 'normal_frame' && lumaClass !== 'unknown' ? lumaClass : '',
+              canRunScopes: lumaClass !== 'valid_black',
+            };
+            if (S.isPlaying) {
+              if (S.currentFrame === frame) syncSeek();
+            }
+            // Persist to main-process disk cache so future sessions skip re-decode
+            _persistFrameToCache(frame, imageData);
+          }
+
+          _cacheDecodedFrame(frame, imageData, localSurface, localBitmap, localPixels, localPixW, localPixH);
+        }
       }
     }
 
     // ── Fallback: try native browser jp2 decode (Safari) ─────────────────────
-    if (!S.frameBitmap && !S.frameImageData) {
+    if (!S.frameBitmap && !S.frameImageData && !S.frameGLCanvas) {
       for (const mime of ['image/jp2', 'image/jpx']) {
         try {
           const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }));
@@ -3501,12 +3668,12 @@ async function _loadFrameBytes(frame, seq, opts = {}) {
     }
 
     // Electron fallback: async, fires when renderer produced no bitmap.
-    if (!S.frameBitmap && !S.frameImageData) {
+    if (!S.frameBitmap && !S.frameImageData && !S.frameGLCanvas) {
       _tryElectronFrameBackend(frame, seq); // intentionally not awaited
     }
 
     if (!isPrefetch && allowPresent) {
-      if (!S.frameBitmap && !S.frameImageData && S.displayFrame == null) {
+      if (!S.frameBitmap && !S.frameImageData && !S.frameGLCanvas && S.displayFrame == null) {
         _restoreNearestCachedFrame(frame, Math.max(6, S.playbackStride * 3));
       }
       drawFrame();
@@ -3618,8 +3785,8 @@ async function _tryElectronImfDecode(frame, seq) {
   // CPL-absolute frame = this reel's composition start + reel-local frame
   const cplFrame = (S.tcOffset || 0) + frame;
 
-  console.log(`[IMF] _tryElectronImfDecode reel=${S.reelNum || 1} frame=${frame} cplFrame=${cplFrame} cpl=${S.cplPath}`);
-  console.log(`[IMF] assetMaps=${JSON.stringify(S.assetMaps)}`);
+  if (window.PFX_DEBUG_IMF) console.log(`[IMF] _tryElectronImfDecode reel=${S.reelNum || 1} frame=${frame} cplFrame=${cplFrame} cpl=${S.cplPath}`);
+  if (window.PFX_DEBUG_IMF) console.log(`[IMF] assetMaps=${JSON.stringify(S.assetMaps)}`);
 
   let result;
   try {
@@ -3649,7 +3816,7 @@ async function _tryElectronImfDecode(frame, seq) {
 
   // Print all debug log lines emitted by the main process
   if (Array.isArray(result.log)) {
-    for (const line of result.log) console.log(line);
+    if (window.PFX_DEBUG_IMF) { for (const line of result.log) console.log(line); }
   }
 
   // Update pipeline status chips regardless of success/fail
@@ -3743,6 +3910,7 @@ async function _tryElectronImfDecode(frame, seq) {
     const lumaClass  = _classifyFrameLuma(idata.data, bitmap.width, bitmap.height);
 
     S.frameBitmap    = bitmap;
+    S.frameGLCanvas  = null;  // baked-image present — supersede any stale GL frame
     S.displayFrame   = frame;
     S.framePixels    = idata.data;
     S.framePixW      = bitmap.width;
@@ -3858,6 +4026,52 @@ async function _tryElectronFrameBackend(frame, seq) {
         console.warn('[IMF] Electron backend failed:', errCode, errMsg);
       }
 
+      // ── Metal HTJ2K pre-decoded samples (feature-flagged, default OFF) ───────
+      // The main process decoded the frame on the GPU (native Metal helper) and
+      // attached interleaved samples. Skip the WASM decoder and present directly
+      // through the same WebGL2 presenter. Same UNSUPPORTED_HTJ2K seam; only taken
+      // when result.samplesB64 + metalFrameInfo are present (i.e. the flag was ON).
+      if (errCode === 'UNSUPPORTED_HTJ2K' && result.samplesB64 && result.metalFrameInfo) {
+        try {
+          const fi  = result.metalFrameInfo;
+          const raw = Uint8Array.from(atob(result.samplesB64), c => c.charCodeAt(0));
+          let pixels;
+          if (fi.pixelsType === 'u16')      pixels = new Uint16Array(raw.buffer, raw.byteOffset, raw.byteLength >> 1);
+          else if (fi.pixelsType === 'i16') pixels = new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength >> 1);
+          else                              pixels = raw;
+          const decoded = {
+            width: fi.width, height: fi.height, componentCount: fi.componentCount,
+            bitsPerSample: fi.bitsPerSample, isSigned: !!fi.isSigned,
+            sampleLayout: fi.sampleLayout || 'interleaved', pixelsType: fi.pixelsType,
+            pixels, decoderKind: 'htj2k-metal',
+          };
+          if (seq !== S.loadSeq) return;
+          const _colorInfo = {
+            transfer:       S.transfer   || '–',
+            primaries:      S.primaries  || '–',
+            tonemapMode:    S.previewMode || 'sdr',
+            srcPeakNits:    S.srcPeakNits,
+            activeL1MaxNits: _getActiveL1NitsForFrame(),
+            dvTrim:         S.previewMode === 'trim' ? _activeTrimForFrame() : null,
+            previewHdr:     S.previewHdr,
+          };
+          let glCanvas = null;
+          try { glCanvas = _presentDecodedFrameGL(decoded, _colorInfo); }
+          catch (glErr) { console.warn('[IMF] GL present threw (metal-htj2k)', glErr); glCanvas = null; }
+          if (glCanvas) {
+            S.frameGLCanvas  = glCanvas;
+            S.frameImageData = null; S.frameSurface = null; S.frameBitmap = null;
+            S.framePixels    = null; S.framePixW = 0; S.framePixH = 0;
+            S.displayFrame   = frame;
+            S.previewStatus  = { status: 'REAL_FRAME', engine: 'metal-htj2k-gl',
+              diagnostic: `Metal HTJ2K · GPU · ${decoded.width}×${decoded.height}`, canRunScopes: false };
+            S.lastDecodeBackend = 'metal-htj2k-gl';
+            drawFrame();
+            return;   // success — skip WASM + error display
+          }
+        } catch (e) { console.warn('[IMF] metal-htj2k present failed, falling back', e); }
+      }
+
       // ── HTJ2K WASM fallback ──────────────────────────────────────────────────
       // The main process extracted the raw codestream bytes (via ffmpeg -c:v copy,
       // which works without any HTJ2K decoder) and piggybacked them on the response.
@@ -3879,6 +4093,49 @@ async function _tryElectronFrameBackend(frame, seq) {
               dvTrim:         S.previewMode === 'trim' ? _activeTrimForFrame() : null,
               previewHdr:     S.previewHdr,
             };
+
+            // ── GPU present fast-path (playback) ──────────────────────────────
+            // This HTJ2K-WASM fallback (reached on standard desktop builds whose
+            // ffmpeg lacks libopenjph) yields the SAME raw interleaved samples as
+            // the pure-WASM path, so the GPU color pipeline applies. Same gating as
+            // _loadFrameBytes: compute the present decision FIRST and only call
+            // render() when the frame will actually be presented (the shared GL
+            // canvas must never receive a stale/behind frame). This path is
+            // non-prefetch only (see the !opts.prefetch guard in _loadFrameBytes),
+            // so there is no prefetch-pollution risk here.
+            const _glEligible = S.isPlaying
+              && (decoded.sampleLayout || 'interleaved') === 'interleaved'
+              && (decoded.componentCount | 0) >= 3;
+            const _glShouldPresent = _glEligible && (S.currentFrame === frame || S.displayFrame == null || (!S.frameBitmap && !S.frameImageData && !S.frameGLCanvas) || Math.abs(frame - S.currentFrame) <= Math.max(1, S.playbackStride * 2) || frame > (S.displayFrame ?? -1));
+            if (_glShouldPresent) {
+              let glCanvas = null;
+              try {
+                glCanvas = _presentDecodedFrameGL(decoded, _colorInfo);
+              } catch (glErr) {
+                console.warn('[IMF] GL present threw (htj2k-wasm), using CPU path', glErr);
+                glCanvas = null;
+              }
+              if (glCanvas) {
+                S.frameGLCanvas  = glCanvas;
+                S.frameImageData = null;
+                S.frameSurface   = null;
+                S.frameBitmap    = null;
+                S.framePixels    = null;
+                S.framePixW      = 0;
+                S.framePixH      = 0;
+                S.displayFrame   = frame;
+                S.previewStatus  = {
+                  status:       'REAL_FRAME',
+                  engine:       'renderer-htj2k-gl',
+                  diagnostic:   `HTJ2K WASM · GPU · ${decoded.width}×${decoded.height}`,
+                  canRunScopes: false,
+                };
+                S.lastDecodeBackend = 'renderer-htj2k-gl';
+                drawFrame();
+                return;  // success — skip CPU render + error display
+              }
+            }
+
             let rendered = null;
             try {
               rendered = await _renderDecodedFrame(decoded, 1, { needScope: !S.isPlaying });
@@ -3900,6 +4157,7 @@ async function _tryElectronFrameBackend(frame, seq) {
               S.frameImageData = imageData;
               S.frameSurface   = localSurface;
               S.frameBitmap    = localBitmap;
+              S.frameGLCanvas  = null;  // CPU present — supersede any stale GL frame
               S.framePixels    = rendered.scopePixels || null;
               S.framePixW      = rendered.scopeW || 0;
               S.framePixH      = rendered.scopeH || 0;
@@ -3963,6 +4221,7 @@ async function _tryElectronFrameBackend(frame, seq) {
         if (S.decodeInfo.lastAttempt) S.decodeInfo.lastAttempt.lumaClass = lumaClass;
 
         S.frameBitmap   = bitmap;
+        S.frameGLCanvas = null;  // baked-image present — supersede any stale GL frame
         S.displayFrame  = frame;
         // Expose pixel buffer to scope engine — same path as renderer j2k pixels
         S.framePixels   = idata.data;
@@ -4159,22 +4418,7 @@ export function initIMFPlayer() {
     if (S.isPlaying) {
       // Prefer the realtime stream engine (one persistent ffmpeg + -lowres).
       // Fall back to the per-frame decode loop if it can't start.
-      _startRealtimeStream().then((streaming) => {
-        if (streaming || !S.isPlaying) return;
-        // Warm-start the decode resolution from the media's dimensions so heavy
-        // media (HD/UHD) plays smoothly from frame 1 rather than stuttering at
-        // full-res until the reactive controller catches up. Auto/Realtime only;
-        // scrub/pause stay full-res (decodeScale forces 1 when not playing).
-        _setPreviewScale(_predictInitialPlaybackScale(), 'warm-start');
-        S.lastTs = performance.now();
-        S.playBaseTs = S.lastTs;
-        S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
-        S.currentFrame = (S.displayFrame ?? S.currentFrame);
-        S.droppedFrames = 0;
-        S.lastFrameAdvance = 0;
-        S.scaleRecoveryScore = 0;
-        S.raf = requestAnimationFrame(playLoop);
-      });
+      _beginRealtimeFirstPlayback('warm-start');
     } else {
       if (S.streamMode) _stopRealtimeStream();
       cancelAnimationFrame(S.raf);
@@ -4726,6 +4970,10 @@ function pausePlayer() {
     const btn = document.getElementById('imfBtnPlay');
     if (btn) btn.textContent = '▶';
     _emitPlayerState();
+    // The GPU present path (playback) produces no scope/compare pixels, so
+    // re-decode the held frame full-res on the CPU path to restore them and
+    // supersede the GL canvas. (No-op for proxy/companion; safe if already CPU.)
+    _refineCurrentFrameFullRes();
   }
 }
 
@@ -4776,6 +5024,7 @@ export function playerSetCompanionThumb(bitmap, reelKey = '') {
     S.frameBitmap  = bitmap;
     S.frameImageData = null;
     S.frameSurface = null;
+    S.frameGLCanvas = null;
     S.displayFrame = S.currentFrame;
     drawFrame();
     drawScope();
@@ -4798,6 +5047,7 @@ export function playerLoadReel(file, reelInfo = {}) {
   pausePlayer();
 
   S.loadSeq++;       // invalidate any in-flight frame loads
+  S._lastPrefetchFrame = -1;   // new reel: force prefetch guard to re-run
   S.streamStallFallback = false;   // let a fresh media retry the realtime stream
   const mySeq = S.loadSeq;
 
@@ -4813,6 +5063,9 @@ export function playerLoadReel(file, reelInfo = {}) {
   S.frameBytes   = null;
   S.frameJ2K     = null;
   S.frameBitmap  = null;
+  S.frameImageData = null;
+  S.frameSurface = null;
+  S.frameGLCanvas = null;  // reel switch: don't paint the previous reel's GPU frame
   S.framePixels  = null;
   S.framePixW    = 0;
   S.framePixH    = 0;
@@ -4824,6 +5077,7 @@ export function playerLoadReel(file, reelInfo = {}) {
     S.frameBitmap  = _companionPreviewBitmap;
     S.frameImageData = null;
     S.frameSurface = null;
+    S.frameGLCanvas = null;
   }
   _clearFrameByteCache();
   S.mxfScanning  = false;
@@ -4867,6 +5121,9 @@ export function playerLoadReel(file, reelInfo = {}) {
   S.scaleRecoveryScore = 0;
   S.droppedFrames = 0;
   S.lastFrameAdvance = 0;
+  // Route counters are per-reel, like every other counter reset here. Cumulative
+  // totals would let the previous reel's backend keep colouring this reel's HUD.
+  _resetDecodeRouteStats();
 
   const seek = document.getElementById('imfSeek');
   if (seek) {
@@ -4946,11 +5203,7 @@ export function playerLoadReel(file, reelInfo = {}) {
         S.isPlaying = true;
         const btn = document.getElementById('imfBtnPlay');
         if (btn) btn.textContent = '⏸';
-        S.lastTs = performance.now();
-        S.playBaseTs = S.lastTs;
-        S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
-        S.raf = requestAnimationFrame(playLoop);
-        _audPlay(initialFrame);
+        _beginRealtimeFirstPlayback('auto-play');
       }
 
       if (idx.error) console.warn('[IMF] scanMXF error:', idx.error);
@@ -4986,11 +5239,7 @@ export function playerLoadReel(file, reelInfo = {}) {
       S.isPlaying = true;
       const btn = document.getElementById('imfBtnPlay');
       if (btn) btn.textContent = '⏸';
-      S.lastTs = performance.now();
-      S.playBaseTs = S.lastTs;
-      S.playBaseFrame = (S.displayFrame ?? S.currentFrame);
-      S.raf = requestAnimationFrame(playLoop);
-      _audPlay(initialFrame);
+      _beginRealtimeFirstPlayback('auto-play');
     }
   }
 }
@@ -5218,6 +5467,7 @@ export async function playerShowTestFrame(src, meta = {}) {
     const bitmap = await _resultToBitmap(result);
     if (!bitmap) return;
     S.frameBitmap   = bitmap;
+    S.frameGLCanvas = null;  // baked-image present — supersede any stale GL frame
     S.displayFrame  = S.currentFrame || 0;
     S.previewStatus = {
       status:       'REAL_FRAME',

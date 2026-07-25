@@ -79,6 +79,61 @@ export function resetDecodeRouteStats() {
   _routeStats.last = null;
 }
 
+// Operator-facing names. Deliberately the decoder, not the transport: "which
+// library produced this pixel" is the question a QC operator can act on.
+const DECODE_BACKEND_LABELS = {
+  'direct-openjph':        'OpenJPH',
+  'sandbox:htj2k-openjph': 'OpenJPH',
+  'sandbox:j2k-openjpeg':  'OpenJPEG',
+  'sandbox:j2k-fallback':  'JS fallback',
+};
+
+// A pure-JS baseline decoder is a correctness net, not a playback path. If it is
+// serving frames, the WASM decoder failed and the operator is watching something
+// far slower than the tool implies.
+const DEGRADED_BACKENDS = new Set(['sandbox:j2k-fallback']);
+
+// Below this share of frames, thrown-away direct attempts are startup noise
+// (module warm-up, a first-frame probe). At or above it they are per-frame waste.
+export const WASTED_ATTEMPT_WARN_PCT = 10;
+
+/**
+ * Condense route counters into the one line a HUD can show.
+ *
+ * @param {ReturnType<getDecodeRouteStats>} stats
+ * @returns {{backend:string, label:string, text:string, sharePct:number,
+ *            wastedPct:number, mixed:boolean, degraded:boolean}|null}
+ *   null when nothing has been decoded yet — the caller should render nothing
+ *   rather than a misleading zero.
+ */
+export function summarizeDecodeRoute(stats) {
+  if (!stats || !(stats.total > 0)) return null;
+
+  // Dominant backend. Strict `>` keeps the first-inserted key on a tie, which is
+  // the earliest backend to serve a frame — stable across repeated calls.
+  let backend = null, top = 0;
+  for (const [k, n] of Object.entries(stats.byBackend || {})) {
+    if (n > top) { top = n; backend = k; }
+  }
+  if (!backend) return null;
+
+  const sharePct  = Math.round((top / stats.total) * 100);
+  const wastedPct = Math.round(((stats.directFailures | 0) / stats.total) * 100);
+  const mixed     = Object.keys(stats.byBackend).length > 1;
+  const label     = DECODE_BACKEND_LABELS[backend] || backend;
+
+  let text = label;
+  if (mixed) text += ` ${sharePct}%`;
+  // Only shown when it is costing something: a full codestream copy into the
+  // WASM heap plus a thrown exception, once per frame, for nothing.
+  if (wastedPct >= WASTED_ATTEMPT_WARN_PCT) text += ` ⚠${wastedPct}% wasted`;
+
+  return {
+    backend, label, text, sharePct, wastedPct, mixed,
+    degraded: DEGRADED_BACKENDS.has(backend) || wastedPct >= WASTED_ATTEMPT_WARN_PCT,
+  };
+}
+
 export function prewarmJ2KDecoders() {
   return _ensureSandboxPool().then(() => getDecoderPoolInfo()).catch(() => getDecoderPoolInfo());
 }

@@ -449,3 +449,27 @@ Worth recording: the capability-bit mutation **initially survived**, because the
 - **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1). Cross-directory import verified to resolve in **both** built targets (`dist/desktop/`, `dist/extension/`).
 - **Files:** `src/scripts/modules/imf/j2kCodestream.js` (new), `src/scripts/modules/imf/imf_j2k.js`, `src/sandbox/j2k_decoder.js`, `tests-js/j2kCodestream.test.mjs`.
 - **Next:** wire `getDecodeRouteStats()` into a visible HUD readout (the counters exist but nothing displays them yet), or `imf_player.js::parseJ2KHeader` → replace its third private parse with the shared module.
+
+---
+
+### 2026-07-26 (night run, iteration 5) — C-RT2 (part 2): the counters nobody could see
+
+Iteration 4 left `getDecodeRouteStats()` exported and unread. That is not instrumentation, it is dead code with good intentions — and it is precisely the shape of the defect the same iteration had just fixed (a correct value computed and then discarded by its consumer). This closes it.
+
+**What an operator can now answer.** `imf_player.js` already draws a real-time HUD behind the `H` key (`S.showRtHud`, ~line 1178) showing fps, preview scale, dropped frames and decode-ms. It said nothing about *which decoder produced the pixels* — and the four rungs of the ladder look identical on screen. "Why is this reel 6 fps" was unanswerable without opening a console.
+
+The HUD line now ends with the dominant backend by operator-meaningful name — **OpenJPH** / **OpenJPEG** / **JS fallback**, i.e. the library, not the transport, since `direct-openjph` and `sandbox:htj2k-openjph` are the same decoder to the person watching. A share percentage appears only when routing is actually mixed, and `⚠N% wasted` only when thrown-away direct attempts cross 10% of decoded frames — below that they are startup warm-up, above it they are the iteration-4 defect recurring, per frame, in the open.
+
+**Colour outranks cadence.** The HUD tinted itself green whenever cadence held. Hitting 24 fps on the pure-JS baseline decoder is still a finding, so `route.degraded` now takes precedence over `cadenceOk` in the fill colour. Degraded means either the JS fallback is dominant — a correctness net, never a playback path — or the wasted-attempt rate is over threshold.
+
+**Two smaller decisions.** The summariser returns `null` rather than a zero-valued object before the first frame, because a HUD reading `OpenJPH 0%` is worse than a blank one. And the route counters reset per reel alongside `S.droppedFrames`, so the previous reel's backend cannot colour this one. The player binds all three functions through null-object defaults, so the HUD still draws normally if the J2K module never loads.
+
+**Testing.** New `tests-js/decodeRoute.test.mjs`, 36 assertions: empty/null/zero-total inputs, each backend's label, dominance vs. a handful of stray fallback frames, deterministic tie-breaking, the 9%/10% threshold boundary from both sides, unknown backends falling through to their raw key rather than to silence, snapshot immutability, and source-level assertions that the player actually binds, computes, pushes and colours — inside the toggled block, not burned onto every capture.
+
+Threshold fixtures are written as literals with `eq(WASTED_ATTEMPT_WARN_PCT, 10)` pinning the constant separately — iteration 4's surviving mutation taught that lesson once and it does not need teaching twice.
+
+Mutation-verified four times: inclusive threshold → exclusive → 1 failure; tie-break `>` → `>=` → 1; JS fallback removed from the degraded set → 1; degraded colour dropped from the HUD ternary → 1.
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1).
+- **Files:** `src/scripts/modules/imf/imf_j2k.js`, `src/scripts/modules/imf/imf_player.js`, `tests-js/decodeRoute.test.mjs`.
+- **Next:** `imf_player.js::parseJ2KHeader` — the third private header parse, still un-converged onto `j2kCodestream.js`. Or: nothing disables the direct HT path after repeated failures, so a misrouted clip pays the cost for its whole length; a strike-count latch would make the ⚠ readout self-correcting instead of merely honest.
