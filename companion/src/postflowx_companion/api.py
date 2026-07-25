@@ -285,6 +285,10 @@ class CompanionApi:
         # preview requests (e.g. OCF + QT fired together) corrupt Resolve's current
         # timeline / seek state and the cache dict.
         self._ocf_resolve_lock = threading.RLock()
+        # Full-range OCF proxy render jobs (Problem 2): cacheKey → job dict. Guards
+        # against launching a second Resolve render for the same in-flight request.
+        self._ocf_proxy_jobs: dict[str, dict] = {}
+        self._ocf_proxy_jobs_lock = threading.Lock()
         # Shared media runtime — initialized lazily on first use to avoid startup delay
         self._media_runtime: MediaRuntime | None = None
 
@@ -462,6 +466,11 @@ class CompanionApi:
             "resolve.extract_still_frame": self._vfx_preview_resolve_still,
             "vfxPreviewAvfStill":        self._vfx_preview_avf_still,
             "vfx.preview.avfStill":      self._vfx_preview_avf_still,
+            # ── Full-range OCF proxy render (Problem 2 — scrub the whole shot) ─
+            "ocfRenderProxyStart":         self._ocf_render_proxy_start,
+            "resolve.renderOcfProxy":      self._ocf_render_proxy_start,
+            "ocfRenderProxyStatus":        self._ocf_render_proxy_status,
+            "resolve.renderOcfProxyStatus": self._ocf_render_proxy_status,
             # ── Apple Vision OCR (macOS only) ─────────────────────────────────
             "ocrImage":             self._ocr_image,
             "ocrCapabilities":      self._ocr_capabilities,
@@ -591,9 +600,12 @@ class CompanionApi:
                 "resolveConnected":        resolve_connected,
                 "resolveExtractStillFrame": True,
                 "resolveStillBatch":       True,
+                "resolveRenderOcfProxy":   True,
                 "ffmpegFallback":          bool(ffmpeg_path),
             },
             "actions": [
+                "resolve.renderOcfProxy",
+                "resolve.renderOcfProxyStatus",
                 "vfxPreviewResolveStill",
                 "vfx.preview.resolveStill",
                 "vfxPreviewResolveStillBatch",
@@ -3605,6 +3617,313 @@ class CompanionApi:
             except Exception:
                 pass
 
+    # ── Full-range OCF proxy render (Problem 2) ──────────────────────────────
+    @staticmethod
+    def _ocf_proxy_cache_dir() -> "Path":
+        """Persistent on-disk cache for full-range OCF proxy .mp4 files."""
+        try:
+            from .proxy_service import get_proxy_root
+            root = get_proxy_root()
+            if root:
+                p = root / "ocf_proxies"
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+        p = Path.home() / ".cache" / "postflowx" / "ocf_proxies"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @staticmethod
+    def _ocf_proxy_cache_key(ocf_path: str, hdl_st_tc: str, hdl_end_tc: str,
+                             width: int, fps: float) -> str:
+        raw = f"{ocf_path}|{hdl_st_tc}|{hdl_end_tc}|{int(width)}|{round(float(fps), 3)}"
+        return "pfx_ocfproxy_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _ocf_render_proxy_start(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Start (or reuse) a full-range OCF proxy render. Renders the whole
+        HdlSt→HdlEnd range to a cached H.264 .mp4 (native 100%; editorial retime is
+        applied at PLAYBACK by the renderer). Returns immediately with either a
+        cached-complete result or a { jobId } to poll via renderOcfProxyStatus.
+
+        request: { ocfPath, hdlStTc, hdlEndTc, sourceStartTc?, fps?, outputWidth? }
+        """
+        import os
+        ocf_path   = str(request.get("ocfPath") or request.get("filePath") or "").strip()
+        hdl_st_tc  = str(request.get("hdlStTc") or "").strip()
+        hdl_end_tc = str(request.get("hdlEndTc") or "").strip()
+        start_tc   = str(request.get("sourceStartTc") or request.get("clipStartTc") or "").strip()
+        width      = int(request.get("outputWidth") or request.get("width") or 960)
+        req_fps    = float(request.get("fps") or 0) or 0.0
+
+        if not ocf_path or not os.path.isfile(ocf_path):
+            return self._ok({"ok": False, "state": "error", "stage": "validation",
+                             "error": "ocfPath missing or not found."})
+        if not (hdl_st_tc and hdl_end_tc):
+            return self._ok({"ok": False, "state": "error", "stage": "validation",
+                             "error": "hdlStTc and hdlEndTc are required."})
+
+        cache_dir = self._ocf_proxy_cache_dir()
+        key = self._ocf_proxy_cache_key(ocf_path, hdl_st_tc, hdl_end_tc, width, req_fps)
+
+        # ── Cache hit: return a fresh proxy without rendering ────────────────
+        try:
+            ocf_mtime = os.path.getmtime(ocf_path)
+        except Exception:
+            ocf_mtime = 0
+        for fname in sorted(os.listdir(cache_dir)):
+            if fname.startswith(key) and fname.lower().endswith((".mp4", ".mov")):
+                fp = str(cache_dir / fname)
+                try:
+                    if os.path.getsize(fp) > 1024 and os.path.getmtime(fp) >= ocf_mtime:
+                        return self._ok({"ok": True, "state": "complete", "cached": True,
+                                         "proxyPath": fp, "jobId": key})
+                except Exception:
+                    pass
+
+        # ── In-flight guard: a duplicate request rides the running job ───────
+        with self._ocf_proxy_jobs_lock:
+            existing = self._ocf_proxy_jobs.get(key)
+            if existing and existing.get("state") in ("pending", "rendering"):
+                return self._ok({"ok": True, "state": existing["state"], "jobId": key})
+            job = {"state": "pending", "progress": 0, "proxyPath": None,
+                   "frameCount": 0, "fps": req_fps, "error": None,
+                   "ocfPath": ocf_path, "key": key}
+            self._ocf_proxy_jobs[key] = job
+
+        t = threading.Thread(
+            target=self._ocf_render_proxy_worker,
+            args=(key, ocf_path, hdl_st_tc, hdl_end_tc, start_tc, width, req_fps,
+                  str(cache_dir)),
+            daemon=True,
+        )
+        t.start()
+        return self._ok({"ok": True, "state": "pending", "jobId": key})
+
+    def _ocf_render_proxy_worker(self, key, ocf_path, hdl_st_tc, hdl_end_tc,
+                                 start_tc, width, req_fps, cache_dir):
+        """Background: run the full-range Resolve render, updating the job map.
+        Serialized behind the shared Resolve lock (the API is not thread-safe)."""
+        import os, time, logging
+        log = logging.getLogger("postflowx.ocf_proxy")
+
+        def _set(**kw):
+            with self._ocf_proxy_jobs_lock:
+                j = self._ocf_proxy_jobs.get(key)
+                if j:
+                    j.update(kw)
+
+        app = self._get_resolve_app()
+        if app is None:
+            _set(state="error", error="Resolve Engine is not running.")
+            return
+
+        self._ocf_resolve_lock.acquire()
+        project = None
+        timeline = None
+        media_pool = None
+        job_id = None
+        try:
+            _set(state="rendering", progress=1)
+            pm = app.GetProjectManager()
+            if not pm:
+                _set(state="error", error="No ProjectManager."); return
+            project = pm.GetCurrentProject()
+            if not project:
+                _set(state="error", error="No active project."); return
+            media_pool = project.GetMediaPool()
+            if not media_pool:
+                _set(state="error", error="No MediaPool."); return
+
+            try:
+                if project.IsRenderingInProgress():
+                    project.StopRendering()
+                project.DeleteAllRenderJobs()
+            except Exception:
+                pass
+
+            # Find or import the clip.
+            target_clip = None
+            try:
+                for clip in (media_pool.GetRootFolder().GetClipList() or []):
+                    try:
+                        if clip.GetClipProperty("File Path") == ocf_path:
+                            target_clip = clip; break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            if not target_clip:
+                imported = media_pool.ImportMedia([ocf_path]) or []
+                if not imported:
+                    _set(state="error", error="Resolve could not import the OCF file."); return
+                target_clip = imported[0]
+
+            try:
+                fps = float(target_clip.GetClipProperty("FPS") or 24)
+            except Exception:
+                fps = 24.0
+            if req_fps > 0:
+                fps = req_fps
+
+            clip_start_tc = start_tc
+            if not clip_start_tc:
+                try:
+                    clip_start_tc = str(target_clip.GetClipProperty("Start TC") or "").strip()
+                except Exception:
+                    clip_start_tc = ""
+            try:
+                total = max(1, int(float(target_clip.GetClipProperty("Frames") or 1)))
+            except (TypeError, ValueError):
+                total = 1
+
+            base = 0
+            if clip_start_tc and ":" in clip_start_tc:
+                base = int(round(_timecode_to_seconds(clip_start_tc, fps) * fps))
+            # ABSOLUTE source-TC frames (free-run embedded TC) — the domain the
+            # renderer's _pfxPlrProxyTimeAt/_pfxPlrRecToSrc use, so hdlStFrame/
+            # hdlEndFrame are stored/returned in THIS domain (no base subtraction).
+            hdl_st_abs  = int(round(_timecode_to_seconds(hdl_st_tc,  fps) * fps))
+            hdl_end_abs = int(round(_timecode_to_seconds(hdl_end_tc, fps) * fps))
+            # CLIP-RELATIVE frames — only for AppendToTimeline startFrame/endFrame.
+            hdl_st_f  = max(0, min(hdl_st_abs  - base, total - 1))
+            hdl_end_f = max(0, min(hdl_end_abs - base, total - 1))
+            if hdl_end_f < hdl_st_f:
+                hdl_st_f, hdl_end_f = hdl_end_f, hdl_st_f
+            if hdl_end_abs < hdl_st_abs:
+                hdl_st_abs, hdl_end_abs = hdl_end_abs, hdl_st_abs
+            frame_count = hdl_end_f - hdl_st_f + 1
+            _set(fps=fps, frameCount=frame_count,
+                 hdlStFrame=hdl_st_abs, hdlEndFrame=hdl_end_abs,
+                 hdlStClipFrame=hdl_st_f, hdlEndClipFrame=hdl_end_f)
+
+            # Output dimensions from the clip aspect (even for H.264).
+            try:
+                res_str = str(target_clip.GetClipProperty("Resolution") or "")
+                if "x" in res_str:
+                    ow, oh = map(int, res_str.split("x"))
+                    out_h = max(2, int(width * oh / max(1, ow)))
+                else:
+                    out_h = int(width * 9 / 16)
+            except Exception:
+                out_h = int(width * 9 / 16)
+            out_h -= out_h % 2
+
+            import uuid as _uuid
+            timeline = media_pool.CreateEmptyTimeline(f"pfx_proxy_{_uuid.uuid4().hex[:6]}")
+            if not timeline:
+                _set(state="error", error="CreateEmptyTimeline failed."); return
+            appended = media_pool.AppendToTimeline([{
+                "mediaPoolItem": target_clip,
+                "startFrame": hdl_st_f, "endFrame": hdl_end_f, "mediaType": 1,
+            }])
+            if not appended:
+                appended = media_pool.AppendToTimeline([{"mediaPoolItem": target_clip, "mediaType": 1}])
+            if not appended:
+                _set(state="error", error="Could not append clip to timeline."); return
+            project.SetCurrentTimeline(timeline)
+
+            for codec_pair in (("mp4", "H264"), ("mov", "H264"), ("mp4", "H265")):
+                try:
+                    if project.SetCurrentRenderFormatAndCodec(*codec_pair):
+                        break
+                except Exception:
+                    pass
+
+            if not project.SetRenderSettings({
+                "SelectAllFrames": True,
+                "TargetDir": cache_dir, "CustomName": key,
+                "ExportVideo": True, "ExportAudio": False,
+                "FormatWidth": width, "FormatHeight": out_h,
+            }):
+                _set(state="error", error="SetRenderSettings returned False."); return
+
+            job_id = project.AddRenderJob()
+            if not job_id:
+                _set(state="error", error="AddRenderJob returned None."); return
+            start_t = time.time()
+            project.StartRendering([job_id])
+            log.info("[OCF Proxy] rendering %d frames → %s", frame_count, key)
+            done = False
+            while True:
+                time.sleep(0.5)
+                st = project.GetRenderJobStatus(job_id) or {}
+                pct = st.get("CompletionPercentage")
+                if isinstance(pct, (int, float)):
+                    _set(progress=max(1, min(99, int(pct))))
+                status = st.get("JobStatus")
+                if status in ("Complete", "Failed", "Cancelled"):
+                    done = (status == "Complete"); break
+                if time.time() - start_t > 300:
+                    try: project.StopRendering()
+                    except Exception: pass
+                    break
+
+            proxy_file = None
+            try:
+                cands = []
+                for fname in os.listdir(cache_dir):
+                    if fname.startswith(key) and fname.lower().endswith((".mp4", ".mov")):
+                        fp = os.path.join(cache_dir, fname)
+                        if os.path.getmtime(fp) >= start_t - 2 and os.path.getsize(fp) > 1024:
+                            cands.append((os.path.getmtime(fp), fp))
+                if cands:
+                    cands.sort(reverse=True)
+                    proxy_file = cands[0][1]
+            except Exception:
+                pass
+
+            if proxy_file and (done or os.path.getsize(proxy_file) > 1024):
+                _set(state="complete", progress=100, proxyPath=proxy_file)
+                log.info("[OCF Proxy] complete: %s", proxy_file)
+            else:
+                _set(state="error", error="Proxy render produced no output.")
+        except Exception as exc:
+            log.exception("[OCF Proxy] worker exception: %s", exc)
+            _set(state="error", error=str(exc))
+        finally:
+            try:
+                if job_id and project:
+                    project.DeleteRenderJob(job_id)
+            except Exception:
+                pass
+            try:
+                if timeline and media_pool:
+                    media_pool.DeleteTimelines([timeline])
+            except Exception:
+                pass
+            try:
+                self._ocf_resolve_lock.release()
+            except Exception:
+                pass
+
+    def _ocf_render_proxy_status(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Poll a full-range OCF proxy render job.
+        request: { jobId }  →  { state, progress, proxyPath, frameCount, fps,
+                                 hdlStFrame, hdlEndFrame, error }
+        """
+        job_id = str(request.get("jobId") or "").strip()
+        if not job_id:
+            return self._ok({"ok": False, "state": "error", "error": "jobId required."})
+        with self._ocf_proxy_jobs_lock:
+            job = self._ocf_proxy_jobs.get(job_id)
+            if not job:
+                return self._ok({"ok": False, "state": "error",
+                                 "error": "Unknown proxy jobId."})
+            return self._ok({
+                "ok": True,
+                "state": job.get("state") or "pending",
+                "progress": int(job.get("progress") or 0),
+                "proxyPath": job.get("proxyPath"),
+                "frameCount": int(job.get("frameCount") or 0),
+                "fps": job.get("fps") or 0,
+                # ABSOLUTE source-TC frame of the proxy's first/last frame; the renderer
+                # maps (srcF − hdlStFrame)/fps → proxy time in this same domain.
+                "hdlStFrame": int(job.get("hdlStFrame") or 0),
+                "hdlEndFrame": int(job.get("hdlEndFrame") or 0),
+                "error": job.get("error"),
+            })
+
     def _vfx_preview_resolve_still_batch(self, request: dict[str, Any]) -> dict[str, Any]:
         """Batch OCF strip endpoint — renders the contiguous HdlSt→HdlEnd range ONCE
         and ffmpeg-extracts every requested position from that single render, instead
@@ -5728,21 +6047,32 @@ class CompanionApi:
             return self._error("RESOLVE_ENGINE_START_FAILED", str(exc), "Could not start Resolve Engine.")
 
     def _resolve_start_background(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Launch Resolve HIDDEN in the background and return IMMEDIATELY. The JS
-        caller (_pmEnsureResolveConnected) polls for the connection itself, so we
-        must NOT block here — delegating to _resolve_start_engine waits up to 60s
-        and times out the companion call ("Companion error"). `open -gj` =
-        don't-foreground + launch-hidden; Resolve has no headless mode but this
-        avoids stealing focus."""
-        import os, subprocess
+        """Launch Resolve in the background and return IMMEDIATELY. The JS caller
+        (_pmEnsureResolveConnected) polls for the connection itself, so we must
+        NOT block here — delegating to _resolve_start_engine waits up to 60s and
+        times out the companion call ("Companion error").
+
+        Prefer TRUE headless via `-nogui` on the Resolve Studio binary: no GUI,
+        and crucially no Project Manager modal on startup, while the scripting
+        API still answers. _launch_resolve_background() handles the -nogui launch
+        and falls back to `open -gj` (hidden GUI) on installs that reject it."""
+        import os
+        from .engines.resolve_engine import _launch_resolve_background, _effective_resolve_path
         app = "/Applications/DaVinci Resolve/DaVinci Resolve.app"
         try:
             if not os.path.isdir(app):
                 return self._ok({"ok": False, "installed": False, "launched": False, "state": "not_installed"})
             if self._get_resolve_app() is not None:
                 return self._ok({"ok": True, "running": True, "launched": False, "state": "connected"})
-            subprocess.Popen(["open", "-gj", app])   # non-blocking, hidden
-            return self._ok({"ok": True, "installed": True, "launched": True, "state": "launching"})
+            run_mode = str(request.get("runMode") or request.get("mode") or "headless")
+            bin_path, _info = _effective_resolve_path(str(request.get("resolvePath") or ""))
+            default_bin = "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/MacOS/Resolve"
+            ok, err, pid = _launch_resolve_background(bin_path or default_bin, run_mode=run_mode)
+            if not ok:
+                return self._error("RESOLVE_START_FAILED", err or "launch failed", "Could not launch Resolve.")
+            return self._ok({"ok": True, "installed": True, "launched": True, "state": "launching",
+                             "headless": run_mode.strip().lower() in {"headless", "background", "nogui", "localengine", "local_engine"},
+                             "pid": pid})
         except Exception as exc:
             return self._error("RESOLVE_START_FAILED", str(exc), "Could not launch Resolve.")
 
@@ -6759,8 +7089,13 @@ def _adm_bed_layout(pack: ET.Element) -> tuple[int, str]:
     return ch, _BED_LAYOUT_BY_CH.get(ch, f"{ch}ch")
 
 
-def _inspect_iab_asset(path: Path) -> dict[str, Any]:
-    xml_text = _extract_embedded_adm_xml(path)
+def _parse_adm_xml(xml_text: str) -> dict[str, Any]:
+    """Shape an S-ADM XML block into the IAB tab's bed/object/track model.
+
+    Split out of `_inspect_iab_asset` so the parsing logic is unit-testable
+    against a small XML fixture — the real IAB samples are hundreds of MB and
+    aren't on every machine, which left this logic effectively uncovered.
+    """
     root = safe_xml.fromstring(xml_text)
     programme_names = _collect_named_nodes(root, "audioProgramme", "audioProgrammeName")
     content_names = _collect_named_nodes(root, "audioContent", "audioContentName")
@@ -6805,12 +7140,27 @@ def _inspect_iab_asset(path: Path) -> dict[str, Any]:
     bed_layout = beds[0]["layout"] if beds else ""
 
     # Structured track list for the Resolve-style track view (bed + Object 1..N).
+    #
+    # Driven by the authoritative dynamic-object COUNT, not by `object_names`:
+    # ADM names are optional and may repeat, and `_collect_named_nodes` dedupes
+    # them. Iterating the deduped list rendered a short — often bed-only — track
+    # view for packages whose objects are unnamed or share a name, even though
+    # objectSummary reported the correct total. Names are read in document order
+    # from the elements themselves and only used to label rows.
+    object_labels: list[str] = []
+    for node in root.iter():
+        if _strip_ns(node.tag) != "audioObject":
+            continue
+        nm = (node.attrib.get("audioObjectName") or "").strip()
+        if nm and "bed" in nm.lower():
+            continue  # the bed row is emitted from `beds` below
+        object_labels.append(nm)
+
     tracks: list[dict[str, Any]] = []
     for b in beds:
         tracks.append({"type": "bed", "name": b["name"], "layout": b["layout"], "channels": b["channels"]})
-    for name in object_names:
-        if "bed" in name.lower():
-            continue
+    for i in range(dynamic_objects):
+        name = (object_labels[i] if i < len(object_labels) else "") or f"Object {i + 1}"
         tracks.append({"type": "object", "name": name, "layout": "Object", "channels": 1})
 
     return {
@@ -6835,3 +7185,7 @@ def _inspect_iab_asset(path: Path) -> dict[str, Any]:
         },
         "xmlSize": len(xml_text),
     }
+
+
+def _inspect_iab_asset(path: Path) -> dict[str, Any]:
+    return _parse_adm_xml(_extract_embedded_adm_xml(path))

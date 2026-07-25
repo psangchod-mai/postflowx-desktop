@@ -29,3 +29,7 @@ electron/native/r3d_libs/
 # Built installer / packaging output
 companion/output/
 *.pkg
+
+# Project-local Python env for the companion test suite (machine-specific).
+# Create with: python3 -m venv companion/.venv && companion/.venv/bin/pip install pytest
+companion/.venv/

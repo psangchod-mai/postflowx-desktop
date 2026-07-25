@@ -326,3 +326,27 @@ _(Newest on top. First nightly run starts here.)_
 - Blocked: macOS native build/sign = terminal hand-off (see BUILD_MAC_RUNBOOK.md)
 - Next: A1
 -->
+
+### 2026-07-26 (night run, iteration 1) — quality gate repair + IAB/S-ADM test coverage & track-view fix
+
+**Research first — the backlog was lying.** Verified before implementing anything; these items are marked open but are already shipped, so nothing was re-done:
+- **A-IAB0c** — attribute-based name reads, count-driven `admStats`, bed/object typing, structured track list: DONE in `api.py`.
+- **C-RT1e** — honest decode HUD: DONE, `imf_ui.js:9089` derives the label from the CPL codec (`CPU · HTJ2K (OpenJPH / FFmpeg)`) instead of hardcoding VideoToolbox.
+- **C-RT1a / C-RT1b** — adaptive quality ladder (`S.previewScale` 1 / 0.5 / 0.25, `playbackMode === 'auto'`, `_setPreviewScale`, `_predictInitialPlaybackScale`) and the reduce-level decode fix: DONE in `imf_player.js` / `imf_j2k.js`.
+
+**1. The quality gate was silently partial (HIGH).** `build-verify` ran `(cd companion && python3 -m pytest -q)`. There is no pytest in the macOS CLT python3, no Homebrew pytest, and no venv anywhere in the tree — so **the entire 250-test Python suite was being skipped and `build-verify` still printed a pass.** Every "build-verify green" claim in this log since the script was written covered JS only.
+- Added `tools/run-pytest.mjs` — resolves an interpreter in priority order (`companion/.venv` → `$PFX_PYTHON` → PATH), *proves* `import pytest` works before running, and **exits 1 with the venv-creation command** if none qualifies. It can no longer fail open.
+- Rewired `test:py`, `build-verify`, and `test` to it; created `companion/.venv` (pytest 9.1.1); gitignored it.
+
+**2. IAB (Dolby Atmos) S-ADM parsing had zero real coverage.** `test_iab_inspect.py` asserts the contract against a ~hundreds-of-MB Meridian MXF that exists on exactly one workstation — `pytestmark = skipif(not _FIXTURE.is_file())`, so all 3 tests skip everywhere, including here.
+- Split the pure parser `_parse_adm_xml(xml_text)` out of `_inspect_iab_asset(path)` (which is now a two-line wrapper) so the logic is drivable from a string.
+- `companion/tests/test_adm_parse.py`: 14 tests over a synthetic Meridian-shaped ADM block (7.1.2 DirectSpeakers bed + 48 Objects packs, namespaced `ebuCoreMain`) — counts, bed-layout ladder (6/8/10/12/16 → 5.1…9.1.6), unknown-width fallback, namespace stripping, attribute-vs-child name reads, and XXE refusal.
+- **Proven non-vacuous by mutation:** reverting the attribute read to a child-element read → 2 failures (`assert 1 == 49`, IndexError). Restored, 14 green.
+
+**3. Real latent bug found by that work, and fixed — the Resolve-style track view.** The summary is count-driven (A-IAB0c) but `tracks` was still built by iterating `object_names`, which `_collect_named_nodes` **dedupes**. Two silent failure modes: a package whose objects carry no `audioObjectName` rendered a **bed-only** track view while `objectSummary.totalObjects` correctly said 49; and objects sharing a name (common — e.g. every object called "Atmos") **collapsed into a single row**.
+- `tracks` now emits exactly `dynamic_objects` rows, taking labels in document order from the `audioObject` elements themselves (no dedupe) and synthesizing `Object N` where the name is empty. Meridian behaviour is unchanged byte-for-byte (48 labels → 48 rows, `objs[0] == "Object 1"`).
+- Two new tests cover the unnamed and duplicate-named cases; mutation-tested (reverting → `assert 1 == 48`).
+
+- **Build:** `build-verify` PASS — and for the first time genuinely: node `--test` 55 pass/1 skip, `test:js` 82 files exit 0, **pytest 250 passed / 7 skipped**, XSS gate clean, XXE gate clean. `build:renderer` PASS (366 files).
+- **Files:** `tools/run-pytest.mjs` (new), `package.json`, `.gitignore`, `companion/src/postflowx_companion/api.py`, `companion/tests/test_adm_parse.py` (new).
+- **Next:** the 7 remaining skips are all fixture-gated like `test_iab_inspect` — worth auditing whether any can be made fixture-free the same way.
