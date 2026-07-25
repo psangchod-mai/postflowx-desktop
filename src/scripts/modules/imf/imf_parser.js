@@ -4,6 +4,8 @@
 // Namespace-agnostic: uses localName matching so all SMPTE IMF namespace variants work.
 'use strict';
 
+import { classifyJ2KDescriptor } from './j2kCodestream.js';
+
 // ── SMPTE UL → human-readable label maps ──────────────────────────────────────
 const UL_TRANSFER = {
   '060e2b34.0401010d.04010101.01010000': 'Gamma 2.2',
@@ -155,14 +157,29 @@ export function parseCPL(xmlText) {
     const channelCount = isImmersive ? 0 : (parseInt(deepText(ed, 'ChannelCount') || deepText(ed, 'Channels') || '0', 10) || 0);
     const isRGBA  = !!findFirst(ed, 'RGBADescriptor');
     const isCDCI  = !!findFirst(ed, 'CDCIDescriptor');
-    // HTJ2K (JPEG2000 Part 15): ContainerConstraintsSubDescriptor or J2CLayout
-    const isJ2K   = !!findFirst(ed, 'JPEG2000SubDescriptor')     ||
-                    !!findFirst(ed, 'J2CLayout')                  ||
-                    !!findFirst(ed, 'ContainerConstraintsSubDescriptor');
-    // Check PictureEssenceCoding UL for HTJ2K
+    // JPEG 2000, and separately whether it is Part 15 (HTJ2K). Both answers come
+    // from j2kCodestream.js, which also owns the codestream-byte answer, so the
+    // declaration and the truth cannot drift apart the way they had:
+    // `isHTJ2K` was `isJ2K || …`, so every classic Part 1 package read as HTJ2K
+    // and three downstream branches written for plain J2K were unreachable.
+    //
+    // ContainerConstraintsSubDescriptor is gone from the J2K test. It is ST
+    // 379-2 generic-container constraints, carried by sound essence too, so it
+    // made audio descriptors read as JPEG 2000 pictures.
     const pecUL   = deepText(ed, 'PictureEssenceCoding');
-    const isHTJ2K = isJ2K || (pecUL.includes('0d01030c') || pecUL.includes('04010202.03010000'));
-    const isPicture = isRGBA || isCDCI || isHTJ2K || (!isImmersive && (w !== '–'));
+    const j2kClass = classifyJ2KDescriptor({
+      hasJ2KSubDescriptor:     !!findFirst(ed, 'JPEG2000SubDescriptor') || !!findFirst(ed, 'J2CLayout'),
+      hasExtendedCapabilities: !!findFirst(ed, 'J2KExtendedCapabilities'),
+      pecUL,
+    });
+    const isJ2K      = j2kClass.isJ2K;
+    const isHTJ2K    = j2kClass.isHTJ2K;
+    const htEvidence = j2kClass.htEvidence;
+    // isJ2K, not isHTJ2K. The old `isJ2K ||` above made the HT flag load-bearing
+    // for picture detection, so narrowing HT without this line would have
+    // dropped a J2K descriptor whose StoredWidth did not parse out of the
+    // running for primary picture descriptor.
+    const isPicture = isRGBA || isCDCI || isJ2K || (!isImmersive && (w !== '–'));
 
     // Dolby Vision sub-descriptor
     const isDVision = !!findFirst(ed, 'DolbyVisionFrameInfo') ||
@@ -199,7 +216,7 @@ export function parseCPL(xmlText) {
 
     descriptors.push({
       id, w, h, tc, cp, depth,
-      isIAB, isMGA, isImmersive, isRGBA, isCDCI, isJ2K, isHTJ2K, isDVision, isPicture,
+      isIAB, isMGA, isImmersive, isRGBA, isCDCI, isJ2K, isHTJ2K, htEvidence, isDVision, isPicture,
       dvProfile, dvLevel, dvTrimPasses, channelCount,
       frameLayout: isInterlaced ? 'Interlaced' : 'Progressive',
       pecUL,
@@ -388,6 +405,12 @@ export function parseCPL(xmlText) {
     primaries:    picDesc.cp || '–',
     bitDepth:     picDesc.depth || '–',
     codec,
+    // Exposed so the validator and UI can read the classification instead of
+    // substring-matching `codec`, which is a display string: re-wording the
+    // label used to change validation severity.
+    isJ2K:        !!picDesc.isJ2K,
+    isHTJ2K:      !!picDesc.isHTJ2K,
+    htEvidence:   picDesc.htEvidence || null,
     appVersion,
     isDolbyVision: descriptors.some(d => d.isDVision),
     hasIAB:       !!iabDesc || descriptors.some(d => d.isImmersive),
@@ -397,6 +420,17 @@ export function parseCPL(xmlText) {
     dvLevel:      descriptors.find(d => d.isDVision)?.dvLevel   || '',
     dvTrimPasses: descriptors.reduce((n, d) => n + (d.dvTrimPasses || 0), 0),
     descriptors,
+    // The primary picture descriptor, resolved once above. It was computed and
+    // then dropped: five call sites already read `cpl.picDesc?.…` — the status
+    // bar's decoder line, the engine's HTJ2K status suffix and its limitations
+    // list, and two backfills for a missing bitDepth/resolution — and every one
+    // of them had been reading undefined since the field was first referenced.
+    //
+    // Exporting it had to wait for the classification fix above. Before that,
+    // `isHTJ2K` was true for every classic package, so handing picDesc to those
+    // consumers would have spread the wrong label to five new places at once
+    // instead of leaving it in one.
+    picDesc,
     segments,
     videoResources: segments.flatMap(s =>
       s.resources.filter(r =>

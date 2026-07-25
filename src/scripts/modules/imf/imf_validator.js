@@ -310,13 +310,26 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   }
 
   if (cpl.codec && cpl.codec !== '–') {
-    const isHTJ2K = cpl.codec.includes('HTJ2K') || cpl.codec.includes('Part 15');
-    const isJ2K = cpl.codec.includes('JPEG 2000');
+    // Read the parser's classification, not its display string. Matching on
+    // `cpl.codec` meant re-wording the label silently changed the severity, and
+    // it could only ever repeat whatever the parser had already decided — which
+    // for a long time was "HTJ2K" for every classic Part 1 package, so the PASS
+    // arm below was unreachable and every J2K delivery carried the HT caveat.
+    const isHTJ2K = !!cpl.isHTJ2K;
+    const isJ2K   = !!cpl.isJ2K;
+    // Say which signal carried the finding. A descriptor that only matches a
+    // PictureEssenceCoding UL is weaker evidence than one carrying
+    // J2KExtendedCapabilities, and it is the operator who has to decide whether
+    // to trust it — so the difference is stated rather than flattened.
+    const detail = !isHTJ2K ? ''
+      : cpl.htEvidence === 'pec-ul'
+        ? 'HTJ2K declared by PictureEssenceCoding UL alone — no J2KExtendedCapabilities in the descriptor. Confirm against the codestream before routing to an HT-only decoder'
+        : 'HTJ2K declared (J2KExtendedCapabilities present) — decoder compatibility should still be verified at track level';
     results.push(result(
       isHTJ2K ? SEV.INFO : isJ2K ? SEV.PASS : SEV.INFO,
       'PIC004',
       `Codec: ${cpl.codec}`,
-      isHTJ2K ? 'HTJ2K declared — useful for routing, but decoder compatibility should still be verified at track level' : ''
+      detail
     ));
   }
 

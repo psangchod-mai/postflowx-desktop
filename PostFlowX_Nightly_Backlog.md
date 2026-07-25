@@ -497,3 +497,43 @@ Mutation-verified eight times: cumulative instead of consecutive → 3 failures;
 - **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1).
 - **Files:** `src/scripts/modules/imf/imf_j2k.js`, `tests-js/decodeRoute.test.mjs`.
 - **Next:** `imf_player.js::parseJ2KHeader` is still the third private header parse, un-converged onto `j2kCodestream.js` — the one item left from area 8 and the smallest remaining piece of C-RT2. After that the J2K decode path is exhausted as an audit area and the loop should move on.
+
+---
+
+### 2026-07-26 (night run, iteration 7) — every classic JPEG 2000 package was labelled HTJ2K
+
+**Re-prioritised away from the planned item, on evidence.** Iteration 6 named `parseJ2KHeader` as next. RESEARCH found something strictly larger one file over, so that item is deferred again — deliberately, and it is still open below.
+
+**The defect.** `imf_parser.js` computed the picture-coding flags as:
+
+```js
+const isHTJ2K = isJ2K || (pecUL.includes('0d01030c') || pecUL.includes('04010202.03010000'));
+```
+
+`isJ2K` is true for anything carrying a `JPEG2000SubDescriptor`. So `isHTJ2K` was true for **every JPEG 2000 IMP that has ever been opened in this app**, classic SMPTE Part 1 included. Part 15 is a positive finding about a stream; "it is JPEG 2000" is not evidence for it. The three-way ladder immediately below it — `isHTJ2K → 'HTJ2K (JPEG 2000 Part 15)'`, `isJ2K → 'JPEG 2000'` — could only ever take its first branch.
+
+**What the operator was told.** Four consequences, all provable from the code's own structure rather than inferred:
+
+1. The status bar's decoder line read **`CPU · HTJ2K (OpenJPH / FFmpeg)`** for classic essence — naming a decoder that, by this codebase's own routing (`src/sandbox/j2k_decoder.js`, and iteration 4's sniff), cannot decode that stream at all. The single line an operator reads to answer "what is playing this?" named the wrong one on every classic delivery.
+2. PIC004 returned `INFO` with *"HTJ2K declared — decoder compatibility should still be verified at track level"* on every classic J2K delivery. The `SEV.PASS` arm written for plain J2K was unreachable. A caveat that fires on every package is indistinguishable from no caveat: it trains the operator to skim past the line that will one day be true.
+3. The `imf-rt-codec-j2k` badge in `imf_ui.js` was dead CSS.
+4. `d.isJ2K ? 'JPEG 2000'` in the validator's descriptor table, likewise.
+
+**And a second, opposite error in the same expression.** `ContainerConstraintsSubDescriptor` counted as evidence *of JPEG 2000*. That is ST 379-2 generic-container constraints — sound essence carries it too. So an audio descriptor could satisfy `isJ2K`, and through `isPicture` compete to be the primary **picture** descriptor. Removed.
+
+**Two coupling traps, both of which would have turned the fix into a regression.**
+
+- `isPicture` was `isRGBA || isCDCI || isHTJ2K || …`. The bug was *load-bearing*: because HT was true for all J2K, that clause was doing duty as the J2K clause. Narrowing HT without switching this line to `isJ2K` would have dropped a J2K descriptor whose `StoredWidth` did not parse out of the running for primary picture descriptor entirely — trading a wrong label for a missing one. The line now reads `isJ2K`.
+- `picDesc` was resolved in `parseCPL`, used locally, and **never returned**. Five call sites read `cpl.picDesc?.…` — the status bar's decoder line, the engine's HTJ2K status suffix, its limitations list, and two backfills for a missing bitDepth/resolution — and every one of them has read `undefined` since the field was first referenced. Fixing that had to come *after* the classification fix, not before: exporting `picDesc` while `isHTJ2K` was still true-for-everything would have propagated the wrong label to five fresh consumers in one commit.
+
+**Convergence, and the restraint that goes with it.** The descriptor answer now lives in `j2kCodestream.js` beside the codestream answer, as `classifyJ2KDescriptor()`. Holding the declaration in one file and the truth in another is exactly how the codebase came to carry two definitions of "HTJ2K". `J2KExtendedCapabilities` presence is the strong signal — the element exists to carry the CAP segment's Pcap/Ccap, which a Part 1 stream has no marker for. **No Pcap bit is decoded**, on purpose: `tests-js/j2kCodestream.test.mjs:52` already contains a fixture commented "Part 15 sets Pcap bit 15" with a value that would be `1 << 17` under ISO's MSB-first numbering, and which nothing reads. The convention could not be settled from the repo, so the classifier does not depend on it. `04010202.03010000` was removed from the HT UL set with a stated reason (it is the *generic* JPEG 2000 coding label, which classic essence is entitled to declare). `0d01030c` is inherited and unverified against RP 224, so it was **kept but demoted**: it reports `htEvidence: 'pec-ul'`, and PIC004 says so — *"declared by PictureEssenceCoding UL alone — confirm against the codestream before routing to an HT-only decoder."* Deleting a check on a hunch is the same unfounded move as adding one; the honest option was to grade the evidence and let the operator judge.
+
+**The validator stopped reading a display string.** PIC004 previously derived its own severity with `cpl.codec.includes('HTJ2K')`. Re-wording a UI label silently changed validation severity — and the parse could only ever repeat what the parser had already decided, wrongly. It now reads `cpl.isHTJ2K` / `cpl.isJ2K`.
+
+**Testing.** `tests-js/j2kDescriptor.test.mjs`, 43 assertions — nothing in `tests-js/` mentioned HTJ2K before this file, which is why the bug survived every gate. Covers the core rule (J2K is not evidence of Part 15), evidence grading and precedence, case-folding, the generic-UL false positive, five degenerate inputs, the invariant `isHTJ2K === (htEvidence !== null)`, and source-level guards on all four wiring changes.
+
+Mutation-verified eight times: HT evidence no longer implying J2K → 1 failure; the original `isJ2K ||` bug reintroduced → 3; the generic UL re-added → 3; UL case-folding dropped → 1; evidence precedence inverted → 1; `isPicture` back onto the HT flag → 1; `picDesc` dropped from the return → 1; validator back to substring-matching → 2. None survived.
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean; all `tests-js` suites green). `build:renderer` PASS (367 files, v2026.6.1).
+- **Files:** `src/scripts/modules/imf/j2kCodestream.js`, `src/scripts/modules/imf/imf_parser.js`, `src/scripts/modules/imf/imf_validator.js`, `tests-js/j2kDescriptor.test.mjs`.
+- **Next:** `imf_player.js::parseJ2KHeader` — still the third private header parse, now twice deferred. Beyond the convergence it has two concrete hazards found while reading it this iteration: `new DataView(bytes.buffer, bytes.byteOffset)` is constructed with **no length**, so on a subarray view its reads run into neighbouring frame bytes; and the marker walk has no SOT/SOD stop and no byte bound, so a truncated header walks garbage segment lengths across the entire frame. Its only consumer is the centre-screen `W × H` readout, which bounds the blast radius to a wrong number on screen — but the unbounded view is the kind of thing that stops being harmless the moment someone reuses the function.

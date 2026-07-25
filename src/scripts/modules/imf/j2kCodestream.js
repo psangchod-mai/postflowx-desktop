@@ -108,3 +108,62 @@ function _scanForCap(bytes, sizOff, lim) {
 export function isHTJ2KCodestream(bytes) {
   return sniffCodestream(bytes).kind === 'htj2k';
 }
+
+// ── Descriptor-level declaration ─────────────────────────────────────────────
+// Everything above inspects codestream bytes and is authoritative. What follows
+// answers the same question from an IMF CPL's EssenceDescriptorList: a
+// *declaration*, available before a single frame has been read, of what the
+// packager says the essence is. When the two disagree the bytes win — nothing
+// here should ever be used to choose a decoder, only to label and to validate.
+//
+// It lives in this file anyway. Keeping the descriptor answer in imf_parser.js
+// and the codestream answer here is precisely how the codebase came to hold two
+// different definitions of "HTJ2K", one of which was true for every classic
+// Part 1 package.
+
+/**
+ * PictureEssenceCoding UL fragments taken as declaring Part 15. Matched as
+ * substrings of the dot-grouped UL text a CPL carries, lower-cased.
+ *
+ * Deliberately short, and shorter than it was. `04010202.03010000` was in this
+ * set: that is the trailing-zero *generic* JPEG 2000 coding label, which a
+ * classic Part 1 essence is entitled to declare, so matching it reported plain
+ * J2K as HTJ2K. A fragment belongs here only if it names Part 15 specifically.
+ *
+ * The one remaining entry is inherited and unverified against SMPTE RP 224. It
+ * is kept because a narrow check that may never fire is harmless, while
+ * deleting a check on a hunch is the same unfounded move as adding one — but it
+ * is reported as weaker evidence than the descriptor element below, so a
+ * package that matches only this cannot quietly pass for a confirmed HT stream.
+ */
+export const HTJ2K_PEC_UL_FRAGMENTS = Object.freeze(['0d01030c']);
+
+/**
+ * Classify an essence descriptor's picture coding from CPL-declared signals.
+ *
+ * @param {object} sig
+ * @param {boolean} sig.hasJ2KSubDescriptor      a JPEG 2000 sub-descriptor is present
+ * @param {boolean} sig.hasExtendedCapabilities  J2KExtendedCapabilities is present
+ * @param {string}  sig.pecUL                    PictureEssenceCoding text, or ''
+ * @returns {{isJ2K:boolean, isHTJ2K:boolean, htEvidence:'extended-capabilities'|'pec-ul'|null}}
+ *   `isHTJ2K` is exactly `htEvidence !== null`, and is never implied by
+ *   `isJ2K`. Part 15 is a positive finding about a stream; "it is JPEG 2000"
+ *   is not evidence for it.
+ */
+export function classifyJ2KDescriptor(sig) {
+  const s = sig || {};
+  const pecUL = typeof s.pecUL === 'string' ? s.pecUL.toLowerCase() : '';
+
+  // J2KExtendedCapabilities exists to carry the CAP marker segment's Pcap/Ccap
+  // values. A Part 1 codestream has no CAP marker, so the element has nothing
+  // to describe and a Part 1 descriptor does not carry one: presence alone is
+  // the signal. No Pcap bit is decoded here on purpose — the bit numbering is a
+  // second fact to get wrong, and presence already answers the question asked.
+  let htEvidence = null;
+  if (s.hasExtendedCapabilities) htEvidence = 'extended-capabilities';
+  else if (pecUL && HTJ2K_PEC_UL_FRAGMENTS.some(f => pecUL.includes(f))) htEvidence = 'pec-ul';
+
+  // HT evidence implies J2K — both signals are JPEG 2000 constructs — but the
+  // implication runs in that direction only.
+  return { isJ2K: !!s.hasJ2KSubDescriptor || htEvidence !== null, isHTJ2K: htEvidence !== null, htEvidence };
+}
