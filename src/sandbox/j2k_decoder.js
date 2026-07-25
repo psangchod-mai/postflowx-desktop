@@ -1,5 +1,10 @@
 "use strict";
 
+// One shared classifier with imf_j2k.js — this file's local copy was the only
+// correct HT-vs-classic sniff in the codebase, and the direct decode path in
+// imf_j2k.js had no copy at all. Importing keeps them from drifting apart again.
+import { sniffCodestream } from '../scripts/modules/imf/j2kCodestream.js';
+
 console.log('[J2K-SBX] sandbox decoder boot v27');
 
 let htModulePromise = null;
@@ -188,24 +193,6 @@ function readUint16BE(bytes, off) {
   return ((bytes[off] & 0xff) << 8) | (bytes[off + 1] & 0xff);
 }
 
-function sniffCodestream(bytes) {
-  const info = { kind: 'unknown', rsiz: null, markerOffset: -1 };
-  if (!bytes || bytes.length < 8) return info;
-  if (bytes[0] !== 0xFF || bytes[1] !== 0x4F) return info;
-  const lim = Math.min(bytes.length - 6, 8192);
-  for (let i = 2; i < lim; i++) {
-    if (bytes[i] === 0xFF && bytes[i + 1] === 0x51) {
-      const rsiz = readUint16BE(bytes, i + 4);
-      info.rsiz = rsiz;
-      info.markerOffset = i;
-      info.kind = (rsiz & 0x4000) ? 'htj2k' : 'j2k';
-      return info;
-    }
-  }
-  info.kind = 'j2k';
-  return info;
-}
-
 function trimToCodestream(bytes) {
   if (!bytes || bytes.length < 4) return bytes;
   let start = 0;
@@ -250,6 +237,7 @@ function decodeHTBytes(bytes, reduceLevel = 0) {
   if (!htModuleInstance) throw new Error('HTJ2K decoder module unavailable');
   let reduce = Math.max(0, reduceLevel | 0);
   const decoder = new htModuleInstance.HTJ2KDecoder();
+  try {
   const buf = decoder.getEncodedBuffer(bytes.length);
   buf.set(bytes);
   decoder.readHeader();
@@ -300,6 +288,7 @@ function decodeHTBytes(bytes, reduceLevel = 0) {
     nativeReduced: reduce > 0,
     nativeReduceLevel: reduce,
   };
+  } finally { try { decoder.delete(); } catch (_) {} }
 }
 
 function planarToInterleaved(data, width, height) {

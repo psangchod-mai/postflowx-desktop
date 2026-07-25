@@ -2,6 +2,8 @@
 // MV3-safe J2K bridge using a sandboxed iframe page.
 'use strict';
 
+import { sniffCodestream } from './j2kCodestream.js';
+
 let _sandboxPoolReadyPromise = null;
 const _sandboxPool = [];
 const _sandboxMap = new WeakMap();
@@ -35,6 +37,46 @@ export function getDecoderPoolInfo() {
     ready: _sandboxPool.length,
     hardware,
   };
+}
+
+// ── Which backend actually served each frame (C-RT2) ────────────────────────
+// The decode ladder has four rungs (direct OpenJPH → sandbox OpenJPH → sandbox
+// OpenJPEG → pure JS) and, until now, nothing outside a console.log said which
+// one you were on. A silently-degraded rung looks exactly like a fast one, just
+// slower — the same blind spot that let classic streams pound the HT decoder
+// once per frame for however long that has been shipping. Count it, and let the
+// HUD show it.
+const _routeStats = { byBackend: Object.create(null), total: 0, directFailures: 0, failed: 0, rejected: 0, last: null };
+
+function _noteRoute(backend) {
+  _routeStats.byBackend[backend] = (_routeStats.byBackend[backend] || 0) + 1;
+  _routeStats.total++;
+  _routeStats.last = backend;
+}
+
+/**
+ * Frame counts per decode backend since load. `last` is the backend that served
+ * the most recent frame — the value a HUD wants. Returns a copy; callers cannot
+ * mutate the counters.
+ */
+export function getDecodeRouteStats() {
+  return {
+    byBackend: { ..._routeStats.byBackend },
+    total: _routeStats.total,
+    directFailures: _routeStats.directFailures,
+    failed: _routeStats.failed,
+    rejected: _routeStats.rejected,
+    last: _routeStats.last,
+  };
+}
+
+export function resetDecodeRouteStats() {
+  for (const k of Object.keys(_routeStats.byBackend)) delete _routeStats.byBackend[k];
+  _routeStats.total = 0;
+  _routeStats.directFailures = 0;
+  _routeStats.failed = 0;
+  _routeStats.rejected = 0;
+  _routeStats.last = null;
 }
 
 export function prewarmJ2KDecoders() {
@@ -139,6 +181,7 @@ function _reduceLevelFromScale(scale) {
 function _decodeHTBytesWithModule(mod, bytes, scale = 1) {
   let reduceLevel = _reduceLevelFromScale(scale);
   const decoder = new mod.HTJ2KDecoder();
+  try {
   const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const enc = decoder.getEncodedBuffer(src.length);
   enc.set(src);
@@ -188,6 +231,7 @@ function _decodeHTBytesWithModule(mod, bytes, scale = 1) {
     nativeReduced: reduceLevel > 0,
     nativeReduceLevel: reduceLevel,
   };
+  } finally { try { decoder.delete(); } catch (_) {} }
 }
 
 function _installSandboxListener() {
@@ -323,25 +367,42 @@ function _pickSandbox() {
 
 export async function decodeHTJ2K(bytes, opts = {}) {
   if (!bytes || bytes.length < 6) return null;
-  // 0xFF 0x4F = standard J2K SOC; 0xFF 0x50 = HTJ2K (JPEG 2000 Part 15) SOC
-  if (bytes[0] !== 0xFF || (bytes[1] !== 0x4F && bytes[1] !== 0x50)) {
-    console.warn('[J2K] No SOC marker — not a J2K or HTJ2K codestream');
+
+  // Classify before choosing a decoder. The previous check here accepted a
+  // codestream starting 0xFF4F *or* 0xFF50 on the belief that 0xFF50 was an
+  // "HTJ2K SOC" — there is no such thing. Every JPEG 2000 codestream, Part 1
+  // and Part 15 alike, starts 0xFF4F; 0xFF50 is CAP, a main-header segment that
+  // never appears at offset 0. So that branch was unreachable, and worse, the
+  // absence of a real sniff meant classic Part 1 streams were handed to the
+  // direct OpenJPH decoder below — the HT-only decoder the sandbox deliberately
+  // reserves for kind === 'htj2k'.
+  const sniff = sniffCodestream(bytes);
+  if (sniff.kind === 'unknown') {
+    console.warn('[J2K] No SOC marker — not a J2K codestream');
+    _routeStats.rejected++;
     return null;
   }
 
   // MV3 extension pages allow wasm-unsafe-eval for WebAssembly, but still reject
   // unsafe-eval/new Function. The packaged HT JS wrapper currently trips that path,
   // so prefer the sandbox decoder path here and avoid noisy CSP errors on index.html.
-  if (!_directHTDisabled) {
+  //
+  // Desktop additionally gates on the sniff: OpenJPH decodes HT block coding
+  // only. Sending it a Part 1 stream cost a full copy of the codestream into the
+  // WASM heap plus a thrown exception *per frame*, then fell through to the
+  // sandbox that would have decoded it correctly in the first place.
+  if (!_directHTDisabled && sniff.kind === 'htj2k') {
     try {
       const mod = await _loadDirectHTModule();
       if (mod) {
         const frame = _decodeHTBytesWithModule(mod, bytes, typeof opts.scale === 'number' ? opts.scale : 1);
-        console.log(`[J2K] direct decode ok via ${frame.decoderKind} ${frame.width}x${frame.height} ${frame.componentCount}ch ${frame.bitsPerSample}bpp`);
+        _noteRoute('direct-openjph');
+        if (typeof window !== 'undefined' && window.PFX_DEBUG_IMF) console.log(`[J2K] direct decode ok via ${frame.decoderKind} ${frame.width}x${frame.height} ${frame.componentCount}ch ${frame.bitsPerSample}bpp`);
         return frame;
       }
     } catch (e) {
       _lastDirectHTError = String(e && e.message ? e.message : e);
+      _routeStats.directFailures++;
       console.warn('[J2K] direct HT decode failed, falling back to sandbox', e);
     }
   }
@@ -393,9 +454,13 @@ export async function decodeHTJ2K(bytes, opts = {}) {
 
   try {
     const frame = await reqPromise;
-    console.log(`[J2K] sandbox decode ok via ${frame.decoderKind || 'unknown'} ${frame.width}x${frame.height} ${frame.componentCount}ch ${frame.bitsPerSample}bpp`);
+    // decoderKind is what the sandbox *actually* used, which is the answer worth
+    // recording — the sandbox has its own OpenJPEG→pure-JS fallback inside it.
+    _noteRoute(frame.decoderKind ? `sandbox:${frame.decoderKind}` : 'sandbox:unknown');
+    if (typeof window !== 'undefined' && window.PFX_DEBUG_IMF) console.log(`[J2K] sandbox decode ok via ${frame.decoderKind || 'unknown'} ${frame.width}x${frame.height} ${frame.componentCount}ch ${frame.bitsPerSample}bpp`);
     return frame;
   } catch (e) {
+    _routeStats.failed++;
     console.warn('[J2K] sandbox decode error', e);
     return null;
   }

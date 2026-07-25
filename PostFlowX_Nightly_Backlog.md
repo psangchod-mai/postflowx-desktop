@@ -413,3 +413,39 @@ Mutation-verified twice: deleting the `NATIVE_ENGINE` case → 3 failures; reint
 - **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (366 files, v2026.6.1).
 - **Files:** `src/scripts/core/playbackRouter.js`, `src/scripts/core/playableMedia.js`, `tests-js/playbackRouter.test.mjs`.
 - **Next:** C-RT2 (HUD showing which backend served each frame — would have made this visible immediately), or D1's remaining `fs.watch` → `ctl.onFsEvent` live-wire.
+
+### 2026-07-26 (night run, iteration 4) — C-RT2: the same question answered three times, three different ways
+
+**Picked over D1.** D1's remainder is the Electron `fs.watch` → `ctl.onFsEvent` adapter plus a DOM prompt — roughly 20 lines that can only be confirmed by running the packaged app. This loop's standard is that every iteration ends green on a headless gate, so an item that can't be verified headlessly isn't the highest-value item available at 03:00. C-RT2 ("surface which backend served each frame") turned out to be the right call for a second reason: the instrumentation it asks for is exactly what was missing.
+
+**The finding.** Whether a JPEG 2000 codestream is HTJ2K (Part 15) or classic (Part 1) is decided in three places, and they disagree:
+
+| Where | What it does |
+|---|---|
+| `src/sandbox/j2k_decoder.js::sniffCodestream` | Walks to SIZ, tests `Rsiz & 0x4000`, routes HT → OpenJPH / classic → OpenJPEG. **Correct.** |
+| `imf_j2k.js::decodeHTJ2K` | **No sniff at all.** Accepted `0xFF4F` *or* `0xFF50` and handed everything to OpenJPH. |
+| `imf_player.js::parseJ2KHeader` | Walks the marker segments properly and captures `rsiz` — then never tests the bit. The value is only displayed. |
+
+So the codebase already extracted the deciding value twice and routed on it exactly zero times outside the sandbox.
+
+Two things were wrong in `decodeHTJ2K`. The `0xFF50` arm was justified in a comment as an "HTJ2K SOC" — there is no such marker. Every J2K codestream, Part 1 and Part 15, starts `0xFF4F`; `0xFF50` is CAP, a main-header segment that can never sit at offset 0. That branch was unreachable. The real defect is what the missing sniff caused: `_directHTDisabled = !_isDesktopApp`, so on desktop the direct OpenJPH path is tried **first, for every frame**, and OpenJPH is HT-only. For a classic Part 1 IMF package — the majority of real deliverables — every single frame paid a full copy of the codestream into the WASM heap (`getEncodedBuffer` + `buf.set`, megabytes per UHD frame), a thrown exception, and a `console.warn`, before falling through to the sandbox that would have decoded it correctly. And the failure is never sticky: nothing disables the direct path after it fails, so the cost repeats frame after frame for the whole clip.
+
+`imf_player.js` calls `_decodeHTJ2K(...)` for *every* frame of any IMF MXF essence regardless of profile, so nothing upstream filtered this either.
+
+**Fix.**
+- **New `src/scripts/modules/imf/j2kCodestream.js`** — the one classifier. Exports `MARKER`, `RSIZ_CAP_BIT`, `sniffCodestream(bytes)` → `{kind, rsiz, markerOffset, hasCap}`, and `isHTJ2KCodestream(bytes)`. A length-walk from SOC to SIZ, with a bounded byte scan as recovery when a segment length is malformed. `kind: 'unknown'` means "not a codestream — do not guess a decoder".
+- **`imf_j2k.js`** — sniffs first; rejects non-codestreams outright; gates the direct OpenJPH path on `sniff.kind === 'htj2k'`. Classic streams now go straight to the sandbox, which routes them to OpenJPEG.
+- **`src/sandbox/j2k_decoder.js`** — its local `sniffCodestream` deleted in favour of the shared import, so the two can't drift apart again.
+- **Route accounting (the actual C-RT2 deliverable)** — `getDecodeRouteStats()` / `resetDecodeRouteStats()` in `imf_j2k.js` count decodes by the backend that served them (`direct-openjph`, `sandbox:<decoderKind>`), plus `directFailures`, `rejected`, `failed`, and `last`. This is the number whose absence let the defect hide: a HUD reading "sandbox:openjpeg — 1 direct failure per frame" would have said it out loud on the first classic IMF open.
+
+**Deliberately conservative.** `rsiz & 0x4000` is kept as the predicate — exactly what the sandbox has always used — rather than a stricter Pcap test the decoders were never validated against; `hasCap` is reported separately as corroboration. And a valid SOC whose SIZ can't be read resolves to `'j2k'`, never `'htj2k'`: the classic path has a pure-JS fallback behind it, the HT path has nothing.
+
+**Testing.** New `tests-js/j2kCodestream.test.mjs`, 36 assertions: synthesised Part 1 / Part 15 / CAP-bearing headers, eight broadcast-profile Rsiz values that must not read as HT, JP2 container and `0xFF50`-leading buffers that must resolve `'unknown'`, degenerate headers that must resolve to classic, and source-level assertions that both consumers import the shared module and that the sandbox no longer defines its own.
+
+Mutation-verified four times: dropping the `htj2k` gate → 2 failures; wrong capability bit → 6; unsafe `'htj2k'` default on an unreadable SIZ → 1; sandbox redefining its own sniff → 1.
+
+Worth recording: the capability-bit mutation **initially survived**, because the test built its HT fixtures from `RSIZ_CAP_BIT` — so flipping the constant moved the fixture and the assertion together. Fixtures are now written as literals with `eq(RSIZ_CAP_BIT, 0x4000)` pinning the constant separately. A test that derives its input from the value under test is testing nothing. This is the same failure mode as iteration 3's tests-on-the-unused-twin, one level down.
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1). Cross-directory import verified to resolve in **both** built targets (`dist/desktop/`, `dist/extension/`).
+- **Files:** `src/scripts/modules/imf/j2kCodestream.js` (new), `src/scripts/modules/imf/imf_j2k.js`, `src/sandbox/j2k_decoder.js`, `tests-js/j2kCodestream.test.mjs`.
+- **Next:** wire `getDecodeRouteStats()` into a visible HUD readout (the counters exist but nothing displays them yet), or `imf_player.js::parseJ2KHeader` → replace its third private parse with the shared module.

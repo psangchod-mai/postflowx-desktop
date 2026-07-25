@@ -1,0 +1,110 @@
+// scripts/modules/imf/j2kCodestream.js
+// The one place that decides whether a JPEG 2000 codestream is HTJ2K (Part 15)
+// or classic (Part 1). Pure byte inspection — no DOM, no WASM, unit-testable.
+//
+// Why this module exists: three places used to answer this question and they
+// disagreed.
+//   • src/sandbox/j2k_decoder.js  — scanned for SIZ, tested Rsiz & 0x4000, and
+//     routed HT → OpenJPH / classic → OpenJPEG. Correct.
+//   • imf_j2k.js decodeHTJ2K()    — did not sniff at all. It accepted any
+//     codestream and handed it to OpenJPH's HTJ2KDecoder, which is the decoder
+//     the sandbox reserves for HT only.
+//   • imf_player.js parseJ2KHeader() — walked the marker segments properly and
+//     captured Rsiz, but never tested the capability bit; the value was only
+//     ever displayed.
+// So the codebase already knew the answer twice and still routed on it zero
+// times outside the sandbox. Import from here instead of re-deriving it.
+'use strict';
+
+export const MARKER = {
+  SOC: 0xFF4F,  // Start of codestream — first two bytes of every J2K stream,
+                // Part 1 and Part 15 alike. HTJ2K does NOT have its own SOC.
+  SIZ: 0xFF51,  // Image and tile size — mandatory, immediately follows SOC.
+  CAP: 0xFF50,  // Extended capabilities. Present iff Rsiz bit 14 is set; this
+                // is the marker HTJ2K adds, not a different SOC.
+  EOC: 0xFFD9,
+};
+
+// Rsiz bit 14. Set means "a CAP marker segment follows", which is how a Part 15
+// (HTJ2K) codestream announces itself. Strictly, Pcap in the CAP segment names
+// *which* extension; in practice every HT stream sets this bit and the sandbox
+// has always routed on it alone, so this module matches that predicate exactly
+// rather than inventing a stricter one the decoders were never tested against.
+// `hasCap` is reported separately for callers that want the corroboration.
+export const RSIZ_CAP_BIT = 0x4000;
+
+function u16(bytes, off) {
+  return ((bytes[off] & 0xff) << 8) | (bytes[off + 1] & 0xff);
+}
+
+/**
+ * Classify a raw JPEG 2000 codestream.
+ *
+ * @param {Uint8Array} bytes  Codestream, ideally starting at SOC.
+ * @returns {{kind:'htj2k'|'j2k'|'unknown', rsiz:number|null, markerOffset:number, hasCap:boolean}}
+ *   kind 'unknown' means "not a J2K codestream" — callers must not guess a
+ *   decoder for it. 'j2k' means classic Part 1. Never returns 'htj2k' on a
+ *   stream whose SIZ could not be read.
+ */
+export function sniffCodestream(bytes) {
+  const info = { kind: 'unknown', rsiz: null, markerOffset: -1, hasCap: false };
+  if (!bytes || bytes.length < 8) return info;
+  if (u16(bytes, 0) !== MARKER.SOC) return info;
+
+  // SIZ is mandatory and immediately follows SOC, so the walk below normally
+  // resolves on its first step. The bounded scan is tolerance for streams with
+  // a stray segment in front, matching what the sandbox has always accepted.
+  let off = 2;
+  const lim = Math.min(bytes.length - 6, 8192);
+  while (off < lim) {
+    const marker = u16(bytes, off);
+    if (marker === MARKER.SIZ) {
+      info.markerOffset = off;
+      info.rsiz = u16(bytes, off + 4);
+      info.kind = (info.rsiz & RSIZ_CAP_BIT) ? 'htj2k' : 'j2k';
+      info.hasCap = _scanForCap(bytes, off, lim);
+      return info;
+    }
+    const len = u16(bytes, off + 2);
+    if (len < 2) break;          // malformed length — stop walking, start scanning
+    off += 2 + len;
+  }
+
+  // Length walk failed (truncated or malformed header). Fall back to a plain
+  // byte scan for SIZ rather than guessing HT.
+  for (let i = 2; i < lim; i++) {
+    if (bytes[i] === 0xFF && bytes[i + 1] === 0x51) {
+      info.markerOffset = i;
+      info.rsiz = u16(bytes, i + 4);
+      info.kind = (info.rsiz & RSIZ_CAP_BIT) ? 'htj2k' : 'j2k';
+      info.hasCap = _scanForCap(bytes, i, lim);
+      return info;
+    }
+  }
+
+  // Valid SOC but no readable SIZ. It is a codestream, but we cannot tell which
+  // kind — report classic, the conservative choice: the classic decoder path has
+  // a pure-JS fallback behind it, the HT path does not.
+  info.kind = 'j2k';
+  return info;
+}
+
+function _scanForCap(bytes, sizOff, lim) {
+  const len = u16(bytes, sizOff + 2);
+  if (len < 2) return false;
+  let off = sizOff + 2 + len;
+  while (off + 4 <= lim) {
+    const marker = u16(bytes, off);
+    if (marker === MARKER.CAP) return true;
+    if (marker === 0xFF90 || marker === 0xFF93) return false;  // SOT/SOD — main header over
+    const l = u16(bytes, off + 2);
+    if (l < 2) return false;
+    off += 2 + l;
+  }
+  return false;
+}
+
+/** True only for codestreams that OpenJPH (HTJ2K-only) should be given. */
+export function isHTJ2KCodestream(bytes) {
+  return sniffCodestream(bytes).kind === 'htj2k';
+}
