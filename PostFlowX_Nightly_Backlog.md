@@ -350,3 +350,24 @@ _(Newest on top. First nightly run starts here.)_
 - **Build:** `build-verify` PASS — and for the first time genuinely: node `--test` 55 pass/1 skip, `test:js` 82 files exit 0, **pytest 250 passed / 7 skipped**, XSS gate clean, XXE gate clean. `build:renderer` PASS (366 files).
 - **Files:** `tools/run-pytest.mjs` (new), `package.json`, `.gitignore`, `companion/src/postflowx_companion/api.py`, `companion/tests/test_adm_parse.py` (new).
 - **Next:** the 7 remaining skips are all fixture-gated like `test_iab_inspect` — worth auditing whether any can be made fixture-free the same way.
+
+### 2026-07-26 (night run, iteration 2) — the same fail-open class in the JS suite, and a gate to end it
+
+**Research — two leads killed before writing code.**
+- *"Audit whether any of the 7 remaining pytest skips can be made fixture-free"* (iteration 1's Next). No: 4 are `PyOpenColorIO`, a build-time-only dependency, and the other 3 are the Meridian MXF tests already superseded by `test_adm_parse.py`. Nothing to harvest — closing this lead.
+- **E1's follow-up is stale** ("`fdlGenerator.js` has NO golden/pixel-accuracy tests"). `tests-js/fdlGenerator.test.mjs` exists and is thorough: schema tag, frame-range math, the reformat-scale formula against a non-trivial 4608x3164 → 3840x2160 case (0.6827), AMF precedence, CSV escaping, TXT block, sparse defaults. That is the sixth backlog item found already-shipped; the backlog is a lead list, not a truth source.
+
+**1. Iteration 1's lesson applied to the JS suite — same defect, four more sites (MEDIUM).** `test:js` was audited on the assumption it fails loudly. Four files wrapped `require('electron/imf/imf_direct_engine.js')` in `catch (e) { console.log('SKIP…'); process.exit(0) }` (and one in a bare `return` from an async helper). `imf_direct_engine.js` is **first-party and always present** — a load failure there is a bug, never an optional dependency. A syntax error in the engine would have deleted **76 assertions** across `imfDirectEngineRealtime`, `imfEngineProgressCancel`, `imfMpjpegReassembler`, and `imfEngineUiWiring` while `test:js` still exited 0 and printed green. Latent, not live — all four currently pass — but it is exactly how iteration 1's pytest hole stayed invisible for months. All four now `console.error('FAIL …')` + `process.exit(1)`.
+
+**2. New gate so the class cannot come back — `tools/scan-failopen.mjs`.** Follows the `scan-rawxml` convention (pure exported predicate + `--gate` → exit 1). Flags, across `tests-js/` and `test/`:
+- a `catch` body containing `process.exit(0)`;
+- a `catch` body that logs `SKIP` and bare-`return`s (a plain `return null` fallback is *not* flagged — that would be noise);
+- npm scripts that discard their own exit code (`|| true`, `; true`, `|| exit 0`).
+Genuinely-optional dependencies stay expressible via `// fail-open-ok: <reason>` on or above the catch — the point is that a skip is a reviewed decision, not an accident. node:test's `{ skip: reason }` is preferred and never flagged, since it still reports.
+- **Mutation-verified:** reintroducing the exact pre-fix catch into `imfMpjpegReassembler.test.mjs` → gate exits 1 naming `:26`. Restored → clean.
+- A design flaw surfaced *from* its own tests: folding the two preceding source lines into the catch body let one catch's `process.exit(0)` condemn the next catch. `catchBlocks` now returns `{ line, body, annotation }` with the annotation checked separately.
+- 13 new assertions in `tests-js/securityGates.test.mjs` (40 total, was 27).
+
+- **Build:** `build-verify` PASS — node `--test` 55 pass/1 skip, `test:js` 82 files exit 0, pytest 250 passed / 7 skipped, XSS + XXE + **fail-open** gates clean. `build:renderer` PASS (366 files).
+- **Files:** `tools/scan-failopen.mjs` (new), `package.json`, `tests-js/securityGates.test.mjs`, `tests-js/imfDirectEngineRealtime.test.mjs`, `tests-js/imfEngineProgressCancel.test.mjs`, `tests-js/imfMpjpegReassembler.test.mjs`, `tests-js/imfEngineUiWiring.test.mjs`.
+- **Next:** the verification-integrity seam is now closed on both suites; move to product substance — C-RT1c (FFmpeg `-threads`/frame-slice threading on the `-f imf` decode, the biggest CPU lever left) or C1 (unify the codec→engine routing decision currently split between the companion and `smart_router.js`).

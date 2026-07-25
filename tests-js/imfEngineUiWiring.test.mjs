@@ -26,6 +26,7 @@ function ok(c, l) { if (c) { passed++; console.log('PASS -', l); } else { failed
 
 const preloadSrc = fs.readFileSync(path.join(root, 'electron/preload.js'), 'utf8');
 const uiSrc      = fs.readFileSync(path.join(root, 'src/scripts/modules/imf/imf_ui.js'), 'utf8');
+const playerSrc  = fs.readFileSync(path.join(root, 'src/scripts/modules/imf/imf_player.js'), 'utf8');
 
 // ── (1) preload bridge exposes the three job methods on imfEngine ──────────────
 {
@@ -67,13 +68,24 @@ const uiSrc      = fs.readFileSync(path.join(root, 'src/scripts/modules/imf/imf_
   // runHashVerification must consult the engine path before the legacy loop.
   ok(/async function runHashVerification[\s\S]{0,1400}_runHashVerificationViaEngine\(/.test(uiSrc),
      'runHashVerification prefers the engine (progress+cancel) path');
+
+  ok(/function _beginRealtimeFirstPlayback\(/.test(playerSrc),
+     'validation player has a realtime-first playback entry point');
+  ok(/btnPlay\.onclick[\s\S]{0,1800}_beginRealtimeFirstPlayback\('warm-start'\)/.test(playerSrc),
+     'validation Play button routes through realtime-first playback');
+  ok(/if \(autoPlay\)[\s\S]{0,220}_beginRealtimeFirstPlayback\('auto-play'\)/.test(playerSrc),
+     'validation reel auto-play routes through realtime-first playback');
+  ok(/eng\.startPlayback[\s\S]{0,220}assetMaps:\s*S\.assetMaps/.test(playerSrc),
+     'validation realtime playback passes all ASSETMAPs for supplemental packages');
 }
 
 // ── (3) live poll contract against the real engine (bridge/engine parity) ──────
 async function pollContract() {
   let engine = null;
   try { engine = require(path.join(root, 'electron/imf/imf_direct_engine.js')); }
-  catch (e) { console.log('SKIP - engine not loadable for poll contract:', e.message); return; }
+  // First-party module: a load failure is a bug, not a skip condition. Returning
+  // here quietly dropped the entire poll contract while the file still exited 0.
+  catch (e) { console.error('FAIL - imf_direct_engine failed to load:', e.stack || e.message); process.exit(1); }
   const { startJob, jobProgress, cancelJob } = engine;
 
   // startJob('validate') on a missing package settles fast and is pollable via

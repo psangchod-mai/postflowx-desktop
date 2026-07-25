@@ -16,7 +16,11 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let engine = null;
 try { engine = require(path.join(root, 'electron/imf/imf_direct_engine.js')); }
-catch (e) { console.error('SKIP - could not load imf_direct_engine:', e.message); process.exit(0); }
+// imf_direct_engine.js is first-party and always present — a load failure is a
+// BUG, not an optional dependency. This used to exit(0), which meant a syntax
+// error in the engine silently deleted this whole file from `test:js` and the
+// suite still reported green. Fail loudly instead.
+catch (e) { console.error('FAIL - imf_direct_engine failed to load:', e.stack || e.message); process.exit(1); }
 
 const { CancellationToken, CancellationError, startJob, jobProgress, cancelJob, _getJob } = engine;
 

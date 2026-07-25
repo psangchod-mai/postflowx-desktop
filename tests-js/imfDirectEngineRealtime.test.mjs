@@ -4,6 +4,7 @@
 // never routes through _extractSingleFrame. Run: node tests-js/imfDirectEngineRealtime.test.mjs
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -14,7 +15,13 @@ function ok(c, l) { if (c) { passed++; console.log('PASS -', l); } else { failed
 
 let engine = null;
 try { engine = require(path.join(root, 'electron/imf/imf_direct_engine.js')); }
-catch (e) { console.error('SKIP - could not load imf_direct_engine:', e.message); process.exit(0); }
+// imf_direct_engine.js is first-party and always present — a load failure is a
+// BUG, not an optional dependency. This used to exit(0), which meant a syntax
+// error in the engine silently deleted this whole file from `test:js` and the
+// suite still reported green. Fail loudly instead.
+catch (e) { console.error('FAIL - imf_direct_engine failed to load:', e.stack || e.message); process.exit(1); }
+
+const engineSrc = fs.readFileSync(path.join(root, 'electron/imf/imf_direct_engine.js'), 'utf8');
 
 // ── Reduced-decode quality ladder (P0-RT-REDUCED) ──
 // full → lowres 0 (full res); half → 1; quarter → 2; auto → reduced (>=1).
@@ -53,6 +60,26 @@ catch (e) { console.error('SKIP - could not load imf_direct_engine:', e.message)
   ok(s.perFrameSpawnsDuringPlay === 0, 'per-frame-during-play counter resets to 0 (the play invariant)');
   ok(typeof s.mpjpegBufferCapBytes === 'number' && s.mpjpegBufferCapBytes > 0 && s.mpjpegBufferCapBytes <= 64 * 1024 * 1024,
     'mpjpeg decode-ahead buffer is bounded (backpressure cap present, <=64MB)');
+}
+
+// ── Stream session attach contract (RT-START-ATTACH) ──
+// Regression guard: startPlayback creates the session before the renderer opens
+// streamUrl. The HTTP attach path only starts ffmpeg for a playing session, so a
+// freshly-started session must already be marked playing or the viewer silently
+// stalls and falls back to per-frame playback.
+{
+  ok(/async function startPlayback[\s\S]*state:\s*'playing'/.test(engineSrc),
+     'startPlayback creates a playing session so streamUrl attach starts ffmpeg');
+  ok(/function _attachMJPEGStream[\s\S]*session\.state === 'playing'[\s\S]*_startFFmpegStream/.test(engineSrc),
+     'HTTP stream attach starts the persistent ffmpeg stream for playing sessions');
+  ok(/assetMapPaths\s*=\s*_assetMapList\(idx,\s*opts\.assetMaps\)/.test(engineSrc),
+     'startPlayback accepts renderer-provided supplemental ASSETMAP list');
+  ok(/assetMapPath:\s*assetMapArg/.test(engineSrc),
+     'stream session passes comma-joined ASSETMAPs to ffmpeg');
+  ok(/function _streamVideoFilter[\s\S]*flags=lanczos[\s\S]*unsharp=/.test(engineSrc),
+     'reduced realtime stream uses sharper scaling without changing full-res mode');
+  ok(/function _startFFmpegStream[\s\S]*'-re'[\s\S]*'-i', session\.cplPath/.test(engineSrc),
+     'persistent stream is throttled to realtime instead of decode-as-fast-as-possible');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
