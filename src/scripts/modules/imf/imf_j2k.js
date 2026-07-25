@@ -67,6 +67,8 @@ export function getDecodeRouteStats() {
     failed: _routeStats.failed,
     rejected: _routeStats.rejected,
     last: _routeStats.last,
+    directLatched: _directHTLatch.latched,
+    directLatchReason: _directHTLatch.reason,
   };
 }
 
@@ -77,7 +79,58 @@ export function resetDecodeRouteStats() {
   _routeStats.failed = 0;
   _routeStats.rejected = 0;
   _routeStats.last = null;
+  // The latch is part of the route state this function reports. Clearing the
+  // counters but not the latch would leave the HUD showing 0% waste while the
+  // fast path stayed off — a lie assembled out of two true halves.
+  _directHTLatch.reset();
 }
+
+// ── Strike latch for the direct HT path ─────────────────────────────────────
+// Consecutive, not cumulative. One corrupt frame in an otherwise-fine reel must
+// not cost the fast path for the remaining nine minutes; a systematically
+// incompatible stream must not cost a full codestream copy into the WASM heap
+// plus a thrown exception on every frame for that same nine minutes.
+export const DIRECT_HT_STRIKE_LIMIT = 3;
+
+/**
+ * A consecutive-failure latch. Exported and dependency-free so the tripping
+ * rule can be tested without a DOM, a WASM module, or a decode.
+ *
+ * @param {number} limit consecutive failures that trip the latch
+ */
+export function createStrikeLatch(limit) {
+  // No clamp on `limit`. A `Math.max(1, …)` guard was written here first and then
+  // removed: every degenerate value (0, negative, NaN, fractional) coerces to a
+  // max the first strike already exceeds, so the latch trips on failure 1 either
+  // way. A defence that cannot change an outcome is not a defence, it is a
+  // comment that costs a branch — and one no test can tell from its absence.
+  const max = limit | 0;
+  let strikes = 0, latched = false, reason = '';
+  return {
+    get latched() { return latched; },
+    get strikes() { return strikes; },
+    get reason() { return reason; },
+    /** A success. Resets the run — this is what makes the count consecutive. */
+    ok() { strikes = 0; },
+    /** A failure. Returns true only on the call that trips the latch, so the
+     *  caller can log once instead of once per frame. */
+    fail(why) {
+      strikes++;
+      if (latched || strikes < max) return false;
+      latched = true; reason = why || 'unknown';
+      return true;
+    },
+    /** Trip immediately, no strikes — for failures already known to be permanent. */
+    trip(why) {
+      if (latched) return false;
+      latched = true; reason = why || 'unknown';
+      return true;
+    },
+    reset() { strikes = 0; latched = false; reason = ''; },
+  };
+}
+
+const _directHTLatch = createStrikeLatch(DIRECT_HT_STRIKE_LIMIT);
 
 // Operator-facing names. Deliberately the decoder, not the transport: "which
 // library produced this pixel" is the question a QC operator can act on.
@@ -127,9 +180,17 @@ export function summarizeDecodeRoute(stats) {
   // Only shown when it is costing something: a full codestream copy into the
   // WASM heap plus a thrown exception, once per frame, for nothing.
   if (wastedPct >= WASTED_ATTEMPT_WARN_PCT) text += ` ⚠${wastedPct}% wasted`;
+  // Informational, deliberately not a warning and deliberately not `degraded`.
+  // The latch is what *stopped* the waste. It usually coincides with a genuinely
+  // degraded backend, which is flagged on its own merits below — but the direct
+  // path can also fail for reasons local to the main-page WASM heap while the
+  // sandbox's separate heap decodes at full speed, and calling that degraded
+  // would cry wolf on a reel that is completely fine.
+  if (stats.directLatched) text += ' (HT off)';
 
   return {
     backend, label, text, sharePct, wastedPct, mixed,
+    directLatched: !!stats.directLatched,
     degraded: DEGRADED_BACKENDS.has(backend) || wastedPct >= WASTED_ATTEMPT_WARN_PCT,
   };
 }
@@ -446,19 +507,39 @@ export async function decodeHTJ2K(bytes, opts = {}) {
   // only. Sending it a Part 1 stream cost a full copy of the codestream into the
   // WASM heap plus a thrown exception *per frame*, then fell through to the
   // sandbox that would have decoded it correctly in the first place.
-  if (!_directHTDisabled && sniff.kind === 'htj2k') {
+  //
+  // The strike latch is the third gate. Before it, a stream OpenJPH could not
+  // decode was retried on every single frame — the sniff stops classic essence
+  // from getting here, but an HT stream this build's OpenJPH chokes on (an
+  // unsupported subprofile, a bit depth it was not compiled for) still paid the
+  // copy and the throw 24 times a second for the length of the reel, and wrote
+  // a console.warn each time, which is itself not free with devtools open.
+  if (!_directHTDisabled && !_directHTLatch.latched && sniff.kind === 'htj2k') {
     try {
       const mod = await _loadDirectHTModule();
       if (mod) {
         const frame = _decodeHTBytesWithModule(mod, bytes, typeof opts.scale === 'number' ? opts.scale : 1);
+        _directHTLatch.ok();
         _noteRoute('direct-openjph');
         if (typeof window !== 'undefined' && window.PFX_DEBUG_IMF) console.log(`[J2K] direct decode ok via ${frame.decoderKind} ${frame.width}x${frame.height} ${frame.componentCount}ch ${frame.bitsPerSample}bpp`);
         return frame;
       }
+      // The loader memoises its own failure, so re-entering costs nothing — but
+      // it will never succeed either, and the HUD should say the path is off
+      // rather than leave the operator wondering why the fast rung never appears.
+      if (_directHTLatch.trip(_lastDirectHTError || 'direct HT module unavailable')) {
+        console.warn(`[J2K] direct HT path off for this reel: ${_directHTLatch.reason}`);
+      }
     } catch (e) {
       _lastDirectHTError = String(e && e.message ? e.message : e);
       _routeStats.directFailures++;
-      console.warn('[J2K] direct HT decode failed, falling back to sandbox', e);
+      // fail() is true only on the call that trips the latch, so this logs once
+      // per reel instead of once per frame.
+      if (_directHTLatch.fail(_lastDirectHTError)) {
+        console.warn(`[J2K] direct HT path off for this reel after ${_directHTLatch.strikes} consecutive failures: ${_directHTLatch.reason}`);
+      } else if (_directHTLatch.strikes === 1) {
+        console.warn('[J2K] direct HT decode failed, falling back to sandbox', e);
+      }
     }
   }
 

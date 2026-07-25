@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   summarizeDecodeRoute, getDecodeRouteStats, resetDecodeRouteStats,
-  WASTED_ATTEMPT_WARN_PCT,
+  WASTED_ATTEMPT_WARN_PCT, createStrikeLatch, DIRECT_HT_STRIKE_LIMIT,
 } from '../src/scripts/modules/imf/imf_j2k.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -94,6 +94,67 @@ eq(summarizeDecodeRoute(stats({ 'sandbox:j2k-openjpeg': 100 }, { directFailures:
   ok(s.text.length > 0, 'a new decode rung is visible before anyone adds a label for it');
 }
 
+// ── the strike latch: consecutive, not cumulative ──
+// The subtle half. A cumulative counter would disable the fast path after three
+// scattered bad frames across a two-hour reel, which is a worse outcome than the
+// per-frame waste it exists to stop.
+eq(DIRECT_HT_STRIKE_LIMIT, 3, 'three consecutive failures trip the direct HT latch');
+{
+  const l = createStrikeLatch(3);
+  eq(l.latched, false, 'a fresh latch is open');
+  eq(l.fail('a'), false, 'strike 1 does not trip');
+  eq(l.fail('b'), false, 'strike 2 does not trip');
+  eq(l.latched, false, 'still open below the limit');
+  eq(l.fail('c'), true, 'strike 3 trips, and says so exactly once');
+  eq(l.latched, true, 'latched');
+  eq(l.reason, 'c', 'the tripping failure is the recorded reason');
+  eq(l.fail('d'), false, 'a latched latch never re-announces — this is what stops per-frame logging');
+  eq(l.reason, 'c', 'later failures do not overwrite the reason');
+}
+{
+  const l = createStrikeLatch(3);
+  l.fail('a'); l.fail('b');
+  l.ok();
+  eq(l.strikes, 0, 'a success resets the run');
+  eq(l.fail('c'), false, 'so the next failure is strike 1, not strike 3');
+  eq(l.fail('d'), false, 'strike 2');
+  eq(l.latched, false, 'two isolated bad frames around a good one do not cost the fast path');
+}
+{
+  const l = createStrikeLatch(3);
+  eq(l.trip('module unavailable'), true, 'a known-permanent failure trips without strikes');
+  eq(l.latched, true, 'latched immediately');
+  eq(l.trip('again'), false, 'tripping twice announces once');
+  l.reset();
+  eq(l.latched, false, 'reset reopens the latch');
+  eq(l.reason, '', 'and clears the reason');
+  eq(l.strikes, 0, 'and the strike run');
+}
+// Degenerate limits. The contract is "starts open, trips on the first failure" —
+// never "starts latched", which would disable the fast path on frame 1 of every
+// reel. Stated as an outcome, not as a clamp: an earlier version of this test
+// claimed to verify a `Math.max(1, …)` guard, and a mutation removing that guard
+// passed, because every degenerate value produces the same outcome with or
+// without it. The guard is gone; the outcome is what is pinned.
+for (const bad of [0, -5, NaN, undefined, 0.5]) {
+  const l = createStrikeLatch(bad);
+  eq(l.latched, false, `createStrikeLatch(${String(bad)}) starts open`);
+  eq(l.fail('x'), true, `createStrikeLatch(${String(bad)}) trips on the first failure, not before it`);
+}
+
+// ── a latched fast path is reported, but is not by itself "degraded" ──
+{
+  const s = summarizeDecodeRoute(stats({ 'sandbox:htj2k-openjph': 200 }, { directLatched: true }));
+  eq(s.directLatched, true, 'the latch is surfaced to the HUD');
+  eq(s.text, 'OpenJPH (HT off)', 'the operator is told the direct rung is off');
+  eq(s.degraded, false,
+     'the main-page WASM heap can fail while the sandbox decodes at full speed — that is not degraded');
+}
+eq(summarizeDecodeRoute(stats({ 'sandbox:j2k-fallback': 40 }, { directLatched: true })).degraded, true,
+   'a latch alongside a genuinely bad backend is still degraded, on the backend’s own merits');
+eq(summarizeDecodeRoute(stats({ 'direct-openjph': 40 })).directLatched, false,
+   'no latch reported when the direct path is serving frames');
+
 // ── the live counters are a copy, and resettable ──
 {
   const a = getDecodeRouteStats();
@@ -103,6 +164,24 @@ eq(summarizeDecodeRoute(stats({ 'sandbox:j2k-openjpeg': 100 }, { directFailures:
   ok(!('forged' in getDecodeRouteStats().byBackend), 'byBackend is copied, not aliased');
   resetDecodeRouteStats();
   eq(getDecodeRouteStats().last, null, 'reset clears the last-backend marker');
+  eq(getDecodeRouteStats().directLatched, false, 'reset reopens the direct-HT latch');
+}
+
+// ── the hot path must actually consult the latch ──
+// A latch nothing reads is the iteration-5 finding all over again.
+{
+  const j = fs.readFileSync(path.join(root, 'src/scripts/modules/imf/imf_j2k.js'), 'utf8');
+  const guard = j.match(/if\s*\(!_directHTDisabled[^)]*\)/);
+  ok(guard && /_directHTLatch\.latched/.test(guard[0]),
+     'the direct-path guard itself checks the latch');
+  ok(/_directHTLatch\.ok\(\)/.test(j),
+     'a successful direct decode resets the strike run');
+  ok(/if \(_directHTLatch\.fail\(/.test(j),
+     'the warn is gated on fail() returning true — once per reel, not once per frame');
+  ok(/_directHTLatch\.reset\(\)/.test(j),
+     'resetDecodeRouteStats clears the latch with the counters it belongs to');
+  ok(/_directHTLatch\.trip\(/.test(j),
+     'a permanently unavailable module trips the latch rather than re-checking forever');
 }
 
 // ── the player must actually render this ──

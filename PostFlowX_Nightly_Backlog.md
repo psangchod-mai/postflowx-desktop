@@ -473,3 +473,27 @@ Mutation-verified four times: inclusive threshold → exclusive → 1 failure; t
 - **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1).
 - **Files:** `src/scripts/modules/imf/imf_j2k.js`, `src/scripts/modules/imf/imf_player.js`, `tests-js/decodeRoute.test.mjs`.
 - **Next:** `imf_player.js::parseJ2KHeader` — the third private header parse, still un-converged onto `j2kCodestream.js`. Or: nothing disables the direct HT path after repeated failures, so a misrouted clip pays the cost for its whole length; a strike-count latch would make the ⚠ readout self-correcting instead of merely honest.
+
+---
+
+### 2026-07-26 (night run, iteration 6) — C-RT2 (part 3): stop the waste, don't just report it
+
+Iteration 5 made per-frame decoder waste visible. Visible is not fixed. This latches it off.
+
+**The remaining hole.** The sniff added in iteration 4 stops *classic* essence from reaching the direct OpenJPH path. It does nothing for an HT stream that this build's OpenJPH cannot decode — an unsupported subprofile, a bit depth it wasn't compiled for, a main-page WASM heap that won't allocate. That stream still paid a full codestream copy into the WASM heap plus a thrown exception **on every frame**, wrote a `console.warn` with an Error object each time, and then fell through to the sandbox that decodes it correctly. At 24 fps for a ten-minute reel: 14,400 wasted attempts and 14,400 console entries, which with devtools open is itself a measurable cost.
+
+**Consecutive, not cumulative.** Three consecutive direct-HT failures now latch the fast path off for the rest of the reel; any success resets the run. That distinction is the whole design. A cumulative counter would disable the fast path after three scattered bad frames spread across a two-hour reel — a worse outcome than the waste it exists to prevent. A permanently unavailable module (`_loadDirectHTModule` memoises its own failure) trips the latch immediately rather than being re-checked forever.
+
+**Logging drops from per-frame to per-reel.** `fail()` returns true only on the call that trips the latch, so the caller logs once. The first failure still gets its warning — a single "falling back to sandbox" line is useful; 14,400 of them bury the log they are trying to write.
+
+**A latch is reported but is deliberately not `degraded`.** The HUD gains `(HT off)`, plain, no ⚠. The latch is what *stopped* the waste. It usually coincides with a genuinely bad backend, and that backend is flagged on its own merits — but the direct path can fail for reasons local to the main-page WASM heap while the sandbox's separate heap decodes at full speed, and colouring that reel red would cry wolf. Note that the player needed no change at all: iteration 5's HUD reads `route.text`, so the new state surfaced for free.
+
+**Testing.** `tests-js/decodeRoute.test.mjs` grows to 77 assertions. The latch is an exported dependency-free factory (`createStrikeLatch`) precisely so the tripping rule is testable without a DOM, a WASM module, or a decode — consecutive-vs-cumulative, trip-announces-once, reset, degenerate limits, plus source-level guards that the hot path checks the latch, resets on success, gates its warn on `fail()`, and clears with the counters.
+
+Mutation-verified eight times: cumulative instead of consecutive → 3 failures; re-announcing every frame → 2; off-by-one trip → 6; latch wrongly implying degraded → 1; hot path ignoring the latch → 1; reset leaving it stuck → 1; latch starting closed → 17; never tripping → 5.
+
+**One mutation survived, and the code lost a line because of it.** `createStrikeLatch` originally clamped its limit with `Math.max(1, limit | 0)`. Removing the clamp changed nothing any test could see — and on inspection, nothing *anything* could see: every degenerate value (`0`, negative, `NaN`, `undefined`, fractional) coerces to a max the first strike already exceeds, so the latch trips on failure 1 with or without it. The clamp was deleted rather than tested. The test was reworded from a claim about a mechanism to a claim about the outcome, and now runs over five degenerate inputs. Iteration 4's lesson was *don't derive the fixture from the value under test*; this is its sibling — **a test labelled for a mechanism it cannot detect is worse than no test, because it reports the mechanism as covered.**
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (367 files, v2026.6.1).
+- **Files:** `src/scripts/modules/imf/imf_j2k.js`, `tests-js/decodeRoute.test.mjs`.
+- **Next:** `imf_player.js::parseJ2KHeader` is still the third private header parse, un-converged onto `j2kCodestream.js` — the one item left from area 8 and the smallest remaining piece of C-RT2. After that the J2K decode path is exhausted as an audit area and the loop should move on.
