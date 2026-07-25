@@ -8,6 +8,7 @@ import { fmtDuration } from './imf_parser.js';
 import { scanMXF, readMXFFrame } from './imf_mxf.js';
 import { diffStats } from './imf_layer_compare.js';
 import { createImfGlPresenter } from './imf_gl_present.js';
+import { sniffCodestream } from './j2kCodestream.js';
 
 // GPU (WebGL2/Metal-via-ANGLE) present path for the WASM-decode "Path B".
 // Lazily initialized on first present; `undefined` = not yet tried, `null` =
@@ -308,31 +309,39 @@ function _avLockActive() {
 // Exposed so imf_ui.js can halt audio when it drives a reel change directly.
 export { _audStop as audStop, _audPlay as audPlay };
 
-// ── J2K header parser ─────────────────────────────────────────────────────────
-// Returns { width, height, rsiz, byteLength } or null if not J2K
+// ── J2K header ────────────────────────────────────────────────────────────────
+// Returns { width, height, rsiz, isHTJ2K, byteLength }, or null when the bytes
+// are not a JPEG 2000 codestream at all. width/height are null when SIZ could
+// not be read — the caller must test them, not print them.
+//
+// The parse used to live here, as the fourth private copy of the SIZ walk in
+// this codebase. It carried four defects the shared one in j2kCodestream.js
+// does not:
+//   • it reported Xsiz as the width; the image is Xsiz − XOsiz;
+//   • it accepted `Lsiz >= 38`, a length no conforming SIZ can have (41 is the
+//     floor, at one component), so a spurious FF51 in packet data could match;
+//   • its marker walk had no byte bound and no SOT/SOD stop, so a truncated
+//     frame was walked to the end of the buffer with entropy-coded bytes read
+//     as segment lengths;
+//   • it built its DataView as `new DataView(bytes.buffer, bytes.byteOffset)`
+//     with no length, so the view spanned to the end of the underlying
+//     ArrayBuffer instead of this frame. Every read happened to be guarded
+//     against `bytes.length` by hand, so nothing read out of bounds today —
+//     but the safety lived in five separate hand-written comparisons rather
+//     than in the view, and one more read would have been one too many.
+// It also captured `rsiz` and never tested the capability bit, which is the
+// original reason j2kCodestream.js exists.
 function parseJ2KHeader(bytes) {
   if (!bytes || bytes.length < 6) return null;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset);
-  // SOC marker = FF 4F
-  if (dv.getUint16(0) !== 0xFF4F) return null;
-  let off = 2;
-  while (off + 4 <= bytes.length) {
-    const marker = dv.getUint16(off);
-    if (off + 2 >= bytes.length) break;
-    const len = dv.getUint16(off + 2);
-    if (marker === 0xFF51 && len >= 38) {  // SIZ segment
-      if (off + 14 > bytes.length) break;
-      return {
-        rsiz:       dv.getUint16(off + 4),
-        width:      dv.getUint32(off + 6),
-        height:     dv.getUint32(off + 10),
-        byteLength: bytes.length,
-      };
-    }
-    if (len < 2) break;
-    off += 2 + len;
-  }
-  return { byteLength: bytes.length };  // J2K but SIZ not found
+  const info = sniffCodestream(bytes);
+  if (info.kind === 'unknown') return null;
+  return {
+    rsiz:       info.rsiz,
+    width:      info.width,
+    height:     info.height,
+    isHTJ2K:    info.kind === 'htj2k',
+    byteLength: bytes.length,
+  };
 }
 
 // ── Scan progress overlay ─────────────────────────────────────────────────────

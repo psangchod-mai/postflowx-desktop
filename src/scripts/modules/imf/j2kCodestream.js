@@ -37,17 +37,70 @@ function u16(bytes, off) {
   return ((bytes[off] & 0xff) << 8) | (bytes[off + 1] & 0xff);
 }
 
+// Multiply rather than `<< 24`: Xsiz is an unsigned 32-bit field, and a shift
+// would sign-flip anything at or above 2^31 into a negative width.
+function u32(bytes, off) {
+  return ((bytes[off] & 0xff) * 0x1000000) +
+         (((bytes[off + 1] & 0xff) << 16) |
+          ((bytes[off + 2] & 0xff) << 8) |
+           (bytes[off + 3] & 0xff));
+}
+
+// SIZ layout (ISO/IEC 15444-1 Table A.9), byte offsets from the marker:
+//   +0 SIZ  +2 Lsiz  +4 Rsiz  +6 Xsiz  +10 Ysiz  +14 XOsiz  +18 YOsiz
+//   +22 XTsiz  +26 YTsiz  +30 XTOsiz  +34 YTOsiz  +38 Csiz, then 3 bytes each.
+// Lsiz = 38 + 3·Csiz, so a conforming segment with even one component is 41 or
+// longer. Both private copies of this parse tested `Lsiz >= 38`, a length no
+// SIZ can actually have — a looser gate on a marker match than the format
+// allows, which matters only when the match is spurious, which is exactly when
+// it matters.
+export const SIZ_MIN_LSIZ = 41;
+const SIZ_DIMS_END = 22;   // bytes from the marker needed to read through YOsiz
+
+/**
+ * Image dimensions from a SIZ segment at `sizOff`, or null if the segment is
+ * too short, truncated, or describes an empty grid.
+ */
+function _readSizDims(bytes, sizOff) {
+  if (u16(bytes, sizOff + 2) < SIZ_MIN_LSIZ) return null;
+  if (sizOff + SIZ_DIMS_END > bytes.length) return null;
+  const xsiz  = u32(bytes, sizOff + 6);
+  const ysiz  = u32(bytes, sizOff + 10);
+  const xosiz = u32(bytes, sizOff + 14);
+  const yosiz = u32(bytes, sizOff + 18);
+  // The image is the reference grid minus its origin: Xsiz − XOsiz, not Xsiz.
+  // Both private parsers returned Xsiz and labelled it the width, which is
+  // right only because IMF App#2E pins the image offset to zero. Nothing in
+  // either parser depended on that being true, and neither said so.
+  const width  = xsiz - xosiz;
+  const height = ysiz - yosiz;
+  if (!(width > 0) || !(height > 0)) return null;
+  return { width, height, xsiz, ysiz, xosiz, yosiz };
+}
+
 /**
  * Classify a raw JPEG 2000 codestream.
  *
- * @param {Uint8Array} bytes  Codestream, ideally starting at SOC.
- * @returns {{kind:'htj2k'|'j2k'|'unknown', rsiz:number|null, markerOffset:number, hasCap:boolean}}
+ * @param {Uint8Array} bytes  Codestream, ideally starting at SOC. Indexed
+ *   directly, never through a DataView, so a `subarray` view of a larger read
+ *   buffer is read to its own length and cannot run into the next frame.
+ * @returns {{kind:'htj2k'|'j2k'|'unknown', rsiz:number|null, markerOffset:number,
+ *            hasCap:boolean, width:number|null, height:number|null,
+ *            xsiz:number|null, ysiz:number|null, xosiz:number|null, yosiz:number|null}}
  *   kind 'unknown' means "not a J2K codestream" — callers must not guess a
  *   decoder for it. 'j2k' means classic Part 1. Never returns 'htj2k' on a
  *   stream whose SIZ could not be read.
+ *
+ *   `width`/`height` are the image size (Xsiz − XOsiz, Ysiz − YOsiz) and are
+ *   null whenever the SIZ segment was absent, short, or truncated. Null means
+ *   "not known", never "zero" — callers displaying dimensions must test for it
+ *   rather than printing whatever came back.
  */
 export function sniffCodestream(bytes) {
-  const info = { kind: 'unknown', rsiz: null, markerOffset: -1, hasCap: false };
+  const info = {
+    kind: 'unknown', rsiz: null, markerOffset: -1, hasCap: false,
+    width: null, height: null, xsiz: null, ysiz: null, xosiz: null, yosiz: null,
+  };
   if (!bytes || bytes.length < 8) return info;
   if (u16(bytes, 0) !== MARKER.SOC) return info;
 
@@ -63,6 +116,7 @@ export function sniffCodestream(bytes) {
       info.rsiz = u16(bytes, off + 4);
       info.kind = (info.rsiz & RSIZ_CAP_BIT) ? 'htj2k' : 'j2k';
       info.hasCap = _scanForCap(bytes, off, lim);
+      Object.assign(info, _readSizDims(bytes, off));
       return info;
     }
     const len = u16(bytes, off + 2);
@@ -78,6 +132,7 @@ export function sniffCodestream(bytes) {
       info.rsiz = u16(bytes, i + 4);
       info.kind = (info.rsiz & RSIZ_CAP_BIT) ? 'htj2k' : 'j2k';
       info.hasCap = _scanForCap(bytes, i, lim);
+      Object.assign(info, _readSizDims(bytes, i));
       return info;
     }
   }

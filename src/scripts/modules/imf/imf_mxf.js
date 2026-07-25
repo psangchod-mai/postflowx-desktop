@@ -4,6 +4,8 @@
 // Supports CBR (IndexUnitSize > 0) and VBR (per-frame IndexEntries) layouts.
 'use strict';
 
+import { sniffCodestream } from './j2kCodestream.js';
+
 console.log('[MXF] module build: 2026-04-07-v9');
 
 // ── KLV well-known ULs (hex, first 13 bytes matched) ─────────────────────────
@@ -54,21 +56,20 @@ function findMarker(bytes, markerHi, markerLo, start = 0) {
   return -1;
 }
 
+// Image dimensions of the codestream starting at `soc`, or null if unknown.
+//
+// This was a private SIZ walk, near-identical to the one in imf_player.js and
+// carrying the same defects: it reported Xsiz as the width (the image is
+// Xsiz − XOsiz), it accepted `Lsiz >= 38` where no conforming SIZ is shorter
+// than 41, and its marker walk was unbounded with no SOT/SOD stop. The last one
+// bites hardest here, because the only caller is the truncation heuristic
+// below — the input is a codestream already suspected of being cut short, which
+// is precisely the case where the walk runs off the end of the main header and
+// starts reading entropy-coded data as segment lengths.
 function parseJ2KSIZ(bytes, soc = 0) {
   if (!bytes || bytes.length < soc + 6) return null;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes[soc] !== 0xFF || bytes[soc + 1] !== 0x4F) return null;
-  let off = soc + 2;
-  while (off + 4 <= bytes.length) {
-    const marker = dv.getUint16(off);
-    const len = dv.getUint16(off + 2);
-    if (marker === 0xFF51 && len >= 38 && off + 14 <= bytes.length) {
-      return { width: dv.getUint32(off + 6), height: dv.getUint32(off + 10) };
-    }
-    if (len < 2) break;
-    off += 2 + len;
-  }
-  return null;
+  const info = sniffCodestream(soc ? bytes.subarray(soc) : bytes);
+  return info.width != null ? { width: info.width, height: info.height } : null;
 }
 
 function isSuspiciousCodestream(bytes, soc = 0) {
@@ -108,7 +109,11 @@ async function readValue(file, klv, maxBytes) {
   const len = Math.min(klv.valueLength, maxBytes);
   const bytes = await readBytes(file, klv.valueOffset, len);
   if (!bytes) return null;
-  return new DataView(bytes.buffer);
+  // Offset and length spelled out. readBytes() always allocates a fresh whole
+  // buffer today, so `new DataView(bytes.buffer)` happened to be the same view
+  // — but that is a property of the current reader, not of this function's
+  // contract, and every caller below reads by absolute offset.
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 // ── Partition pack parser ─────────────────────────────────────────────────────
