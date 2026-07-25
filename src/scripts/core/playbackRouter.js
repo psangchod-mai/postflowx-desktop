@@ -26,6 +26,49 @@ export const ENGINE = {
   CHROMIUM_VIDEO: 'ChromiumVideo',
 };
 
+/**
+ * The playback paths a caller has to implement, and the single mapping from an
+ * ENGINE value to the path that handles it.
+ *
+ * Why this exists: playableMedia.js used to dispatch with
+ * `if (engine === ENGINE.NATIVE_AV) … else if (engine === ENGINE.MPV) … else
+ * chromium`. ENGINE.NATIVE_ENGINE — the *preferred* ProRes path, and the value
+ * this router returns on every desktop build, since preload exposes
+ * `pfxPlatform.nativeEngine` unconditionally — matched neither arm, so ProRes
+ * .mov files were handed to the Chromium player this router had just flagged
+ * `htmlVideoBlocked: true`. Route through this map instead: an unrecognised
+ * engine returns null, which a caller can log, rather than silently becoming
+ * Chromium.
+ */
+export const PLAYBACK_PATH = {
+  CANVAS_NATIVE: 'canvas-native',   // NativeAVPlayerEngine drawing to a canvas
+  MPV:           'mpv',
+  CHROMIUM:      'chromium',
+};
+
+export function pathForEngine(engine) {
+  switch (engine) {
+    // NativeAVPlayerEngine.open() tries pfxPlatform.nativeEngine first and
+    // self-heals to the avf_bridge spawn path, so both native engine values are
+    // served by the same canvas path.
+    case ENGINE.NATIVE_ENGINE:
+    case ENGINE.NATIVE_AV:      return PLAYBACK_PATH.CANVAS_NATIVE;
+    case ENGINE.MPV:            return PLAYBACK_PATH.MPV;
+    case ENGINE.CHROMIUM_VIDEO: return PLAYBACK_PATH.CHROMIUM;
+    default:                    return null;
+  }
+}
+
+// preload exposes `pfxPlatform.nativeEngine` as a plain object literal, so its
+// presence proves nothing about whether the Swift binary actually started —
+// `isReady` is the documented capability flag. Only an explicit false counts as
+// unavailable, which keeps today's behaviour identical while leaving the
+// avf_bridge and MPV rungs below reachable if that flag is ever made honest.
+function _nativeEngineAvailable() {
+  const ne = window.pfxPlatform?.nativeEngine;
+  return !!ne && ne.isReady !== false;
+}
+
 // ProRes codec identifiers returned by avf_bridge getInfo
 const PRORES_CODECS = new Set(['apcn', 'apco', 'apcs', 'apch', 'ap4h', 'ap4x', 'apns', 'prores']);
 
@@ -69,7 +112,7 @@ export function selectPlaybackEngine(mediaInfo) {
   if (!proRes) return 'chromium-video';
   if (!window.pfxPlatform?.isMacApp) return 'proxy';
   // Prefer persistent native engine (session-cached, HW decode) over one-shot avf_bridge
-  if (window.pfxPlatform?.nativeEngine) return 'native-engine';
+  if (_nativeEngineAvailable()) return 'native-engine';
   if (window.pfxPlatform?.media?.getStill) return 'native-avfoundation';
   return 'mpv';
 }
@@ -138,7 +181,7 @@ export async function selectEngine(nativePath) {
   if (isProRes) {
     const info = avfInfo || { codec: codec_name || codec_tag_string, fps: ffInfo?.fps };
     // Prefer persistent native engine (session-cached AVAsset, HW decode, ~5ms/frame)
-    if (window.pfxPlatform?.nativeEngine) {
+    if (_nativeEngineAvailable()) {
       const engine = ENGINE.NATIVE_ENGINE;
       console.log(`[PlaybackRouter] selectedEngine=${engine}`);
       console.log(`[PlaybackRouter] htmlVideoBlocked=true`);

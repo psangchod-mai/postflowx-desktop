@@ -371,3 +371,45 @@ Genuinely-optional dependencies stay expressible via `// fail-open-ok: <reason>`
 - **Build:** `build-verify` PASS — node `--test` 55 pass/1 skip, `test:js` 82 files exit 0, pytest 250 passed / 7 skipped, XSS + XXE + **fail-open** gates clean. `build:renderer` PASS (366 files).
 - **Files:** `tools/scan-failopen.mjs` (new), `package.json`, `tests-js/securityGates.test.mjs`, `tests-js/imfDirectEngineRealtime.test.mjs`, `tests-js/imfEngineProgressCancel.test.mjs`, `tests-js/imfMpjpegReassembler.test.mjs`, `tests-js/imfEngineUiWiring.test.mjs`.
 - **Next:** the verification-integrity seam is now closed on both suites; move to product substance — C-RT1c (FFmpeg `-threads`/frame-slice threading on the `-f imf` decode, the biggest CPU lever left) or C1 (unify the codec→engine routing decision currently split between the companion and `smart_router.js`).
+
+### 2026-07-26 (night run, iteration 3) — C1: the ProRes engine the app chose and then threw away
+
+**Research.** Two leads were killed before any code was written.
+
+- **C-RT1c (IMF decode threading) — not verifiable here, deferred.** `ffmpeg -demuxers | grep -i imf` returns nothing on this machine (build has no libxml2), and there is no `libopenjpeg` decoder — only native `jpeg2000`. The `-f imf` path cannot be exercised or benchmarked locally, so any `-threads` change would ship an unmeasured perf claim. Left open.
+- **C1's stated premise was wrong.** The backlog says routing is "split between the companion and `smart_router.js`". `electron/native/smart_router.js` is a pure HTTP proxy to `127.0.0.1:47125` — it holds no codec decision at all. The premise is the **seventh** stale/incorrect backlog entry (after A-IAB0c, C-RT1a, C-RT1b, C-RT1e, E1-FDL, and C1's own wording).
+
+But chasing that premise found the real split, and a live bug inside it.
+
+**The two decisions that actually exist.**
+1. `companion/.../media_engine/media_router.py::select_engine` — 9 inputs → `(engine, fallbacks, reason)`, vocabulary `NativeAVFoundationEngine | MPVEngine | FFmpegFrameServerEngine | IMFEngine | ResolveEngine | ChromiumVideoEngine | ProxyEngine`. Reached via `smartMedia.selectEngine` → `POST /api/media/select-engine`.
+2. `src/scripts/core/playbackRouter.js::selectEngine` — the renderer's own ProRes probe, vocabulary `PFXNativeEngine | NativeAVPlayerEngine | MPVPlayerEngine | ChromiumVideo`. Reached from `playableMedia.js` on every local `.mov` open.
+
+They serve different layers (companion decode service vs. renderer player choice), so merging them is not obviously right and was **not** attempted tonight. What was wrong is inside (2).
+
+**The bug.** `playableMedia.js` dispatched on the router's answer with a hand-written chain:
+
+```js
+if (engine === ENGINE.NATIVE_AV)      { …canvas… }
+else if (engine === ENGINE.MPV)       { …mpv… }
+else                                  { _startChromiumPath(…) }   // ← everything else
+```
+
+`ENGINE.NATIVE_ENGINE` (`'PFXNativeEngine'`) — the *preferred* ProRes path, documented at the top of the router as "persistent session, ~5ms/frame" — matched neither arm and fell into the Chromium branch. And it is not a rare value: `electron/preload.js:467` exposes `nativeEngine` as an unconditional object literal, so `window.pfxPlatform?.nativeEngine` is **always truthy** in the desktop app and the router returns `PFXNativeEngine` for *every* ProRes file on *every* desktop build. The `_startNativeAVPath` call at the top of that chain was unreachable code in the shipped app.
+
+The router had already set `htmlVideoBlocked: true` on that same return. The app decided Chromium could not play the file and then handed the file to Chromium.
+
+**Why it looked like it worked.** `_startChromiumPath` has a black-frame heuristic — after 2500 ms with `videoWidth === 0` it calls `goNative()` and lands on the canvas engine anyway. So ProRes usually did play, just after a wasted decode attempt and a ≥2.5 s stall. The exception is the cross-tab proxy-reuse branch (`4b`), which commits to a cached transcoded proxy and `return`s before any of that: a ProRes clip with a cached proxy played the degraded proxy permanently and never reached the native path at all.
+
+**Fix.**
+- `playbackRouter.js` — added `PLAYBACK_PATH` + `pathForEngine(engine)`, one exhaustive map from engine value → path. Unknown engine returns `null` (loud) rather than defaulting to Chromium. Both native values share `canvas-native`, which is correct: `NativeAVPlayerEngine.open()` already tries `pfxPlatform.nativeEngine` first and self-heals to `avf_bridge`.
+- `playableMedia.js` — dispatches through `pathForEngine`, warns on an unrecognised engine.
+- `playbackRouter.js` — the two `window.pfxPlatform?.nativeEngine` truthiness checks now go through `_nativeEngineAvailable()`, which reads the documented `isReady` capability flag and treats only an explicit `false` as unavailable. **Behaviourally identical today** (`isReady` is hardcoded `true`), but it points the ladder at the intended signal, so the `avf_bridge` and MPV rungs become reachable the moment that flag is made honest instead of being dead by construction.
+
+**Testing.** `tests-js/playbackRouter.test.mjs` 20 → 42 assertions. The old file tested `selectPlaybackEngine` exhaustively — a function with **zero production callers** — while the async `selectEngine` the app actually runs had none. That is how this shipped. Added: exhaustiveness over every `ENGINE` value, the full `selectEngine` matrix (ProRes/h264/off-desktop/`isReady:false` rungs), and a source-level assertion that `playableMedia` dispatches via `pathForEngine` and contains no `engine === ENGINE.*` chain.
+
+Mutation-verified twice: deleting the `NATIVE_ENGINE` case → 3 failures; reintroducing an `=== ENGINE.` chain in the consumer → 1 failure.
+
+- **Build:** `build-verify` PASS (pytest 250 passed / 7 skipped; XSS + XXE + fail-open gates clean). `build:renderer` PASS (366 files, v2026.6.1).
+- **Files:** `src/scripts/core/playbackRouter.js`, `src/scripts/core/playableMedia.js`, `tests-js/playbackRouter.test.mjs`.
+- **Next:** C-RT2 (HUD showing which backend served each frame — would have made this visible immediately), or D1's remaining `fs.watch` → `ctl.onFsEvent` live-wire.

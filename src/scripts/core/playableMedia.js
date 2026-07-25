@@ -33,7 +33,7 @@ import {
   tryRestoreProxyForMeta,
   loadVideoWithProxyFallback,
 } from '../modules/proResProxy.js';
-import { selectEngine, ENGINE } from './playbackRouter.js';
+import { selectEngine, PLAYBACK_PATH, pathForEngine } from './playbackRouter.js';
 import {
   NativeAVPlayerEngine,
   mountNativeCanvas,
@@ -198,16 +198,22 @@ export function attachPlayableVideo(videoEl, file, opts = {}) {
   if (nativePath && isMov && window.pfxPlatform?.isMacApp) {
     selectEngine(nativePath).then(({ engine, info }) => {
       if (videoEl[_K.token] !== token) return; // stale — file changed during probe
-      if (engine === ENGINE.NATIVE_AV) {
+      // Dispatch through pathForEngine, never a hand-written === chain: this arm
+      // previously tested only NATIVE_AV and MPV, so ENGINE.NATIVE_ENGINE — what
+      // the router actually returns for ProRes on every desktop build — fell into
+      // the Chromium branch the router had just marked htmlVideoBlocked.
+      const path = pathForEngine(engine);
+      if (path === PLAYBACK_PATH.CANVAS_NATIVE) {
         _startNativeAVPath(videoEl, file, nativePath, info, token, {
           onMode, onStatus, onNativeEngine,
         });
-      } else if (engine === ENGINE.MPV) {
+      } else if (path === PLAYBACK_PATH.MPV) {
         _startMPVPath(videoEl, file, nativePath, info, token, {
           onMode, onStatus, onNativeEngine, onProxyFail, onNoOutputDir,
           onProgress,
         });
       } else {
+        if (!path) console.warn(`[playableMedia] unrecognised engine "${engine}" — using Chromium`);
         _startChromiumPath(videoEl, file, nativePath, token, {
           onMode, onStatus, onProgress, onProxyFail, onNoOutputDir, onNativeEngine,
         });
@@ -371,7 +377,9 @@ function _startChromiumPath(videoEl, file, nativePath, token, {
           ? `${d.streamUrl}${d.streamUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(httpToken)}`
           : d.streamUrl;
         videoEl[_K.mode] = 'direct';
-        if (/^https?:\/\//i.test(streamUrl)) videoEl.crossOrigin = 'anonymous';
+        // http(s) companion streams and pfx-media:// both send Access-Control-Allow-Origin:*
+        // — request in CORS mode so a canvas drawn from this frame is not tainted.
+        if (/^https?:\/\//i.test(streamUrl) || /^pfx-media:\/\//i.test(streamUrl)) videoEl.crossOrigin = 'anonymous';
         else {
           try { videoEl.removeAttribute('crossorigin'); } catch {}
           try { videoEl.crossOrigin = null; } catch {}
@@ -416,8 +424,16 @@ function _startChromiumPath(videoEl, file, nativePath, token, {
       : null;
     if (directUrl && videoEl[_K.token] === token && videoEl[_K.mode] === 'pending') {
       videoEl[_K.mode] = 'direct';
-      try { videoEl.removeAttribute('crossorigin'); } catch {}
-      try { videoEl.crossOrigin = null; } catch {}
+      // pfx-media:// returns Access-Control-Allow-Origin:* — request in CORS mode so
+      // the drawn canvas is NOT tainted. Otherwise pfx-media:// (a distinct origin from
+      // the file:// renderer) taints the canvas and toDataURL()/getImageData() throw,
+      // silently breaking thumbnail capture / OCR when the companion is unavailable and
+      // there is no native-still fallback (companion "Limited", path-only reference).
+      if (/^pfx-media:\/\//i.test(directUrl)) videoEl.crossOrigin = 'anonymous';
+      else {
+        try { videoEl.removeAttribute('crossorigin'); } catch {}
+        try { videoEl.crossOrigin = null; } catch {}
+      }
       videoEl.src = directUrl;
       videoEl.load();
       onMode?.('direct', directUrl);
