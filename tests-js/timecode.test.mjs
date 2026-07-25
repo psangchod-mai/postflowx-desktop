@@ -25,6 +25,40 @@ eq(framesToTC(86400, 24), '01:00:00:00', '86400 @24 → 01:00:00:00');
 eq(tcToFrames('00:00:10:00', 25), 250, '10s @25 = 250 frames');
 eq(framesToTC(250, 25), '00:00:10:00', '250 @25 → 00:00:10:00');
 
+// ── Bare pair at fractional rates: the whole-frame (nominal) base ──
+// Absolute values, not round-trips. The fuzz suite next door proves the pair is
+// invertible, which a wrong-but-self-consistent base would satisfy too — floor
+// 23.976 to 23 and every round-trip still closes. Only a known frame count can
+// tell 24 from 23, so these are pinned to what timecode itself says: at 23.976 a
+// timecode second holds 24 frame fields, so one hour is 86400 of them.
+eq(tcToFrames('01:00:00:00', 23.976), 86400, '1h @23.976 = 86400 frames (24-frame base)');
+eq(tcToFrames('00:00:01:00', 23.976), 24, '1s @23.976 = 24 frames, not 23');
+eq(framesToTC(86400, 23.976), '01:00:00:00', '86400 @23.976 → 01:00:00:00 (was 01:00:03:14)');
+eq(framesToTC(24, 23.976), '00:00:01:00', 'frame 24 @23.976 → 00:00:01:00');
+eq(tcToFrames('01:00:00:00', 29.97), 108000, '1h @29.97 NDF = 108000 frames (30-frame base)');
+eq(tcToFrames('01:00:00:00', 59.94), 216000, '1h @59.94 NDF = 216000 frames (60-frame base)');
+// The span that motivated this: five seconds must measure 120 frames at 23.976,
+// not 119. A pull one frame short is the field-visible form of the old bug.
+eq(tcToFrames('01:00:05:00', 23.976) - tcToFrames('01:00:00:00', 23.976), 120,
+   '5s @23.976 spans 120 frames, not 119');
+// Fractional and integer forms of the same base must be interchangeable — the
+// disagreement between them is what let the bug hide behind callers that rounded.
+eq(tcToFrames('01:23:45:06', 23.976), tcToFrames('01:23:45:06', 24),
+   '23.976 and 24 agree frame-for-frame');
+eq(tcToFrames('01:23:45:06', 29.97), tcToFrames('01:23:45:06', 30),
+   '29.97 NDF and 30 agree frame-for-frame');
+// The bare pair must now agree with the settings-aware wrapper it sits under,
+// which reached the right answer only by rounding fps before calling down.
+eq(tcToFrames('01:00:00:00', 29.97), timecodeToFrames('01:00:00:00', ndf2997),
+   'bare pair agrees with timecodeToFrames on 29.97 non-drop');
+// An unusable rate must not produce Infinity in a timecode field.
+eq(framesToTC(48, undefined), '00:00:02:00', 'an undefined rate falls back to 24, not NaN');
+eq(tcToFrames('00:00:02:00', 0), 48, 'a zero rate falls back to 24 rather than collapsing');
+// framesToTC clamps at zero. Untested until a mutation sweep removed the clamp and
+// every suite still passed — a negative frame count then formats as "-1:59:59:19",
+// which parses back as a positive time and would read as a real handle.
+eq(framesToTC(-5, 24), '00:00:00:00', 'a negative frame count clamps to 00:00:00:00');
+
 // ── 29.97 DROP-FRAME — SMPTE-known values ──
 eq(timecodeToFrames('01:00:00;00', df2997), 107892, '1h @29.97DF = 107892 frames (SMPTE)');
 eq(framesToTimecode(107892, df2997), '01:00:00;00', '107892 → 01:00:00;00');

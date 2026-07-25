@@ -32,6 +32,33 @@ export function parseFracSeconds(frac, fps) { // "A/Bs" -> frames @fps
   return Math.round((num / den) * fps);
 }
 
+/**
+ * Timecode counts on a whole-frame base: 23.976 fits 24 frame fields into a
+ * timecode second, 29.97 NDF fits 30. Handing the fractional rate to a HH:MM:SS:FF
+ * conversion asks for something unrepresentable — 24 distinct frame fields do not
+ * fit into 23.976 frames — and the pair stops being invertible. It was measurably
+ * not invertible: tcToFrames('01:00:00:00', 23.976) returned 86313 where timecode
+ * says 86400, and framesToTC turned that back into '00:59:59:23'. A one-hour start
+ * timecode came back 87 frames — 3.6 seconds — short of itself, and a five-second
+ * span measured 119 frames instead of 120, which is the shape of a VFX pull that
+ * arrives one frame short.
+ *
+ * Rounding here is not a new convention; it is the one already written down three
+ * times and never applied at the bottom. timecodeToFrames calls
+ * `tcToFrames(tc, Math.round(fps))` and explains why in as many words; xml.js's
+ * normFps rounds before every conversion it makes; and timecodeFuzz.test.mjs calls
+ * this pair's contract "nominal-base" — while fuzzing it only at 24/25/30/50/60,
+ * the rates where nominal and real are the same number. The gap survived because
+ * every caller that knew about it worked around it on the way in.
+ *
+ * For callers already passing an integer rate this is a no-op.
+ */
+function nominalBase(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return 24;
+  return Math.round(n);
+}
+
 export function tcToFrames(tc, fps) { // "HH:MM:SS:FF" or "HH;MM;SS;FF" (DF treated as NDF) -> frames
   if (!tc) return 0;
   // Normalise drop-frame semicolon separators to colons
@@ -39,14 +66,18 @@ export function tcToFrames(tc, fps) { // "HH:MM:SS:FF" or "HH;MM;SS;FF" (DF trea
   // Strip subframe suffix emitted by DaVinci Resolve 21 (e.g. "12.5" → "12")
   if (parts.length >= 4) parts[3] = parts[3].replace(/\.\d+$/, '');
   const [hh, mm, ss, ff] = parts.map(n => +n || 0);
-  return (((hh * 3600) + (mm * 60) + ss) * fps + ff) | 0;
+  // Math.round, not `| 0`: on a whole-frame base the product is already an
+  // integer, so the old truncation was a no-op that also silently wrapped past
+  // 2^31 frames. Rounding keeps the arithmetic and drops the 32-bit ceiling.
+  return Math.round(((hh * 3600) + (mm * 60) + ss) * nominalBase(fps) + ff);
 }
 
 export function framesToTC(fr, fps) { // frames -> "HH:MM:SS:FF" (NDF)
+  const base = nominalBase(fps);
   fr = Math.max(0, Math.round(fr));
-  const hh = Math.floor(fr / (3600 * fps)); fr -= hh * 3600 * fps;
-  const mm = Math.floor(fr / (60 * fps));   fr -= mm * 60 * fps;
-  const ss = Math.floor(fr / fps);          fr -= ss * fps;
+  const hh = Math.floor(fr / (3600 * base)); fr -= hh * 3600 * base;
+  const mm = Math.floor(fr / (60 * base));   fr -= mm * 60 * base;
+  const ss = Math.floor(fr / base);          fr -= ss * base;
   const ff = Math.floor(Math.max(0, fr));
   const pad = n => String(n).padStart(2, '0');
   return `${pad(hh)}:${pad(mm)}:${pad(ss)}:${pad(ff)}`;
