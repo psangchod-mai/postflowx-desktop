@@ -53,7 +53,7 @@ export function parseFracSeconds(frac, fps) { // "A/Bs" -> frames @fps
  *
  * For callers already passing an integer rate this is a no-op.
  */
-function nominalBase(fps) {
+export function nominalBase(fps) {
   const n = Number(fps);
   if (!Number.isFinite(n) || n <= 0) return 24;
   return Math.round(n);

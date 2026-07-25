@@ -9,6 +9,14 @@
 //   from 00:00:00:00 using src duration.
 // - Option: opts.recStartAtZero (default true) to always start REC at 00:00:00:00.
 
+// The whole-frame timecode base, shared with utils_time.js rather than re-derived.
+// This file keeps its own tcToFrames/framesToTC below — deliberately, because they
+// are stricter than the exported pair (an unparseable timecode returns 0 here, where
+// the lenient parser returns NaN, and NaN has no business reaching a delivery EDL).
+// Only the base is shared. Two copies of "23.976 counts on 24" is how they drifted
+// apart in the first place.
+import { nominalBase } from "./utils_time.js";
+
 function pad3(n) { return String(n).padStart(3, "0"); }
 function pad2(n) { return String(n).padStart(2, "0"); }
 
@@ -107,13 +115,21 @@ function tcToFrames(tc, fps = 24) {
   const mm = parseInt(m[2], 10);
   const ss = parseInt(m[3], 10);
   const ff = parseInt(m[4], 10);
-  return (((hh * 60 + mm) * 60) + ss) * fps + ff;
+  return (((hh * 60 + mm) * 60) + ss) * nominalBase(fps) + ff;
 }
 
+// `frames % fps` at a fractional rate produced a fractional frame FIELD — a five-second
+// span at 23.976 measured 119.88 frames and formatted as "00:00:05:0.12000000000000455".
+// That string then hit safeTC below, failed its \d{2} regex, went through Number() to NaN,
+// and came back "00:00:00:00". Every REC column in a rebuilt EDL collapsed to zero at
+// 23.976 / 29.97 / 59.94 while every integer rate stayed correct — the sanitizer turned a
+// timecode an editor would have rejected into one it silently accepts. Counting on the
+// whole-frame base keeps the modulo integral, so nothing malformed reaches safeTC at all.
 function framesToTC(frames, fps = 24) {
+  const base = nominalBase(fps);
   frames = Math.max(0, Math.round(frames || 0));
-  const ff = frames % fps;
-  const totalSeconds = (frames - ff) / fps;
+  const ff = frames % base;
+  const totalSeconds = (frames - ff) / base;
   const ss = totalSeconds % 60;
   const totalMinutes = (totalSeconds - ss) / 60;
   const mm = totalMinutes % 60;

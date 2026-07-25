@@ -168,3 +168,83 @@ test('buildEDLFiles: FCM line present in header', () => {
   const content = build([ev])[0].content;
   assert.ok(content.includes('FCM'), 'FCM line missing from EDL header');
 });
+
+// ── Fractional frame rates: the whole-frame timecode base ─────────────────────
+// Every test above this line pins fps to 24. The rates a real ALE or FCPXML
+// actually carries — 23.976 from an ALE header, 30000/1001 from a frameDuration —
+// were the ones never exercised, and they were the only ones broken.
+
+// Rebuilt REC columns collapsed to 00:00:00:00 at every fractional rate while every
+// integer rate stayed correct. `frames % fps` yielded a fractional frame field,
+// framesToTC formatted "00:00:05:0.12000000000000455", and safeTC — which exists to
+// keep malformed timecode out of the EDL — failed its own \d{2} regex on it, ran it
+// through Number() to NaN, and returned "00:00:00:00". A timecode an editor would
+// have rejected became one it silently accepts, so the loss was invisible.
+test('buildEDLFiles: rebuilt REC timeline is correct at 23.976, not zeroed', () => {
+  const ev = makeEv('01:00:00:00', '01:00:05:00', '', '', { fps: 23.976 });
+  const content = build([ev], { recStartAtZero: true })[0].content;
+  const rec = content.match(/^\d{3}\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+(\S+)/m);
+  assert.ok(rec, 'no event line found');
+  assert.equal(rec[1], '00:00:00:00', 'REC IN');
+  assert.equal(rec[2], '00:00:05:00', 'REC OUT — was 00:00:00:00 (a five-second event with no duration)');
+});
+
+// A fractional rate and its whole-frame base are the same timecode grid, so they must
+// produce byte-identical EDLs. This is the assertion that generalises: it holds for
+// any future arithmetic added to this file, not just the modulo that broke here.
+for (const [frac, whole] of [[23.976, 24], [29.97, 30], [59.94, 60]]) {
+  test(`buildEDLFiles: ${frac} emits the same EDL as ${whole}`, () => {
+    const evs = fps => [
+      makeEv('01:00:00:00', '01:00:05:00', '', '', { fps, reel: 'R1', clipName: 'A' }),
+      makeEv('02:00:00:00', '02:00:10:00', '', '', { fps, reel: 'R1', clipName: 'B' }),
+    ];
+    assert.equal(
+      build(evs(frac), { recStartAtZero: true })[0].content,
+      build(evs(whole), { recStartAtZero: true })[0].content,
+    );
+  });
+}
+
+// Structural guard on the whole artifact rather than on one field. safeTC turned the
+// malformed value into a plausible one before any assertion could see it, so pinning
+// individual columns is not enough — nothing anywhere in the text may be a non-timecode.
+test('buildEDLFiles: no malformed timecode reaches the EDL text at any rate', () => {
+  for (const fps of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]) {
+    const evs = [
+      makeEv('01:00:00:00', '01:00:05:00', '', '', { fps }),
+      makeEv('02:00:00:00', '02:00:10:12', '', '', { fps }),
+    ];
+    for (const opts of [{ recStartAtZero: true }, { metadata: true }, { vfxMarker: true }]) {
+      const content = build(evs, opts)[0].content;
+      // Any HH:MM:SS:FF-shaped run must have exactly two digits in each field —
+      // a fractional or over-long field is the signature of rate-based arithmetic.
+      const bad = content.match(/\d+[:;]\d+[:;]\d+[:;]\d*\.\d+/g)
+               || content.match(/\b\d{3,}[:;]\d+[:;]\d+[:;]\d+/g);
+      assert.equal(bad, null, `@${fps} ${JSON.stringify(opts)} emitted ${JSON.stringify(bad)}`);
+    }
+  }
+});
+
+// The duration itself was wrong before the frame field was, and by a different amount:
+// five seconds measured 119.88 frames on the fractional rate where timecode says 120.
+test('buildEDLFiles: a five-second source span is 120 frames at 23.976', () => {
+  const ev = makeEv('01:00:00:00', '01:00:05:00', '', '', { fps: 23.976 });
+  const c24 = build([makeEv('01:00:00:00', '01:00:05:00', '', '', { fps: 24 })], { recStartAtZero: true })[0].content;
+  const c23 = build([ev], { recStartAtZero: true })[0].content;
+  assert.equal(c23, c24, '23.976 must measure the same span as its 24-frame base');
+});
+
+// A wrong base that is used consistently cancels out: floor 23.976 to 23, count a
+// five-second event as 115 frames, format it back on the same base, and the EDL text
+// is byte-identical. Every assertion above survives that mutation. The base is only
+// observable where an absolute frame count crosses into the timecode grid, and this
+// file has exactly one such door — the ev.durFrames fallback in rebuildRecFromZero.
+test('buildEDLFiles: durFrames is read on the whole-frame base, not a floored rate', () => {
+  const ev = makeEv('', '', '', '', { fps: 23.976, durFrames: 120 });
+  const content = build([ev], { recStartAtZero: true })[0].content;
+  const rec = content.match(/^\d{3}\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+(\S+)/m);
+  assert.ok(rec, 'no event line found');
+  // 120 frames on a 24-frame base is exactly five seconds. On a floored base of 23 it
+  // reads 00:00:05:05 — five frames of handle that were never in the source.
+  assert.equal(rec[2], '00:00:05:00', 'REC OUT from durFrames=120 @23.976');
+});
