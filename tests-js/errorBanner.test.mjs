@@ -61,11 +61,92 @@ test('an existing #errors element wins and no second banner is created', () => {
   // index.html has none, but the extension target and the tool pages do not
   // share that file — this module must not displace a slot someone added.
   const doc = freshDoc('<div id="errors"></div>');
-  const el = showErrorBanner('Disk full', doc);
+  const el = showErrorBanner('Scan a VFX folder first.', doc);
   assert.equal(el.id, 'errors');
   assert.equal(doc.getElementById('pfxErrorBanner'), null, 'created a banner despite a host slot');
-  assert.equal(el.textContent, 'Disk full');
+  assert.equal(el.textContent, 'Scan a VFX folder first.');
   assert.equal(el.style.opacity, '1', 'host slot must keep the old opacity contract');
+});
+
+// ── Plain language, applied where nothing can bypass it ──────────────────────
+
+test('raw exception text is rewritten before it reaches the screen', () => {
+  // 17 of the 70 showError() call sites pass err?.message straight through.
+  // Before the banner existed those were invisible; now they are the first
+  // thing a non-technical user reads.
+  const doc = freshDoc();
+  const el = showErrorBanner('ENOSPC: no space left on device', doc);
+  assert.doesNotMatch(el.textContent, /ENOSPC/, 'the errno reached the user');
+  assert.match(el.textContent, /disk is full/i, 'no plain-language rewrite happened');
+  assert.match(el.textContent, /free up space/i, 'rewritten but with no next step');
+});
+
+test('a stack-shaped message never reaches the user verbatim', () => {
+  const doc = freshDoc();
+  const el = showErrorBanner("TypeError: cannot read properties of undefined (reading 'frames')", doc);
+  assert.doesNotMatch(el.textContent, /TypeError|undefined|properties/,
+    'raw JS internals shown to someone who cannot act on them');
+  assert.match(el.textContent, /went wrong inside PostFlowX/i);
+});
+
+test("the app's own hand-written messages are left exactly alone", () => {
+  // 53 of the 70 sites already say something useful. Rewriting those would be
+  // a regression, not an improvement.
+  const doc = freshDoc();
+  for (const msg of [
+    'Scan a VFX folder first.',
+    'Native VFX Root is required.',
+    'Open the Cut Diff tab, then retry',
+    'No events to export.',
+  ]) {
+    assert.equal(showErrorBanner(msg, doc).textContent, msg, `reworded: ${msg}`);
+  }
+});
+
+test('rewriting twice is the same as rewriting once', () => {
+  // Some callers humanize before calling — including showError itself in an
+  // in-flight working-tree change — and a rule's output can re-match its own
+  // pattern ("The disk is full…" still contains "disk is full"). If this ever
+  // stops holding, those messages get their hint appended twice.
+  const doc = freshDoc();
+  for (const raw of [
+    'ENOENT: no such file or directory, open /Volumes/SHOW/reel.mxf',
+    'ENOSPC: no space left on device',
+    'EACCES: permission denied, open /private/x',
+    'EBUSY: resource busy or locked',
+    'Failed to fetch',
+    '401 Unauthorized',
+    'memory access out of bounds',
+  ]) {
+    const once = showErrorBanner(raw, doc).textContent;
+    const twice = showErrorBanner(once, doc).textContent;
+    assert.equal(twice, once, `not idempotent for: ${raw}`);
+  }
+});
+
+test('the filesystem path survives the rewrite — it is the actionable part', () => {
+  const doc = freshDoc();
+  const el = showErrorBanner('ENOENT: no such file or directory, open /Volumes/SHOW/reel.mxf', doc);
+  assert.match(el.textContent, /\/Volumes\/SHOW\/reel\.mxf/, 'the path was reworded away');
+  assert.match(el.textContent, /\n/, 'the path must stay on its own line');
+});
+
+test('an unrewritable message is still shown rather than replaced', () => {
+  // Pass-through is the conservative default; a message nobody wrote a rule for
+  // is better than a generic one.
+  const doc = freshDoc();
+  const odd = 'Reel 04A failed conform at 01:00:12:07';
+  assert.equal(showErrorBanner(odd, doc).textContent, odd);
+});
+
+test('reading time is measured on what is displayed, not what was thrown', () => {
+  // A three-word errno becomes two sentences; timing the dismissal on the errno
+  // would take the message away before it could be read.
+  const doc = freshDoc();
+  const raw = 'ENOSPC';
+  const shown = showErrorBanner(raw, doc).textContent;
+  assert.ok(shown.length > raw.length, 'precondition: the rewrite is longer');
+  assert.ok(dismissDelay(shown) > dismissDelay(raw), 'dismissal still timed on the raw text');
 });
 
 // ── Clearing ─────────────────────────────────────────────────────────────────

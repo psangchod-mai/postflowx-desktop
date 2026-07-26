@@ -24,8 +24,37 @@
 // this cannot displace a page that already has its own slot.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { friendlyText } from './friendlyError.js';
+
 const BANNER_ID = 'pfxErrorBanner';
 const ON_CLASS = 'pfx-error-banner--on';
+
+/**
+ * Plain-language rewrite, applied at the display boundary rather than at the
+ * call sites.
+ *
+ * 17 of the 70 showError() call sites pass `err?.message || String(err)`
+ * straight through, so with the banner now actually visible a non-technical
+ * user would read "TypeError: cannot read properties of undefined (reading
+ * 'frames')" where they previously read nothing. Fixing that one call site at a
+ * time leaves the next one to be written unprotected; doing it here means
+ * nothing reaches the screen unrewritten, including window.pfxShowErrorBanner.
+ *
+ * Safe to apply twice: friendlyText passes an already-friendly string through
+ * unchanged, which errorBanner.test.mjs pins. That matters because some callers
+ * humanize before calling, and because a rule's own output can re-match its own
+ * pattern ("The disk is full…" still contains "disk is full").
+ *
+ * Empty text is never passed through it — friendlyText('') returns "Something
+ * went wrong.", and an empty message means *hide the banner*.
+ */
+function humanize(s) {
+  try {
+    return friendlyText(s) || s;
+  } catch (_) {
+    return s;   // a rewrite failure must never swallow the error being reported
+  }
+}
 
 /**
  * How long a message stays up, in ms.
@@ -82,7 +111,8 @@ export function showErrorBanner(text, doc) {
   const el = bannerHost(d);
   if (!el) return null;
 
-  const msg = text == null ? '' : String(text);
+  const raw = text == null ? '' : String(text);
+  const msg = raw ? humanize(raw) : '';
 
   // A second failure while the first is still up replaces it and restarts the
   // clock; otherwise the earlier timeout would cut the new message short.
