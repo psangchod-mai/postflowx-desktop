@@ -1799,3 +1799,94 @@ staged as blobs reconstructed from `HEAD` plus only this iteration's edits.
 `git show --stat` after the commit read 13 / 6 / 162 — exactly what was
 written. The working-tree diff for those two files shrank by exactly 13 and 6
 lines, confirming nothing of the user's was swept in.
+
+## Iteration 13 — the tutorial with no door
+
+`#playerTransportTutorialModal` is 133 lines of finished, interactive help in
+`src/index.html:599-731`: eight clickable `data-player-demo` transport buttons
+under the heading "Interactive Player — Click To Try", plus prose explaining the
+scrub bar, the nav pod, jump-to-start/end, play forward and play backward. It is
+the richest tutorial in the app and the one most directly aimed at somebody
+opening the player for the first time.
+
+Nothing could open it.
+
+Every mention of it in the codebase, traced:
+
+| Site | What it is | Live? |
+|---|---|---|
+| `index.html:599` | the markup | — |
+| `ui.js:9691` | `_wirePlayerTransportDeepDive()` looking itself up | only if called |
+| `ui.js:11931` | `if (modalId === 'playerTransportTutorialModal') …` inside `_openTutorial` | **dead** |
+| `ui.js:24004` | the same guard in the duplicate `#btnTutorial` handler | **dead** |
+| `ui.js:11964` | close-button wiring in the fallback list | live, but only closes |
+
+Both guards are unreachable. The two How-to-Use tables (`_tutModalMap`,
+`_tutMap`) are keyed by tab, and `document.body.dataset.main` is one of twelve
+values, none of them the player — the player is a *panel inside* a tab. So no
+key can ever yield that id, `_wirePlayerTransportDeepDive` is called from
+nowhere, and the content sits there.
+
+### The fix
+
+The door goes on the thing the tutorial is about. A `? Help` button at the end
+of `.pm-controls` (`src/index.html`), immediately after `#pmAnnotateBtn`, in the
+tutorial's own orange so the button and the panel read as one thing:
+
+```html
+<button id="pmTransportHelpBtn" class="pm-help-btn" type="button"
+        title="How the player transport works — scrub bar, nav pod, play and jump"
+        aria-label="How the player transport works">? Help</button>
+```
+
+It routes through `_openTutorial('player')` rather than showing the modal
+itself, so it inherits the Esc handler, the backdrop click, the close button and
+the "close whatever tutorial is already open" bookkeeping instead of
+re-implementing four things. That required one new entry in `_tutModalMap`:
+
+```js
+    player:      'playerTransportTutorialModal',
+```
+
+`player` is deliberately not a tab name, and the comment above it says so — it
+is a route key, not a tab key, and `#btnTutorial` can never dispatch it.
+
+The opener is registered inside `_wirePfxTutorials()` because
+`_wirePlayerTransportDeepDive` and `_openTutorial` are both closure-private to
+that function; wiring from outside would have meant exporting one of them.
+
+Word, not glyph: the bar already speaks in glyphs (`M`, `✏`, `◀ ● ▶`), so a bare
+`?` would have been the consistent choice. "Help" is the discoverable one, and
+for the audience this whole loop is aimed at, discoverable wins.
+
+### The gate
+
+`tests-js/reachableTutorials.test.mjs` (185 lines). Every id ending in
+`TutorialModal` authored in a checked-in `.html` must appear as a value in one
+of the two router tables in `ui.js`. Those tables are the only code in the app
+that makes a tutorial visible, so a tutorial in neither is unreachable by
+construction.
+
+This is the reverse of iteration 12's question. `modalIds.test.mjs` asks *does
+every id a router names exist?* This asks *does every element we authored have a
+router that names it?* Same two sets, opposite direction, and the second
+direction found what the first could not.
+
+### Verification
+
+- Negative-verified against the real shipped defect: `src/index.html` and
+  `src/scripts/ui.js` restored from HEAD in place. Gate went red naming
+  `playerTransportTutorialModal — authored in src/index.html, named by no router
+  table`, and the specific regression test went red too. Both scan-sanity tests
+  stayed **green**, which is what makes the failure a finding rather than a
+  broken scan. Files restored; `diff` against the fixed copies reported
+  identical.
+- `npm run build-verify` exit 0 — 250 Python passed / 7 skipped, XSS / XXE /
+  fail-open gates clean.
+- `npm run build:renderer` — 372 files, v2026.6.1.
+- `git show --stat c7b3c62` read `src/index.html | 5`, `src/scripts/ui.js | 17`,
+  `src/styles/main.css | 4`, `tests-js/reachableTutorials.test.mjs | 185` — the
+  counts written.
+- Working-tree diff for the three source files shrank 82→77, 60→43, 631→627,
+  with deletions unchanged at 356. Exactly the 5, 17 and 4 lines added; none of
+  the user's in-flight work was swept in.

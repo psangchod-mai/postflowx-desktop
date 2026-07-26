@@ -1610,3 +1610,131 @@ handlers on one control is worth its own sweep.
 - A tab-name consistency sweep. `trlconf` was called "Timeline Conform" in one
   place and "Trailers Conform" in three; the feature inside it is "Timeline
   Convert". Whether the other ten tabs are consistent is unmeasured.
+
+## Audit 13
+
+### 13.1 A new species: unreachable authored content
+
+Every defect this loop has found so far has been something *wrong*: an id that
+names nothing, a control with no name, a handler bound to the wrong copy of a
+shadowed element. This one is different. Nothing about
+`#playerTransportTutorialModal` is wrong. The markup is valid. The wiring
+function is correct. The close handling works. The eight demo buttons would
+respond if anyone clicked them.
+
+There is simply no line of code anywhere that makes it visible.
+
+That is the signature of the species: **the defect is the absence of a line**,
+and absence is what code review is worst at seeing. A reviewer reads
+`_wirePlayerTransportDeepDive()` and sees a function that does its job. A
+reviewer reads
+
+    if (modalId === 'playerTransportTutorialModal') _wirePlayerTransportDeepDive();
+
+and sees a call site. Both readings are correct in isolation. What is invisible
+is that the set of values `modalId` can hold never contains that string —
+information that lives in a different function, in a table twelve entries long,
+and only exists as a fact about the *union* of two files.
+
+It is worth naming what it cost: not a crash, not a wrong answer, but 133 lines
+of somebody's careful teaching work that no user has ever seen.
+
+### 13.2 The reverse-direction audit
+
+Iteration 12's gate asks: *does every id the code references actually exist?*
+It caught `tconformTutorialModal` — a name with no element.
+
+Iteration 13 asks the inverse: *does every element we authored have code that
+references it?* Same two sets — authored ids, referenced ids — and merely
+reading the difference in the other direction. That took one probe to write and
+found a defect the forward direction is structurally incapable of seeing, because
+in the forward direction `playerTransportTutorialModal` is perfectly resolved:
+it appears in JS, and the element exists. Both checks pass. The relationship
+between them is what is broken.
+
+Generalisable: **any gate that checks a mapping in one direction has a blind
+spot exactly the size of the other direction.** Worth walking the list of
+existing gates and asking, of each, what its inverse would find.
+
+### 13.3 "Mentioned somewhere" is far too weak a proxy for "reachable"
+
+The first probe of this iteration asked the obvious question — for every authored
+overlay that starts hidden, is it mentioned anywhere in JS or HTML? It found
+**22 authored hidden overlays and zero orphans.**
+
+Applying the standing rule (a scan reporting a suspiciously clean result is a
+scan to distrust before celebrating), the denominator was checked: 18
+`id="*Modal"` in HTML, 16 with inline `display:none`, 9 `pfx-tutorial-modal`
+lines. The denominator is genuinely plausible. This is a real negative result,
+not a broken scan — **and it was still useless**, because the very modal that is
+unreachable was "mentioned" five times.
+
+Recorded here so nobody re-runs it. The lesson is about proxy quality: *mentioned
+in the source* and *reachable by a user* are separated by every dead branch,
+every self-lookup and every close-only handler in the codebase. The gate that
+shipped tests routing instead, which is a claim about what the code can actually
+dispatch.
+
+### 13.4 A clipped `sed` range produces a false positive
+
+While comparing the two router tables, `sed -n '11908,11930p'` cut off the last
+entries and made `cutdiff2` look absent from `_tutModalMap`. Re-read at
+`11908,11932` — it is there, both tables agree, no defect.
+
+Nothing about the output announced that it was truncated. A range read is a
+silent claim about where a construct ends, and that claim was wrong. When the
+question is *does this table contain X*, grep the table for X; do not eyeball a
+range you chose by guessing.
+
+### 13.5 Dead code that reads as live code
+
+Both dead guards are written in the idiom of working code:
+
+    if (modalId === 'playerTransportTutorialModal') _wirePlayerTransportDeepDive();
+
+Nothing distinguishes this from the four live lines beside it. There is no
+compiler that will say "this comparison is never true", because the values of
+`modalId` come from a table lookup and no type system in play here tracks that.
+
+This is the same shape as the `if (!modal) return` from iteration 12: a
+construct whose purpose is to be defensive, quietly doing the opposite —
+converting a structural error into silence. Iteration 12's version swallowed a
+broken lookup. This version *looked* like the code that made a feature work.
+
+The repair deliberately made one of those branches live rather than deleting it.
+`_openTutorial('player')` now reaches line 11931 for the first time.
+
+### 13.6 What the new gate cannot see
+
+- **Whether the door is findable.** The rule is satisfied by a table entry
+  alone. `player: 'playerTransportTutorialModal'` works only because
+  `#pmTransportHelpBtn` calls `_openTutorial('player')`; the fourth test pins
+  that exact chain, but the general rule cannot. A route key that nothing
+  dispatches would pass. Making the general rule strong enough would mean
+  tracing dispatch statically, which is a different project.
+- **Overlays that are not tutorials.** The `TutorialModal` suffix is the whole
+  net. The 22 hidden overlays include confirms, pickers and panels whose
+  reachability is unexamined.
+- **Whether a tutorial is about the feature its route claims.** Neither this
+  gate nor `modalIds.test.mjs` can see that; iteration 12's Trailers Conform
+  defect was caught by a human reading two tables.
+- **Tutorials created at runtime.** Only checked-in HTML is scanned.
+
+### 13.7 Follow-ups
+
+- The duplicate `#btnTutorial` handler pair is now three iterations old as a
+  known problem. `_tutMap` still lacks a `player` entry (correctly — it is only
+  reached with tab keys), which means the two tables are now *legitimately*
+  different, and the "keep in sync" comment from iteration 12 is no longer
+  literally true. Consolidating the pair would remove both the comment and the
+  class of bug.
+- `ui.js:24004`'s guard is still dead and now provably so. Left in place: it is
+  the fallback handler's mirror of a branch that is live in the primary, and
+  deleting half of a mirrored pair is worse than leaving it.
+- Carried from 12.7, unchanged: the global How to Use button silently does
+  nothing on `bwav`, `preflight`, `renderq` and `home`; the global button shows
+  `#tlcTutorialModal` in static English rather than the user's stored tutorial
+  language; a tab-name consistency sweep across the other ten tabs.
+- Open question worth the next iteration: `.pm-controls` now has a help
+  affordance. No other panel in the app does. Which other panels have authored
+  help that is reachable only from somewhere non-obvious?
