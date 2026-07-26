@@ -605,3 +605,58 @@ This is the existing heuristic *"a green suite tells you the assertions passed, 
 - The three other `_matchEventByVisualWave` call sites and their `unmrefSec` / `corrSrcSec` duplicates (library-match, AI, reel-match), currently in-tree only.
 - **A test that imports `trlconf/index.js` at all.** The rate fix is unverified by machine; only the reasoning and the diff back it. Extracting the frames↔seconds helpers into something importable would be worth more than any further fix inside the file.
 - Carried from it15: `modules/amf_convert.js` (three private TC helpers, `framesToSec` at `:4342`, `ensureComp` at `:4740` — generated ExtendScript, rates must be threaded via `JOB`), `aaf_wasm.js` outside `assertParseResult`, `features/edl/filters.js` unsurveyed, `timelineAutoInject.js:53`, `prproj.js:465`.
+
+## Iteration 17 — the carried backlog, checked against the code instead of against itself
+
+A survey iteration. No source change. Its value is that it **removed** three items from the still-open list by proving they were not defects worth an iteration, and correctly classified a fourth that looked like an easy win.
+
+### 1. `features/edl/filters.js` — the path is stale
+
+Carried since iteration 15 as "unsurveyed". The file does not exist and, going by the report history, never did. The three real filter modules are `modules/filters.js` (live — reached only through `await import()` at `ui.js:114`, so it shows zero hits on a static-import grep), `modules/filters_common.js`, and `modules/filters_vfxRename.js`.
+
+### 2. `filters_common.js` — the defect in miniature, in a file production cannot reach
+
+`tc(x, fps=24)` contains the whole it15/it16 pattern in twenty-one lines:
+
+```js
+const fr = Math.round(num/den * fps);            // real media time  → wants the EXACT rate
+const ff = String(fr % fps).padStart(2,'0');     // timecode field   → wants the BASE
+```
+
+At a fractional rate `fr % 23.976` yields a fractional frame field, and — the it15 heuristic again — **`padStart` does not round**, so the output is `00:00:00:5.28`. A textbook case.
+
+It is also unreachable from the app. The only consumer repo-wide is `tests-js/filtersVfxRename.test.mjs:8`. Recorded, not fixed.
+
+### 3. `aceslook` — two defects in one function, and only one of them is real
+
+`_framesToTC(totalFrames, fps)` at `index.js:2159` decomposes with `totalFrames % fps`, so on a fractional rate it prints a fractional frame field. But all three `_addTcOverlay` call sites (`:1939`, `:2031`, `:2131`) pass **no** `fps` and take the `fps = 24` default, and `fps` occurs exactly 10 times in the entire file — all ten accounted for by the helper and the overlay. **The feature has no clip-rate source anywhere in it.** So:
+
+- The fractional-frame-field defect is **unreachable** — it cannot be triggered by any current caller.
+- The reachable defect is different and duller: the overlay hardcodes 24, so it reports the wrong frame on any non-24 clip, and on a 25 fps source two distinct timecodes (`00:00:00:24` and `00:00:01:00`) collapse onto the same frame number.
+
+Fixing the reachable one means introducing a rate source the feature does not have — new plumbing, not a local edit. Left open, described honestly rather than banked as the easy fix it resembled.
+
+### 4. The timeline-strip subsystem is unreachable in its entirety
+
+`features/edl/timelineAutoInject.js` (517 lines, git-clean) has **no importers** — the only matches for its name outside its own header comment are in this report. The component it imports, `components/timeline/index.js`, has exactly two references: the dead injector, and `cutdiff/index.js:7`, which imports `createTimeline` and **never calls it**. `components/timeline/index.js:158` carries the same `total % fps` decomposition, and `:175`'s `Number(options.fps) > 0` guard admits a fractional rate happily — but no live path delivers one, or anything at all.
+
+Deleting it is the user's call, not the loop's; an unused import in a dirty file is not something to sweep up unasked.
+
+### Heuristics added
+
+**1. A carried backlog item is a claim about the code made at a past commit, and claims rot.** Three of four items surveyed here were stale — one pointed at a file that does not exist, two at code nothing reaches. The still-open list had been treated as a work queue when it is really a set of hypotheses. Re-verify an item before spending an iteration on it; that verification cost minutes and saved the iteration.
+
+**2. Reachability is the first question, not the last.** Every item surveyed was the *same* rate defect by shape, so severity of the math distinguished nothing between them. What distinguished them was whether any caller could arrive: two dead, one unreachable-by-default, one real-but-needs-plumbing. Ranking a backlog of same-shaped defects by how bad the arithmetic looks will rank it almost randomly.
+
+**3. An iteration that changes no code is not a failed iteration** — provided it changes what the next one will do. This one shortened the queue by three and stopped the aceslook item being fixed in the wrong place.
+
+### Still open (revised)
+
+- **`_refineSourceOut`** — highest priority once it lands in HEAD; it no-ops rather than degrades.
+- The three other `_matchEventByVisualWave` call sites, currently in-tree only.
+- **A test that imports `trlconf/index.js` at all.** Still the highest-value item in the whole list: the it16 rate fix is backed by reasoning and a diff, by no machine.
+- `modules/amf_convert.js` — three private TC helpers, `framesToSec` at `:4342`, `ensureComp` at `:4740`; generated ExtendScript, so rates must be threaded via `JOB`.
+- `aaf_wasm.js` outside `assertParseResult`; `prproj.js:465`.
+- `aceslook` TC overlay — needs a clip-rate source before the hardcoded 24 can be fixed.
+- The untracked `tests-js/timecodeFuzz.test.mjs` + `electron/native/seekModel.js` pair (must land together).
+- ~~`features/edl/filters.js`~~ — does not exist. ~~`timelineAutoInject.js:53`~~, ~~`filters_common.js`~~ — dead code, documented above.

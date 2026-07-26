@@ -152,3 +152,56 @@ Open the app with media loaded + Resolve connected, report what the OCF preview 
 - Mechanical sweep of remaining ~570 `innerHTML` sinks + a lint rule banning bare-`${}` `innerHTML`.
 - Confirm a restrictive renderer CSP (`script-src 'self'`) to blunt the XSS class wholesale.
 - Scope `pfx:readFile`/`pfx:writeFile` to known roots.
+
+---
+
+# Closing report — the 15:00 run (2026-07-26, 08:23 → 14:30)
+
+A second autonomous RESEARCH → CODE → AUDIT loop, run to the 15:00 stop. Five iterations (13–17), **ten commits**, one theme.
+
+## The theme: one field was doing two jobs
+
+Every fix in this run descends from a single observation made in iteration 13 and only fully understood in 15: the codebase used one number, `fps`, for two incompatible things.
+
+- **Timecode base** — a whole-frame count. 24 on a 23.976 show, 30 on a 29.97 one. Timecode arithmetic counts *fields* and needs this.
+- **Exact playback rate** — 23.976023976…. Anything touching real media time (a seek, a duration in seconds, an AE comp rate) needs this.
+
+They differ by 0.1%: **3.6 seconds — about 86 frames — at the one-hour mark.** Whichever one you store in a field called `fps`, half the consumers are wrong, and which half changes per parser. That is why the same defect kept reappearing in different clothes.
+
+| It. | Commits | What landed |
+|---|---|---|
+| 13 | `64b2848`, `f29812d` | Event duration: a dead fallback chain, and fractional-rate timecode. Survey of all 17 parsers. |
+| 14 | `7372184`, `1feb2f6`, `347d276`, `0389cdf` | Reviews marker source TC malformed at every fractional rate; cutdiff VFX pull lengths fractional; FCPXML rational times resolved at the rounded rate. |
+| 15 | `7791423`, `ef24ad5` | **The contract.** Six parsers split into `fps` (base) + `fpsExact` (true rate); `nominalBase()` added to `utils_time.js`. |
+| 16 | `580acb0`, `a2bb645` | The consumer side: the visual conform engine now seeks the reference on the playback rate. |
+| 17 | *(docs only)* | Survey — retired three carried backlog items as dead code or stale paths. |
+
+## The one thing to read if you read nothing else
+
+Iteration 15's parser fix made `state.fps` the whole base everywhere. That was correct, and it **made the visual conform engine worse**: before it, the XMEML path reported 23.976, so those seeks were right by accident and the timecode maths was wrong. After it, the maths was right and the seeks were consistently wrong on every NTSC show. Iteration 16 closed that. It is recorded in the commit message and in both markdown docs as a regression I introduced, not a defect I found, because the two iterations only make sense read together.
+
+The severity there is not evenly spread, and that matters more than the size of the error:
+
+1. The master search self-corrects — its ±30 s window swallows 3.6 s.
+2. The **reference** seek has no window at all. A rate error there does not weaken a match; it hashes a *different shot* and matches that one with full confidence.
+3. `unmrefSec >= refDuration - 0.1` turns the overshoot into a **silent drop** — an event near the tail of a long reference leaves the conform with no row and no error.
+
+## What a green build did and did not prove
+
+`build-verify` was green at the end of every iteration (250 pytest passed / 7 skipped) and `build:renderer` produced 368 files each time. But `grep -rln "trlconf" test/ tests-js/` matches one file, in two *comments*. **No test imports the visual conform engine.** Its rate fix is backed by reasoning and a diff, by no machine. That is the highest-value open item in the backlog, above any remaining fix.
+
+## Working-tree discipline
+
+The tree carries roughly 690 pre-existing dirty files of in-flight work. Every commit in this run contains only the files that iteration touched, and only the hunks it wrote. `trlconf/index.js` needed a different technique to achieve that — it has 155 hunks against HEAD and 5 of the 24 I needed came back merged with the user's adjacent work, so the staged content was reconstructed from HEAD and written with `git hash-object` / `git update-index` without the working tree ever being touched. Your uncommitted work is exactly where you left it. Two near-misses during that process are written up in the audit report; both came from reconstructing target text from memory instead of reading HEAD's bytes.
+
+## Artefact
+
+`npm run build:renderer` + `npm run build:mac-dir`, exit 0, at **14:19** — `dist/mac-arm64/PostFlowX.app`. Unsigned local package, built from the working tree, so it contains your in-flight work as well as the committed fixes. Iteration 17 changed no source, so this is the final build of the run.
+
+## Where to pick up
+
+1. **A test that imports `trlconf/index.js`.** Extracting its frames↔seconds helpers into something importable is worth more than any further fix inside it.
+2. **`_refineSourceOut`** — once it lands in HEAD. Its ±0.9 s / ±1.2 s windows are far narrower than 3.6 s, so on NTSC it does not degrade, it **silently no-ops**, under a doc comment promising it "can only improve accuracy, never regress it."
+3. **`modules/amf_convert.js`** — three private TC helpers plus `framesToSec` and the `ensureComp` comp rate. It generates ExtendScript and cannot import `nominalBase`, so both rates have to be threaded in through `JOB`.
+
+Full detail: `PostFlowX_Nightly_Backlog.md` (what was done) and `PostFlowX_Audit_Report.md` (what was found, and the heuristics the loop accumulated).

@@ -844,3 +844,19 @@ Backward compatible by construction: `fpsExact = fps` as a defaulted parameter a
 `index.js` is the single dirtiest file in the tree: **155 `-U0` hunks** against HEAD. I had verified that every line I edited was byte-identical to HEAD and concluded the hunks would therefore be isolable. They were not. `git diff -U0` merges a changed line with any foreign changed line *contiguous* with it, so **5 of 24 hunks came back mixed** — the worst being `@@ -723 +872,80 @@`, where 80 lines of the user's `_assertDecodable` / `_refineSourceOut` / `_retimeDescriptor` sit immediately above my `_matchEventByVisualWave` signature.
 
 Pivoted to reconstructing the staged content instead: `git show HEAD:…` to a pristine baseline (sha256 pinned and re-verified after every run), a scripted apply of all 22 edits with per-edit occurrence assertions, then `git hash-object -w` + `git update-index --cacheinfo` to stage that blob directly. The working tree was never written to — the user's in-flight work stays modified-but-uncommitted, confirmed after the commit.
+
+## Iteration 17 — a survey that retired more backlog than it added (no code change)
+
+**Item picked:** the carried "still open" list itself. Before spending an iteration fixing the next rate defect, check that the items are still true. Four were surveyed; **three turned out not to be fixable defects at all.**
+
+| Carried item | Reality |
+|---|---|
+| `features/edl/filters.js` unsurveyed | **The file does not exist.** Stale path. The real files are `modules/filters.js` (live, reached via `await import` from `ui.js:114`), `modules/filters_common.js`, `modules/filters_vfxRename.js`. |
+| `filters_common.js` `tc()` | Carries the two-rate defect exactly, but its **only consumer repo-wide is `tests-js/filtersVfxRename.test.mjs:8`**. Production-dead. Documentation-only. |
+| `timelineAutoInject.js:53` private `tcToFrames` | **Zero importers repo-wide.** So is the component it pulls in: `components/timeline/index.js` is imported by exactly two files — the dead injector, and `cutdiff/index.js:7`, which imports `createTimeline` and never calls it. ~1,000 lines reachable by nobody. |
+| `aceslook` TC overlay (new this iteration) | Two different defects, only one reachable — see the audit report. |
+
+**No source was changed.** Nothing here was both reachable and fixable inside the time left, and manufacturing a change to a dead file to keep a streak would be the opposite of the point. Build state is unchanged from `580acb0` — last verified green there.
+
+- **Docs commit:** this section plus the audit-report section, 2 files.
+- **Packaging:** the one-time repackage ran at 14:19 (`build:renderer` + `build:mac-dir`, exit 0). Because iteration 17 changed no source, that build is the final artefact and rule (5)'s "once" is satisfied exactly.
