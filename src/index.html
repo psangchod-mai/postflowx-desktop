@@ -2139,54 +2139,12 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           </div>
         </div>
       </div>
-      <!-- Inspector moved to .cd2x-left-col — stub kept for legacy DOM refs -->
-      <div id="cd2x-inspector-stub" style="display:none">
-        <div class="cd2x-insp-body" style="display:none">
-          <div class="cd2x-insp-section cd2x-insp-section-new">
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Reel</span><span id="cd2x-insp-reel" class="cd2x-insp-val">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Clip</span><span id="cd2x-insp-clip" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src In</span><span id="cd2x-insp-src-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src Out</span><span id="cd2x-insp-src-out" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec In</span><span id="cd2x-insp-rec-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec Out</span><span id="cd2x-insp-rec-out" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Duration</span><span id="cd2x-insp-duration" class="cd2x-insp-val">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">FPS</span><span id="cd2x-insp-fps" class="cd2x-insp-val">—</span></div>
-          </div>
-          <div class="cd2x-insp-divider">Match Analysis</div>
-          <div class="cd2x-insp-section">
-            <div class="cd2x-insp-conf-row">
-              <span class="cd2x-insp-lbl">Confidence</span>
-              <div class="cd2x-insp-conf-track"><div id="cd2x-insp-score-bar" class="cd2x-insp-conf-fill" style="width:0%"></div></div>
-              <span id="cd2x-insp-score-pct" class="cd2x-insp-val">—</span>
-            </div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Reason</span><span id="cd2x-insp-reason" class="cd2x-insp-val">—</span></div>
-            <div class="cd2x-insp-divider">OLD Match</div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Clip</span><span id="cd2x-insp-old-clip" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src In</span><span id="cd2x-insp-old-src-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-            <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec In</span><span id="cd2x-insp-old-rec-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
-          </div>
-          <div class="cd2x-insp-divider">Workflow</div>
-          <div class="cd2x-insp-section">
-            <div class="cd2x-insp-row">
-              <span class="cd2x-insp-lbl">Status</span>
-              <select id="cd2x-insp-status" class="cd2x-insp-select">
-                <option value="none">— Unset</option>
-                <option value="ok">&#10003; Approved</option>
-                <option value="skip">&#8856; Skip</option>
-                <option value="query">? Query</option>
-              </select>
-            </div>
-            <div class="cd2x-insp-note-row">
-              <span class="cd2x-insp-lbl">Note</span>
-              <textarea id="cd2x-insp-note" class="cd2x-insp-note" rows="3" placeholder="Add a note…"></textarea>
-            </div>
-            <div style="display:flex;gap:4px;">
-              <button id="cd2x-insp-note-save" class="btn tiny ghost cd2x-insp-save-btn" type="button">Save Note</button>
-              <button id="cd2x-insp-seek-btn"  class="btn tiny theme-cd2x cd2x-insp-save-btn" type="button" title="Seek video compare to this event"><span class="bar"></span>&#9654; Seek VC</button>
-            </div>
-          </div>
-        </div>
-      </div><!-- /cd2x-inspector-stub -->
+      <!-- The inspector lives once, at the bottom of the right column (#cd2x-inspector).
+           A hidden duplicate used to sit here, left behind by the move and kept "for
+           legacy DOM refs". getElementById resolves first-in-document-order, so the
+           duplicate did not act as a fallback — it captured all 18 body-field lookups
+           and the real, visible panel never received a value. Do not re-add it; the
+           duplicate-id gate in tests-js/duplicateIds.test.mjs now fails the build. -->
     </div><!-- /cd2x-vc-panel -->
 
     <!-- Inspector at bottom of right column -->
