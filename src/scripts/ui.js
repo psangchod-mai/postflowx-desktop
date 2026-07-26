@@ -65,6 +65,8 @@ import {
   clearMediaRootDir
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
+import { nominalBase } from "./modules/utils_time.js";
+import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
 import { nativeSetProxyRoot } from "./modules/native_helper_client.js";
 
@@ -270,16 +272,29 @@ function _parseProgressHide() {
   el.classList.remove('pfx-pp-on');
 }
 
+// Both count on the whole-frame base, not the playback rate: 23.976 fits 24 frame
+// fields into a timecode second and 29.97 NDF fits 30. Multiplying seconds by the
+// fractional rate made a four-second span measure 95.904 frames, and dividing by it
+// in framesToTC put a fractional number in the frame field — "00:00:05:0.12000000000000455"
+// reached the Inspector's duration label that way.
+//
+// tcToFrames still answers 0 for anything it cannot read, because thirty call sites
+// in this file add its result straight into a running total and a NaN would poison
+// every row after it. That 0 is only safe for callers that add; callers that *test*
+// the result for validity must not use this — Number.isFinite(0) is true, so the
+// test always passes. Those callers use parseTimecodeFrames from modules/eventDuration.js,
+// which answers NaN.
 function tcToFrames(tc,fps=24){
-  const m = tc&&tc.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  const m = tc&&String(tc).trim().match(/^(\d+)[:;](\d+)[:;](\d+)[:;](\d+)(?:\.\d+)?$/);
   if(!m)return 0;
-  return (+m[1]*3600+ +m[2]*60+ +m[3])*fps + +m[4];
+  return (+m[1]*3600+ +m[2]*60+ +m[3])*nominalBase(fps) + +m[4];
 }
 
 function framesToTC(fr,fps=24){
+  const base=nominalBase(fps);
   fr=Math.round(fr||0);
-  const s=Math.floor(fr/fps);
-  const ff=fr%fps;
+  const s=Math.floor(fr/base);
+  const ff=fr%base;
   const hh=Math.floor(s/3600), mm=Math.floor((s%3600)/60), ss=s%60;
   const p=n=>String(n).padStart(2,"0");
   return `${p(hh)}:${p(mm)}:${p(ss)}:${p(ff)}`;
@@ -385,19 +400,12 @@ function computeEdlRecMap(view=[], rowOrder=[], fps=24, selectedSet=null){
   const map = new Map(); // i -> {inTC,outTC,inF,outF,durF}
   let cur = 0;
 
-  const durFramesFor = (e) => {
-    // Prefer explicit durationFrames if present
-    if (e && Number.isFinite(e.durationFrames)) return Math.max(0, Math.round(e.durationFrames));
-    // Fallback: src duration
-    const si = tcToFrames(e?.srcIn, fps);
-    const so = tcToFrames(e?.srcOut, fps);
-    if (Number.isFinite(si) && Number.isFinite(so) && so >= si) return Math.max(0, so - si);
-    // Fallback: rec duration
-    const ri = tcToFrames(e?.recIn, fps);
-    const ro = tcToFrames(e?.recOut, fps);
-    if (Number.isFinite(ri) && Number.isFinite(ro) && ro >= ri) return Math.max(0, ro - ri);
-    return 0;
-  };
+  // durationFrames, else source span, else record span. Lives in
+  // modules/eventDuration.js so it can be tested — the record fallback used to be
+  // unreachable here (tcToFrames answered 0, and Number.isFinite(0) is true, so the
+  // source branch claimed every event), and nothing in the suite could reach this
+  // file to notice. See tests-js/eventDuration.test.mjs.
+  const durFramesFor = (e) => durationFramesFor(e, fps);
 
   for (const i of order){
     const e = view[i];
@@ -12955,21 +12963,11 @@ const isSpeed = hasSpeedChange(ev);
   setText("insSrcOut", ev.srcOut || "00:00:00:00");
 
   // ---- Duration: durationFrames → Src → Rec
-  let durFrames = Number.isFinite(ev.durationFrames) ? ev.durationFrames : null;
-
-  if (!Number.isFinite(durFrames) && ev.srcIn && ev.srcOut){
-    const a = tcToFrames(ev.srcIn, timelineFps);
-    const b = tcToFrames(ev.srcOut, timelineFps);
-    const df = b - a;
-    if (Number.isFinite(df) && df >= 0) durFrames = df;
-  }
-
-  if (!Number.isFinite(durFrames) && ev.recIn && ev.recOut){
-    const a = tcToFrames(ev.recIn, timelineFps);
-    const b = tcToFrames(ev.recOut, timelineFps);
-    const df = b - a;
-    if (Number.isFinite(df) && df >= 0) durFrames = df;
-  }
+  // NaN when the event says nothing readable, so the label below stays "—" rather
+  // than asserting a confident "00:00:00:00 / 0 fr". The inline version of this
+  // chain measured a malformed or drop-frame source timecode as 0 - 0 and stopped
+  // there, never reaching the record columns that would have answered.
+  const durFrames = measuredDurationFrames(ev, timelineFps);
 
   let durationLabel = "—";
   if (Number.isFinite(durFrames) && durFrames >= 0){
