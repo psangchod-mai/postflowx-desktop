@@ -821,3 +821,26 @@ Enforced centrally in `test/_contract.mjs` — `fps` integer, `fpsExact` positiv
 - **Commit hygiene — two catches.** `prep_mark.js` was dirty with ~60 foreign hunks (835 ins / 138 del) against my 11 lines; `edl.js` carried a foreign `isVideoTrack` hunk. Both split out by patch surgery and verified absent from the staged diff. Then `git update-index --chmod=-x` **silently re-registered the whole working-tree file**, putting all 973 lines back into the index — caught only because the staged stat was re-read after the chmod rather than assumed. Restaged from the isolated patch. Final commit: 346 insertions across 12 files, no mode flips.
 
 **Heuristic for the file:** `git update-index --chmod` is not a mode-only operation — it re-stages content. Never run it on a file that is partially staged, and always re-read `git diff --cached --stat` afterwards.
+
+---
+
+## Iteration 16 — the consumer side of the two-rate contract (`580acb0`)
+
+**Item picked:** finish what iteration 15 started. It15 fixed six *producers* so `fps` and `fpsExact` mean one thing each. `trlconf/index.js` is the consumer that most needed them and had not been threaded — it ran ~20 frames↔seconds conversions on `state.fps`, and every one of them feeds real media time.
+
+**Owning the regression.** Before it15 the XMEML path reported `fps = 23.976`, so the seeks in this engine were right and `_tcToFrames` was wrong. After it15 `state.fps` is always the whole base, so the conform math became right everywhere and the seeks became *consistently* wrong on every NTSC show. That is a regression I introduced, not a defect I discovered. This iteration closes it.
+
+**What changed.** `fpsExact` threaded through the reference seek, the master hint, the AI and hash search calls, the seconds→frames result coming back out of a seek, the verify panel, the wave-offset readout, timeline load (both sites), session save/restore, and reset. Timecode arithmetic — `_tcToFrames`, `_framesToTC`, `_eventFrameMetrics`, sample offsets — deliberately stays on the base. `ai_matcher.js` takes the matching parameter rename and docblock.
+
+Backward compatible by construction: `fpsExact = fps` as a defaulted parameter and `state.fpsExact || state.fps` at every read, so any untouched caller or pre-existing saved session keeps exactly today's behaviour instead of silently changing rate.
+
+**Left alone on purpose.** `_refineSourceOut`, `_detectShotsFromVideo`, `_assertDecodable`, `_retimeDescriptor`, `_withNativePaths`, `_fpsIsDrop`, the `regionalHash`/wideSearch branch, and three further `_matchEventByVisualWave` call sites (working-tree ~3351/~3423/~3632) **do not exist in HEAD** — all verified at zero occurrences in `git show HEAD:…`. They are in-flight work in the tree and inherit today's behaviour through the default.
+
+- **Build:** `build-verify` exit 0 (250 pytest passed / 7 skipped), `build:renderer` exit 0 (368 files). Both green — and both blind to this change, see the audit report.
+- **Commit:** `580acb0`, exactly 2 files, 95 insertions / 20 deletions, no mode flips, no foreign hunks.
+
+### Commit hygiene — the technique had to change
+
+`index.js` is the single dirtiest file in the tree: **155 `-U0` hunks** against HEAD. I had verified that every line I edited was byte-identical to HEAD and concluded the hunks would therefore be isolable. They were not. `git diff -U0` merges a changed line with any foreign changed line *contiguous* with it, so **5 of 24 hunks came back mixed** — the worst being `@@ -723 +872,80 @@`, where 80 lines of the user's `_assertDecodable` / `_refineSourceOut` / `_retimeDescriptor` sit immediately above my `_matchEventByVisualWave` signature.
+
+Pivoted to reconstructing the staged content instead: `git show HEAD:…` to a pristine baseline (sha256 pinned and re-verified after every run), a scripted apply of all 22 edits with per-edit occurrence assertions, then `git hash-object -w` + `git update-index --cacheinfo` to stage that blob directly. The working tree was never written to — the user's in-flight work stays modified-but-uncommitted, confirmed after the commit.

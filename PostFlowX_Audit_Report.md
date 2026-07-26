@@ -562,3 +562,46 @@ The two consumers of that one number needed opposite values and **both were righ
 - `trlconf/index.js:2303` — `delta / state.fps` is the one site in that file wanting the *true* rate; repoint at `fpsExact`.
 - `modules/amf_convert.js` — three private TC helper copies, plus `framesToSec` at `:4342` and the `ensureComp` comp rate at `:4740` inside **generated After Effects ExtendScript**, which cannot import `nominalBase`. Both rates must be threaded in via `JOB`.
 - `aaf_wasm.js` is not covered by `assertParseResult` and was not converted.
+
+---
+
+## Iteration 16 — the visual conform engine seeks by the wrong clock
+
+**Severity: high, and asymmetric in a way that explains why nobody caught it.**
+
+### The finding
+
+`trlconf/index.js` converts frames↔seconds on `state.fps` — the whole-frame timecode base — at roughly twenty sites. On any NTSC show the base is 0.1% away from the true playback rate: **3.6 seconds, ~86 frames, at the one-hour mark.** Three of those sites matter very differently:
+
+1. **The master search self-corrects.** `_searchMasterForFrame` gives its hint a ±30 s coarse window. A 3.6 s error is well inside it, the match still lands, and nothing looks wrong.
+2. **The reference seek has no window at all.** `_seekVideo(refVideo, refSec)` then hash, directly. A rate error here does not *degrade* a match — it hashes **a different shot and matches that, with full confidence.** There is no signal, because a confident match on the wrong frame is indistinguishable from a confident match on the right one.
+3. **The range guard turns the overshoot into a silent drop.** `if (unmrefSec < 0 || unmrefSec >= refDuration - 0.1) { console.warn(...); continue; }` — an event near the tail of a long reference overshoots, logs to a console nobody has open, and leaves the conform with **no row and no error**.
+
+`_refineSourceOut` is worse still and is *not* fixed here (it does not exist in HEAD): its windows are `coarseWindowSec: 0.9` / `fineWindowSec: 1.2`, so 3.6 s is far outside them. It does not degrade on NTSC — it **silently no-ops**, under a doc comment claiming it "can only improve accuracy, never regress it." That is the next item.
+
+### This is my regression, not a discovery
+
+Iteration 15 made `state.fps` the whole base on every path. Before it, XMEML reported 23.976, so these seeks were *right* and `_tcToFrames` was wrong. It15 fixed the conform math and, in doing so, made the seeks consistently wrong on every NTSC source. Recording it as a fresh find would misrepresent both iterations.
+
+### The finding that should change how the loop reads a green build
+
+`grep -rln "trlconf" test/ tests-js/` matches exactly one file — `test/parsers/xml.test.mjs` — and only in two **comments** (lines 46 and 77). **No test imports `trlconf/index.js`.** `build-verify` has never executed a line of the visual conform engine. That is how a rate defect lived in it through fifteen green iterations, and it means "build-verify green" is not evidence about this file. Stated in the commit message rather than left implied.
+
+This is the existing heuristic *"a green suite tells you the assertions passed, not that they ran against the thing their names claim"* in its strongest form yet: here the assertions do not merely test something else, **the file has no assertions at all.**
+
+### Heuristics added
+
+**1. Line-level cleanliness does not imply hunk-level isolability.** I verified every line I touched was byte-identical to HEAD and concluded the hunks were separable. `git diff -U0` still merged 5 of 24 of them with foreign work, because git groups by *adjacency*, not by authorship. In a file with 155 hunks, "my line is clean" and "my hunk is clean" are different claims and only the second one is the one that matters. When they diverge, stop splitting hunks and reconstruct the intended blob from HEAD instead.
+
+**2. A substring count is not an anchor — `count(old) == 1` can pass on the wrong line.** This is the sharp one. My apply script asserts an exact occurrence count before every replacement, and that mechanism had already caught one bad target (the `reset` line, whose HEAD text is column-aligned as `state.fps                = DEFAULT_FPS;`). It then let a worse one straight through: the session-save target `"      fps: state.fps,"` counted exactly **1** — but the match was the *tail* of a 14-space-indented `              fps: state.fps,` at the conform call site. HEAD's real session-save line is `      fps:              state.fps,`. So the edit landed in the wrong function, produced a duplicate misindented property, and the real `exportState()` never got the field — meaning saved sessions would have silently lost `fpsExact` on every reload. **Caught only by reading the full reconstructed diff before staging, not by the assertion that was supposed to catch it.** The guard is now a line-boundary check as well as a count: an indented target must also start at a line start. A verification that can be satisfied by the wrong thing is not a verification.
+
+**3. Both of this iteration's near-misses are the same root mistake as iteration 15's.** Every one came from reconstructing an `old_string` from memory or from the working tree instead of reading the live HEAD bytes — and column alignment is where it bites, because the eye normalises whitespace and `count()` does not. Read the bytes.
+
+**4. `git add` re-introduces working-tree mode bits.** Adding the clean `ai_matcher.js` swept in a 644→755 flip alongside the content. Fixed with `git update-index --cacheinfo 100644,<same-sha>,<path>` — which sets the mode against an explicit blob — rather than `--chmod`, which iteration 15 established re-stages content. Verified with `git diff --cached --summary` returning empty.
+
+### Still open
+
+- **`_refineSourceOut`** — highest priority once it lands in HEAD; it no-ops rather than degrades, so it will keep looking like a feature that simply never helps.
+- The three other `_matchEventByVisualWave` call sites and their `unmrefSec` / `corrSrcSec` duplicates (library-match, AI, reel-match), currently in-tree only.
+- **A test that imports `trlconf/index.js` at all.** The rate fix is unverified by machine; only the reasoning and the diff back it. Extracting the frames↔seconds helpers into something importable would be worth more than any further fix inside the file.
+- Carried from it15: `modules/amf_convert.js` (three private TC helpers, `framesToSec` at `:4342`, `ensureComp` at `:4740` — generated ExtendScript, rates must be threaded via `JOB`), `aaf_wasm.js` outside `assertParseResult`, `features/edl/filters.js` unsurveyed, `timelineAutoInject.js:53`, `prproj.js:465`.
