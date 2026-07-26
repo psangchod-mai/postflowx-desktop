@@ -9,11 +9,24 @@
  *   IMF Decode Test  → use currently loaded IMF package, or prompt
  *   Generate Test Proxy → prompt for file, kick off proxy generation
  *   Show Logs        → load all 4 log channels, tabbed display
- *   Repair Engines   → open brew install guide in external browser
+ *   Repair Engines   → print the install instructions into the logs panel
+ *
+ * The Repair Engines line used to read "open brew install guide in external
+ * browser". It has never opened a browser; it writes into the panel below.
+ * Corrected in place rather than deleted — a comment that describes a
+ * behaviour the function does not have is worth recording as its own defect.
+ *
+ * Failure text: every status line in this panel goes through friendlyStatus,
+ * because four of friendlyError's sixteen hints send the user *here* to fix
+ * something. Arriving at the repair screen and being handed a second raw
+ * errno is the end of the trail for a non-technical reader. Each call passes
+ * "<what was being done> failed: <raw>" — friendlyStatus keeps the prefix
+ * (it needs a space before the colon to do so) and humanizes the tail.
  */
 
 import { buildBadge, engineColor } from './smart_playback_engine.js';
 import { friendlyAlert } from '../core/friendlyAlert.js';
+import { friendlyStatus } from '../core/friendlyError.js';
 
 const STATUS_COLOR = {
   ready:   '#2ecc71',
@@ -88,10 +101,23 @@ async function checkEngines() {
     }
     _renderEngineRows(engines);
   } catch (err) {
-    list.innerHTML = `<div style="font-size:9px;color:#e74c3c;">Error: ${_esc(err.message)}</div>`;
+    const line = friendlyStatus(`Engine check failed: ${err.message}`);
+    list.innerHTML = `<div style="font-size:9px;color:#e74c3c;white-space:pre-wrap;">${_esc(line)}</div>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Check Engines'; }
   }
+}
+
+// friendlyStatus puts its advice on a line of its own, and the elements these
+// failures land in are plain <div>s in index.html with default white-space,
+// where a newline collapses straight back to a space — the same collapse
+// iteration 22 removed from the error banner. The markup is not ours to change
+// from here, so the property is set where the text is written, which is what
+// errorBanner.js does for the same reason.
+function _setStatusText(el, text) {
+  if (!el) return;
+  el.style.whiteSpace = 'pre-wrap';
+  el.textContent = text;
 }
 
 // ── Decode Test Frame ─────────────────────────────────────────────────────────
@@ -135,14 +161,14 @@ async function decodeTestFrame() {
       imgEl.src = `file://${r.imagePath}`;
       resultEl.style.display = '';
     } else {
-      const msg = r?.error || r?.stderr?.slice(0, 200) || 'decode failed';
-      labelEl.textContent = `FAILED: ${msg}`;
+      const msg = r?.error || r?.stderr?.slice(0, 200) || 'no reason was reported';
+      _setStatusText(labelEl, friendlyStatus(`Decode test failed: ${msg}`));
       imgEl.src = '';
       resultEl.style.display = '';
     }
   } catch (err) {
     const labelEl = _q('smartEngineDecodeLabel');
-    if (labelEl) labelEl.textContent = `Error: ${err.message}`;
+    _setStatusText(labelEl, friendlyStatus(`Decode test failed: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
     if (resultEl) resultEl.style.display = '';
   } finally {
@@ -194,14 +220,14 @@ async function imfDecodeTest() {
       imgEl.src = decodeResult.imageDataUrl;
       resultEl.style.display = '';
     } else {
-      const msg = (decodeResult?.errors || []).join('; ') || decodeResult?.error || 'IMF decode failed';
-      labelEl.textContent = `FAILED: ${msg}`;
+      const msg = (decodeResult?.errors || []).join('; ') || decodeResult?.error || 'no reason was reported';
+      _setStatusText(labelEl, friendlyStatus(`IMF decode test failed: ${msg}`));
       imgEl.src = '';
       resultEl.style.display = '';
     }
   } catch (err) {
     const labelEl = _q('smartEngineDecodeLabel');
-    if (labelEl) labelEl.textContent = `Error: ${err.message}`;
+    _setStatusText(labelEl, friendlyStatus(`IMF decode test failed: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
     if (resultEl) resultEl.style.display = '';
   } finally {
@@ -247,7 +273,9 @@ async function generateTestProxy() {
     if (labelEl) {
       labelEl.textContent = r?.ok
         ? `Proxy queued (session: ${sessionId}). Check proxy folder: ${outputDir}/proxies/`
-        : `Proxy failed: ${r?.error || 'unknown'}`;
+        // 'unknown' was the previous fallback, and it read as if the app knew
+        // something it would not say. It does not know; say that instead.
+        : friendlyStatus(`Test proxy failed: ${r?.error || 'no reason was reported'}`);
     }
     if (resultEl) {
       resultEl.style.display = '';
@@ -302,7 +330,7 @@ async function showLogs() {
     panel.style.display = '';
     if (btn) btn.textContent = 'Hide Logs';
   } catch (err) {
-    content.textContent = `Error loading logs: ${err.message}`;
+    _setStatusText(content, friendlyStatus(`Loading the engine logs failed: ${err.message}`));
     panel.style.display = '';
     if (btn) btn.textContent = 'Hide Logs';
   } finally {
@@ -323,31 +351,65 @@ function _renderActiveLogTab() {
 // ── Repair Engines ────────────────────────────────────────────────────────────
 
 function repairEngines() {
+  // The button is called Repair Engines, so a reader expects the app to do the
+  // repairing. It cannot — these are system-wide packages and installing them
+  // needs an admin password in a terminal. What the button can honestly do is
+  // hand over instructions somebody who has never opened Terminal can follow,
+  // which means saying what the engines are, what the steps are, and what a
+  // prompt for a password means. The bare `brew install` list this used to
+  // print assumed all of that.
   const instructions = [
-    'To install or repair PostFlowX media engines, run the following in Terminal:',
+    'Repair engines',
     '',
-    '  # Core (required)',
-    '  brew install ffmpeg',
-    '  brew install mpv',
+    'PostFlowX decodes and plays media using a few free helper programs, called',
+    'engines. They are not part of PostFlowX and it cannot install them for you,',
+    'so anything Check Engines listed as missing has to be installed on this Mac',
+    'once. This is a copy-and-paste job — you are not writing any code.',
     '',
-    '  # IMF (ffmpeg must be built with --enable-libxml2)',
-    '  brew install libxml2',
-    '  brew reinstall ffmpeg',
+    '  1. Open the Terminal app (press Command + Space, type Terminal, Return).',
+    '  2. Copy one line below, paste it into Terminal, press Return, and let it',
+    '     finish before you paste the next one.',
+    '  3. When they are all done, come back here and click Check Engines.',
     '',
-    '  # JPEG 2000 / HTJ2K',
-    '  brew install openjpeg',
-    '  brew install libopenjph  # OpenJPH (ojph_expand)',
+    'The lines use Homebrew, the usual way to install tools like these on macOS.',
+    'If Terminal answers "command not found: brew", install Homebrew first from',
+    'https://brew.sh and then start again at step 1. You may be asked for your',
+    'Mac password; nothing appears on screen while you type it, which is normal.',
     '',
-    '  # After installing, click "Check Engines" to verify.',
+    'For normal playback:',
+    '',
+    '    brew install ffmpeg',
+    '    brew install mpv',
+    '',
+    'For IMF packages (the second line rebuilds ffmpeg and can take a while):',
+    '',
+    '    brew install libxml2',
+    '    brew reinstall ffmpeg',
+    '',
+    'For JPEG 2000 and HTJ2K material:',
+    '',
+    '    brew install openjpeg',
+    '    brew install libopenjph',
+    '',
+    'None of this touches your footage or your projects. If a line fails, the',
+    'text Terminal prints back is the useful thing to send to support.',
   ].join('\n');
 
   if (_isElectron()) {
-    // Show in a dedicated panel rather than a system dialog
+    // Printed straight into the panel's content element, NOT through
+    // _logsData/_renderActiveLogTab. That pair was the defect: the write went
+    // to the fixed 'playback' key while the render reads whichever tab carries
+    // .is-active, so with IMF, Proxy or Resolve selected the instructions
+    // landed in a channel nobody was looking at and the button did visibly
+    // nothing. On the Playback tab it did show them — by destroying the log
+    // that had just been fetched, until the next Show Logs. Writing to the
+    // element covers both: the text always appears, no log is overwritten, and
+    // clicking any tab calls _renderActiveLogTab() and hands the panel back.
     const content = _q('smartEngineLogsContent');
     const panel   = _q('smartEngineLogsPanel');
     if (content && panel) {
-      _logsData['playback'] = instructions;
-      _renderActiveLogTab();
+      content.textContent = instructions;
+      content.scrollTop   = 0;   // instructions are read from the top; logs from the bottom
       panel.style.display = '';
     }
   } else {
