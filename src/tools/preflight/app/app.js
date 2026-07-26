@@ -1,6 +1,7 @@
 import { loadConfig } from "./loader.js";
 import { buildRun } from "./run.js";
 import { renderApp } from "./ui.js";
+import { normalizeLocale, preferredLocale } from "./locale.js";
 
 // Chrome extension runtime bridge — works in extension context AND Electron iframe (no chrome runtime).
 // Falls back to localStorage so state persists across reloads in the desktop app.
@@ -380,6 +381,118 @@ async function rescanFolderAndRun(reqId){
 }
 
 
+/**
+ * Write every static string in index.html from the current config.
+ *
+ * Split out of init() so a language change can re-run it. Only assignments live
+ * here — every addEventListener stays in init(), because this runs again on each
+ * change and re-binding a listener each time is how one click becomes four.
+ */
+function applyStaticLabels() {
+  const UI = state.config.ui || {};
+  const L = UI.labels || {};
+  const B = UI.buttons || {};
+
+  setText("lProject", L.project);
+  setText("lProfile", L.profile);
+  setText("lLanguage", L.language);
+
+  setText("tScope", L.scope);
+  setText("tFilters", L.filters);
+  setText("tHistory", L.history);
+  setText("tLimitations", L.limitations);
+  setText("tAssets", L.assets);
+  setText("tUnassigned", L.unassigned);
+  setText("tViews", L.views || "Views");
+
+  setText("lblBlockers", L.blockers);
+  setText("lblMissing", L.missing);
+  setText("lblWarnings", L.warnings);
+
+  const search = qs("search");
+  if (search && L.search_placeholder) search.placeholder = L.search_placeholder;
+
+  const unHelp = qs("unassignedHelp");
+  if (unHelp && L.unassigned_help) unHelp.textContent = L.unassigned_help;
+
+  const bRun    = qs("runBtn");       if (bRun    && B.run)           bRun.textContent    = B.run;
+  const bExport = qs("exportBtn");    if (bExport && B.export_report) bExport.textContent = B.export_report;
+  const bReset  = qs("resetBtn");     if (bReset  && B.reset)         bReset.textContent  = B.reset;
+
+  const drawerClose = qs("drawerClose"); if (drawerClose && B.close) drawerClose.textContent = B.close;
+  const tabFix = qs("tabFix"); if (tabFix && L.fix_now) tabFix.textContent = L.fix_now;
+  const tabEvidence = qs("tabEvidence"); if (tabEvidence && L.evidence_tab) tabEvidence.textContent = L.evidence_tab;
+}
+
+/**
+ * Switch language in place. Returns the locale actually in effect.
+ *
+ * The order matters. loadConfig runs *before* anything is mutated, so a failed
+ * or partial load leaves the pane exactly as it was rather than half-translated
+ * — the user gets no change instead of a broken one.
+ *
+ * The category keys the scope selection is stored against come from
+ * requirements.json, which is not localized; the i18n files override display
+ * text only. So state.settings.selectedCategories survives the swap untouched,
+ * and re-normalizing it here would be a chance to silently drop a selection for
+ * no gain.
+ */
+async function relocalize(raw) {
+  const locale = normalizeLocale(raw);
+  if (locale === state.settings.locale) return locale;
+
+  let cfg;
+  try {
+    cfg = await loadConfig(locale);
+  } catch (err) {
+    console.warn("Preflight: language change failed, keeping", state.settings.locale, err);
+    return state.settings.locale;
+  }
+  if (!cfg || !cfg.ui) {
+    console.warn("Preflight: config for", locale, "loaded empty; keeping", state.settings.locale);
+    return state.settings.locale;
+  }
+
+  state.settings.locale = locale;
+  state.config = cfg;
+  try { await _ext.saveSettings(state.settings); } catch (_) {}
+
+  applyStaticLabels();
+  render();
+
+  // A finished run's card titles were baked at scan time (run.js:630 copies
+  // req.title into the card), so re-rendering alone leaves the results in the
+  // old language while the chrome around them changes — the worst of both. The
+  // files are still in memory precisely because this did not reload, so the run
+  // can simply be redone. This is the payoff for not calling location.reload():
+  // after a reload state.files is empty and re-running is not an option at all.
+  if (state.run && (state.settings.selectedCategories?.length ?? 0) > 0
+      && state.files.some(Boolean)) {
+    qs("runBtn")?.click();
+  }
+  return locale;
+}
+
+/**
+ * Listen for the app's language.
+ *
+ * postMessage is the contract (scripts/core/paneLang.js). The storage event is a
+ * fallback for the case where the host wrote mps.lang without the broadcast
+ * reaching us; it is keyed on mps.lang alone, because reacting to our own
+ * settings write would loop.
+ */
+function listenForLanguage() {
+  window.addEventListener("message", (ev) => {
+    const d = ev?.data;
+    if (!d || d.type !== "pfx:lang" || !d.lang) return;
+    relocalize(d.lang);
+  });
+  window.addEventListener("storage", (ev) => {
+    if (!ev || ev.key !== "mps.lang" || !ev.newValue) return;
+    relocalize(ev.newValue);
+  });
+}
+
 async function init() {
   // Load saved settings + history first (so we can load the correct locale).
   const _initData = await _ext.getState();
@@ -394,8 +507,11 @@ async function init() {
     state.disabledFileIdxs = new Set(Array.isArray(_storedIdxs) ? _storedIdxs : []);
   }
 
-  // Default locale
-  if (!state.settings.locale) state.settings.locale = "en";
+  // Starting language. The title bar's choice wins over whatever this pane last
+  // ran as — see preferredLocale() in locale.js for why that order and not the
+  // other one. The postMessage from paneLang.js will correct us either way; this
+  // only decides what the user sees for the first few hundred milliseconds.
+  state.settings.locale = preferredLocale(state.settings.locale);
 
   // Load config with locale
   state.config = await loadConfig(state.settings.locale);
@@ -498,55 +614,16 @@ async function init() {
     });
   }
 
-  // Language selector (flags)
-  const localeSelect = qs("localeSelect");
-  if (localeSelect) {
-    const options = [
-      { value: "en", label: "🇺🇸 EN" },
-      { value: "ja", label: "🇯🇵 JP" },
-      { value: "ko", label: "🇰🇷 KR" },
-      { value: "zh-TW", label: "🇹🇼 TW" },
-      { value: "id", label: "🇮🇩 ID" },
-      { value: "th", label: "🇹🇭 TH" },
-    ];
-    localeSelect.innerHTML = "";
-    for (const o of options) {
-      const opt = document.createElement("option");
-      opt.value = o.value;
-      opt.textContent = o.label;
-      localeSelect.appendChild(opt);
-    }
-    localeSelect.value = state.settings.locale || "en";
-    localeSelect.addEventListener("change", async () => {
-      state.settings.locale = localeSelect.value;
-      await _ext.saveSettings(state.settings);
-      location.reload();
-    });
-  }
+  // Language. The pane takes the app's language rather than offering its own —
+  // see locale.js. What stood here was a picker bound to qs("localeSelect"), an
+  // element app/index.html has never contained, so the handler never ran and the
+  // six non-English config sets on disk were unreachable.
+  listenForLanguage();
 
-  // Localize static labels/buttons
-  const UI = state.config.ui || {};
-  const L = UI.labels || {};
-  const B = UI.buttons || {};
-
-  setText("lProject", L.project);
-  setText("lProfile", L.profile);
-  setText("lLanguage", L.language);
-
-  setText("tScope", L.scope);
-  setText("tFilters", L.filters);
-  setText("tHistory", L.history);
-  setText("tLimitations", L.limitations);
-  setText("tAssets", L.assets);
-  setText("tUnassigned", L.unassigned);
-  setText("tViews", L.views || "Views");
-
-  setText("lblBlockers", L.blockers);
-  setText("lblMissing", L.missing);
-  setText("lblWarnings", L.warnings);
+  // Localize static labels/buttons.
+  applyStaticLabels();
 
   const search = qs("search");
-  if (search && L.search_placeholder) search.placeholder = L.search_placeholder;
 
   const searchClear = qs("searchClear");
   if (searchClear) {
@@ -618,17 +695,6 @@ async function init() {
     });
   }
 
-  const unHelp = qs("unassignedHelp");
-  if (unHelp && L.unassigned_help) unHelp.textContent = L.unassigned_help;
-
-  const bRun    = qs("runBtn");       if (bRun    && B.run)           bRun.textContent    = B.run;
-  const bExport = qs("exportBtn");    if (bExport && B.export_report) bExport.textContent = B.export_report;
-  const bReset  = qs("resetBtn");     if (bReset  && B.reset)         bReset.textContent  = B.reset;
-
-  const drawerClose = qs("drawerClose"); if (drawerClose && B.close) drawerClose.textContent = B.close;
-  const tabFix = qs("tabFix"); if (tabFix && L.fix_now) tabFix.textContent = L.fix_now;
-  const tabEvidence = qs("tabEvidence"); if (tabEvidence && L.evidence_tab) tabEvidence.textContent = L.evidence_tab;
-
   // pickers (bulk + per-package)
   const folderPicker = qs("folderPicker");
   const filePicker = qs("filePicker");
@@ -667,7 +733,9 @@ async function init() {
     // Require scope selection (categories) for vendor-by-vendor workflows.
     const cats = state.settings.selectedCategories || [];
     if (!Array.isArray(cats) || cats.length === 0) {
-      alert(L.select_scope_first || "Select at least one category to check (left sidebar).");
+      // Read live rather than from a captured `L` — this closure outlives any
+      // number of language changes.
+      alert(state.config.ui?.labels?.select_scope_first || "Select at least one category to check (left sidebar).");
       return;
     }
 
