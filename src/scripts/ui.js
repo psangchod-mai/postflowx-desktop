@@ -11914,6 +11914,11 @@ function _wirePfxTutorials(){
     imf:         'settingsTutorialModal',
     aceslook:    'settingsTutorialModal',
     about:       'settingsTutorialModal',
+    // Not a tab key — document.body.dataset.main is never 'player'. This entry
+    // exists so the player's own Help button can reuse _openTutorial's Esc,
+    // backdrop and close-button wiring instead of duplicating it. Reached only
+    // from #pmTransportHelpBtn; see the opener at the end of this function.
+    player:      'playerTransportTutorialModal',
   };
   let _tutCurrentClose = null;
 
@@ -11962,6 +11967,18 @@ function _wirePfxTutorials(){
       m.style.display = 'none';
     });
   });
+
+  // #playerTransportTutorialModal is 133 lines of authored, interactive help —
+  // the scrub bar, the nav pod, play forward and backward — and until now nothing
+  // in the app could open it. Neither How-to-Use table could name it: those are
+  // keyed by tab, and the player is a panel inside a tab, not a tab of its own.
+  // So the door goes on the player itself. tests-js/reachableTutorials.test.mjs
+  // gates the general case: an authored tutorial no router names is unreachable.
+  const _transportHelp = document.getElementById('pmTransportHelpBtn');
+  if (_transportHelp && !_transportHelp._tutWired) {
+    _transportHelp._tutWired = true;
+    _transportHelp.addEventListener('click', () => _openTutorial('player'));
+  }
   }catch(_){}
 }
 

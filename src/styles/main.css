@@ -42431,6 +42431,10 @@ tr:hover .pm-vfx-scan-btn { opacity: 1; color: rgba(160,200,255,.75); }
   accent-color: #3a5a88;
 }
 .pm-mark-btn { color: #2172E3 !important; border-color: #5a4a10 !important; background: #1c1808 !important; font-weight: 700 !important; }
+/* Help affordance in the transport bar — carries the tutorial's own orange so the
+   button and the panel it opens read as one thing. */
+.pm-help-btn { color: #ff9e6c !important; border-color: #4a3020 !important; background: #16100c !important; font-weight: 600 !important; }
+.pm-help-btn:hover { color: #ffb489 !important; border-color: #6a4428 !important; background: #201610 !important; }
 
 /* ── Marker color picker ── */
 .pm-marker-color-wrap { position: relative; display: inline-flex; }

@@ -2629,6 +2629,11 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         </div>
         <button id="pmAddMarkerBtn"  class="pm-mark-btn"   title="Add marker at playhead (M)">M</button>
         <button id="pmAnnotateBtn"   class="pm-annot-btn"  title="Annotate frame (N)">&#x270F;</button>
+        <!-- The player transport tutorial (#playerTransportTutorialModal) had no opener
+             anywhere in the app. Its subject is this bar, so its door belongs here. -->
+        <button id="pmTransportHelpBtn" class="pm-help-btn" type="button"
+                title="How the player transport works — scrub bar, nav pod, play and jump"
+                aria-label="How the player transport works">? Help</button>
       </div>
       <div id="pmInspector" class="pm-inspector"></div>
     </div>
