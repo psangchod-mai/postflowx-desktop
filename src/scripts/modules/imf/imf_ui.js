@@ -13,6 +13,7 @@ import { imfPickFolder, imfPickFolderCompanion, imfScanFolderCompanion, imfGener
 import { parseDoviXml, annotateShots, validateDoviShots, exportDoviXml, buildUuidColorMap, pickSdrTrim, ffmpegTrimFilter, getTrimTargetLabel, isNeutralL8, fmtL8Value, DV_TRIM_TARGETS } from './imf_dovi_metafier.js';
 import { analyzeDolbyVisionFromImfPackage, DOVI_STATUS, DOVI_SOURCE, doviStatusLabel, doviStatusSeverity } from './imf_dovi_extractor.js';
 import { storeNamedHandle, loadNamedHandle, clearNamedHandle } from '../../core/projectFile.js';
+import { friendlyStatus } from '../../core/friendlyError.js';
 import { runAllUgChecks } from './imf_ug_checks.js';
 import { validateApp2E, parseDeliverySchema, validateAgainstSchema, APP2E_PRESET } from './imf_delivery_schema.js';
 import { toCSV as buildReportCSV, toJSON as buildReportJSON } from './imfReport.js';
@@ -5486,10 +5487,17 @@ function showPanel(id) {
   }
 }
 
+// Four call sites below say `'Load failed: ' + err.message`, which lands raw
+// exception text in the IMF status line. Rewriting here covers all of them and
+// whatever is added next; friendlyStatus keeps the "Load failed" half, so the
+// line still names the operation instead of only describing the cause.
 function setStatus(type, msg) {
   const s = $('imfStatus');
   if (!s) return;
-  s.textContent = msg;
+  let out = msg;
+  try { out = friendlyStatus(msg); }
+  catch (_) { out = msg; }   // a rewrite failure must never swallow the status being reported
+  s.textContent = out;
   s.className = 'imf-status imf-status-' + type;
 }
 

@@ -25,6 +25,7 @@ import { loadOcfFilesFromLibrary, libraryCount } from './dbLibrarySource.js';
 import { decodeWithRetry, isTimeout, runDecodeChain } from '../../modules/mediaDecode.js';
 import { createBridgeMonitor } from '../../modules/bridgeHealth.js';
 import { nativeHelperPing } from '../../modules/native_helper_client.js';
+import { friendlyStatus } from '../../core/friendlyError.js';
 
 // ---------------------------------------------------------------------------
 // Native companion helpers (direct chrome.runtime.sendMessage wrappers)
@@ -4100,9 +4101,18 @@ function _setGoBtn(enabled) {
   if (btn) btn.disabled = !enabled;
 }
 
+// Nine call sites below build their status text as `Something failed: ${e?.message || e}`,
+// which puts ENOENT / EACCES / "TypeError: …" in front of an editor who cannot act
+// on it. Rewriting here rather than at each site means the tenth one written is
+// covered too; friendlyStatus keeps the "Something failed" half so the line still
+// says which operation broke.
 function _setStatus(text) {
   const el = document.getElementById('pmVfxPullStatus');
-  if (el) el.textContent = text || '—';
+  if (!el) return;
+  let out = text;
+  try { out = friendlyStatus(text); }
+  catch (_) { out = text; }   // a rewrite failure must never swallow the status being reported
+  el.textContent = out || '—';
 }
 
 function _showVfxBlockedBanner(errors) {

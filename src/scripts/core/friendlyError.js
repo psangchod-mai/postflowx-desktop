@@ -218,8 +218,47 @@ export function friendlyText(err) {
   return f.hint ? `${f.message} ${f.hint}` : f.message;
 }
 
+/**
+ * friendlyStatus(text) → the same string, with any raw exception tail rewritten.
+ *
+ * For a panel status line, not a banner. The distinction matters:
+ *
+ *   _setStatus(`Relink failed: ${e?.message || e}`)
+ *
+ * The prefix is the only thing on screen that says WHICH operation failed —
+ * the status line has no title bar, no icon, no context of its own. Running
+ * that whole string through friendlyText() would return
+ * "PostFlowX doesn't have permission to open that location. …" and drop
+ * "Relink failed" on the floor, trading jargon for lost context. So the label
+ * is held back and only the tail is rewritten.
+ *
+ * A label must be a PHRASE ("Rescan failed", "Review proxy error (sh010)"),
+ * hence the \s in the first group. That is load-bearing: without it a bare
+ * "ENOENT: no such file…" would treat "ENOENT" as the operation name and leave
+ * the very jargon this exists to remove sitting on screen as a heading.
+ *
+ * Like friendlyText, this is conservative: a string it cannot improve comes
+ * back byte-identical, so progress and success lines ("Ready", "Relinked: x.ari",
+ * "Visual match: scanning 4/57…") pass through untouched.
+ */
+export function friendlyStatus(text) {
+  const s = String(text == null ? '' : text);
+  if (!s.trim()) return s;
+
+  const m = s.match(/^([^:]{1,40}\s[^:]{0,40}):\s+([\s\S]+)$/);
+  if (m) {
+    const tail = friendlyText(m[2]);
+    if (tail && tail !== m[2]) return `${m[1]}: ${tail}`;
+    return s;
+  }
+
+  const out = friendlyText(s);
+  return (out && out !== s) ? out : s;
+}
+
 // Expose globals for non-module / classic-script consumers.
 if (typeof window !== 'undefined') {
   window.pfxFriendlyError = friendlyError;
   window.pfxFriendlyText = friendlyText;
+  window.pfxFriendlyStatus = friendlyStatus;
 }
