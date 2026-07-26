@@ -660,3 +660,59 @@ Deleting it is the user's call, not the loop's; an unused import in a dirty file
 - `aceslook` TC overlay — needs a clip-rate source before the hardcoded 24 can be fixed.
 - The untracked `tests-js/timecodeFuzz.test.mjs` + `electron/native/seekModel.js` pair (must land together).
 - ~~`features/edl/filters.js`~~ — does not exist. ~~`timelineAutoInject.js:53`~~, ~~`filters_common.js`~~ — dead code, documented above.
+
+---
+
+## 21:00 run — iteration 1 · what a non-technical user sees when things break
+
+**Scope.** Every path that puts failure text in front of a human: `ui.js`
+`showError()` (the main banner), the three separate `_showToast` implementations
+(`render_queue.js:1420`, `auth/login-ui.js:741`, `features/platelink2/index.js:1398`),
+and `core/shotWorkItems.js:292`'s `window._showToast`.
+
+**Finding 1 — a live humanizer existed and was not in git.**
+`src/scripts/core/friendlyError.js` was untracked while being loaded by
+`index.html:13` as a module script and called from five places. Any audit run
+against HEAD would conclude the app has no error humanizer at all; the running
+app has one. This is a general hazard in this tree, which carries ~690 dirty and
+untracked files: **HEAD is not the app.** Now committed (`887b161`).
+
+**Finding 2 — six error classes reached users as raw exception text.**
+Measured, not estimated: `friendlyError()` was run over a 23-string corpus of
+error text the app actually produces. Ten of 23 classified; the rest passed
+through, of which six were genuinely technical rather than already-friendly.
+All six are now classified. Detail and the rationale for each rule's placement
+are in the backlog entry and in the commit message.
+
+**Finding 3 — rule ordering in this module is silently load-bearing.**
+First match wins, so a broad rule above a precise one swallows it with no
+symptom at the call site. Three real collisions exist today:
+
+- EBUSY vs EACCES — both match a locked file; the fixes are *close it in
+  Resolve* and *grant Full Disk Access*, and giving the wrong one wastes a
+  session.
+- The WASM rule vs the generic programming-error rule, which matches
+  "out of memory" and advises restarting the app. The memory is held by other
+  open decoders; restarting to reclaim it is a much larger hammer than needed.
+- The encode rule vs the decode rule. Deliberately kept narrow: a bare
+  `ffmpeg exited with code 1` names neither end, and guessing "check your
+  output folder" sends the user away from the input media that is broken.
+
+Each pair is now pinned by a test in `tests-js/friendlyErrorRules.test.mjs`, so
+a future reorder fails loudly instead of degrading advice quietly.
+
+**Finding 4 — two quality invariants were unenforced and now are.** No
+classified message may leak jargon (`ENOENT`, `RuntimeError`, `stderr`, …) into
+title/message/hint; and every classified failure must offer exactly one next
+step short enough for a toast (<170 chars). Both hold across the full rule table.
+
+**Non-finding — pass-through is correct and worth defending.** The module
+declines to rewrite text it doesn't recognise. That protects messages the app
+already words well ("Scan a VFX folder first.", "Open the Cut Diff tab, then
+retry"), which are better than any generic rule. An always-override design would
+have been a regression. Guarded by test.
+
+**Open.** `render_queue.js`'s private `_parseError` still returns `null` on a
+miss instead of delegating to `friendlyText`. Fixing it needs the
+reconstructed-blob staging technique — the file carries unrelated pending user
+changes — so it is deferred rather than dropped.

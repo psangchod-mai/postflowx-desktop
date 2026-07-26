@@ -860,3 +860,76 @@ Pivoted to reconstructing the staged content instead: `git show HEAD:…` to a p
 
 - **Docs commit:** this section plus the audit-report section, 2 files.
 - **Packaging:** the one-time repackage ran at 14:19 (`build:renderer` + `build:mac-dir`, exit 0). Because iteration 17 changed no source, that build is the final artefact and rule (5)'s "once" is satisfied exactly.
+
+---
+
+## 21:00 run — iteration 1 · plain-language failures (`887b161`)
+
+**Objective shift.** Runs 1–2 chased timecode correctness. This run's brief is
+different: *a professional, user-friendly tool that stays accessible to
+non-technical users.* So iteration 1 went after the moment a non-technical user
+is least served — the moment something fails and the app answers with
+`ENOENT: no such file, open /Volumes/…`.
+
+**What actually happened is the finding.** I began by designing a new shared
+error explainer (`modules/errorExplain.js`, 257 lines, 31 tests, all green) off a
+survey of `render_queue.js`'s private `_parseError` and three `_showToast`
+implementations. Then I found `src/scripts/core/friendlyError.js` in the working
+tree: untracked, already written, already wired into `index.html:13`,
+`ui.js:3284` `showError()`, and all three toasts — with its own test file. I had
+built a duplicate of something that already shipped, and shipping mine would
+have produced two modules doing one job with one of them unwired: exactly the
+dead code iteration 17 spent itself retiring.
+
+Deleted my module and its tests. Folded the value into theirs instead.
+
+> **Heuristic (new).** *A claim about what the app lacks rots exactly like a
+> claim about what it contains.* Iteration 17 learned that carried backlog items
+> go stale; this is the mirror image. Worse, an untracked file is invisible to
+> every HEAD-based check — `git log`, `git grep`, `git show` all agree it isn't
+> there. Grep the working tree, not the index.
+
+**Method.** Rather than judging gaps by eye, ran `friendlyError()` over a
+23-string corpus of error text this app genuinely emits and read off which fell
+through to raw. Six did. Five were fixed:
+
+| Fell through as | Now reads |
+|---|---|
+| `EBUSY: resource busy, unlink` | File is in use — *close it in the other app, often Resolve or Premiere* |
+| `moov atom not found` | Could not decode media |
+| `Failed to mux output stream` | Export could not be written — *check the output folder* |
+| `RuntimeError: memory access out of bounds` | Ran out of memory — *close the other tabs* |
+| `fetch failed` / `getaddrinfo ENOTFOUND` | Network problem |
+| `{}` → `[object Object]` | Something went wrong. |
+
+**The sixth was withdrawn, and that is the more useful entry.** I added a
+`/Volumes/` rule reading "Drive not connected", then found
+`tests-js/friendlyError.test.mjs:9-10` asserts an ENOENT under `/Volumes/X/a.mxf`
+says "found" *and* preserves the full path. Those are deliberate assertions. My
+rule truncated the path to the volume root and changed the wording, so it broke
+both. Removed it rather than overriding the author's intent — and their existing
+ENOENT hint ("Check that it still exists and the drive is connected.") already
+covers the drive case without losing the filename an assistant needs.
+
+**Kept their design, not mine.** My module always overrode; theirs passes
+unmatched text through untouched. Theirs is the better call: at all four wired
+call sites the app already writes good messages ("Scan a VFX folder first."),
+and an always-override humanizer would degrade them. A test now pins that.
+
+**Verify.** 46 tests (23 theirs + 23 new). `npm run test:js` exit 0 across all
+90 files; `build-verify` 250 passed / 7 skipped + three security gates clean;
+`build:renderer` 368 files.
+
+**Commit hygiene.** All three files were untracked, so the commit is purely
+additive — no reconstructed-blob staging needed and no risk of sweeping foreign
+hunks. Staged via `hash-object` + `--cacheinfo 100644` because two of them carry
+a stray `0700` from the editor and neither has a shebang.
+
+**Flagged for the user:** `friendlyError.js` and `friendlyError.test.mjs` were
+your in-flight, uncommitted work. Committing the module I edited meant committing
+them; both dirs are mode-mixed so 100644 was a judgement call, not a convention.
+Say the word and I'll `git rm --cached` them back out.
+
+**Next:** the three `_showToast` implementations now all call `pfxFriendlyText`,
+so the only remaining duplication is the toast plumbing itself — a candidate for
+one shared notifier.
