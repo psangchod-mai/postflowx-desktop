@@ -1122,3 +1122,70 @@ delegation only; the `window.pfxFriendlyText` line in the working-tree copy is
 pre-existing uncommitted user work and was deliberately left unstaged. With the
 rewrite now at the boundary, that line is redundant but harmless — idempotence is
 what makes it so, and that is now a tested property rather than a hope.
+
+## 21:00 run — iteration 5 · the language selector that stopped at the frame boundary (`f737a88`)
+
+**The audit item was wrong, and the reachability check is what caught it.** The
+open item read *"`src/tools/bwav/*` and `src/tools/preflight/*` do not load
+`modules/i18n.js` at all — English in all 7 languages."* Both halves turned out
+to be false in an interesting way. The panes are not un-internationalised; they
+are **richly** internationalised, in systems of their own, and none of it can be
+switched on.
+
+| | translations present | how a user selects one |
+|---|---|---|
+| Host app | 7 languages, `modules/i18n.js` | title-bar flag selector |
+| BWAV Inspector | ~92 keys × ja/ko/th/id | *nothing* — `navigator.language` only |
+| Preflight Validator | 18 locale files, ~148K | *nothing* — hard-pinned to `en` |
+
+**Both panes read a picker that has never existed.** `bwav/app.js:730` and
+`preflight/app/app.js:502` each do `getElementById("localeSelect")`. Neither
+`bwav/app.html` nor `preflight/app/index.html` contains that id, and
+`git log --all -S'localeSelect'` on both files returns nothing — it was never
+there to be deleted. Preflight goes further and builds a six-option flag menu
+into the null element every startup.
+
+This is the third phantom element in three iterations, and the second one found
+by asking *"is this reachable?"* before *"is this correct?"*.
+
+**Reachability first, again.** Before any of this was worth writing, the panes
+themselves had to be reachable — they are, as full workspace panes at
+`src/index.html:4895` and `:4905`. Had they been dead, the right answer was to
+delete 148K of translations, not to wire them up.
+
+**Why not just add the two missing pickers.** Because then a Thai user has three
+language controls in one window and three ways for them to disagree, and they
+have already said what they want once. The title-bar selector becomes
+authoritative and its choice crosses the frame boundary:
+
+- `core/paneLang.js` posts `{type:'pfx:lang', lang}` to same-origin iframes.
+- `i18n.js` calls it from `applyI18n` — the single funnel both `setLang` and
+  `initI18nUI` route through — placed **after** `resumeObserver()`, so a pane
+  that throws cannot leave the host's MutationObserver paused and kill
+  translation app-wide. A test pins that ordering.
+- `bwav/app.js` reads `mps.lang` ahead of its own `bwav_locale` mirror, and
+  listens for both the message and a `storage` event.
+
+**The load race is the whole reason this is not a one-liner.** Both panes start
+`display:none` and load lazily; `initI18nUI` runs at startup. Whichever happens
+first, the pane must end up correct — so `broadcastLang` arms a one-time `load`
+handler per frame that re-sends the *current* language, not the one it was armed
+with. Two tests cover the ordering and a third pins that the handler is armed
+once, since N handlers means N duplicate messages per reload.
+
+**Cross-origin frames are skipped**, detected by `contentDocument` throwing. The
+Fun Box pane can hold a YouTube embed; a language code is not something to post
+at a third party just because it is cheap.
+
+**Preflight was deliberately left out**, and this is the honest part of the
+iteration. Its own locale handler ends in `location.reload()`. `state.run` is
+persisted but `state.files` is not — so switching language mid-session would
+silently discard a file list the user had assembled. That behaviour has never
+run in front of a user (the picker was unreachable), so adopting it now would be
+shipping a data-loss path that nobody has ever hit. It needs a reload-free
+re-localisation, which is its own iteration.
+
+**Verification.** 18 tests, negative-verified three ways — dropping the
+broadcast fails 2, consulting the stale mirror first fails 1, removing the load
+re-send fails 3. `test:js` 23 files, `build-verify` 250 passed / 7 skipped with
+all three gates clean, `build:renderer` 370 files.

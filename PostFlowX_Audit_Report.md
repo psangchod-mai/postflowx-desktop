@@ -875,3 +875,49 @@ finding, the `setStatus`-writes-to-STATE finding, the tool pages that never load
 `modules/i18n.js`, the phantom `window._pmShowToast`, and the four unrelated
 `_showToast` implementations. Also still open: the `git rm --cached` offer for
 `friendlyError.js` and `friendlyError.test.mjs`.
+
+## 21:00 run — iteration 5 · translations nobody can select
+
+**Finding 1 — a third phantom element, and the pattern is now a rule.**
+`localeSelect` is read in two files and defined in none, exactly as `#errors`
+was in iteration 3. All three share a shape: **a read against an element that
+was never created, in code whose failure mode is silence.** `getElementById`
+returning null is indistinguishable from a feature being off, so nothing ever
+reports it. Recommended standing check: any `getElementById`/`querySelector`
+whose id appears in no HTML file in the repo is a defect, and it is cheap to
+grep for. That sweep has not been run yet across the whole tree — it is the
+single highest-value open item on this list.
+
+**Finding 2 — the previous audit entry was wrong, and wrong in the expensive
+direction.** It claimed the tool pages had no i18n. They have three separate
+i18n implementations between them (host: English-keyed dictionary + observer;
+bwav: `data-i18n` attributes; preflight: per-locale JSON config files), and
+~148K of translated preflight content that has never been rendered. Acting on
+the entry as written would have meant *writing new translations* on top of
+translations that already existed. **A claim about what the app lacks rots the
+same way a claim about what it contains does** — that heuristic was recorded in
+an earlier run and has now cost, and then saved, real work.
+
+**Finding 3 — Preflight is pinned to English by a default that nothing can
+override.** `app.js:398` sets `settings.locale = "en"` when unset; the only
+writer is the change handler on the element that does not exist. Twelve
+`checks.i18n.*` / `requirements.i18n.*` files plus six `ui_strings.*` files are
+unreachable. Wiring is deferred, not dismissed: the existing switch path calls
+`location.reload()` and `state.files` is not persisted.
+
+**Finding 4 — `zh-TW` is declared supported by BWAV and has no dictionary.**
+`SUPPORTED_LOCALES` at `bwav/app.js:651` lists `zh-TW`, `normalizeLocale` maps
+any `zh*` to it, and `I18N` has entries only for `en/ja/ko/id/th`. Today `t()`
+falls back to `I18N.en`, so a Taiwanese user gets English rather than raw keys —
+correct by accident of the fallback, not by design. Now that the host can
+actually send `zh-TW`, this path runs for the first time. Not fixed here:
+supplying ~92 Chinese strings is authoring, not repair.
+
+**Finding 5 — measured, still open.** The four `_showToast` implementations and
+the phantom `window._pmShowToast` from iteration 3 remain. `setStatus` in
+`modules/amf_convert.js:4988`/`:5175` still writes `STATE.statusText.text`
+rather than the DOM, so the observer cannot see it — same family as this
+iteration's finding: a string that exists, is correct, and reaches nobody.
+
+**Still open from earlier runs:** the `git rm --cached` offer for
+`friendlyError.js` / `friendlyError.test.mjs`.
