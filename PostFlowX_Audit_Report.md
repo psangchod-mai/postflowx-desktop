@@ -776,3 +776,62 @@ than collected in one table, so extracting them is its own pass.
 **Still open from iteration 1.** `friendlyError.js` and `friendlyError.test.mjs`
 were uncommitted in-flight user work that this loop committed in `887b161`. Say
 the word and they come back out with `git rm --cached`.
+
+## 21:00 run — iteration 3 · a display path that displayed nothing
+
+**Finding 1 — `showError()` has been a no-op for the life of the repository.**
+Severity: this is the highest-impact defect found in three loop runs. The function
+guards on an element that has never existed, in any page or any commit, so all 66
+call sites in `src/scripts` produce nothing. Confirmed by absence in source, in
+the build output, in runtime assignment, in DOM injection, and in
+`git log --all -S'id="errors"'`. A user whose export is refused sees an app that
+appears to have ignored the click.
+
+The instructive part is *why it survived*. The code is not obviously wrong — it
+looks like defensive programming, and `if (!el) return;` is the idiom you write
+when an element is optional. Nothing logs, nothing throws, and the failure mode is
+literally invisible. Nobody was ever going to notice this from the code; it took
+asking a different question — *does this output reach the DOM at all?* — for a
+reason unrelated to the bug.
+
+**Reachability is the first question, not the last.** Third time this heuristic
+has paid out, and the largest by far. The plan was to add dictionary entries; the
+check that would have validated the plan invalidated the premise instead.
+
+**Finding 2 — the fix that looks right is wrong here.** Adding
+`<div id="errors">` to `index.html` fixes the desktop renderer and leaves the
+extension target and both tool pages exactly as broken, because they do not share
+that file. This is the same shape as iteration 2's trap (the obvious fix silently
+does nothing) in a different subsystem, and it is worth naming as a pattern:
+**in a one-source/two-target renderer, any fix expressed in `index.html` is a fix
+to one host.** Self-mounting from the module that needs it is target-agnostic.
+
+**Finding 3 — a unit test would not have caught this and will not catch it
+again.** `errorBanner.test.mjs` passes completely with `ui.js` never importing the
+module. So one test reads `src/scripts/ui.js` and asserts the wiring: that
+`showError` calls the banner, that no live `#errors` lookup has returned, and that
+the import is present. Comments are stripped first, since the replaced code is
+quoted in a comment as documentation.
+
+**Newly measured, still open (from the reachability table built for the abandoned
+translation sweep):**
+
+1. `setStatus` in `modules/amf_convert.js:4988` and `:5175` writes
+   `STATE.statusText.text`, not the DOM. The i18n observer can never see those
+   strings; they need a translation call at the assignment, not a dictionary entry.
+2. `src/tools/bwav/*` and `src/tools/preflight/*` do not load `modules/i18n.js` at
+   all. Every string on those pages is English in all seven languages.
+3. `bwav/app.html` uses a *different* i18n system keyed on attributes
+   (`data-i18n="status.ready"`). **The app has two unrelated i18n
+   implementations**, and work on one does not reach the other.
+4. `window._pmShowToast` and `window._pfxToast` are read by
+   `render_queue.js:1426` but assigned nowhere in `src/`, so the inline fallback
+   div is always the path taken. Same species as this iteration's finding — a
+   preferred path that does not exist — though here the fallback saves it.
+5. Four `_showToast` implementations (`render_queue.js:1420`,
+   `auth/login-ui.js:741`, `features/platelink2/index.js:1398`,
+   `core/shotWorkItems.js:292`) with no shared notifier between them.
+
+**Still open from iteration 1.** `friendlyError.js` and `friendlyError.test.mjs`
+were uncommitted in-flight user work that this loop committed in `887b161`. Say
+the word and they come back out with `git rm --cached`.

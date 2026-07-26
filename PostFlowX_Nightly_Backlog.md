@@ -993,3 +993,79 @@ that `friendlyError` passes through untouched — `"Scan a VFX folder first."`,
 `"Open the Cut Diff tab, then retry"` and their kind — are also absent from the
 dictionary. Those live at call sites across the app rather than in one table, so
 they are a separate sweep, not a rider on this one.
+
+## 21:00 run — iteration 3 · the error banner that was never there (`d0ab098`)
+
+**How this was found.** I set out to do the sweep iteration 2 left open: translate
+the app's own hand-written messages. Before writing a single dictionary entry I
+built a reachability table for the 48 genuinely user-facing prose strings — the
+i18n MutationObserver only translates text that reaches the DOM, so a string that
+never gets there cannot be fixed by a dictionary. That table is what turned up the
+real problem. Checking whether `showError()`'s output reaches the observer meant
+first checking whether it reaches the *screen*.
+
+It does not, and never has.
+
+```js
+function showError(msg){
+  const el = $("#errors");
+  if (!el) return;          // ← always taken
+  ...
+}
+```
+
+**No element with `id="errors"` exists.** Verified six ways, because a claim this
+large deserves it: absent from `src/index.html` (the only occurrence of the word
+"errors" in that file is an unrelated HTML comment at line 5190); absent from the
+built `dist/desktop/index.html`; no `.id = "errors"` or `getElementById('errors')`
+assignment anywhere in the tree; no `innerHTML`/`insertAdjacentHTML` injection (the
+grep hits were an unrelated `errors` array in `vfxPullPanel.js` and a different
+`errorsBar` in `imf_package_ui.js`); exactly one definition of `showError`; and
+`git log --oneline --all -S'id="errors"'` returns nothing at all, so it was never
+present in any commit on any ref. `$` is plainly `document.querySelector`.
+
+**All 66 call sites have been silent since the initial commit `b173ee8`.** Every
+export guard, every validation refusal, "Scan a VFX folder first.", "Native VFX
+Root is required." A non-technical user clicks Export, the app refuses, and
+nothing whatsoever appears. There is no way to distinguish a refused action from a
+frozen app — which is the single worst thing this objective could leave standing,
+and it outranked the translation sweep by a wide margin.
+
+**What shipped.** `src/scripts/core/errorBanner.js` — a banner that mounts itself
+on first use. Markup in `index.html` was the obvious fix and the wrong one:
+`index.html` is not shared by the extension target, nor by the `src/tools/bwav/*`
+and `src/tools/preflight/*` pages, so a div would have fixed one host and left the
+others exactly as broken. A host-supplied `#errors` still wins where one exists,
+so this can never displace a page that has its own slot.
+
+Not merely restored — built for the reader the objective names:
+
+| | before | now |
+|---|---|---|
+| shown at all | no | yes |
+| dismissal | flat 4s | `max(4s, min(15s, 3.5s + 55ms/char))` |
+| screen reader | — | `role="alert"`, `aria-live="assertive"` |
+| dismiss early | — | click |
+| long path in message | `nowrap`, pushed off-screen | `pre-wrap`, own line |
+| rendering | `textContent` | `textContent` (kept — catch-block text) |
+
+The flat 4s was the quiet one. Iteration 2's `friendlyError` output is a sentence
+plus a next step; four seconds is not enough to read that, and a message that
+vanishes before it is read is barely better than none.
+
+**Also fixed.** `ui.js:17140` — the tab-reset path wrote to the same phantom
+element. It now calls `hideErrorBanner()`, so a stale failure does not survive a
+reset.
+
+**Caught before shipping.** An empty banner with `padding: 10px 20px` at
+`opacity: 0` is still an invisible ~40×29px box at the bottom of the screen
+swallowing clicks. `pointer-events: none` on the base rule, `auto` only on `--on`.
+
+**Verification.** 17 tests in `tests-js/errorBanner.test.mjs`, negative-verified
+three ways — dropping the `appendChild`, switching to `innerHTML`, and restoring
+the flat 4s each fail exactly the assertion that guards them (3, 1 and 1 failures
+respectively). One test scans `ui.js` itself, because a unit test of the module
+alone passes perfectly well with the caller disconnected, and that is precisely
+the shape of the bug being fixed. `npm run test:js` 22/22 files, `build-verify`
+250 passed / 7 skipped with all three security gates clean, `build:renderer` 369
+files.
