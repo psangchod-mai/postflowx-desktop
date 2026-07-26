@@ -12,6 +12,8 @@
 //   CHANGED   : same clip name but different take/src-in (>tolerance)
 //   NEW       : clip appears in NEW but has no identity match in OLD
 
+import { nominalBase } from './utils_time.js';
+
 export const DIFF_TYPES = {
   NEW       : 'NEW',
   EXTENDED  : 'EXTENDED',
@@ -25,16 +27,30 @@ function safeFps(evFps, fallback = 24) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+// Timecode counts on the whole-frame base, not the playback rate: HH:MM:SS:FF
+// has no fractional field, so 23.976 fits 24 of them into a timecode second and
+// 29.97 NDF fits 30. Scaling by the fractional rate made every frame count here
+// fractional — a four-second clip measured 95.90400000000955 frames, and that
+// number is not just displayed, it leaves this module as `durationFrames` and
+// `_pullLenFrames`, which is the length of a VFX pull.
 export function tcToFrames(tc, fps) {
   if (!tc) return 0;
   const parts = String(tc).split(':').map(n => parseInt(n, 10) || 0);
   if (parts.length !== 4) return 0;
   const [hh, mm, ss, ff] = parts;
-  return ((hh * 60 + mm) * 60 + ss) * (fps || 24) + ff;
+  return ((hh * 60 + mm) * 60 + ss) * nominalBase(fps) + ff;
 }
 
 function framesToTc(fr, fps) {
-  const rate = safeFps(fps, 24);
+  // Same base as tcToFrames so the pair round-trips. The fractional rate as a
+  // modulus left `ff` fractional, and padStart does not round, so this would
+  // have emitted "01:00:04:0.5039999999898" — except that it could not: the
+  // four call sites below are all `ev.X || framesToTc(nf.XF, fps)`, and nf.XF
+  // is tcToFrames(ev.X), so when the fallback fires ev.X was falsy, the parse
+  // returned 0, and the only reachable output is "00:00:00:00". Fixed because
+  // the next caller will not be shielded by that accident, not because this
+  // one was breaking.
+  const rate = nominalBase(safeFps(fps, 24));
   let v = Math.max(0, Math.round(Number(fr) || 0));
   const ff = v % rate; v = Math.floor(v / rate);
   const ss = v % 60;   v = Math.floor(v / 60);

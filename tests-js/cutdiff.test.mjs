@@ -86,5 +86,61 @@ const typeOf = (diff, clip) => diff.find(d => d.clipName === clip)?.diffType;
 ok(Array.isArray(computeCutDiff(null, null)), 'null inputs → array, no throw');
 ok(computeCutDiff([], []).length === 0, 'empty inputs → empty diff');
 
+// ── Fractional rates ────────────────────────────────────────────────────────
+// Every assertion above runs at fps 24, where the whole-frame base and the
+// playback rate are the same number — so none of them could see that this
+// module was scaling timecode by the fractional rate. The frame counts below
+// do not stay inside the module: durationFrames and _pullLenFrames are the
+// length of a VFX pull, and a pull cannot be 95.90400000000955 frames long.
+{
+  const evAt = (fps, srcIn, srcOut) =>
+    ({ clipName: 'SHOT_010', reel: 'A001', srcIn, srcOut, fps });
+
+  for (const fps of [24, 23.976, 25, 29.97, 30, 50, 59.94]) {
+    const base = Math.round(fps);
+    const d = computeCutDiff([], [evAt(fps, '01:00:00:00', '01:00:04:00')]);
+    const row = d[0];
+    ok(row?.durationFrames === base * 4,
+       `@${fps} four-second clip → ${base * 4} frames (got ${row?.durationFrames})`);
+    ok(Number.isInteger(row?.durationFrames),
+       `@${fps} durationFrames is a whole number of frames`);
+    ok(Number.isInteger(row?._pullLenFrames),
+       `@${fps} _pullLenFrames is whole — a VFX pull has integer length`);
+  }
+
+  // Emitted timecodes stay well-formed HH:MM:SS:FF.
+  //
+  // Note what these do NOT prove. The `ev.recIn || framesToTc(nf.recInF, fps)`
+  // fallbacks are tautological: nf.recInF is tcToFrames(ev.recIn), so whenever
+  // the fallback fires ev.recIn was falsy, the parse returned 0, and the
+  // fallback can only ever emit "00:00:00:00". framesToTc is therefore never
+  // called with a non-zero argument from here, and the fractional-modulus bug
+  // it had was unreachable in practice. It is fixed because the next caller
+  // will not be so lucky, not because this path was broken. The observable fix
+  // in this module is tcToFrames → durationFrames / _pullLenFrames above.
+  for (const fps of [23.976, 29.97, 59.94]) {
+    const d = computeCutDiff([], [{ clipName: 'S', reel: 'R', srcIn: '01:00:00:00',
+                                    srcOut: '01:00:04:00', fps }]);
+    for (const key of ['recIn', 'recOut', 'srcIn', 'srcOut']) {
+      const tc = d[0]?.[key];
+      ok(/^\d{2}:\d{2}:\d{2}:\d{2}$/.test(String(tc)),
+         `@${fps} ${key} is well-formed, got "${tc}"`);
+    }
+  }
+
+  // Classification must not change because of the base: an unchanged clip at a
+  // fractional rate stays unchanged, and a 48-frame extension stays EXTENDED.
+  for (const fps of [23.976, 29.97]) {
+    const same = computeCutDiff([evAt(fps, '01:00:00:00', '01:00:04:00')],
+                                [evAt(fps, '01:00:00:00', '01:00:04:00')],
+                                { includeUnchanged: true });
+    ok(same[0]?.diffType === DIFF_TYPES.UNCHANGED, `@${fps} identical events → UNCHANGED`);
+
+    const longer = computeCutDiff([evAt(fps, '01:00:00:00', '01:00:04:00')],
+                                  [evAt(fps, '01:00:00:00', '01:00:06:00')]);
+    ok(longer[0]?.diffType === DIFF_TYPES.EXTENDED, `@${fps} NEW longer → EXTENDED`);
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
