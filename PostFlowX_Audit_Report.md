@@ -2401,3 +2401,142 @@ One behaviour change worth recording rather than discovering later:
 `setStatus('x', undefined)` used to render the literal string `"undefined"` and
 now renders empty. That is an improvement, but it is a change, and if some
 caller was relying on seeing `undefined` to notice a bug, it no longer will.
+
+---
+
+## Audit 19 — a Cancel button that did not cancel
+
+### 19.1 The defect
+
+Review notes (JSON/CSV) and visual-QC reports are saved through a three-route
+cascade, because no single route works everywhere:
+
+| tier | route | dialog? |
+|---|---|---|
+| 1 | `chrome.downloads.download({ saveAs: true })` | yes, native Save As |
+| 2 | `window.showSaveFilePicker()` | yes, native picker |
+| 3 | anchor `click()` with a blob/data URL | **no** — silent write to Downloads |
+
+Every tier answered with a boolean: did the file get written? That collapses two
+different answers into one value. *The user pressed Cancel* and *this route is
+unavailable here* both returned `false`.
+
+So the observed behaviour was: press Cancel on the Save dialog → the cascade
+reads a route failure → a second dialog opens → press Cancel again → tier 3
+runs, and tier 3 has no dialog to cancel. The file lands in Downloads.
+
+Cancel meant "ask me twice, then do it anyway". For a non-technical user this is
+worse than an error: nothing appears to go wrong, and a file they explicitly
+declined to save exists on their disk.
+
+Two independent copies of `downloadOrSaveText` had the bug, in
+`features/reviews/index.js` and `components/visualQcModal/index.js`.
+
+### 19.2 The finding that made the rest of it matter
+
+Mid-implementation, `src/scripts/electron_shim.js` turned out to build the
+renderer's `chrome` object entirely out of spreads:
+
+```js
+merged.runtime = { ...(existing.runtime || {}), ...(shim.runtime || {}) };
+```
+
+`electron/preload.js` deliberately defines `runtime.lastError` with
+`Object.defineProperty` and a live getter. **A spread invokes an accessor once
+and copies the resulting value as a plain data property.** The renderer
+therefore received `lastError` frozen at whatever it read during load — `null` —
+and it could never change again.
+
+Consequence, stated plainly: **every `if (chrome.runtime.lastError)` in the
+renderer was dead code in the desktop build.** Not just for downloads — for any
+shimmed Chrome call that reports failure that way. A cancelled download, a
+failed `sendMessage`, all reported nothing at all.
+
+This is why the iteration is four changes and not one. Links 1, 2 and 4 could
+all have been written, tested, and shipped green, and nothing on screen would
+have changed, because the value never reached the renderer. Fix the whole chain
+or none of it.
+
+New species for the catalogue: **getter-flattened-by-spread**.
+
+### 19.3 The four links
+
+| # | file | change |
+|---|---|---|
+| 1 | `electron/ipc.js` | dismissed `showSaveDialog` returns `{ ok: false, canceled: true }`, not a bare `{ ok: false }` |
+| 2 | `electron/preload.js` | translate that to `runtime.lastError = { message: 'USER_CANCELED' }`, readable only inside the callback, cleared in a `finally` |
+| 3 | `src/scripts/electron_shim.js` | re-install the accessor descriptor after the merge |
+| 4 | `src/scripts/core/saveOutcome.js` (new) + both cascades | three outcomes and one runner that stops on a cancel |
+
+Link 2 is worth defending. `USER_CANCELED` — one L — is real Chrome's own
+spelling, and lastError being readable only from inside the callback is real
+Chrome's own lifetime. Matching both is not politeness toward the API; it is
+what lets ONE piece of renderer code recognise a cancel in the desktop app and
+in the extension. An approximate shim would have forced two code paths.
+
+### 19.4 What is deliberately not a cancel
+
+`showSaveFilePicker` rejects with *"The request is not allowed by the user agent
+or the platform in the current context"* when it is called without a transient
+user activation. That is the route being unusable, not the person declining.
+Classifying it as a cancel would stop the cascade and silently abandon an export
+the user did ask for. `isUserCancel` recognises `AbortError`, `canceled`/
+`cancelled: true`, and the `USER_CANCELED` wording — and not that string.
+
+### 19.5 Mutation test — and a hole in the gate
+
+Seven mutations, one per link plus one per behaviour the gate claims to protect:
+
+| # | mutation | caught? |
+|---|---|---|
+| M1 | shim getter re-install deleted | **1 fail** |
+| M2 | `canceled` flag dropped from the IPC reply | **1 fail** |
+| M3 | runner falls through on `CANCELLED` | **3 fail** |
+| M4 | `isUserCancel` over-fires on `NotAllowedError` | **1 fail** |
+| M5 | `visualQcModal` bypasses the runner | **1 fail** |
+| M6 | preload leaks `lastError` past the callback | **1 fail** |
+| M7 | a tier helper reverted to `return !!downloadId;` | **none — survived** |
+
+M7 is the interesting one, and it is a failure of my own gate rather than of the
+source. The assertion read:
+
+```js
+assert.doesNotMatch(body, /return (?:true|false);/);
+assert.match(body, /CANCELLED/);
+```
+
+`return !!downloadId;` contains neither literal, so the first assertion passes.
+`CANCELLED` still appears in the function's catch block, so the second passes
+too. Seventeen green tests, and a helper handing the runner `true` — which is
+neither `SAVED` nor `CANCELLED`, so the runner falls through to the next tier
+and opens a second dialog after a *successful* download.
+
+The lesson is one this report has recorded before in another costume: a gate
+that enumerates forbidden spellings is guessing at the mutation. The repaired
+version enumerates every `return` statement in each helper body and requires
+each one to carry an outcome constant, with a single documented exception for
+`return reject(...)` inside the nested Promise executor. Re-run under M7 it
+fails with the offending line quoted. Restored, all six files `diff -q`
+byte-identical, 17/17.
+
+### 19.6 Out of scope, on purpose
+
+`src/scripts/pfxPlatform.js:64-84` `saveFile()` has the identical collapse
+(`void chrome.runtime.lastError; resolve(id ? defaultPath : null);`). It has
+**zero callers repo-wide**, so fixing it would be unverifiable churn. Recorded
+here and in the test header rather than silently skipped.
+
+`friendlyError.js` has no rule for `AbortError` or for the "not allowed by the
+user agent" wording, so if either ever does reach a user it arrives raw. Carried
+to iteration 20 alongside the 12 `alert()` sites.
+
+### 19.7 Deploy
+
+`npm run build-verify` exit 0, `npm run build:renderer` exit 0 (373 files).
+Committed as `bf455e0`, seven files, verified with `git show --numstat` to carry
+no foreign hunks — the three dirty files (`electron/ipc.js` 528/13,
+`electron/preload.js` 26/1, `reviews/index.js` 6/6 of the user's in-flight work)
+were staged as reconstructed blobs built from `HEAD`, and each blob was diffed
+against `HEAD` before staging to prove it contained my hunks and nothing else.
+A signed/notarized `npm run build:mac` needs the user's Apple credentials and
+pushes an artifact outward; it has not been authorized and was not run.

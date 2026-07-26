@@ -2508,3 +2508,74 @@ Measured across `src/` this iteration, raw exception text reaching a user:
 `alert()` is the next one and it is harder: a modal has no boundary function to
 wrap, so it is twelve edits or a shared `pfxAlert()` helper. Five of the twelve
 are in `src/tools/preflight/app/app.js`, which is a separate mini-app.
+
+---
+
+## Iteration 19 — Cancel means cancel
+
+Scope changed deliberately at the start of this iteration. The pre-committed
+plan was the 12 raw-exception `alert()` sites; while reading the save helpers to
+confirm an unrelated hypothesis, the cancel defect surfaced. A Cancel button
+that saves the file anyway is worth more to a non-technical user than better
+wording on an error modal, so it took the slot and `alert()` moved to 20.
+
+### What a user would have seen
+
+Export review notes, or a visual-QC report. The Save dialog opens. Press Cancel.
+A second Save dialog opens. Press Cancel again. The file is now in your
+Downloads folder.
+
+Three save routes each answered with a boolean, so "the user pressed Cancel" and
+"this route is unavailable here" were the same `false`. Cancel read as a route
+failure, and the last route in the cascade — an anchor click — has no dialog and
+cannot be cancelled.
+
+### Four changes, all required
+
+`electron/ipc.js` now reports `{ ok: false, canceled: true }` when the native
+dialog is dismissed. `electron/preload.js` translates that into real Chrome's
+own `runtime.lastError = "USER_CANCELED"`, readable only inside the callback.
+`src/scripts/electron_shim.js` re-installs the `lastError` accessor. A new
+`src/scripts/core/saveOutcome.js` replaces the boolean with `SAVED` /
+`CANCELLED` / `UNAVAILABLE` and a `runSaveCascade` runner that treats a cancel
+as terminal.
+
+### The one that nearly got missed
+
+The shim built the renderer's `chrome` object with spreads. A spread reads a
+getter once and copies the value, and preload defines `lastError` as a live
+getter — so the renderer held a frozen `null` and **every
+`if (chrome.runtime.lastError)` in the app was dead code in the desktop build.**
+
+Three of the four links could have shipped fully green and changed nothing on
+screen. Worth remembering as a shape: when a fix crosses a process boundary,
+check what the boundary does to the value, not just what each side does with it.
+
+### De-duplication, as a side effect rather than the goal
+
+`reviews` and `visualQcModal` each had their own `downloadOrSaveText`, and both
+had the same bug. Their tiers genuinely differ — data URL vs blob URL, a
+`finally`-closed writable — so the tiers stayed put. Only the sequencing rule
+moved into `runSaveCascade`, which is the part both copies had got wrong.
+
+### Gate
+
+`tests-js/saveOutcome.test.mjs`, 17 tests. The strongest executes the real shim
+IIFE through `new Function('window', src)` rather than parsing it, so it cannot
+drift from the thing it measures.
+
+Mutation-tested at seven points. Six failed exactly the intended assertion. The
+seventh survived: reverting a tier helper to `return !!downloadId;` passed a
+gate that only banned the literals `true` and `false`. Repaired to enumerate
+every return path and require an outcome on each. That is the second time this
+run that a gate has looked green while checking the wrong thing, and both times
+only the mutation run found it.
+
+### Still open on this front
+
+`pfxPlatform.saveFile` has the same cancel/failure collapse. Zero callers
+repo-wide, so it is left alone and named rather than quietly skipped.
+
+`friendlyError.js` has no rule for `AbortError` or for "not allowed by the user
+agent or the platform in the current context" — both still surface raw if they
+ever reach a user. Folded into iteration 20 with the 12 `alert()` sites.
