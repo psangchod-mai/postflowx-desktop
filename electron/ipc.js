@@ -705,7 +705,11 @@ function register(mainWindow, appRoot) {
     }
 
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, { defaultPath });
-    if (canceled || !filePath) return { ok: false };
+    // `canceled` rides along with ok:false. Without it the renderer cannot tell
+    // "the user closed the dialog" from "the write threw", and the save cascade
+    // in reviews / visual QC responded to the former by opening another dialog
+    // and eventually writing the file anyway.
+    if (canceled || !filePath) return { ok: false, canceled: true };
 
     try {
       if (dataUrl) {

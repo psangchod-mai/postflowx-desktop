@@ -156,12 +156,27 @@ const downloads = {
   download({ url, filename, saveAs }, callback) {
     invoke('pfx:download', { url, filename, saveAs })
       .then((r) => {
-        if (callback) callback(r?.ok ? 1 : null);
+        if (r?.ok) {
+          if (callback) callback(1);
+          return;
+        }
+        // Real Chrome reports a dismissed Save As dialog by leaving the
+        // download id undefined and setting runtime.lastError to the literal
+        // "USER_CANCELED". Matching that spelling is not cosmetic: it is what
+        // lets one piece of renderer code recognise a cancel in the desktop app
+        // and in the extension, instead of the desktop build quietly treating
+        // Cancel as a failed route and saving the file by another path.
+        _lastError = { message: r?.canceled ? 'USER_CANCELED' : (r?.error || 'DOWNLOAD_FAILED') };
+        // lastError is only readable from inside the callback, as in Chrome —
+        // otherwise a cancel here would still be sitting there during the next
+        // unrelated download.
+        try { if (callback) callback(undefined); } finally { _lastError = null; }
       })
       .catch(() => {
         // Swallow IPC failures — surface as a failed download to the callback
-        // rather than an unhandled promise rejection.
-        if (callback) callback(null);
+        // rather than an unhandled promise rejection. invoke() has already put
+        // the transport error in _lastError.
+        try { if (callback) callback(undefined); } finally { _lastError = null; }
       });
   },
 };

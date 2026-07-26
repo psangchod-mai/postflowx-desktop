@@ -62,6 +62,7 @@ import { openBurninSetupModal } from '../../components/burninSetupModal/index.js
 import { openVisualQcModal } from '../../components/visualQcModal/index.js';
 import { iconSvg, setIconButton, setLabeledIcon, setPlayPauseIconButton, setTimelineFitToggleButton } from '../../core/iconButtons.js';
 import { resolveShortcutAction, getShortcutsConfig } from '../../core/shortcuts.js';
+import { SAVED, CANCELLED, UNAVAILABLE, isUserCancel, runSaveCascade } from '../../core/saveOutcome.js';
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -89,7 +90,7 @@ async function downloadTextViaChromeDownloads(filename, text, mime='text/plain')
   // Uses Save As to avoid silent failures / blocked auto-download.
   try{
     const dl = (globalThis.chrome && chrome.downloads && chrome.downloads.download) ? chrome.downloads : null;
-    if (!dl) return false;
+    if (!dl) return UNAVAILABLE;
 
     // Use a data URL (small payload) to avoid blob URL lifetime issues.
     const charset = 'utf-8';
@@ -108,9 +109,12 @@ async function downloadTextViaChromeDownloads(filename, text, mime='text/plain')
       });
     });
 
-    return !!downloadId;
-  }catch{
-    return false;
+    return downloadId ? SAVED : UNAVAILABLE;
+  }catch(err){
+    // chrome.runtime.lastError is "USER_CANCELED" when the Save As dialog is
+    // dismissed — in real Chrome and, since the download shim was made
+    // faithful to it, in the desktop app too.
+    return isUserCancel(err) ? CANCELLED : UNAVAILABLE;
   }
 }
 
@@ -118,7 +122,7 @@ async function downloadTextViaChromeDownloads(filename, text, mime='text/plain')
 // in some Chrome setups, and lets users choose location).
 async function saveTextViaPicker(filename, text, mime = 'text/plain'){
   try{
-    if (typeof window.showSaveFilePicker !== 'function') return false;
+    if (typeof window.showSaveFilePicker !== 'function') return UNAVAILABLE;
     const ext = (filename.split('.').pop() || '').toLowerCase();
     const picker = await window.showSaveFilePicker({
       suggestedName: filename,
@@ -130,24 +134,30 @@ async function saveTextViaPicker(filename, text, mime = 'text/plain'){
     const w = await picker.createWritable();
     await w.write(new Blob([text], { type: mime }));
     await w.close();
-    return true;
-  }catch{
-    return false;
+    return SAVED;
+  }catch(err){
+    // Dismissing the picker rejects with AbortError. That is the user saying
+    // no, not this route being unusable.
+    return isUserCancel(err) ? CANCELLED : UNAVAILABLE;
   }
 }
 
 async function downloadOrSaveText(filename, text, mime='text/plain'){
   // Must be called from a user gesture (click) for best reliability.
-  // 1) Prefer Chrome downloads API (extension-reliable, supports Save As).
-  const okDl = await downloadTextViaChromeDownloads(filename, text, mime);
-  if (okDl) return;
-
-  // 2) Then try File System Access picker (also user-controlled).
-  const okPicker = await saveTextViaPicker(filename, text, mime);
-  if (okPicker) return;
-
-  // 3) Fallback: anchor download.
-  downloadText(filename, text, mime);
+  //
+  // Tier 3 has no dialog: it drops the file into Downloads and says nothing.
+  // That is a fine last resort when no other route exists, and completely wrong
+  // as a response to someone pressing Cancel — which is what it used to be,
+  // because every tier reported cancel and unavailable as the same `false`.
+  // runSaveCascade stops on a cancel; only an unavailable route falls through.
+  return runSaveCascade([
+    // 1) Chrome downloads API (extension-reliable, supports Save As).
+    () => downloadTextViaChromeDownloads(filename, text, mime),
+    // 2) File System Access picker (also user-controlled).
+    () => saveTextViaPicker(filename, text, mime),
+    // 3) Anchor download — always available, so the cascade ends here.
+    () => { downloadText(filename, text, mime); return SAVED; },
+  ]);
 }
 
 function clampTcInput(v) {

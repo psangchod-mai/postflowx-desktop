@@ -5,6 +5,9 @@
 
 import { PFX_getBurninPresetForClip } from '../burninSetupModal/index.js';
 import { getCachedProxyForFile } from '../../modules/proResProxy.js';
+// The tiers here throw on cancel rather than returning it, so runSaveCascade's
+// own catch classifies them and this file never needs isUserCancel directly.
+import { SAVED, UNAVAILABLE, runSaveCascade } from '../../core/saveOutcome.js';
 
 /**
  * Resolve the best playable URL for a clip used by hidden analysis video elements
@@ -780,23 +783,30 @@ async function openPrintReportHtml({ filenameBase, html }){
   return false;
 }
 
+// Same three-route cascade the review notes export uses, and it had the same
+// bug: each tier reported "the user cancelled" and "this route is unusable"
+// as one indistinguishable `false`, so cancelling the QC report's Save dialog
+// opened a second one and then wrote the file to Downloads anyway. The tiers
+// below genuinely differ from the review ones (blob URL, not data URL; a
+// finally-closed writable), so they stay here — the sequencing rule that both
+// copies got wrong is what moved into runSaveCascade.
 async function downloadOrSaveText(filename, text, mime='text/plain'){
-  try{
-    const dl = (globalThis.chrome && chrome.downloads && chrome.downloads.download) ? chrome.downloads : null;
-    if (dl){
+  return runSaveCascade([
+    async () => {
+      const dl = (globalThis.chrome && chrome.downloads && chrome.downloads.download) ? chrome.downloads : null;
+      if (!dl) return UNAVAILABLE;
       const url = `data:${mime};charset=utf-8,${encodeURIComponent(String(text ?? ''))}`;
-      await new Promise((resolve, reject) => {
-        dl.download({ url, filename, saveAs: true, conflictAction:'uniquify' }, (id)=>{
+      const id = await new Promise((resolve, reject) => {
+        dl.download({ url, filename, saveAs: true, conflictAction:'uniquify' }, (downloadId)=>{
           const err = chrome.runtime?.lastError;
           if (err) return reject(err);
-          resolve(id);
+          resolve(downloadId);
         });
       });
-      return true;
-    }
-  }catch{}
-  try{
-    if (typeof window.showSaveFilePicker === 'function'){
+      return id ? SAVED : UNAVAILABLE;
+    },
+    async () => {
+      if (typeof window.showSaveFilePicker !== 'function') return UNAVAILABLE;
       const ext = (filename.split('.').pop() || '').toLowerCase();
       const picker = await window.showSaveFilePicker({
         suggestedName: filename,
@@ -804,25 +814,24 @@ async function downloadOrSaveText(filename, text, mime='text/plain'){
       });
       const w = await picker.createWritable();
       try{ await w.write(new Blob([text], { type: mime })); }finally{ await w.close(); }
-      return true;
-    }
-  }catch{}
-  try{
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    try{
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }finally{
-      setTimeout(()=> URL.revokeObjectURL(url), 1000);
-    }
-    return true;
-  }catch{}
-  return false;
+      return SAVED;
+    },
+    () => {
+      const blob = new Blob([text], { type: mime });
+      const url = URL.createObjectURL(blob);
+      try{
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }finally{
+        setTimeout(()=> URL.revokeObjectURL(url), 1000);
+      }
+      return SAVED;
+    },
+  ]);
 }
 
 export async function openVisualQcModal({

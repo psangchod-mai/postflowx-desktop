@@ -14,5 +14,17 @@
   merged.system       = { ...(existing.system       || {}), ...(shim.system       || {}) };
   merged.scripting    = { ...(existing.scripting    || {}), ...(shim.scripting    || {}) };
   merged.offscreen    = { ...(existing.offscreen    || {}), ...(shim.offscreen    || {}) };
+
+  // The spread above reads chrome.runtime.lastError once and copies the VALUE.
+  // preload.js deliberately defines it as a live getter, and spreading flattens
+  // that getter into whatever it happened to return at load time — null. Every
+  // `if (chrome.runtime.lastError)` in the renderer was therefore dead code in
+  // the desktop app: a cancelled download or a failed sendMessage reported
+  // nothing at all. Re-install the accessor so it stays live.
+  const lastErrorDesc = Object.getOwnPropertyDescriptor(shim.runtime || {}, 'lastError');
+  if (lastErrorDesc && typeof lastErrorDesc.get === 'function') {
+    Object.defineProperty(merged.runtime, 'lastError', lastErrorDesc);
+  }
+
   window.chrome = merged;
 })();
