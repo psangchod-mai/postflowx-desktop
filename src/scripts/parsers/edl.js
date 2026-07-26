@@ -24,9 +24,12 @@
 //       _edlLoc, _edlComments
 //     }],
 //     projectName,
-//     fps
+//     fps,       // whole-frame timecode base (always an integer)
+//     fpsExact   // true playback rate (23.976023976… for an NTSC header)
 //   }
 // -----------------------------------------------------------------------------
+
+import { nominalBase } from '../modules/utils_time.js';
 
 function basename(p = "") {
   const s = String(p || "").trim();
@@ -279,8 +282,14 @@ export function parseEDL(edlText, filename = "") {
     if (/drop\s*frame/i.test(fcm || "")) fpsGuess = Math.max(fpsGuess, 30);
   }
 
-  events.forEach((ev) => (ev.fps = fpsGuess));
+  // A FRAME_RATE:/FPS: header line is taken verbatim, so explicitFps can be
+  // fractional ("FRAME_RATE: 23.976"). The guess branch cannot be — it picks
+  // from a fixed set — but the base still has to be derived rather than
+  // assumed, because the header branch is the one real EDLs take. `fps` is the
+  // whole-frame timecode base, `fpsExact` the true rate: the shared contract.
+  const fpsBase = nominalBase(fpsGuess);
+  events.forEach((ev) => (ev.fps = fpsBase));
 
   const projectName = title || stemNoExt(filename || "EDL_PROJECT") || "EDL_PROJECT";
-  return { events, fps: fpsGuess, projectName, sourceType: "edl" };
+  return { events, fps: fpsBase, fpsExact: fpsGuess, projectName, sourceType: "edl" };
 }

@@ -2196,9 +2196,17 @@ async function _pmRefreshData() {
   }
   {
     const _projFps = _pmGetProjectSettingsFps();
-    // raw.fps = playback fps (e.g. 23.976); raw.timecodeBase = integer for TC math (e.g. 24)
-    const _importPlayFps = raw?.fps || _pmEvents[0]?.fps || 24;
-    const _importTcBase  = raw?.timecodeBase || Math.round(_importPlayFps) || 24;
+    // Every parser now reports both halves: raw.fps = whole-frame timecode base
+    // (e.g. 24), raw.fpsExact = true playback rate (e.g. 23.976023976…).
+    //
+    // XMEML alone used to carry the exact rate, and it carried it *as* raw.fps.
+    // That is why the FrameClock below was right for XMEML and quietly wrong for
+    // every other source: an NTSC FCPXML reported 24, _pmFpsToRational matched no
+    // NTSC entry and returned 24/1, and playback ran 0.1% fast — 3.6 seconds of
+    // drift per hour against the media. fpsExact is what fixes that. The rest of
+    // each chain still stands up for any producer that predates the contract.
+    const _importPlayFps = raw?.fpsExact || raw?.fps || _pmEvents[0]?.fps || 24;
+    const _importTcBase  = Math.round(raw?.fps || raw?.timecodeBase || _importPlayFps) || 24;
     // _pmFps = integer timecode base for tcToFrames / framesToTC correctness.
     // NDF NTSC: 23.976→24, 29.97→30, 59.94→60. Integer rates: 24→24, 25→25, etc.
     const _projTcBase = _projFps > 0 ? Math.max(1, Math.round(_projFps)) : 0;

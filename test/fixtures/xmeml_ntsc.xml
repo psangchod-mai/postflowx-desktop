@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 23.976 XMEML: <timebase>24</timebase> with <ntsc>TRUE</ntsc>.
+     This is how Premiere and Resolve write an NTSC sequence. The timebase is
+     the WHOLE-FRAME base (24 fields fit in one timecode second) and the ntsc
+     flag means the real playback rate is 24 * 1000/1001 = 23.976023976…
+     The file therefore states BOTH rates, which is why a parser that reports
+     only one of them leaves every consumer downstream guessing which it got.
+
+     Frame counts are on the timebase, as in xmeml_basic.xml:
+       sequence start 86400 = 3600 * 24 = 01:00:00:00
+       each clip 96 frames = 4 timecode seconds
+       clip 2 in 240 = 10 timecode seconds into its media -->
+<xmeml version="5">
+  <sequence>
+    <name>XMEML NTSC</name>
+    <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+    <timecode>
+      <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+      <frame>86400</frame>
+      <displayformat>NDF</displayformat>
+    </timecode>
+    <media>
+      <video>
+        <track>
+          <clipitem>
+            <name>shot_010</name>
+            <start>0</start><end>96</end>
+            <in>0</in><out>96</out>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <file>
+              <name>A001C001.mov</name>
+              <pathurl>file:///media/A001C001.mov</pathurl>
+              <timecode>
+                <frame>86400</frame>
+                <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+              </timecode>
+            </file>
+          </clipitem>
+          <clipitem>
+            <name>shot_020</name>
+            <start>96</start><end>192</end>
+            <in>240</in><out>336</out>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <file>
+              <name>A001C002.mov</name>
+              <pathurl>file:///media/A001C002.mov</pathurl>
+              <timecode>
+                <frame>86400</frame>
+                <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+              </timecode>
+            </file>
+          </clipitem>
+        </track>
+      </video>
+    </media>
+  </sequence>
+</xmeml>

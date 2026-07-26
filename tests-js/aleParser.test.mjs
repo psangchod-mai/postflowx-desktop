@@ -55,7 +55,12 @@ const one = (start, end = null) => parseALE(makeALE({ rows: [row(start, end)] })
   eq(r.events.length, 1, 'a non-drop row produces one event');
   eq(r.events[0].srcIn, '01:00:00:00', 'and its source in is unchanged');
   eq(r.events[0].srcOut, '01:00:10:00', 'as is its source out');
-  eq(r.fps, 29.97, 'FPS is read from the heading');
+  // The heading rate is still read verbatim — it is now reported as `fpsExact`,
+  // with `fps` carrying the whole-frame timecode base beside it. This assertion
+  // used to read `r.fps === 29.97`, which is what made every consumer downstream
+  // guess which of the two rates it had been handed.
+  eq(r.fpsExact, 29.97, 'the heading rate is read as written');
+  eq(r.fps, 30, 'and the whole-frame timecode base is derived from it');
   eq(r.events[0].reel, 'A001', 'Tape wins over the filename stem for the reel');
   eq(r.events[0].isOCF, true, 'and an .mxf source is camera original');
 }
@@ -166,8 +171,15 @@ for (const bad of ['01:00:00', '01:00:00:00:00', '', 'TC', '01-00-00-00']) {
   eq(noFps.events.length, 1, 'a heading with no FPS line still imports its rows');
   eq(noFps.fps, 24, 'and falls back to 24 fps through detectFPSFromHeading');
 }
-eq(parseALE(makeALE({ fps: '23.976', rows: [row('01:00:00:00')] })).fps, 23.976,
-   'a fractional heading FPS is read as written');
+{
+  // A fractional heading rate is the case the two-rate contract exists for: the
+  // rate is kept exactly (fpsExact) AND a whole base is derived for the timecode
+  // arithmetic (fps), instead of one number being asked to serve both.
+  const frac = parseALE(makeALE({ fps: '23.976', rows: [row('01:00:00:00')] }));
+  eq(frac.fpsExact, 23.976, 'a fractional heading FPS is read as written');
+  eq(frac.fps, 24, 'and rounds to a whole timecode base');
+  eq(frac.events[0].fps, 24, 'events are stamped with the base, not the fractional rate');
+}
 
 // ── the divergence is gone from the source ──
 // Guards run against code with comments stripped. The first draft of the

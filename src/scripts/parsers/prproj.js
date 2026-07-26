@@ -61,7 +61,7 @@ export async function parsePRPROJ(file) {
   );
   if (!seq) throw new Error('No usable sequence found in .prproj');
 
-  const { nominalFps, ticksPerFrame } = _getSeqFps(seq, tickRate);
+  const { nominalFps, actualFps, ticksPerFrame } = _getSeqFps(seq, tickRate);
   const seqName     = _text(seq, 'Name') || 'Sequence';
   const projectName = _text(doc.querySelector('Project'), 'Name') ||
                       _text(doc.querySelector('PremiereData > Project'), 'Name') || seqName;
@@ -78,7 +78,10 @@ export async function parsePRPROJ(file) {
     audioMap, seqMarkers, seqName
   );
 
-  return { events, fps: nominalFps, projectName };
+  // `fps` = whole-frame timecode base, `fpsExact` = true playback rate. Ticks
+  // are a real-time unit, so the tick↔frame conversion above already uses the
+  // exact rate; this just stops it from being thrown away at the boundary.
+  return { events, fps: nominalFps, fpsExact: actualFps, projectName };
 }
 
 // ─── Decompression ────────────────────────────────────────────────────────────
@@ -148,7 +151,7 @@ function _getSeqFps(seq, tickRate) {
   // ticks per frame — use nominal for TC display (don't drop frames for pull prep)
   const actualFps    = ntsc ? nominal * 1000 / 1001 : nominal;
   const ticksPerFrame = Math.round(tickRate / actualFps);
-  return { nominalFps: nominal, ticksPerFrame, ntsc };
+  return { nominalFps: nominal, actualFps, ticksPerFrame, ntsc };
 }
 
 // ─── Sequence start tick (record TC base) ────────────────────────────────────

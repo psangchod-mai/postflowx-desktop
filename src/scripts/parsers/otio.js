@@ -183,7 +183,7 @@ export function parseOTIO(jsonInput) {
     }
 
     if (!pickTimeline) {
-      return { events: [], projectName, fps: 24 };
+      return { events: [], projectName, fps: 24, fpsExact: 24 };
     }
 
     // fps default (exact)
@@ -850,10 +850,13 @@ export function parseOTIO(jsonInput) {
       }
     }
 
-    return { events: dedup, projectName, fps, sourceType: "otio" };
+    // `fps` is the whole-frame timecode base, `fpsExact` the true playback rate
+    // — the shared parser contract. fpsExact was already computed here for the
+    // per-event rate and simply never left the module.
+    return { events: dedup, projectName, fps, fpsExact, sourceType: "otio" };
   } catch (e) {
     console.warn("parseOTIO failed", e);
-    return { events: [], projectName: "—", fps: 24, _error: String(e?.message || e) };
+    return { events: [], projectName: "—", fps: 24, fpsExact: 24, _error: String(e?.message || e) };
   }
 }
 

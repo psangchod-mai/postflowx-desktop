@@ -24,8 +24,18 @@
 //     disabled   // ✅ true ถ้ามาจาก clip ที่ enabled="0" หรืออยู่ใต้พ่อที่ถูกปิด
 //   }],
 //   projectName,
-//   fps
+//   fps,        // WHOLE-FRAME timecode base (24 for a 23.976 show) — see below
+//   fpsExact    // TRUE playback rate (23.976023976…) — see below
 // }
+//
+// The two-rate contract, shared by every parser in this directory:
+//   `fps`      is the number of frame fields in one timecode second. It is
+//              always a whole number, and it is what TC↔frames math must use.
+//   `fpsExact` is the real-time playback rate. It is what real-time math must
+//              use: seconds↔frames, an A/V clock, a comp's frame rate.
+// They differ by 0.1% on every NTSC rate, which is 3.6 seconds per hour — small
+// enough to look like nothing in a unit test and large enough to lose sync.
+// Consumers that only build timecode strings can keep reading `fps` alone.
 
 import { nominalBase } from '../modules/utils_time.js';
 
@@ -171,7 +181,10 @@ export function parseFCPXML(xmlText) {
     const mainSeq = doc.querySelector("library project > sequence") ||
                     doc.querySelector("project > sequence") ||
                     doc.querySelector("sequence");
-    if (!mainSeq) return { events: [], projectName, fps: nominalBase(readFPS(doc)), sourceType: "fcpxml" };
+    if (!mainSeq) {
+      const docFps = readFPS(doc);
+      return { events: [], projectName, fps: nominalBase(docFps), fpsExact: docFps, sourceType: "fcpxml" };
+    }
 
     // ---- Resolve FPS from the sequence's own format attribute.
     // readFPS(doc) falls back to the first format element, which may not be the
@@ -223,7 +236,7 @@ export function parseFCPXML(xmlText) {
           if (flat.length) {
             try { flat[0]._seqBaseFrames = seqStartF; } catch {}
           }
-          return { events: flat, projectName, fps: nominalBase(fps), videoTrackCount: Math.max(1, maxTI2 + 1), _seqBaseFrames: seqStartF, _fallback: 'flat-sequence-scan', sourceType: "fcpxml" };
+          return { events: flat, projectName, fps: nominalBase(fps), fpsExact: fps, videoTrackCount: Math.max(1, maxTI2 + 1), _seqBaseFrames: seqStartF, _fallback: 'flat-sequence-scan', sourceType: "fcpxml" };
         }
       } catch (e) {
         console.warn('parseFCPXML flat fallback failed', e);
@@ -238,7 +251,7 @@ export function parseFCPXML(xmlText) {
             if (Number.isFinite(ti)) maxTI3 = Math.max(maxTI3, ti);
           }
           try { topLevel[0]._seqBaseFrames = seqStartF; } catch {}
-          return { events: topLevel, projectName, fps: nominalBase(fps), videoTrackCount: Math.max(1, maxTI3 + 1), _seqBaseFrames: seqStartF, _fallback: 'top-level-spine-scan', sourceType: "fcpxml" };
+          return { events: topLevel, projectName, fps: nominalBase(fps), fpsExact: fps, videoTrackCount: Math.max(1, maxTI3 + 1), _seqBaseFrames: seqStartF, _fallback: 'top-level-spine-scan', sourceType: "fcpxml" };
         }
       } catch (e) {
         console.warn('parseFCPXML top-level fallback failed', e);
@@ -319,10 +332,10 @@ export function parseFCPXML(xmlText) {
       try { events[0]._seqBaseFrames = seqStartF; } catch {}
     }
 
-    return { events, projectName, fps: nominalBase(fps), videoTrackCount, _seqBaseFrames: seqStartF, sourceType: "fcpxml" };
+    return { events, projectName, fps: nominalBase(fps), fpsExact: fps, videoTrackCount, _seqBaseFrames: seqStartF, sourceType: "fcpxml" };
   } catch (e) {
     console.warn("parseFCPXML failed", e);
-    return { events: [], projectName: "—", fps: 24, _error: String(e?.message || e), sourceType: "fcpxml" };
+    return { events: [], projectName: "—", fps: 24, fpsExact: 24, _error: String(e?.message || e), sourceType: "fcpxml" };
   }
 }
 

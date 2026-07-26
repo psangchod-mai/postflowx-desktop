@@ -610,12 +610,12 @@ export function parseXMEML(xmlText) {
 
   const root = doc.documentElement;
   if (!root || root.nodeName.toLowerCase() !== "xmeml") {
-    return { events: [], fps: 24, projectName: "—" };
+    return { events: [], fps: 24, fpsExact: 24, projectName: "—" };
   }
 
   const sequences = root.getElementsByTagName("sequence");
   if (!sequences || !sequences.length) {
-    return { events: [], fps: 24, projectName: "—" };
+    return { events: [], fps: 24, fpsExact: 24, projectName: "—" };
   }
   const seq = sequences[0];
 
@@ -1266,10 +1266,24 @@ export function parseXMEML(xmlText) {
       : 0}`
   );
 
+  // `fps` is the WHOLE-FRAME timecode base and `fpsExact` is the true playback
+  // rate — the same contract every parser in this directory now exports.
+  //
+  // This boundary used to hand out the playback rate as `fps`, alone among the
+  // parsers. Downstream code cannot tell which kind of rate it was given, so
+  // each consumer guessed: `trlconf` fed it straight into tcToFrames and ran
+  // whole NTSC conforms on fractional frame counts (86313.686 frames for
+  // 01:00:00:00 instead of 86400), while `prep_mark` learned to reach past it
+  // for `timecodeBase`. The events this very function emits are stamped
+  // `fps: 24` — the header disagreed with its own rows.
+  //
+  // `timecodeBase` is kept as an alias: it is the same number as `fps` now, and
+  // removing it would break the one consumer that did the right thing.
   return {
     events: normalizedEvents,
-    fps: playbackFps,          // actual playback fps (e.g. 23.976 for ntsc 24)
-    timecodeBase: fps,         // integer timebase for TC string math (e.g. 24)
+    fps,                       // whole-frame timecode base (e.g. 24 for ntsc 24)
+    fpsExact: playbackFps,     // true playback rate (e.g. 23.976023976…)
+    timecodeBase: fps,         // alias of `fps`, retained for existing callers
     isNtsc,
     dropFrame: false,          // XMEML NDF sequences
     displayFormat: seqDisplayFormat,

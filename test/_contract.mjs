@@ -46,6 +46,17 @@ export function assertParseResult(result, { sourceType } = {}) {
   assert.ok(result && Array.isArray(result.events), 'result.events must be an array');
   assert.ok(typeof result.projectName === 'string' && result.projectName.length > 0, 'projectName non-empty');
   assert.ok(Number.isFinite(result.fps) && result.fps > 0, 'top-level fps positive');
+
+  // The two-rate contract. `fps` is the number of frame fields in a timecode
+  // second and is therefore always whole; `fpsExact` is the real-time playback
+  // rate. Enforced here rather than per-parser because the bug this replaces
+  // was precisely that each parser answered `fps` with a different one of the
+  // two, and every downstream consumer had to guess which it had been handed.
+  assert.ok(Number.isInteger(result.fps), `top-level fps must be a whole frame base — got ${result.fps}`);
+  assert.ok(Number.isFinite(result.fpsExact) && result.fpsExact > 0,
+    `fpsExact must be a positive playback rate — got ${result.fpsExact}`);
+  assert.equal(Math.round(result.fpsExact), result.fps,
+    `fps (${result.fps}) must be fpsExact (${result.fpsExact}) rounded to whole frames`);
   if (sourceType) assert.equal(result.sourceType, sourceType, `sourceType === ${sourceType}`);
   const norm = result.events.map(normalizeEvent);
   norm.forEach((ev, i) => assertEventContract(ev, `${sourceType || 'event'}#${i}`));

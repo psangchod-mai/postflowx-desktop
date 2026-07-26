@@ -7,6 +7,8 @@
 // - Reel name ใช้จาก Tape name ก่อน แล้วค่อย fallback เป็น filename stem
 // -----------------------------------------------------------------------------
 
+import { nominalBase } from '../modules/utils_time.js';
+
 /**
  * Normalise one ALE timecode field to "HH:MM:SS:FF", or null if it is not a
  * timecode at all.
@@ -183,7 +185,7 @@ function buildEventFromRow(row, headerMap, defaults) {
 
 export function parseALE(text, filename = "ALE_Import") {
   if (!text || typeof text !== "string") {
-    return { projectName: getStem(filename) || "ALE_Import", fps: DEFAULT_FPS, events: [] };
+    return { projectName: getStem(filename) || "ALE_Import", fps: DEFAULT_FPS, fpsExact: DEFAULT_FPS, events: [] };
   }
 
   const lines = text.split(/\r\n|\n|\r/);
@@ -224,7 +226,11 @@ export function parseALE(text, filename = "ALE_Import") {
     }
   }
 
-  const fps = detectFPSFromHeading(headingLines);
+  // An ALE header can carry a fractional rate verbatim ("FPS\t23.976"), so the
+  // whole-frame timecode base has to be derived rather than assumed. `fps` is
+  // that base and `fpsExact` the true rate — the shared parser contract.
+  const fpsExact = detectFPSFromHeading(headingLines);
+  const fps = nominalBase(fpsExact);
 
   if (headerAfterColumn) {
     columnsLine = headerAfterColumn;
@@ -235,7 +241,7 @@ export function parseALE(text, filename = "ALE_Import") {
   }
 
   if (!columnsLine) {
-    return { projectName: getStem(filename) || "ALE_Import", fps, events: [] };
+    return { projectName: getStem(filename) || "ALE_Import", fps, fpsExact, events: [] };
   }
 
   // Use tab delimiter if the line contains tabs (standard Avid ALE format).
@@ -266,6 +272,7 @@ export function parseALE(text, filename = "ALE_Import") {
   return {
     projectName: projStem,
     fps,
+    fpsExact,
     events,
     sourceType: "ale"
   };
