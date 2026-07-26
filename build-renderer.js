@@ -18,6 +18,8 @@
 const fs   = require('fs');
 const path = require('path');
 
+const { resolveInherited } = require('./tools/authConfigInherit');
+
 const ROOT = __dirname;
 const SRC  = path.join(ROOT, 'src');
 const EXT  = path.join(ROOT, 'extension');
@@ -151,8 +153,16 @@ fs.writeFileSync(path.join(OUT, 'index.html'), html);
 //
 // The generated file is git-ignored (electron/generated/).  It is regenerated
 // on every `node build-renderer.js --target desktop` run.
-// If no env var is set the file is written with an empty string so the app can
-// start and show a clear "not configured" UI instead of crashing.
+// If no env var is set, values are INHERITED from whatever the last build baked
+// in, then from electron/authConfig.local.json — they are not blanked. Writing ''
+// here does not produce an unconfigured build, it erases a working one. See
+// tools/authConfigInherit.js for what that cost. Only a value no source has ever
+// supplied is written empty, and the app then shows a clear "not configured" UI.
+
+/** Read a JSON file, or null if it is missing or unparseable. */
+function tryReadJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
 
 if (target === 'desktop') {
   const generatedDir = path.join(ROOT, 'electron', 'generated');
@@ -164,16 +174,32 @@ if (target === 'desktop') {
     fs.writeFileSync(gitignorePath, '# Auto-generated — never commit credentials\n*\n!.gitignore\n');
   }
 
-  const clientId = (
-    process.env.GOOGLE_DESKTOP_CLIENT_ID ||
-    process.env.POSTFLOWX_GOOGLE_DESKTOP_CLIENT_ID ||
-    ''
-  ).trim();
+  // Both values below are written straight over authConfig.json, which ships as
+  // Resources/authConfig.json — the only auth config the packaged main process
+  // reads. Resolving them to '' when their env var is absent does not produce an
+  // unconfigured build, it produces a build that erases a working one. That is
+  // exactly how a package once shipped with postflowxAuthApiUrl:"" and told
+  // every user "PostFlowX access policy service is not configured for this
+  // build." after a plain `npm run build:renderer`. See tools/authConfigInherit.js.
+  //
+  // devAuthBypass below deliberately does NOT inherit — see that file.
+  const priorResources = tryReadJson(path.join(ROOT, 'authConfig.json'));
+  const localDevConfig = tryReadJson(path.join(ROOT, 'electron', 'authConfig.local.json'));
 
-  const apiUrl = (
-    process.env.POSTFLOWX_AUTH_API_URL ||
-    ''
-  ).trim();
+  const clientIdResolved = resolveInherited([
+    { source: 'env:GOOGLE_DESKTOP_CLIENT_ID',           value: process.env.GOOGLE_DESKTOP_CLIENT_ID },
+    { source: 'env:POSTFLOWX_GOOGLE_DESKTOP_CLIENT_ID', value: process.env.POSTFLOWX_GOOGLE_DESKTOP_CLIENT_ID },
+    { source: 'authConfig.json',                        value: priorResources?.googleDesktopClientId },
+    { source: 'electron/authConfig.local.json',         value: localDevConfig?.googleDesktopClientId },
+  ]);
+  const clientId = clientIdResolved.value;
+
+  const apiUrlResolved = resolveInherited([
+    { source: 'env:POSTFLOWX_AUTH_API_URL',     value: process.env.POSTFLOWX_AUTH_API_URL },
+    { source: 'authConfig.json',                value: priorResources?.postflowxAuthApiUrl },
+    { source: 'electron/authConfig.local.json', value: localDevConfig?.postflowxAuthApiUrl },
+  ]);
+  const apiUrl = apiUrlResolved.value;
 
   const configured = clientId.endsWith('.apps.googleusercontent.com');
 
@@ -212,6 +238,17 @@ if (target === 'desktop') {
     console.warn('[build-renderer] ⚠  auth config: GOOGLE_DESKTOP_CLIENT_ID not set — Google login will be disabled in this build');
     console.warn('[build-renderer]    Set env var before building:');
     console.warn('[build-renderer]      GOOGLE_DESKTOP_CLIENT_ID="xxxx.apps.googleusercontent.com" node build-renderer.js --target desktop');
+  }
+
+  // Say out loud where the access-policy URL came from. When it is empty the
+  // packaged app cannot check anyone's access at all, and the only symptom is a
+  // red line on the login card — so the build must not report that as success.
+  if (apiUrl) {
+    console.log(`[build-renderer] ✓ access policy service: configured (source: ${apiUrlResolved.source})`);
+  } else {
+    console.warn('[build-renderer] ⚠  access policy service: NOT configured — every sign-in in this build will fail with');
+    console.warn('[build-renderer]      "PostFlowX access policy service is not configured for this build."');
+    console.warn('[build-renderer]    Set POSTFLOWX_AUTH_API_URL, or put postflowxAuthApiUrl in electron/authConfig.local.json.');
   }
 }
 

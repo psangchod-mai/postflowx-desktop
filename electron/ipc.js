@@ -1228,8 +1228,22 @@ function register(mainWindow, appRoot) {
 
   function _getPostflowxAuthApiUrl() {
     if (process.env.POSTFLOWX_AUTH_API_URL) return process.env.POSTFLOWX_AUTH_API_URL;
+    const nodePath = require('path');
+    // Resources/authConfig.json — replaceable post-build without repacking.
     const runtimeCfg = _getRuntimeConfig();
     if (runtimeCfg.postflowxAuthApiUrl) return runtimeCfg.postflowxAuthApiUrl;
+    // Bundled build-time config inside the asar. _getGoogleClientId has always
+    // read this as its second line of defence; this function did not, so a
+    // single empty value in Resources/authConfig.json was enough to take the
+    // whole access-policy check offline with nothing to fall back on.
+    const gen = _tryReadJson(nodePath.join(__dirname, 'generated', 'authConfig.generated.json'));
+    if (gen?.postflowxAuthApiUrl) return gen.postflowxAuthApiUrl;
+    // Post-install user config in OS userData — lets an admin repair a shipped
+    // build in place, without a reinstall.
+    try {
+      const cfg = _tryReadJson(nodePath.join(app.getPath('userData'), 'pfx-auth-config.json'));
+      if (cfg?.postflowxAuthApiUrl) return cfg.postflowxAuthApiUrl;
+    } catch {}
     return '';
   }
 
