@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 23.976 (24000/1001) sequence starting at timecode hour 01:00:00:00.
+     Every time value is an exact rational in the timebase, the way FCP X and
+     Resolve write them: frame N is N*1001/24000 seconds.
+       01:00:00:00 = frame 86400 = 86486400/24000s
+       4 seconds   = frame    96 =    96096/24000s
+       01:00:04:00 = frame 86496 = 86582496/24000s
+     Offsets are in the same domain as tcStart (Resolve style). -->
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p2398" frameDuration="1001/24000s" width="1920" height="1080"/>
+    <asset id="a1" name="A001C001" format="r1" start="86486400/24000s" duration="86486400/24000s" hasVideo="1">
+      <media-rep kind="original-media" src="file:///media/A001C001.mov"/>
+    </asset>
+  </resources>
+  <library name="NTSC LIB">
+    <event name="NTSC EVENT">
+      <project name="FCPX NTSC">
+        <sequence format="r1" tcStart="86486400/24000s" tcFormat="NDF" duration="192192/24000s">
+          <spine>
+            <asset-clip name="shot_010" ref="a1" offset="86486400/24000s" start="86486400/24000s" duration="96096/24000s"/>
+            <asset-clip name="shot_020" ref="a1" offset="86582496/24000s" start="86582496/24000s" duration="96096/24000s"/>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

@@ -6,6 +6,16 @@
 //   - strip " - v1" / " - v2" and extension → reel = "A_0001C012_251026_075200_c1I89"
 // ไม่ใช้ clipName เป็นแหล่งรีล ยกเว้นกรณีที่ไม่มี asset และ video จริง ๆ
 //
+// TWO RATES, DELIBERATELY.
+// Every FCPXML time attribute is a rational number of REAL seconds, and the
+// frame index it denotes is value / frameDuration — so seconds→frames must use
+// the true rate (24000/1001 = 23.976…). A timecode label has no fractional
+// frame field, so frames→HH:MM:SS:FF must use the whole-frame base (24).
+// The `fps` threaded through this file is now the EXACT rate; nominalBase() is
+// applied at the two places a whole number is required (the timecode pair) and
+// at every place a rate leaves the module (`res.fps`, `event.fps`, `srcFps`),
+// so the public contract is unchanged — only the timecodes are now right.
+//
 // Returns:
 // {
 //   events: [{
@@ -16,6 +26,8 @@
 //   projectName,
 //   fps
 // }
+
+import { nominalBase } from '../modules/utils_time.js';
 
 export function parseFCPXML(xmlText) {
   try {
@@ -48,7 +60,9 @@ export function parseFCPXML(xmlText) {
         const num = Number(parts[0]);
         const den = Number(parts[1]);
         if (Number.isFinite(num) && Number.isFinite(den) && num > 0 && den > 0) {
-          const v = Math.round(den / num);
+          // Exact, unrounded: "1001/24000s" is 23.976…, and rounding it here to
+          // 24 is what made every seconds→frames conversion below drift.
+          const v = den / num;
           if (v > 0) formats[id] = v;
         }
       }
@@ -60,7 +74,8 @@ export function parseFCPXML(xmlText) {
       if (!id) return;
       const name = a.getAttribute("name") || "";
       const fmtId = a.getAttribute("format");
-      const srcFps = (fmtId && formats[fmtId]) ? formats[fmtId] : null;
+      // Reported, never used for arithmetic — so it leaves as a nominal rate.
+      const srcFps = (fmtId && formats[fmtId]) ? nominalBase(formats[fmtId]) : null;
       // Real camera filename from media-rep src — authoritative OCF identity that
       // survives clip renames in FCP X (the 'name' attribute does not).
       let file = "";
@@ -156,7 +171,7 @@ export function parseFCPXML(xmlText) {
     const mainSeq = doc.querySelector("library project > sequence") ||
                     doc.querySelector("project > sequence") ||
                     doc.querySelector("sequence");
-    if (!mainSeq) return { events: [], projectName, fps: readFPS(doc), sourceType: "fcpxml" };
+    if (!mainSeq) return { events: [], projectName, fps: nominalBase(readFPS(doc)), sourceType: "fcpxml" };
 
     // ---- Resolve FPS from the sequence's own format attribute.
     // readFPS(doc) falls back to the first format element, which may not be the
@@ -208,7 +223,7 @@ export function parseFCPXML(xmlText) {
           if (flat.length) {
             try { flat[0]._seqBaseFrames = seqStartF; } catch {}
           }
-          return { events: flat, projectName, fps, videoTrackCount: Math.max(1, maxTI2 + 1), _seqBaseFrames: seqStartF, _fallback: 'flat-sequence-scan', sourceType: "fcpxml" };
+          return { events: flat, projectName, fps: nominalBase(fps), videoTrackCount: Math.max(1, maxTI2 + 1), _seqBaseFrames: seqStartF, _fallback: 'flat-sequence-scan', sourceType: "fcpxml" };
         }
       } catch (e) {
         console.warn('parseFCPXML flat fallback failed', e);
@@ -223,7 +238,7 @@ export function parseFCPXML(xmlText) {
             if (Number.isFinite(ti)) maxTI3 = Math.max(maxTI3, ti);
           }
           try { topLevel[0]._seqBaseFrames = seqStartF; } catch {}
-          return { events: topLevel, projectName, fps, videoTrackCount: Math.max(1, maxTI3 + 1), _seqBaseFrames: seqStartF, _fallback: 'top-level-spine-scan', sourceType: "fcpxml" };
+          return { events: topLevel, projectName, fps: nominalBase(fps), videoTrackCount: Math.max(1, maxTI3 + 1), _seqBaseFrames: seqStartF, _fallback: 'top-level-spine-scan', sourceType: "fcpxml" };
         }
       } catch (e) {
         console.warn('parseFCPXML top-level fallback failed', e);
@@ -304,7 +319,7 @@ export function parseFCPXML(xmlText) {
       try { events[0]._seqBaseFrames = seqStartF; } catch {}
     }
 
-    return { events, projectName, fps, videoTrackCount, _seqBaseFrames: seqStartF, sourceType: "fcpxml" };
+    return { events, projectName, fps: nominalBase(fps), videoTrackCount, _seqBaseFrames: seqStartF, sourceType: "fcpxml" };
   } catch (e) {
     console.warn("parseFCPXML failed", e);
     return { events: [], projectName: "—", fps: 24, _error: String(e?.message || e), sourceType: "fcpxml" };
@@ -325,10 +340,14 @@ function stemNoExt(path = "") {
   const i = s.lastIndexOf(".");
   return i > 0 ? s.slice(0, i) : s;
 }
+// The timecode pair works in whole frame fields: HH:MM:SS:FF cannot hold a
+// fraction, so a timecode second is 24 fields at 23.976 and 30 at 29.97 NDF.
+// pad2 does not round, so a fractional field would be stringified whole.
 function framesToTC(fr, fps = 24) {
+  const base = nominalBase(fps);
   fr = Math.max(0, Math.round(fr || 0));
-  const s = Math.floor(fr / fps);
-  const ff = fr % fps;
+  const s = Math.floor(fr / base);
+  const ff = fr % base;
   const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
   return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}:${pad2(ff)}`;
 }
@@ -336,8 +355,12 @@ function tcToFrames(tc, fps = 24) {
   const m = typeof tc === "string" && tc.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/);
   if (!m) return 0;
   const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
-  return Math.round(((hh * 3600) + (mm * 60) + ss) * fps + ff);
+  return Math.round(((hh * 3600) + (mm * 60) + ss) * nominalBase(fps) + ff);
 }
+// Rational REAL seconds → frame index. This one must use the true rate: the
+// frame a value denotes is value / frameDuration. Multiplying by the rounded
+// base instead put every event 86 frames (3.6s) late at the 1-hour mark of a
+// 23.976 timeline, and the error grows with position down the reel.
 function ratToFrames(val, fps) {
   if (!Number.isFinite(fps) || fps <= 0) fps = 24;
   if (val == null) return 0;
@@ -405,7 +428,7 @@ function readFPS(doc) {
       const num = Number(parts[0]);
       const den = Number(parts[1]);
       if (Number.isFinite(num) && Number.isFinite(den) && num > 0 && den > 0) {
-        fps = Math.round(den / num);
+        fps = den / num;   // exact — see the formats map above
       }
     }
   }
@@ -812,9 +835,9 @@ function collect(node, baseRecF, originF, fps, assets, medias, effects, doc, out
       srcOut  : framesToTC(srcOutF, fps),
       recIn   : framesToTC(recInF, fps),
       recOut  : framesToTC(recOutF, fps),
-      fps,
+      fps: nominalBase(fps),
       // Best-effort: source clip FPS (may differ from timeline fps)
-      srcFps: mcResolved?.assetSrcFps || assetSrcFps || fps,
+      srcFps: mcResolved?.assetSrcFps || assetSrcFps || nominalBase(fps),
       role    : "video",
       type    : tag,
       isTitle,
@@ -1222,8 +1245,8 @@ function buildTopLevelFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, 
       srcOut: framesToTC(durF, fps),
       recIn: framesToTC(recInF, fps),
       recOut: framesToTC(recOutF, fps),
-      fps,
-      srcFps: mcResolved?.assetSrcFps || ((ref && assets && assets[ref] && assets[ref].srcFps) ? assets[ref].srcFps : fps),
+      fps: nominalBase(fps),
+      srcFps: mcResolved?.assetSrcFps || ((ref && assets && assets[ref] && assets[ref].srcFps) ? assets[ref].srcFps : nominalBase(fps)),
       role: 'video',
       type: tag,
       markers: [],
@@ -1322,8 +1345,8 @@ function buildFlatFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, effe
           srcOut: framesToTC(durF, fps),
           recIn: framesToTC(recInF, fps),
           recOut: framesToTC(recOutF, fps),
-          fps,
-          srcFps: (ref && assets && assets[ref] && assets[ref].srcFps) ? assets[ref].srcFps : fps,
+          fps: nominalBase(fps),
+          srcFps: (ref && assets && assets[ref] && assets[ref].srcFps) ? assets[ref].srcFps : nominalBase(fps),
           role: 'video',
           type: tag,
           markers: [],
