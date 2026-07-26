@@ -494,3 +494,41 @@ That is the sixth place in this codebase where a caller writes a private workaro
 ### Method note: the test names had to be earned
 
 The new suite's assertions are labelled `(was 0)`. A label is a claim, and iteration 12's lesson is that *a green suite tells you the assertions passed, not that they ran against the thing their names claim*. So the pre-fix chain was transcribed verbatim into `/tmp/probe13.mjs` and run beside the new module on the same inputs; every `(was 0)` is a number that probe printed. The one case where old and new agree — a reversed source span, which already fell through to the record columns — is labelled as agreeing, because it did.
+
+---
+
+## Iteration 14 — the inverse bug class, and four things the method got wrong
+
+### Correction to the table above: seven live files, not eight
+
+`features/edl/pipeline/recOffset.js` is on that list and has **zero importers** — verified against dynamic imports as well as static ones. It is orphaned dead code carrying a real defect. It should be deleted or wired up; it should not be "fixed" in place, because fixing it would make it look maintained. The live count is **seven**.
+
+Also demoted: `parsers/otio.js`'s `tcToFramesLocal` (`:835`) is used at exactly one place — `:840`, as a **sort key**. Every element is scaled by the same factor, so the base cannot change the ordering. It is on the list for consistency, not for impact.
+
+### The new bug class: a *rounded* rate used for a seconds→frames conversion
+
+Every defect this loop has found so far is the same shape — timecode counted on the fractional playback rate, producing a fractional frame field that `padStart` stringifies whole. That makes a **label malformed**, and it is obvious the moment you see it.
+
+`fcpxml.js` had the mirror. FCPXML stores time as a rational number of **real** seconds; the frame it denotes is `value / frameDuration`. Rounding the rate and multiplying by it makes every position **drift**, and the error grows linearly with position: 86 frames late at the 1-hour mark of a 23.976 timeline, 172 at two hours. Nothing looks malformed. Every timecode is well-formed. The reel is just *wrong*, more so the further down it you look — which is precisely the failure mode a human spot-check at the head of a reel will not catch.
+
+**The rule that follows: rounding a rate at the *source* is more dangerous than rounding it at the point of use.** `fcpxml.js` rounded in the formats map and in `readFPS` — the two places the rate is read from the file — so every downstream conversion inherited it, including the ones that needed the true rate. Round at the point of use, where the reader can see which kind of conversion is being done.
+
+**Corollary, and why the fix looks odd:** a file that does both kinds of conversion needs **two rates**, and that is not a smell to be tidied away. `fcpxml.js` now threads the exact rate internally and wraps `nominalBase()` at the two places a whole number is required plus every place a rate leaves the module. A future reader who "simplifies" this back to one rate reintroduces one bug or the other, which is why the split is stated in a header comment rather than left to be inferred.
+
+### Four method failures worth recording
+
+**1. A static-import grep proves nothing about whether a module is live.** My first pass grepped `from '…fcpxml'` and got **zero hits**. I nearly filed the file as dead code — which would have meant skipping the single most severe defect in the whole loop. It is reached through six `await import(...)` sites (`ui.js:13592/13603/13616`, `prep_mark.js:2909/2919`, `reviews/index.js:9524`). **Never declare a module orphaned without a pattern that catches dynamic imports.** This also retroactively raises the bar on `recOffset.js` and `fcpxm.js` above — both were re-checked against dynamic imports before being called orphaned.
+
+**2. A whole test file written at fps 24 is blind to base bugs.** Both pre-existing `fcpxml` tests ran at 25 and 24, and every `cutdiff` assertion ran at 24. At an integer rate the nominal base and the playback rate are *the same number*, so no assertion in either file could distinguish the two — the suites were green and structurally incapable of failing on this. A rate-sensitive module needs at least one fractional rate in its fixtures or its coverage of this class is zero.
+
+**3. A fallback whose replacement value is derived from the field it is defaulting is tautological.** `cutdiff.js`'s `ev.recIn || framesToTc(nf.recInF, fps)` looks like a real fallback. It is not: `nf.recInF` is `tcToFrames(ev.recIn)`, so the branch only runs when `ev.recIn` was falsy, which means the parse returned 0, which means the fallback can only ever emit `"00:00:00:00"`. Worth spotting for two reasons — the "fallback" is dead, and any bug inside it is unreachable.
+
+**4. An unreachable defect is still a defect, but say which it is.** I wrote a source comment claiming `framesToTc` was emitting malformed timecodes before checking whether it could be called with a non-zero argument. It cannot. Corrected the source comment, the test comment and the commit message before committing. Fixing it is right — the next caller will not be shielded by that accident — but banking it as an observable fix would have been a false claim in a document whose whole value is that its claims were verified.
+
+### Where the convergence stands
+
+Converged: `reviews/store.js`, `modules/cutdiff.js`, `parsers/fcpxml.js` (this iteration), plus `ui.js`, `eventDuration.js`, `edl_export.js` and the rest from iterations 10–13.
+
+Remaining, in priority order: **`modules/amf_convert.js`** — three private copies (`:1563` `tcToFramesLocal` + a `framesToTc`-alike at `:1571`, `:2517`, `:4337`) with consumers at 1626, 4594, 4595, 4740 (`framesToSec` — check which kind of conversion that is before touching it) and 4800. Then `features/edl/filters.js` (not yet surveyed) and `features/edl/timelineAutoInject.js` (private `tcToFrames` at `:53` returns NaN on failure, uses the raw fps, but has no `/ fps` anywhere and its values are used relatively for lane allocation — low impact, DOM-dependent, hard to test here).
+
+Do **not** touch `parsers/fcpxm.js` or `features/edl/pipeline/recOffset.js`. Both have zero importers, confirmed against dynamic imports.

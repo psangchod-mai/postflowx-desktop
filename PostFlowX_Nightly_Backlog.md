@@ -720,3 +720,40 @@ The overnight pass ended by writing this exact task down: *"lift `durFramesFor` 
 **Commit hygiene.** `ui.js` still carries 32 insertions / 7 deletions of pre-existing work (friendly error text; Fun-box iframe lifecycle). Rather than the backup-restore-reapply dance, I split the diff by hunk — `git diff` → drop the four foreign hunks → `git apply --cached --recount` — then confirmed the worktree residual was exactly the original 32/7 and that the staged file contains none of the user's identifiers. This is the manoeuvre `6e14ec6` needed and did not get.
 
 - **Build:** `build-verify` green (250 passed / 7 skipped; all `tests-js` green, exit 0). `build:renderer` → 368 files (was 367 — the new module).
+
+---
+
+## Iteration 14 — 08:56-09:21 · the timecode base convergence, and the bug hiding underneath it · commits `7372184`, `1feb2f6`, `347d276`
+
+Iteration 13 handed over a list: eight live files still counting timecode on the playback rate. Three of them are now converged, and the third turned out not to be the bug I went looking for.
+
+### `7372184` — `features/reviews/store.js`
+
+Marker source timecode rendered **`01:00:09:23.616000000003282`** at 23.976. `padStart` does not round, so the fractional frame field was stringified whole into a user-visible label. `tests-js/reviewsStoreTimecode.test.mjs`, 111 assertions.
+
+### `1feb2f6` — `modules/cutdiff.js`
+
+A four-second clip measured **`_pullLenFrames: 95.90400000000955`**. That number is the length of a VFX pull, and it leaves the module. Now 96. `tests-js/cutdiff.test.mjs` 13 → 50 assertions.
+
+The file's `framesToTc` had the mirror defect and I fixed it too — but its four call sites are all `ev.X || framesToTc(nf.XF, fps)` where `nf.XF` is `tcToFrames(ev.X)`, so when the fallback fires `ev.X` was falsy, the parse returned 0, and the only reachable output is `"00:00:00:00"`. **Unreachable.** Said so in the source comment, the test comment and the commit message rather than banking it as an observable fix.
+
+### `347d276` — `parsers/fcpxml.js`, and the inverse bug class
+
+The other seven files make labels *malformed*. This one made positions *drift*.
+
+Every FCPXML time attribute is a rational number of **real** seconds, and the frame it denotes is `value / frameDuration`. `fcpxml.js` rounded the rate **at the source** — `Math.round(den/num)` in both the formats map and `readFPS` — so `ratToFrames` multiplied real seconds by 24 where it should have multiplied by 23.976. Positions are absolute, so the error grows with position down the reel: **86 frames (3.6s) late at the hour mark, 172 at two hours.** 23.976 is the default rate in film and episodic post. This was the main path, not an edge case.
+
+Probe before: `_seqBaseFrames=86486` (want 86400), `recIn=01:00:03:14` (want `01:00:00:00`). After: exact at all six broadcast rates, integer rates bit-identical.
+
+**The fix keeps two rates in one file, deliberately.** The internally-threaded `fps` is now exact so `ratToFrames` is right; `nominalBase()` is applied at the two places a whole number is required (the `framesToTC`/`tcToFrames` pair) and at every place a rate leaves the module (`res.fps` ×4, `event.fps` ×3, `srcFps`). `res.fps` still reports **24** for a 23.976 sequence, so the public contract is unchanged and **zero downstream work was required**. A header comment states the split so the next reader does not "simplify" it back into one rate.
+
+**One deliberate behaviour change, asserted rather than hidden.** A bare `tcStart="3600s"` now reads as 3600 *real* seconds — `00:59:56:10` at 23.976 — where it used to answer `01:00:00:00`. That is the spec answer, and no conforming NTSC exporter writes that form (a whole second is not a frame boundary at 24000/1001). Encoded as a test with the reasoning attached so it cannot be rediscovered as a regression.
+
+New fixture `test/fixtures/fcpx_ntsc.fcpxml` plus four tests: the golden, an exact-resolution sweep over 24 / 23.976 / 25 / 29.97 / 30 / 59.94, a two-hours-deep drift check, and the bare-seconds case.
+
+### The sibling-parser scan came back clean
+
+`xml.js` already splits `tcBase` from `playbackFps`. `prproj.js` computes `actualFps = ntsc ? nominal*1000/1001 : nominal` and uses it for `ticksPerFrame` (ticks are a real-time unit, so that is correct) while returning `nominalFps` for display. `otio.js` normalises exact→nominal through an explicit table. `ale.js` and `edl.js` have no rate arithmetic. **`fcpxml.js` was the only parser that collapsed the two rates.** Recorded, not churned.
+
+- **Build:** `build-verify` exit 0 (250 passed / 7 skipped; XSS/XXE/fail-open gates clean), `build:renderer` → 368 files. Grepped the suite output for `fcpx_ntsc.fcpxml` to confirm the new tests ran *inside* the suite, not just standalone.
+- **Commit hygiene:** `store.js` was already dirty — the CSV formula-injection guard, 2 ins / 1 del, not mine. Caught by filtering the diff for lines I did not write, split by hunk, residual verified intact afterwards. A 644→755 mode flip on the new test file was caught by `git diff --cached --summary | grep -i mode` and cleared before committing.
