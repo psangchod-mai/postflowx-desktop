@@ -1100,3 +1100,126 @@ implementations, `setStatus` in `modules/amf_convert.js:4988`/`:5175` writing
 `window._pfxToast` read by `render_queue.js:1426` and assigned nowhere, a
 package-size gate with a defensible threshold (7.2), and the `git rm --cached`
 offer for `friendlyError.js` / `friendlyError.test.mjs`.
+
+## Iteration 9 findings (2026-07-26 18:00)
+
+### 9.1 — The phantom-*global*: five names, zero writers
+Iteration 6 measured the phantom-*element* species: 311 ids read at 440 sites,
+434 of them silent. This iteration found the same defect one level up the stack.
+
+`window.<name>` read inside a feature-detection chain —
+`if (typeof window.foo === 'function') { … }` — where nothing in `src/` or
+`electron/` ever assigns `window.foo`. It fails identically to the phantom
+element: `typeof undefined` is `'undefined'`, the branch is skipped, no error is
+raised, and the code reads as defensive rather than dead.
+
+Five instances, all toast-shaped, all with zero writers before this iteration:
+
+| Read at | Name | Had a working fallback? |
+|---|---|---|
+| `render_queue.js:1426` | `_pmShowToast`, `_pfxToast` | yes — local `_showToast` |
+| `core/shotWorkItems.js:291`, `:296` | `pfxToast`, `_showToast` | **no** |
+| `features/cutdiff/index.js` | `showToast` | yes — `_cdSetProjectStatus` |
+
+Ranked by what it cost the user, not by count: `shotWorkItems` is the only one
+with *no* surviving branch. Creating a VFX marker fell through to
+`console.info('[SWI]', msg)`. The user pressed a button and the app said nothing
+— in a workflow where the whole point of the button is to confirm a marker now
+exists. The other two spoke via their fallback; their preferred path was merely
+dead code, which is a maintenance cost, not a user-facing one.
+
+### 9.2 — The phantom-*CSS-class*: a class is an id wearing a different hat
+`modules/amf_convert.js __toast()` builds a `<div class="mps-toast">`, appends
+it, and toggles `.show`. Neither `.mps-toast` nor `#mpsToast` appears in any
+stylesheet under `src/`. So ten messages — including "Exported Excel (V5
+Template)." and raw upload errors — appended unstyled text to the bottom of a
+6,500-line document, where removing `.show` did nothing because adding it had
+done nothing.
+
+The generalisation worth keeping: **the phantom species is not about
+`getElementById`. It is about any cross-file name resolved at runtime with no
+build-time check** — an element id, a global, a CSS class, a data attribute. Each
+one needs its own gate, because each one fails in its own silence.
+
+### 9.3 — Asynchronous dismissal makes `while (children.length > N)` non-terminating
+Caught by the new test before it shipped, and the most valuable thing this
+iteration produced.
+
+The first draft of the stack trim was the obvious loop:
+
+```js
+while (host.children.length > MAX_VISIBLE) dismiss(host.firstElementChild);
+```
+
+`dismiss()` is deliberately asynchronous — it adds `.is-leaving` and schedules
+`toast.remove()` 220ms later so the leave transition can run. So the node it just
+dismissed is *still a child* on the next iteration, `children.length` never
+drops, and the loop spins forever. The fifth toast of a session would have locked
+the renderer — not degraded it, locked it, on the main thread, with no error in
+the console.
+
+The fix counts only nodes not already marked `_pfxGone`. The test that found it
+is written so that if the defect returns it *hangs* rather than fails, and its
+comment says so, because a hanging test is a clearer signal here than a red one.
+
+**Method note:** the bug was not found by review. It was found by running the
+test, which sat at zero output until it was killed. A test that hangs is
+evidence, not a broken test — the first instinct was to suspect the harness.
+
+### 9.4 — RETRACTION: `setStatus` in `modules/amf_convert.js` is not broken
+Recorded in iteration 5 as newly-measured finding #1 and carried forward in the
+"still open" list of iterations 6, 7 and 8. It is a false positive. Retracted.
+
+The claim was that `setStatus` at `:4988` and `:5175` writes
+`STATE.statusText.text` instead of the DOM, so the i18n observer can never see
+those strings. Both lines are inside a template literal that *generates After
+Effects ExtendScript*. `STATE.statusText` is a real ScriptUI `statictext` widget,
+created at `:5109` and `:5311`. Setting `.text` on it is the correct and only way
+to update a ScriptUI label. There is no DOM in that program, no i18n observer,
+and nothing to fix.
+
+The generalisable error: **a grep for a suspicious pattern cannot tell which
+language it is reading.** `.text = ` looks like the same mistake in JavaScript
+and in ExtendScript-inside-a-string; only one of them is one. This is the same
+class of error as 8.2 (a source grep cannot distinguish code from prose) — the
+remedy there was stripping comments; the remedy here is checking what runtime the
+matched line executes in before recording a finding. Both are cases of a scan
+being trusted past the point where it still knows what it is looking at.
+
+Three iterations of "still open" lists repeated this without re-checking it.
+Carried findings need re-verification, not just re-typing.
+
+### 9.5 — Two gates, both negative-verified, one with a control
+`tests-js/toastContract.test.mjs`, 15 tests.
+
+*Gate 1* scans every `.js` under `src/` for `window.<something>toast<something>`
+reads and for `window.X =` / `globalThis.X =` writes, and fails on any read with
+no writer. Negative-verified by adding a read of `window.__pfxFakeToast` — fired
+immediately, naming that exact global. Then a **control**: the same read placed
+inside a `//` comment, which must *not* fire. It did not. That control exists
+because 8.2 recorded a gate that matched its own documentation; a comment-only
+control is now the cheap way to prove the stripper works.
+
+*Gate 2* asserts every class the module emits is styled in `main.css` **and**
+that every class listed is still emitted by the module. The second half is the
+one that matters over time: without it the list rots into a record of what the
+code used to do. It caught its own bug during authoring — the needle
+`"'pfx-toast--' + kind"` never matched because the module writes
+`'pfx-toast pfx-toast--' + kind`.
+
+### 9.6 — Deliberate non-decision: four local toasts left alone
+`auth/login-ui.js:741` and `features/platelink2/index.js:1398` each have a
+self-contained `_showToast` with its own styled class (`.pfx-auth-toast`,
+`.pl2-toast`). They work. Consolidating them would be a rewrite of working code
+for uniformity's sake, and would put the login toast — which must render before
+the main renderer's scripts are guaranteed loaded — behind a new dependency. The
+scope here is *repair the broken paths*, and four working implementations are not
+a broken path. They stay.
+
+**Still open from earlier runs:** the missing `zh-TW` BWAV dictionary (~92
+strings — authoring, not repair), `src/tools/bwav/*` and `src/tools/preflight/*`
+not loading `modules/i18n.js`, the app's two unrelated i18n implementations, a
+package-size gate with a defensible threshold (7.2), and the `git rm --cached`
+offer for `friendlyError.js` / `friendlyError.test.mjs`. The `setStatus` entry is
+retracted per 9.4 and does not carry forward. The `_pmShowToast` / `_pfxToast`
+entry is closed by this iteration.

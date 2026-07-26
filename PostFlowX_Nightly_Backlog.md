@@ -1398,3 +1398,97 @@ live.
 `locale.js` present in `dist/desktop/`. Each of the seven gates in the new test
 was negative-verified by injecting its specific defect and confirming that gate
 and only that gate fired.
+
+## Iteration 9 — one shared toast (2026-07-26 18:00) (`7d1295c`)
+
+Six panes in this renderer show small transient messages. Three of them routed
+through a global that nothing assigns, and a fourth wrote a CSS class that no
+stylesheet defines. The messages were not wrong — they were absent, silently, in
+the way that leaves a user pressing a button twice because the first press
+appeared to do nothing.
+
+### What was actually broken
+
+`core/shotWorkItems.js` is the one that mattered. Both of its lookups —
+`window.pfxToast?.show` and `window._showToast` — were phantoms, so
+`_toast('VFX marker created: …')` fell through to `console.info`. Creating a VFX
+marker produced no visible confirmation at all. `render_queue.js` and
+`features/cutdiff/index.js` each had a working local fallback behind their
+phantom, so they still spoke; their preferred path was dead code.
+`modules/amf_convert.js` had the CSS-class version of the same bug: ten messages
+appended unstyled text to the bottom of the page, permanently, because the
+`.show` toggle drove no rule.
+
+### The repair, not the rewrite
+
+One implementation — `src/scripts/core/pfxToast.js`, 210 lines, plain non-module
+IIFE — installed on **the two names the existing readers already look for**:
+`window.pfxToast.show` and `window._pfxToast`. The three misspelled readers were
+corrected to match. The four working local implementations
+(`auth/login-ui.js`, `features/platelink2/index.js`, and two others) were left
+exactly where they are.
+
+That ordering is the design decision. Naming the new global something new would
+have meant editing every reader anyway *and* leaving five phantom names in the
+tree for the next person to find. Adopting the names already being read means the
+diff at each call site is one word.
+
+### What the non-technical user gets
+
+Every choice below is downstream of "highly accessible across all functionalities
+for non-technical users", not of tidiness:
+
+- **Errors never auto-dismiss.** A message that vanishes after 3.5 seconds has
+  not been reported to anyone who has to read it, decide what it means, and act.
+  Errors and warnings carry a dismiss button labelled *"Dismiss this message"*.
+- **Dwell scales with reading time** — 3.5s floor plus ~55ms per character,
+  capped at 12s. A fixed timeout is either too short for the long message or too
+  long for the short one.
+- **Error and warning text is humanized** through `pfxFriendlyText` (iteration 4)
+  before display, so a raw `ENOENT` never reaches the user.
+- **13px at 1.45 line-height with real contrast**, replacing 10px nowrap in a
+  corner. At 10px a message is technically present and practically unread.
+- **Screen readers hear it**: the stack is `aria-live="polite"`, and each error
+  additionally carries `role="alert"` so it interrupts rather than queues.
+- **`prefers-reduced-motion` is honoured** — the transition is removed, not
+  shortened.
+- **Repeats collapse to a `×N` badge.** "Already queued: <clip>" fires once per
+  click; four identical stacked toasts hide the one underneath that differs.
+- **Four visible at once, oldest first out** — an unbounded stack is a wall.
+
+### The bug the test caught before it shipped
+
+The first draft of the stack trim was
+`while (host.children.length > MAX_VISIBLE) dismiss(host.firstElementChild)`.
+`dismiss()` is asynchronous by design — it starts the leave transition and
+removes the node 220ms later — so the dismissed node is still a child on the next
+check, the count never drops, and the loop never exits. **The fifth toast of a
+session would have frozen the renderer.**
+
+It was found by running the test, which produced no output until it was killed.
+The fix counts only children not already marked `_pfxGone`. The test is written
+so that if the defect returns it hangs rather than fails, and its comment says
+so — see audit 9.3.
+
+### Retracted
+
+The carried claim that `setStatus` in `modules/amf_convert.js:4988`/`:5175` is
+broken is a **false positive**, recorded in iteration 5 and repeated unchecked in
+6, 7 and 8. Those lines are generated After Effects ExtendScript inside a
+template literal; `STATE.statusText` is a real ScriptUI `statictext` widget
+created at `:5109`/`:5311`, and setting `.text` on it is correct. Full write-up
+and the generalisable lesson in audit 9.4.
+
+### Verification
+
+15/15 toast tests green. `npm run build-verify` exit 0 — 250 Python passed / 7
+skipped, all JS suites, XSS / XXE / fail-open gates clean. `npm run
+build:renderer` green, 372 files, all three new artifacts present in
+`dist/desktop/`. Both new gates negative-verified against their own specific
+injected defect, plus a comment-only control proving the global scanner does not
+fire on prose.
+
+Commit `7d1295c`, 8 files, +657 / −4. Five of the six tracked files carried
+pre-existing foreign hunks; each was staged as a reconstructed blob so the commit
+contains only this iteration's lines, and a post-commit diff confirmed every
+foreign hunk survived untouched in the working tree.
