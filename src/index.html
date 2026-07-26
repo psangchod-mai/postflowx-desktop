@@ -9,6 +9,12 @@
   <script src="scripts/electron_shim.js"></script>
   <!-- Platform abstraction: pfxPlatform for native file/folder/companion access -->
   <script src="scripts/pfxPlatform.js"></script>
+  <!-- Friendly-error translator: sets window.pfxFriendlyText for humanized messages. -->
+  <script type="module" src="scripts/core/friendlyError.js"></script>
+  <!-- Shared toast: sets window.pfxToast / window._pfxToast. Loaded here beside
+       friendlyError because it calls it, and because six panes read these two
+       globals — three of them were reading names nothing ever assigned. -->
+  <script src="scripts/core/pfxToast.js"></script>
 
   <link rel="stylesheet" href="styles/main.css" />
   <!-- Pro design-token system (one accent, semantic status, muted surfaces).

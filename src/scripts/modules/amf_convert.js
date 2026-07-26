@@ -2260,6 +2260,16 @@ document.addEventListener('keydown', (e) => {
 
 function __toast(msg=""){
   if (!msg) return;
+  // Prefer the shared toast. The div below emits class="mps-toast", which no
+  // stylesheet in src/ defined until now — so for as long as this function has
+  // existed its messages have been unstyled text at the bottom of the document,
+  // and `.show` toggled a class with no rule behind it.
+  try{
+    if (typeof window !== "undefined" && typeof window.pfxToast?.show === "function"){
+      window.pfxToast.show(msg);
+      return;
+    }
+  }catch{}
   try{
     let t = document.getElementById("mpsToast");
     if (!t){

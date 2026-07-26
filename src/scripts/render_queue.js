@@ -1415,8 +1415,15 @@
   }
 
   function _showToast(msg, severity) {
+    // Humanize raw exception text on error/warn toasts (pass-through otherwise).
+    if (msg && /err|error|warn|danger|fail/i.test(String(severity || ''))) {
+      try { msg = window.pfxFriendlyText ? window.pfxFriendlyText(msg) : msg; } catch (_) {}
+    }
     try {
-      const fn = window._pmShowToast || window._pfxToast;
+      // `window._pmShowToast` used to head this chain. Nothing in src/ ever
+      // assigned it, so the shared toast was never reached and every message
+      // below fell through to the hand-rolled div underneath.
+      const fn = window._pfxToast;
       if (fn) { fn(msg, severity || 'info'); return; }
       const t = document.createElement('div');
       t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:999999;' +

@@ -67287,3 +67287,104 @@ input[type="checkbox"], input[type="radio"], input[type="range"] {
 #main-prepmark .pfx-vfx-plr-tc-lbl { color: #8888a8 !important; }
 #main-prepmark .pfx-vfx-plr-tc     { color: #b0a0ff !important; }
 #main-prepmark .pfx-vfx-plr-tc-sep { color: #4a4a70 !important; }
+/* ── Shared toast (scripts/core/pfxToast.js) ───────────────────────────────
+   One notification surface for the whole renderer. Deliberately larger and
+   higher-contrast than the per-pane toasts it replaces: at 10px in a corner a
+   message is technically present and practically unread, and everything shown
+   here is something the user needs to notice on the first pass.
+   Bottom-right, stacked newest-last, above every modal in the app.            */
+.pfx-toast-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* The stack must never eat clicks meant for the app underneath; individual
+     toasts re-enable pointer events only where they need them. */
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 40px));
+}
+.pfx-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 100%;
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid #2b3a5e;
+  background: #101a2e;
+  color: #dbe6ff;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .55);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.pfx-toast.is-leaving { opacity: 0; transform: translateY(6px); }
+.pfx-toast-msg   { flex: 1 1 auto; overflow-wrap: anywhere; }
+.pfx-toast-count {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .10);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: .85;
+}
+.pfx-toast-close {
+  flex: 0 0 auto;
+  margin: -2px -4px 0 0;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: .6;
+}
+.pfx-toast-close:hover  { opacity: 1; background: rgba(255, 255, 255, .12); }
+.pfx-toast-close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; opacity: 1; }
+
+.pfx-toast--info    { border-color: #2b4a80; background: #0d1a2e; color: #cfe0ff; }
+.pfx-toast--success { border-color: #1f6b45; background: #0b1f16; color: #a8e9c6; }
+.pfx-toast--warn    { border-color: #6b4a12; background: #241a08; color: #f0cf86; }
+/* Errors do not auto-dismiss, so they carry the strongest border in the set —
+   a toast that stays put should look deliberate rather than stuck. */
+.pfx-toast--error   { border-color: #8a2f2f; background: #26100f; color: #ffc4bd; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pfx-toast { transition: none; }
+}
+
+/* modules/amf_convert.js __toast() has emitted this class since it was written
+   and nothing ever styled it, so ten messages appended unstyled text to the
+   bottom of the document instead of appearing. __toast now delegates to
+   pfxToast; this rule exists so its own fallback path is visible too, on the
+   off-chance the shared module has not loaded. */
+#mpsToast.mps-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid #2b4a80;
+  background: #0d1a2e;
+  color: #cfe0ff;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .55);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+#mpsToast.mps-toast.show { opacity: 1; }

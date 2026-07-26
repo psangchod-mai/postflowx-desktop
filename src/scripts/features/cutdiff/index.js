@@ -1760,8 +1760,11 @@ export function createCutDiffFeature(deps = {}){
 
   function _cdShowToast(msg){
     try{
-      if (typeof window !== "undefined" && typeof window.showToast === "function"){
-        window.showToast(msg);
+      // Was `window.showToast` — a name nothing in src/ defines. The status
+      // line below caught it, so this pane kept speaking; the toast it asked
+      // for simply never happened.
+      if (typeof window !== "undefined" && typeof window.pfxToast?.show === "function"){
+        window.pfxToast.show(msg, "warn");
         return;
       }
     }catch{}

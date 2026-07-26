@@ -289,7 +289,11 @@
   function _toast(msg, type) {
     try {
       if (typeof window.pfxToast?.show === 'function') { window.pfxToast.show(msg, type || 'info'); return; }
-      if (typeof window._showToast === 'function') { window._showToast(msg); return; }
+      // Second line used to read `window._showToast`, which is function-scoped
+      // inside three different IIFEs and global in none of them. Both branches
+      // were phantoms, so "VFX marker created" only ever reached the console —
+      // the user pressed a button and the app said nothing.
+      if (typeof window._pfxToast === 'function') { window._pfxToast(msg, type || 'info'); return; }
       console.info('[SWI]', msg);
     } catch { }
   }
