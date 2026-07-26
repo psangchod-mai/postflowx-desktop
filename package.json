@@ -104,7 +104,9 @@
       "dist/desktop/**/*",
       "package.json",
       "!**/*.DS_Store",
-      "!**/__pycache__/**"
+      "!**/__pycache__/**",
+      "!electron/native/PFXNativeMediaEngine/.build/**",
+      "!electron/imf/metal-htj2k/vectors/**"
     ],
     "extraResources": [
       {
