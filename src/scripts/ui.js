@@ -65,6 +65,7 @@ import {
   clearMediaRootDir
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
+import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -3277,11 +3278,10 @@ function locatorKey(ev){
 // Helpers (UI / layout)
 // -------------------------------------------------------------
 function showError(msg){
-  const el = $("#errors");
-  if (!el) return;
-  el.textContent = msg || "";
-  el.style.opacity = msg ? "1" : "0";
-  if (msg) setTimeout(() => { el.textContent = ""; el.style.opacity = "0"; }, 4000);
+  // Display lives in core/errorBanner.js. This used to look up an element with
+  // id="errors" and return early when it was null — which it always was, since
+  // no page has ever contained one. See that file for the history.
+  showErrorBanner(msg || "");
 }
 
 function setInnerTab(key){
@@ -17137,7 +17137,7 @@ function wireIO(){
 
     const fp = $("#filePicker"); if (fp) fp.value = "";
     const fl = $("#fileList");   if (fl) fl.innerHTML = "";
-    const err = $("#errors");    if (err){ err.textContent = ""; err.style.opacity = "0"; }
+    hideErrorBanner();
     const lm  = $("#loadingMsg");if (lm) lm.style.display = "none";
     if (dz) dz.classList.remove("drag");
 

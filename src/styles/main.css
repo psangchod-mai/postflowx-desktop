@@ -55738,6 +55738,47 @@ tr:hover .pm-vfx-scan-btn { opacity: 1; color: rgba(160,200,255,.75); }
 
 @keyframes pfx-toast-in { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
 
+/* ── Error banner (scripts/core/errorBanner.js) ───────────────────────────── */
+/* The same visual language as .pfx-guard-toast, with four deliberate
+   departures: it wraps and preserves newlines, because a file-not-found
+   message carries a filesystem path on a line of its own and `nowrap` would
+   push it off-screen; it takes pointer events so it can be dismissed early;
+   it is tinted with the app's error red so a failure is not mistaken for a
+   confirmation; and it sits above the guard toast, since a failure outranks a
+   permission notice. */
+.pfx-error-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  z-index: 99999;
+  max-width: min(560px, 90vw);
+  background: rgba(34, 18, 20, .97);
+  border: 1px solid rgba(240, 100, 80, .36);
+  color: #f2c9c0;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px 20px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+  opacity: 0;
+  /* Hidden it must not swallow clicks: with padding it still occupies a small
+     box at the bottom of the screen even when empty. */
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+.pfx-error-banner--on {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pfx-error-banner { transition: none; }
+}
+
 /* ── OTIO Export Modal ────────────────────────────────────────────────────── */
 .pm-otio-modal { width: 440px; }
 .pm-otio-grid {
