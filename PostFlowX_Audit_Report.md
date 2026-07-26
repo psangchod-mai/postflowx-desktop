@@ -2540,3 +2540,203 @@ were staged as reconstructed blobs built from `HEAD`, and each blob was diffed
 against `HEAD` before staging to prove it contained my hunks and nothing else.
 A signed/notarized `npm run build:mac` needs the user's Apple credentials and
 pushes an artifact outward; it has not been authorized and was not run.
+
+## Audit 20 — the dialog that only told you the error class
+
+Iteration 19 fixed the status strip. This one is about the modal that opens on
+top of it. Twelve places in the app answer a failure by calling `alert()` with
+text taken straight off the exception, in two shapes:
+
+```js
+alert(`Rescan failed: ${e?.message||e}`);     // labelled, but the label is the only friendly part
+alert(err?.message || String(err));            // no label at all
+```
+
+Four of the seven sites converted here were the second shape. A colourist who
+clicks **Export Notes (PDF)**, waits, and gets a box containing only
+`Cannot read properties of undefined (reading 'getContext')` has been told
+nothing: not what failed, not whether their work is safe, not what to do. The
+first shape is better only in that it names a feature — `Proxy error:` is the
+tab name, not the operation the user asked for.
+
+### 20.1 Why not just reuse `friendlyText`
+
+`friendlyText` glues `message + ' ' + hint` into one line, and that is correct
+where it is used. `errorBanner.js:121` renders through `el.textContent = msg`
+with default `white-space`, so a `\n` there collapses to a space anyway — the
+single line is the honest representation of what that surface can display.
+
+A native `alert()` is the opposite: it *does* honour `\n`, and it has room. So
+`core/friendlyAlert.js` composes from the structured parts instead —
+`translate(label)`, `f.message`, `f.hint`, joined on a blank line, with empty
+parts dropped so a missing hint never leaves a hole. `friendlyText` was left
+byte-untouched; the two surfaces have different constraints and now say so in
+code rather than by coincidence.
+
+`friendlyAlert` looks up `globalThis.alert` **at call time**, never captured at
+import. That is what lets the test inject a recorder, and it is also what keeps
+the module importable in Node without a DOM.
+
+### 20.2 A test written for the new module found a bug in the old one
+
+The test asserting that a path and the advice about it do not share a line was
+written against `/Volumes/SHOW DRIVE 01/sh010/a.ari`. It failed. Not on the
+line-splitting — on the path itself.
+
+`friendlyError.js`'s `_path` matched `(?:\/[^\s:'"]+)+`, which stops at the
+first space. Handed Node's
+
+```
+ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/a.ari'
+```
+
+it returned `/Volumes/SHOW`. That is worse than returning nothing: it names a
+plausible-looking folder that does not exist, and sends the user to look in the
+wrong place. Post-house volumes are called `SHOW DRIVE 01` and
+`Client Delivery`, not `showdrive01`, so this is the common case, not the edge
+case. It has been shipping inside `errorBanner` since `friendlyText` landed.
+
+The fix is a two-pass `_path`, ordered deliberately: Node quotes the path in
+every `fs` error, and inside quotes the end of the path is unambiguous, so a
+quoted path is taken whole, spaces and all. The old whitespace-terminated scan
+stays only as the fallback for messages assembled without quotes. Two
+regression assertions were added to `friendlyError.test.mjs` (23 → 25).
+
+The general form of this, worth keeping: **writing a test for module B is a
+legitimate way to find bugs in module A**, and the ones it finds are the bugs
+nobody thought to look for, because if anyone had thought about them they would
+already be fixed.
+
+### 20.3 Seven converted, five deliberately not
+
+| File | Sites |
+|---|---|
+| `src/scripts/features/reviews/index.js` | 4 |
+| `src/scripts/features/vfxPull/vfxPullPanel.js` | 1 |
+| `src/scripts/modules/smart_engine_settings.js` | 1 |
+| `src/scripts/modules/imf/imf_package_ui.js` | 1 |
+| `src/tools/preflight/app/app.js` | **5 — not converted** |
+
+The preflight deferral is architectural, not laziness. `src/tools/*` are
+separate documents loaded as **iframes**; nothing under `src/tools/` has ever
+imported from `src/scripts/`, and the only channel that crosses the boundary is
+the `pfx:lang` postMessage in `scripts/core/paneLang.js`. Reaching into
+`../../scripts/core/friendlyAlert.js` from a pane would invent an import edge
+the architecture does not have, to deliver *English* text into a pane that
+already speaks seven languages: preflight loads its own
+`ui_strings.{en,ja,ko,zh-TW,th,id,fil}.json`, and `window.PFX_t` does not exist
+inside that iframe.
+
+Doing it properly means adding error sentences to the pane's own dictionary —
+which currently contains **zero** of them — so seven locales × ~6 keys = 42 new
+translations. That is a translator's job, not a refactor. Recorded as open work
+rather than shipped as a regression dressed up as a fix.
+
+This is the counterpart to "fix the whole chain or none of it." That rule
+applies to a *causal chain*, where fixing four links out of five delivers no
+user-visible change at all. Twelve independent call sites are not a chain:
+fixing seven fully fixes seven users' experiences, and the other five are
+honestly named.
+
+### 20.4 What the gate checks
+
+`tests-js/friendlyAlert.test.mjs`, 9 tests, two halves.
+
+The module half proves the label leads, that a path and its advice occupy
+separate lines (the assertion compares the path line's `.trim()` to the exact
+expected path — an equality, not a substring, which is why it caught 20.2),
+that missing parts leave no blank paragraphs, that dispatch goes through
+`globalThis.alert` looked up at call time, that with no alert available the text
+reaches the console rather than nowhere, and that an alert which throws still
+returns the text.
+
+The call-site half is the part that stops the fix rotting. It requires each
+converted file to import `friendlyAlert`, to carry exactly the expected call
+count, and — the load-bearing one — that no line matching `/(?<!friendly)\balert\(/`
+also matches `/\.message\b|String\(\s*(?:err|e)\s*\)/`. A new raw alert added
+beside a fixed one fails the suite. A separate test requires every label to
+read as an operation rather than an error class: whitespace present, ≥8 chars,
+matching `/fail/i`, counted at exactly 7.
+
+### 20.5 Mutation results
+
+Six mutations, all caught:
+
+| # | Mutation | Caught by |
+|---|---|---|
+| M1 | Revert one converted site to the raw alert | call-site count + raw-in-alert scan |
+| M2 | Add a raw alert next to a good one | raw-in-alert scan |
+| M3 | Drop the `friendlyAlert` import | import assertion |
+| M4 | Label → `'Error'` | label-shape test (length, whitespace) |
+| M5 | Label → `'Failed'` | label-shape test (length, whitespace) |
+| M6 | Remove the `translate` export from `friendlyError.js` | export guard + module tests |
+| M7 | Revert `_path` to the single-pass regex | both suites |
+
+M6 is worth a note for the second time this run: the first attempt at it used
+an over-escaped `perl` substitution that **silently did not apply**. Both suites
+passed, which would have read as "the gate does not catch this" when in fact
+nothing had been mutated. Redone with a verified substitution, it failed as
+required. **A mutation that fails to apply proves nothing** — check that the
+edit actually landed before believing either colour.
+
+All eight touched files restored `diff -q` byte-identical afterwards.
+
+### 20.6 Process finding: `git commit --only <paths>` discards a staged blob
+
+This one cost a commit and is worth recording, because the reconstructed-blob
+workflow is used in most iterations of this run.
+
+Two of the six edited files also carry the user's uncommitted in-flight work
+(269/129 hunks in `vfxPullPanel.js`, 6/6 in `reviews/index.js`). The standing
+policy is to commit only my own hunks, so the index was built with
+`git hash-object -w` on a blob reconstructed from `HEAD` plus my edits, staged
+via `git update-index --cacheinfo`, and each blob diffed against `HEAD` first to
+prove it contained nothing foreign. That part worked exactly as intended.
+
+The commit did not. `git commit --only <paths>` **re-reads the working tree for
+the named paths** and discards whatever was staged for them. Commit `b2360b7`
+therefore contained the user's 269/129 and 6/6 hunks anyway — a perfectly
+staged index, thrown away at the last step. It was visible immediately in the
+output as unexpected `mode change 100644 => 100755` lines, and confirmed with
+`git show --numstat`.
+
+Recovered with `git reset --soft HEAD~1 && git reset -q` (worktree untouched,
+verified byte-identical against the backups in `/tmp/mu20/`), re-staged
+identically, and committed with **no pathspec at all** so the index is what
+lands. Result `1ffde29`: reviews 5/4, vfxPull 4/1, no mode changes, and the
+user's foreign remainders back at 6/6 and 269/129 in the worktree.
+
+Every earlier reconstructed-blob commit in this run (`bf455e0`, `996bedf`,
+`9a08615`) was then audited with `git show --numstat` for the same signature.
+None carry it. The rule now: **after reconstructed-blob staging, `git commit -F
+<msg>` with no pathspec — never `--only`.**
+
+While there, a second mode trap: `git update-index --chmod=-x` on
+`friendlyError.js` *introduced* a mode change, because that file is **100755 at
+HEAD**, not 100644 (so is `reviews/index.js`). Check `git ls-tree HEAD` before
+normalising, and verify with `git diff --cached --summary`.
+
+### 20.7 Out of scope, on purpose
+
+`vfxPullPanel.js:8246` builds a multi-shot failure summary by interpolating
+`r.error` per shot. It is raw text, but it is *N* errors rather than one
+exception, so it needs its own shape — a `friendlyAlert` conversion would not
+fit it. Named, not silently skipped.
+
+`errorBanner`'s hint glue: switching `friendlyText` to join on `\n` would not
+help on its own, because `errorBanner.js:121` uses `textContent` with default
+`white-space`. The fix is CSS (`white-space: pre-line`) *plus* the join, and it
+belongs to whoever owns that surface's layout.
+
+`runSaveCascade` returning `UNAVAILABLE` is still not surfaced at any of its
+seven call sites (`reviews` 8704/8709 and the four converted here;
+`visualQcModal` 780/1705/1712).
+
+### 20.8 Deploy
+
+`npm run build-verify` exit 0 (the two `selfContained.test.mjs` failures present
+before staging clear once the new files are in the index), `npm run
+build:renderer` exit 0, 374 files. Committed as `1ffde29`, eight files, verified
+with `git show --numstat` to carry no foreign hunks. A signed/notarized
+`npm run build:mac` needs the user's Apple credentials and pushes an artifact
+outward; it has not been authorized and was not run.

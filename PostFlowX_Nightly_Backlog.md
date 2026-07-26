@@ -2579,3 +2579,97 @@ repo-wide, so it is left alone and named rather than quietly skipped.
 `friendlyError.js` has no rule for `AbortError` or for "not allowed by the user
 agent or the platform in the current context" — both still surface raw if they
 ever reach a user. Folded into iteration 20 with the 12 `alert()` sites.
+
+## Iteration 20 — a dialog that says what you were doing
+
+### What a user would have seen
+
+Click **Export Notes (PDF)** in VFX Reviews, wait, and get a box containing
+exactly:
+
+```
+Cannot read properties of undefined (reading 'getContext')
+```
+
+No title, no mention of PDF or notes, no indication of whether the markers are
+still there. Four of the seven sites fixed here were that shape — a bare
+`alert(err?.message || String(err))`. The other three at least named a feature
+(`Proxy error:`, `Diagnostics error:`, `EXR export failed:`), but still put the
+raw exception on screen underneath.
+
+After: the label leads, the translated plain-language message follows, and the
+advice sits in its own paragraph.
+
+```
+Test proxy generation failed
+
+There isn't enough space on the disk.
+
+Free up space on the destination drive and try again.
+```
+
+### Seven sites, four files
+
+`reviews/index.js` (4), `vfxPullPanel.js` (1), `smart_engine_settings.js` (1),
+`imf/imf_package_ui.js` (1). Each label names the *operation the user asked
+for*, not the feature and not the error class — "Reviews CSV export failed",
+not "Error".
+
+### The new module, and why it doesn't reuse friendlyText
+
+`src/scripts/core/friendlyAlert.js` composes from `friendlyError()`'s
+structured parts rather than calling `friendlyText`. `friendlyText` joins
+message and hint with a space, which is right for `errorBanner`, where
+`textContent` with default `white-space` would collapse a newline anyway. An
+`alert()` honours `\n` and has room for three paragraphs. Two surfaces, two
+constraints — now expressed in code instead of by accident.
+
+`friendlyError.js` gained one export, `_t as translate`, so the label can be
+localised at the alert site without `friendlyAlert` importing i18n directly.
+
+### The bug the test found on its way past
+
+Writing the "path and advice don't share a line" test surfaced a real shipped
+defect in `_path`: its `[^\s:'"]+` stopped at the first space, so
+
+```
+ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/a.ari'
+```
+
+became `/Volumes/SHOW` — a folder that doesn't exist, pointing the user
+somewhere wrong. Post-house volumes have spaces in their names almost by
+convention. Fixed with a quoted-path first pass; two regressions added to
+`friendlyError.test.mjs` (23 → 25 tests).
+
+### Preflight's five, deliberately left
+
+`src/tools/preflight/app/app.js` has five more of these (lines 303, 346, 366,
+762, 1092) and they are **not** converted. The tools panes are iframes that have
+never imported from `src/scripts/`, and preflight already speaks seven languages
+through its own `ui_strings.*.json` — which contains zero error sentences.
+Importing an English helper across that boundary would be a regression wearing a
+fix's clothes. The real work is ~42 translations and needs a translator.
+
+### Gate
+
+`tests-js/friendlyAlert.test.mjs`, 9 tests. Six exercise the module; three are
+call-site gates that fail if a converted file loses its import, changes its call
+count, gains a raw alert beside a fixed one, or carries a label that reads like
+an error class rather than an operation. Mutation-tested at six points, all
+caught, all eight files restored byte-identical.
+
+### Process note
+
+`git commit --only <paths>` re-reads the *working tree* for those paths and
+throws away a carefully reconstructed index. It swept the user's 269/129 and 6/6
+in-flight hunks into `b2360b7` despite a perfect index. Reset soft, re-staged,
+committed with no pathspec → `1ffde29`. All earlier reconstructed-blob commits
+in this run were audited and are clean. Full detail in audit 20.6.
+
+### Still open on this front
+
+Preflight's 5 sites (needs translations). `vfxPullPanel.js:8246`'s multi-shot
+failure summary interpolates `r.error` per shot — N errors, not one exception,
+so it needs its own shape. `errorBanner`'s hint glue needs CSS plus the join,
+not the join alone. `runSaveCascade`'s `UNAVAILABLE` is still unsurfaced at all
+seven call sites.
