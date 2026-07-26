@@ -11922,8 +11922,137 @@ function _wirePfxTutorials(){
   };
   let _tutCurrentClose = null;
 
+  // ── Fallback How-to-Use ─────────────────────────────────────────────────────
+  // _tutModalMap above names a bespoke modal for eight tabs. For the other four
+  // — HOME, BWAV INSPECTOR, PREFLIGHT, RENDER QUEUE — it had no entry, and
+  // _openTutorial answered a missing entry with a bare `return`. Pressing How to
+  // Use on a third of the app did nothing at all: no modal, no message, not even
+  // a console warning. A help button that silently does nothing does not read as
+  // "no help here", it reads as "this app is broken".
+  //
+  // Content is data rather than markup on purpose. The two routing tables in
+  // this file (_tutModalMap here, _tutMap further down) have already drifted
+  // apart once, and every additional hand-written modal is another chance for
+  // that. Rendered with DOM APIs and textContent — no innerHTML, no new sink.
+  const _TUT_ACCENT = { bg: 'rgba(124,196,255,.12)', bd: 'rgba(124,196,255,.30)', fg: '#7cc4ff' };
+
+  const _tutFallbackContent = {
+    bwav: {
+      title: 'BWAV INSPECTOR — How to Use',
+      steps: [
+        { t: 'Pick the QC mode before you load anything',
+          p: 'The mode buttons — Backlot, DME and M&E — decide which ADM labels count as required. Backlot checks all four groups; DME requires Dialogue, Music and Effects; M&E covers Music and Effects only and treats Dialogue as optional. The same file can pass one mode and fail another, so set this first.' },
+        { t: 'Drop the audio file',
+          p: 'Broadcast WAV / ADM BWF (RIFF, RF64 or BW64), an .atmosIR rendered from the Dolby Atmos Renderer, or an MXF OP-Atom carrying ADM XML such as a Dolby Atmos IMF IAB.' },
+        { t: 'Read the tally, then filter',
+          p: 'Pass, Warn and Reject totals sit across the top. Use the group, status and search filters below them to jump straight to the labels that failed.' },
+        { t: 'Send the result on',
+          p: 'Export PDF for a person to read, or JSON for another tool to consume.' },
+      ],
+      tip: 'Warn is not Reject. A Warn is a label the current mode treats as optional — switching mode re-judges the same file against a different delivery spec.',
+    },
+    preflight: {
+      title: 'PREFLIGHT — How to Use',
+      steps: [
+        { t: 'Describe the delivery',
+          p: 'Set the project name, choose the Profile matching your delivery spec, and set Type — Standalone, or Series with the number of episodes.' },
+        { t: 'Bring in the files',
+          p: 'Import individual files, or point it at a whole folder. Files are matched to asset cards automatically; anything it could not place lands in the unassigned list for you to assign by hand.' },
+        { t: 'Run preflight',
+          p: 'The delivery bar shows how complete the package is, with counts by category beside it.' },
+        { t: 'Open a requirement to see why',
+          p: 'Clicking a requirement opens a drawer holding the evidence behind the verdict. Where the problem is something PostFlowX can act on itself, a Fix now button appears there.' },
+        { t: 'Export the report',
+          p: 'Export writes the result out so it can travel with the delivery.' },
+      ],
+      tip: 'Run this before you export the delivery, not after. A missing asset caught here costs minutes; the same asset caught at QC costs a redelivery.',
+    },
+    renderq: {
+      title: 'RENDER QUEUE — How to Use',
+      steps: [
+        { t: 'Jobs arrive here — you do not create them here',
+          p: 'There is no "add job" button, by design. Other parts of PostFlowX send work to this queue, proxy builds among them. This tab is where you watch and control that work once it has been sent.' },
+        { t: 'In Progress and Completed',
+          p: 'The two view buttons switch between work still outstanding and work already finished. The strip below reports CPU and system load while a render is running.' },
+        { t: 'Pause, Stop and Clear do three different things',
+          p: 'Pause stops the queue picking up the next job — whatever is already rendering carries on to the end. Stop cancels the job running right now. Clear removes finished jobs from the list.' },
+        { t: 'The queue survives a restart',
+          p: 'Jobs and the paused state are stored on this machine, so closing PostFlowX does not empty the queue. If you paused it yesterday it is still paused today.' },
+      ],
+      tip: 'If nothing seems to be rendering, check the Pause button first — a queue left paused looks exactly like a queue with nothing to do.',
+    },
+  };
+
+  function _tutFallbackUnknown() {
+    return {
+      title: 'How to Use',
+      steps: [{
+        t: 'No written walkthrough for this screen yet',
+        p: 'This tab does not have a step-by-step guide. The Setup Guide on the HOME tab covers getting PostFlowX itself set up, and SETTINGS & FEEDBACK has its own How to Use plus a way to send feedback — asking there is the quickest route to getting this screen documented.',
+      }],
+      tip: '',
+    };
+  }
+
+  /**
+   * Populate #genericTutorialModal for a tab with no bespoke tutorial.
+   * @returns {boolean} true if the modal is ready to be shown.
+   */
+  function _fillFallbackTutorial(tabKey) {
+    const body = document.getElementById('genericTutorialBody');
+    const titleEl = document.getElementById('genericTutorialTitleText');
+    if (!body || !titleEl) return false;
+
+    const content = _tutFallbackContent[tabKey] || _tutFallbackUnknown();
+    titleEl.textContent = content.title;
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    content.steps.forEach((step, i) => {
+      const row = document.createElement('div');
+      row.className = 'pfx-tut-step';
+
+      const num = document.createElement('div');
+      num.className = 'pfx-tut-num';
+      num.style.background = _TUT_ACCENT.bg;
+      num.style.borderColor = _TUT_ACCENT.bd;
+      num.style.color = _TUT_ACCENT.fg;
+      num.textContent = String(i + 1);
+
+      const col = document.createElement('div');
+      col.className = 'pfx-tut-content';
+      const heading = document.createElement('div');
+      heading.className = 'pfx-tut-step-title';
+      heading.textContent = step.t;
+      const para = document.createElement('p');
+      para.textContent = step.p;
+      col.appendChild(heading);
+      col.appendChild(para);
+
+      row.appendChild(num);
+      row.appendChild(col);
+      body.appendChild(row);
+    });
+
+    if (content.tip) {
+      const tip = document.createElement('div');
+      tip.className = 'pfx-tut-tip';
+      tip.textContent = content.tip;
+      body.appendChild(tip);
+    }
+    return true;
+  }
+
   function _openTutorial(tabKey) {
-    const modalId = _tutModalMap[tabKey];
+    let modalId = _tutModalMap[tabKey];
+    if (!modalId) {
+      // HOME's help is not a modal. The Setup Guide is a real interactive
+      // walkthrough that inspects this machine and offers to fix what it finds;
+      // any modal written here would be a worse copy of it.
+      if (tabKey === 'home' && typeof window.pfxOpenSetupGuide === 'function') {
+        try { window.pfxOpenSetupGuide(); return; } catch (_) {}
+      }
+      modalId = _fillFallbackTutorial(tabKey) ? 'genericTutorialModal' : '';
+    }
     if (!modalId) return;
     const modal = document.getElementById(modalId);
     if (!modal) return;

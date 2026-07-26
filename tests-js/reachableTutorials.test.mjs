@@ -27,12 +27,20 @@
 // what review is worst at seeing.
 //
 // THE RULE
-// An id ending in "TutorialModal" authored in a checked-in .html file must
-// appear as a value in one of the tutorial router tables in ui.js
-// (`_tutModalMap`, read by _openTutorial; `_tutMap`, read by the duplicate
-// #btnTutorial handler). Those two tables are the only code in the app that
-// makes a tutorial visible, so a tutorial in neither is unreachable by
-// construction.
+// An id ending in "TutorialModal" authored in a checked-in .html file must be
+// named by something in ui.js that can open it. There are three such routers:
+// `_tutModalMap`, read by _openTutorial; `_tutMap`, read by the duplicate
+// #btnTutorial handler; and _openTutorial's fallback branch, which names
+// #genericTutorialModal directly rather than through a table. Those are the
+// only code in the app that makes a tutorial visible, so a tutorial named by
+// none of them is unreachable by construction.
+//
+// The third router was added when this gate went red on #genericTutorialModal —
+// correctly, by its own reading, and wrongly in fact, because a user can open
+// that modal from four different tabs. The rule was always "reachable", never
+// "in a table"; the scan had quietly conflated the two. Worth recording, since
+// the tempting fix was a fake table entry naming a tab key that does not exist,
+// which would have turned a true gate into a decorative one.
 //
 // WHAT THIS CANNOT SEE
 //  - Whether the door is *findable*. `player: 'playerTransportTutorialModal'`
@@ -63,6 +71,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TUTORIAL_ID = /^[A-Za-z][A-Za-z0-9_-]*TutorialModal$/;
 const TABLE = /const\s+(_tutModalMap|_tutMap)\s*=\s*\{([\s\S]*?)\n\s*\};/g;
 const VALUE = /[:,]\s*['"]([A-Za-z0-9_-]*TutorialModal)['"]/g;
+// A third router, which is not a table. _openTutorial's fallback branch names a
+// modal directly: a tab with no bespoke tutorial has content built into
+// #genericTutorialModal at runtime and that id assigned to modalId. It is a real
+// way in, so the scan has to see it — the rule here is "authored content must be
+// reachable", not "must appear in a table", and reading only the tables would
+// report the fallback modal as stranded when a user can plainly open it.
+// Anchored on the assignment to modalId, which is the variable _openTutorial
+// actually shows, so a bare mention in prose still does not count as a route.
+const DIRECT = /modalId\s*=\s*[^;\n]*?['"]([A-Za-z0-9_-]*TutorialModal)['"]/g;
 
 /** @returns {Map<string,string>} tutorial id -> the file that authors it */
 function authoredTutorials() {
@@ -78,6 +95,14 @@ function authoredTutorials() {
 }
 
 /**
+ * A value mentioned in a comment is not a route. The comments in _tutModalMap
+ * and in _openTutorial explain exactly this bug by name, and a regex cannot
+ * tell an explanation from a dispatch.
+ */
+const stripLineComments = (s) =>
+  s.split('\n').filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line)).join('\n');
+
+/**
  * Pull the tutorial ids out of each router table.
  * @param {string} js
  * @returns {Map<string, string[]>} table name -> ids it can dispatch to
@@ -85,22 +110,22 @@ function authoredTutorials() {
 function routerTables(js) {
   const tables = new Map();
   for (const m of js.matchAll(TABLE)) {
-    // A value mentioned in a comment is not a route. Drop whole-line comments
-    // before reading the table — the comments in _tutModalMap explain exactly
-    // this bug, and a grep cannot tell an explanation from a dispatch.
-    const body = m[2]
-      .split('\n')
-      .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
-      .join('\n');
+    const body = stripLineComments(m[2]);
     tables.set(m[1], [...body.matchAll(VALUE)].map((v) => v[1]));
   }
   return tables;
 }
 
+/** @returns {string[]} tutorial ids assigned straight to modalId, outside any table */
+function directRoutes(js) {
+  return [...stripLineComments(js).matchAll(DIRECT)].map((m) => m[1]);
+}
+
 const authored = authoredTutorials();
 const ui = readFileSync(join(ROOT, 'src/scripts/ui.js'), 'utf8');
 const tables = routerTables(ui);
-const routed = new Set([...tables.values()].flat());
+const direct = directRoutes(ui);
+const routed = new Set([...[...tables.values()].flat(), ...direct]);
 
 // ── the scan has to work before what it reports means anything ───────────────
 
