@@ -2075,3 +2075,166 @@ fixture and adding a third is a failure.
   duplicate `#btnTutorial` handler pair; the global How to Use button showing
   `#tlcTutorialModal` in static English; the tab-name consistency sweep;
   `.pm-controls` being the only panel with a help affordance.
+
+## Audit 16
+
+### 16.1 A defect species with no failure mode: the silent fall-through
+
+Every species catalogued so far announces itself. A phantom id resolves to
+`null`. A doubled path segment throws. A destructive default destroys something.
+
+`t()` does none of that:
+
+```js
+export function t(str, langOverride){
+  const lang = normLang(langOverride || getLang());
+  const map = DICT[lang] || {};
+  return map[str] || str;
+}
+```
+
+A missing translation returns the English key. No throw, no warning, no console
+line, no `undefined` rendering as text. The UI is fully functional and entirely
+correct-looking. The only observer who can detect the defect is a user who does
+not read English — precisely the user the feature exists for.
+
+This is why 366 missing translation pairs survived fifteen iterations of gates
+that check the DOM contract, accessibility names, XSS, XXE, fail-open patterns,
+tutorial coverage and module resolution. **None of those gates were wrong. The
+defect has no runtime signature to catch.** It is only visible by counting, and
+nothing counted.
+
+Species added: **absent-translation** and **identity-translation**.
+
+### 16.2 The gap had a shape, and the shape was the cause
+
+Measured across the merged 660-key dictionary: keys present in exactly *n*
+locales — 6 → 461, 5 → 13, 4 → 156, 3 → 27, 2 → 0, 1 → 3.
+
+That spike at 4 is the whole story. 156 keys sat in exactly four locales; ko and
+ja were each missing 150 keys, **142 of them identical**. A random accumulation
+of oversights does not produce two locales missing the same 142 strings. One
+block does: `LOCALE_FULL_DICT` (303 keys) was authored for zh-TW / th / id /
+fil, and ko / ja received 157 of it.
+
+Worth recording as method: the per-locale coverage percentages said "ko and ja
+are behind". The histogram said *why*, and turned 300 apparent oversights into
+one unfinished block. Counting the distribution cost one extra query and changed
+the diagnosis.
+
+### 16.3 A hypothesis killed by measurement
+
+Going in, the working lead was that `ERROR_DICT` lacked `zh-TW`. It was checked
+before any code was written: **all four dictionaries carry all six locales.**
+The lead was false, and the real defect was somewhere else entirely.
+
+Recording this because it is the second time in this run that the pre-work
+hypothesis was wrong and measurement caught it before the fix went in (audit
+11.4 was the first). A lead is not a finding.
+
+### 16.4 "Provably translatable" — the honest bar for a translation gate
+
+The tempting metric is *does every locale have every key*. It is wrong, and it
+fails in the direction that makes a gate useless: it demands Tagalog for
+"Lens Flare" and Indonesian for "VFX Marker", terms those locales keep in
+English on purpose, as their own existing dictionaries show.
+
+The bar this gate uses instead: a key counts against locale L only if some
+**other** locale renders it as something other than the English key. A human has
+already demonstrated the string can be said in another language, so L falling
+back is a gap rather than a decision.
+
+That filter is the difference between a gate people obey and a gate people
+add exceptions to until it means nothing.
+
+### 16.5 Absence is a defect; identity is only evidence
+
+The two species are not equally strong and the gate does not treat them so:
+
+- **absent** — no entry, `t()` returns English. When the key is provably
+  translatable, this is a defect with no defence. **31 remain**, each an explicit
+  decision recorded in a fixture.
+- **identity** — an entry whose value equals its key. Sometimes correct, sometimes
+  a translator typing the English back. **250 remain**, recorded and bounded but
+  not called bugs.
+
+Both baselines shrink-only with hard numeric literals, so raising either is an
+edit somebody has to justify in review.
+
+### 16.6 Executing the code beats parsing it
+
+`tests-js/lib/i18nDict.mjs` slices `i18n.js` at the `// Build key set` marker,
+drops its single relative import, appends an export, and imports the result from
+a base64 `data:text/javascript` URL.
+
+The alternative — parsing four dictionary literals and re-running four merge
+loops in the test — was rejected on a principle worth stating generally: **a gate
+that re-implements the thing it measures drifts away from it.** The moment a
+fifth dictionary or a different merge order lands, a parsing gate reports
+confidently on a dictionary the app no longer builds. Executing the file's own
+construction half means the gate reads exactly the objects `t()` reads, and a
+change to the merge logic either flows through or trips the slice marker.
+
+The `data:` URL over a temp file: no filesystem side-effects, no ESM import-cache
+to bust between runs.
+
+### 16.7 A gate that has never failed has not been shown to work
+
+`tests-js/i18nParity.test.mjs` was mutation-tested before it was trusted. One
+real entry deleted under an occurrence guard; **exactly two** tests failed, and
+they were the right two; the shrink and staleness gates correctly stayed green
+(a deletion makes the baseline *stale*, not *exceeded* — and staleness is checked
+against the fixture, which still matched). Restored, `diff -q` byte-identical.
+
+Equally: the two fixtures were checked four ways against measured ground truth
+before entering the repo — NOT-ABSENT / IDENTITY / EMPTY / OVERRIDE. That check
+caught two entries where **I had violated my own stated rule**, writing English
+straight back for `"VFX Plate:"` in ko and ja. They were removed rather than
+disguised with a fullwidth colon.
+
+An authored dataset is data. Verify it like data.
+
+### 16.8 What this gate cannot see
+
+- **Translation quality.** It sees presence and difference. `"Export"` →
+  `"바나나"` passes.
+- **Strings that never reach `t()`.** `src/index.html` contains **0**
+  `data-i18n` attributes — the main UI translates imperatively via `applyI18n`
+  and the `_ORIG_TEXT` WeakMap. Any label the imperative pass misses is invisible
+  here.
+- **The app's other i18n implementations.** bwav's `I18N` (92 keys × 6 locales,
+  verified perfect parity this iteration) and
+  `src/tools/preflight/app/locale.js` (`PREFLIGHT_LOCALES` = the same seven,
+  `DEFAULT_LOCALE = 'en'`) are separate dictionaries with separate gaps.
+  `src/tools/visionscope/*` has not been examined at all.
+- **Plurals and interpolation.** The dictionary is flat string→string.
+
+### 16.9 Cleared this iteration
+
+- **`electron/`'s CommonJS require graph** — audit 15.7 called this "new, highest
+  value: a doubled path segment there is not a dead button, it is a dead
+  application". Measured: **26 relative `require()` calls, 26 resolve.** Clean.
+  Closed.
+- **82 dynamic `import()` sites in `src/`** — 18 swallow failure silently, but all
+  18 targets resolve in `dist/desktop`. No action; the silent-catch pattern is
+  noted, not a live defect.
+- **bwav `zh-TW` i18n** — a backlog item claimed it had no dictionary. False:
+  92 keys × 6 locales, exact parity. The item was stale and is removed.
+
+### 16.10 Follow-ups
+
+- **New, and the user's call rather than mine:** the 31 absent and 250 identity
+  entries are a native-speaker review, not a scripting problem. The sharpest case
+  is `Vendor`, `Config` and `Continuity`, where `id` and `fil` diverge — I kept
+  them English in `fil` on industry usage, and that is exactly the kind of
+  judgement a Filipino post supervisor should overrule in ten seconds.
+- **New:** `src/index.html`'s zero `data-i18n` attributes. The imperative
+  translation pass is untested and unmeasurable; a declarative attribute would be
+  gate-able. Large change, real payoff, not a nightly-loop-sized job.
+- **New:** `src/tools/visionscope/*` i18n status, unexamined.
+- Carried from 15.7: the untracked-import decision (15 modules, 30 test files)
+  is still the user's, still baselined. `ui.js`'s two dead second-tier fallbacks.
+- Carried, unchanged: `_tutModalMap`'s four legacy keys; the duplicate
+  `#btnTutorial` handler pair; the global How to Use button showing
+  `#tlcTutorialModal` in static English; the tab-name consistency sweep;
+  `.pm-controls` being the only panel with a help affordance.

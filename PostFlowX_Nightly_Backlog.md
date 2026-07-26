@@ -2185,3 +2185,130 @@ nothing to check on a clone; only the arithmetic changed.
   it exports both `nativeResolveStartEngine` and `nativeResolveStartBackground`,
   which is exactly what `startFn` reads; and `scripts/scripts/` appears nowhere
   in the archive.
+
+## Iteration 16 — the app that spoke English to two of its six languages
+
+PostFlowX ships a language switcher offering Korean, Japanese, Traditional
+Chinese, Thai, Indonesian and Filipino. Pick Korean and roughly one label in
+five stayed in English. Pick Japanese and it was closer to one in four.
+
+Not a crash, not an error — just a Korean user reading `Export XLSX`,
+`Frame Rate`, `Shot Marker` and 128 other strings in a language they may not
+have. The switcher worked perfectly. There was simply nothing behind it for
+those keys, and `t()` returns its argument when a lookup misses:
+
+```js
+const map = DICT[lang] || {};
+return map[str] || str;
+```
+
+That fall-through is the right behaviour — an untranslated label beats a blank
+one. It is also completely silent, which is why this survived every previous
+iteration's gates.
+
+### What was actually wrong
+
+The merged dictionary holds **660 distinct keys** across four literal blocks
+(`DICT`, `EXTRA_DICT`, `LOCALE_FULL_DICT`, `ERROR_DICT`), each folded in by its
+own `Object.assign` loop. Coverage before this iteration:
+
+| locale | entries | coverage |
+|--------|---------|----------|
+| zh-TW  | 651     | 98.6%    |
+| th     | 638     | 96.7%    |
+| id     | 622     | 94.2%    |
+| fil    | 609     | 92.3%    |
+| ko     | 510     | 77.3%    |
+| ja     | 509     | 77.1%    |
+
+The shape of the gap named its own cause. Korean and Japanese were each missing
+**150 keys, 142 of them the same ones**, and all 142 were present in all four
+other locales. The 303-key `LOCALE_FULL_DICT` block had been authored for
+zh-TW / th / id / fil; ko and ja only ever received 157 of it. This was one
+unfinished block, not 300 individual oversights.
+
+### The rule that decided what to fill
+
+An entry whose value equals its key changes nothing a user sees. Filipino
+post-production says "Lens Flare"; Indonesian says "VFX Marker". A gate
+demanding Tagalog for those would itself be wrong.
+
+So: **only add an entry whose value differs from its key.** Where a locale
+genuinely keeps a term in English, the honest state is no entry at all.
+
+335 entries were added under that rule. Two of my own drafts violated it —
+`"VFX Plate:"` for ko and ja, where I had written the English straight back —
+and were removed rather than dressed up with a fullwidth colon to fake a
+difference. Those two keys stay absent, deliberately, and are recorded as such.
+
+A second inconsistency was mine rather than the locale's: I filled
+`SETTINGS & FEEDBACK`, `Google Sheet Link`, `Stabilize` and `Integration` for
+Indonesian and not for Filipino, despite my own existing `fil` entries
+(`I-undo`, `I-export`, `Listahan ng VFX Shots`) already settling the pattern.
+Filled, not baselined. `Config`, `Continuity` and `Vendor` stay English in
+`fil` on purpose — those are what the industry says there.
+
+### After
+
+| locale | absent | identity | English shown | was |
+|--------|--------|----------|---------------|-----|
+| ko     | 1      | 3        | 4             | 131 |
+| ja     | 1      | 13       | 14            | 142 |
+| zh-TW  | 0      | 10       | 10            | 17  |
+| th     | 5      | 37       | 42            | 58  |
+| id     | 11     | 61       | 72            | 95  |
+| fil    | 13     | 126      | 139           | 173 |
+
+Absent pairs **366 → 31**. Total strings falling through to English
+**616 → 281**. Key count unchanged at 660: nothing was invented, and no string
+already authored was overwritten — the backfill is a gap-fill, guarded by
+`if (!(k in target))` rather than `Object.assign`.
+
+### The gate
+
+`tests-js/i18nParity.test.mjs` — 11 tests on the shrink-only-baseline model,
+plus `tests-js/lib/i18nDict.mjs`.
+
+The library matters more than the tests. Re-deriving the merged dictionary by
+parsing four merge loops would mean re-implementing them, and a gate that
+re-implements the thing it measures drifts away from it. Instead it slices
+`i18n.js` at the `// Build key set` boundary — everything above is dictionary
+construction, everything below needs a browser — drops the one relative import,
+appends an export, and imports the result from a base64 `data:` URL. No temp
+file, no import cache to bust. The numbers come from the same objects `t()`
+reads.
+
+The bar for calling something a defect is **provably translatable**: a key
+counts against locale L only if some *other* locale renders it as something
+other than the English key. A human has already shown it can be said in another
+language. That single filter is what keeps the gate from demanding Tagalog for
+"Lens Flare".
+
+### Verification
+
+- New gate green: **11/11**.
+- Mutation-tested rather than assumed. Deleting one real entry
+  (`"Export XLSX": "XLSX 내보내기"`, occurrence-guarded to 1) made exactly two
+  tests fail — `no locale newly falls through to English` and `Japanese and
+  Korean got the block they were missing` — while the shrink and staleness gates
+  correctly stayed green. Restored, `diff -q` byte-identical.
+- The two fixtures were verified against measured ground truth before they
+  entered the repo, four ways: NOT-ABSENT / IDENTITY / EMPTY / OVERRIDE. That
+  check is what caught both of my own rule violations.
+- `npm run build-verify` exit 0 — 104 gate files, 0 failures.
+- `npm run build:renderer` — 372 files, v2026.6.1.
+- Committed as `7915b2c`, five files, 1062 insertions / 0 deletions.
+  `git show --numstat` filtered to anything outside those five paths returned
+  nothing.
+- Packaged with `npm run build:mac-dir` (unsigned, identity explicitly null).
+  The shipped `app.asar` was extracted and proves the fix end to end: the
+  packaged `i18n.js` is all 4423 lines, carries `PARITY_DICT`, carries the
+  `if (!(k in target))` gap-fill guard, and contains both `XLSX 내보내기` and
+  `Integrasyon`.
+
+### What this does not fix
+
+The 250 identity entries are not claimed as correct — they are *recorded*. Some
+are right (a locale keeping a proper noun), some are almost certainly a
+translator writing the English back. Telling those apart needs a native speaker,
+not a script, and I stopped at the line where I would have been guessing.
