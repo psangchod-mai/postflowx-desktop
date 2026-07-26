@@ -1,5 +1,10 @@
 // PostFlowX – VFX Reviews (H.264-only) Virtual Timeline Store
-// Drop-in module: no external dependencies.
+// Drop-in module: one dependency, modules/utils_time.js, which is itself a leaf
+// (zero imports) — so "drop-in" still means two files, not a dependency tree.
+// It is imported rather than copied because a private copy of the timecode base
+// is exactly what made the marker source timecodes below wrong.
+
+import { nominalBase } from '../../modules/utils_time.js';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -220,7 +225,16 @@ const normalizeSelectedV1Cut = (value, cutsMap = {}, fps = 24) => {
   return best ? { clipId, timeSec: Number(best.timeSec) || 0 } : null;
 };
 
-/** Parse timecode "HH:MM:SS:FF" → total frames (at fps). */
+/**
+ * Parse timecode "HH:MM:SS:FF" → total frames.
+ *
+ * Counts on the whole-frame base, not the playback rate: 23.976 fits 24 frame
+ * fields into a timecode second and 29.97 NDF fits 30, because HH:MM:SS:FF has
+ * no way to express a fractional field. Multiplying by 23.976 read
+ * "01:00:00:00" as 86313.6 frames instead of 86400 — off by 86 frames, and
+ * fractional, which is how a frame field of "23.616000000003282" ended up
+ * formatted into a marker's source timecode by framesToTc below.
+ */
 export function tcToFrames(tc, fps) {
   if (!tc) return 0;
   const m = String(tc).trim().match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/);
@@ -229,15 +243,27 @@ export function tcToFrames(tc, fps) {
   const mm = Number(m[2]);
   const ss = Number(m[3]);
   const ff = Number(m[4]);
-  const total = (((hh * 60 + mm) * 60) + ss) * fps + ff;
+  const total = (((hh * 60 + mm) * 60) + ss) * nominalBase(fps) + ff;
   return Number.isFinite(total) ? total : 0;
 }
 
-/** Format frames → "HH:MM:SS:FF" (non-drop). */
+/**
+ * Format frames → "HH:MM:SS:FF" (non-drop).
+ *
+ * Same base as tcToFrames, so the pair round-trips. Dividing a frame count by
+ * the fractional rate left `ff` fractional, and pad2 does not round — it
+ * stringified the float whole, so a marker's srcTC read "01:00:09:23.616…".
+ *
+ * The frame counts added to a parse result elsewhere in this file come from
+ * `seconds * fps` at the real rate, which is correct and stays: elapsed frames
+ * really are wall-clock seconds times the true rate. Only the mapping between a
+ * frame count and its HH:MM:SS:FF label uses the nominal base.
+ */
 export function framesToTc(frames, fps) {
+  const base = nominalBase(fps);
   const f = Math.max(0, Math.floor(frames || 0));
-  const totalSec = Math.floor(f / fps);
-  const ff = f % fps;
+  const totalSec = Math.floor(f / base);
+  const ff = f % base;
   const ss = totalSec % 60;
   const mm = Math.floor(totalSec / 60) % 60;
   const hh = Math.floor(totalSec / 3600);
