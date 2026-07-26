@@ -3455,6 +3455,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "해당 파일 또는 폴더를 찾을 수 없습니다.",
     "Something went wrong.": "문제가 발생했습니다.",
     "Export finished.": "내보내기를 완료했습니다.",
+    "Ready. Use “Save as PDF” in the print dialog.": "준비되었습니다. 인쇄 대화상자에서 “PDF로 저장”을 선택하세요.",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "보고서를 새 창에서 열었습니다. 그 창에서 인쇄를 실행한 뒤 “PDF로 저장”을 선택하세요.",
+    "Report exported as an HTML file. Open it and print it to PDF.": "보고서를 HTML 파일로 내보냈습니다. 파일을 열어 PDF로 인쇄하세요.",
     "Export cancelled. Nothing was saved.": "내보내기를 취소했습니다. 저장된 항목이 없습니다.",
     "The file couldn't be saved. Try again, or choose a different folder.": "파일을 저장하지 못했습니다. 다시 시도하거나 다른 폴더를 선택하세요."
   },
@@ -3510,6 +3513,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "そのファイルまたはフォルダが見つかりませんでした。",
     "Something went wrong.": "問題が発生しました。",
     "Export finished.": "書き出しが完了しました。",
+    "Ready. Use “Save as PDF” in the print dialog.": "準備できました。印刷ダイアログで「PDFに保存」を選択してください。",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "レポートを新しいウィンドウで開きました。そのウィンドウで印刷を実行し、「PDFに保存」を選択してください。",
+    "Report exported as an HTML file. Open it and print it to PDF.": "レポートをHTMLファイルとして書き出しました。ファイルを開いてPDFに印刷してください。",
     "Export cancelled. Nothing was saved.": "書き出しをキャンセルしました。何も保存されていません。",
     "The file couldn't be saved. Try again, or choose a different folder.": "ファイルを保存できませんでした。もう一度お試しいただくか、別のフォルダを選んでください。"
   },
@@ -3565,6 +3571,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "找不到該檔案或檔案夾。",
     "Something went wrong.": "發生問題。",
     "Export finished.": "匯出完成。",
+    "Ready. Use “Save as PDF” in the print dialog.": "已就緒。請在列印對話框中選擇「儲存為 PDF」。",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "報告已在新視窗開啟。請在該視窗執行列印，然後選擇「儲存為 PDF」。",
+    "Report exported as an HTML file. Open it and print it to PDF.": "報告已匯出為 HTML 檔案。請開啟檔案並列印成 PDF。",
     "Export cancelled. Nothing was saved.": "已取消匯出，未儲存任何檔案。",
     "The file couldn't be saved. Try again, or choose a different folder.": "無法儲存檔案。請再試一次，或選擇其他資料夾。"
   },
@@ -3620,6 +3629,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "ไม่พบไฟล์หรือโฟลเดอร์นั้น",
     "Something went wrong.": "เกิดข้อผิดพลาด",
     "Export finished.": "ส่งออกเสร็จแล้ว",
+    "Ready. Use “Save as PDF” in the print dialog.": "พร้อมแล้ว เลือก “บันทึกเป็น PDF” ในกล่องโต้ตอบการพิมพ์",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "เปิดรายงานในหน้าต่างใหม่แล้ว สั่งพิมพ์ในหน้าต่างนั้น แล้วเลือก “บันทึกเป็น PDF”",
+    "Report exported as an HTML file. Open it and print it to PDF.": "ส่งออกรายงานเป็นไฟล์ HTML แล้ว เปิดไฟล์แล้วสั่งพิมพ์เป็น PDF",
     "Export cancelled. Nothing was saved.": "ยกเลิกการส่งออกแล้ว ไม่มีการบันทึกไฟล์",
     "The file couldn't be saved. Try again, or choose a different folder.": "บันทึกไฟล์ไม่สำเร็จ ลองอีกครั้ง หรือเลือกโฟลเดอร์อื่น"
   },
@@ -3675,6 +3687,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "Berkas atau folder tersebut tidak ditemukan.",
     "Something went wrong.": "Terjadi kesalahan.",
     "Export finished.": "Ekspor selesai.",
+    "Ready. Use “Save as PDF” in the print dialog.": "Siap. Pilih “Simpan sebagai PDF” di dialog cetak.",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "Laporan terbuka di jendela baru. Jalankan Cetak di jendela itu, lalu pilih “Simpan sebagai PDF”.",
+    "Report exported as an HTML file. Open it and print it to PDF.": "Laporan diekspor sebagai berkas HTML. Buka berkasnya lalu cetak ke PDF.",
     "Export cancelled. Nothing was saved.": "Ekspor dibatalkan. Tidak ada yang disimpan.",
     "The file couldn't be saved. Try again, or choose a different folder.": "File tidak dapat disimpan. Coba lagi, atau pilih folder lain."
   },
@@ -3730,6 +3745,9 @@ const ERROR_DICT = {
     "That file or folder couldn't be found.": "Hindi natagpuan ang file o folder na iyon.",
     "Something went wrong.": "May nangyaring mali.",
     "Export finished.": "Tapos na ang pag-export.",
+    "Ready. Use “Save as PDF” in the print dialog.": "Handa na. Piliin ang “I-save bilang PDF” sa print dialog.",
+    "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "Bumukas ang ulat sa bagong window. Mag-print doon, pagkatapos ay piliin ang “I-save bilang PDF”.",
+    "Report exported as an HTML file. Open it and print it to PDF.": "Na-export ang ulat bilang HTML file. Buksan ito at i-print bilang PDF.",
     "Export cancelled. Nothing was saved.": "Kinansela ang pag-export. Walang na-save.",
     "The file couldn't be saved. Try again, or choose a different folder.": "Hindi na-save ang file. Subukan ulit, o pumili ng ibang folder."
   }

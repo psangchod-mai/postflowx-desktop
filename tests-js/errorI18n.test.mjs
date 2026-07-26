@@ -22,10 +22,18 @@ import { fileURLToPath } from 'node:url';
 // notice if they did not have them. When it was added it shipped with no rows
 // at all and six locales silently read English — which is the failure this file
 // exists to make loud, so leaving it unscanned was the gap, not the strings.
+//
+// core/printOutcome.js is the third, and it is here because the second one
+// taught the lesson: any module that reaches for translate() has to be added to
+// SCANNED below, or it ships English to six locales and every test in this file
+// still passes. That is not a rule a reader can infer from the code, so it is
+// written down — and the orphan check at the bottom now enforces the other
+// direction, because rows added for an unscanned module read as dead keys.
 
 const SRC_DIR = fileURLToPath(new URL('../src/scripts/', import.meta.url));
 const friendlySrc = readFileSync(SRC_DIR + 'core/friendlyError.js', 'utf8');
 const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
+const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
 const i18nSrc = readFileSync(SRC_DIR + 'modules/i18n.js', 'utf8');
 
 const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
@@ -51,9 +59,12 @@ function userFacingStrings(src) {
   return [...found];
 }
 
-// saveNotice.js has no rules table; it calls the shim by its exported name.
-// Same job, different spelling, so it gets its own scan rather than a widened
-// regex that would start matching the `_t as translate` re-export.
+// saveNotice.js and printOutcome.js have no rules table; they call the shim by
+// its exported name. Same job, different spelling, so they get their own scan
+// rather than a widened regex that would start matching the `_t as translate`
+// re-export. Requiring the `translate(` call means a sentence quoted in a
+// header comment — printOutcome.js quotes one to explain itself — is correctly
+// ignored: a comment is not a string the user can be shown.
 function translatedStrings(src) {
   const found = new Set();
   for (const m of src.matchAll(new RegExp(`\\btranslate\\(\\s*${STRING_LIT}\\s*\\)`, 'g'))) {
@@ -86,8 +97,20 @@ function errorDict(src) {
   return new Function('return ' + src.slice(open, end))();
 }
 
-const SAVE_STRINGS = translatedStrings(saveNoticeSrc);
-const STRINGS = [...new Set([...userFacingStrings(friendlySrc), ...SAVE_STRINGS])];
+// Every module that localises through translate(). One row per module, with the
+// count it is expected to carry — the count is what turns "somebody added a
+// fourth sentence" from a silent English leak into a failing test naming the
+// file. Add a module here the moment it imports translate.
+const SCANNED = [
+  { file: 'core/saveNotice.js', src: saveNoticeSrc, expected: 3 },
+  { file: 'core/printOutcome.js', src: printOutcomeSrc, expected: 3 },
+];
+for (const m of SCANNED) m.strings = translatedStrings(m.src);
+
+const STRINGS = [...new Set([
+  ...userFacingStrings(friendlySrc),
+  ...SCANNED.flatMap((m) => m.strings),
+])];
 const DICT = errorDict(i18nSrc);
 
 // ── The extraction itself has to be trustworthy ──────────────────────────────
@@ -102,16 +125,29 @@ test('the source scan actually found the rule strings', () => {
   assert.ok(STRINGS.includes("That file or folder couldn't be found."), 'missed a _t() call');
 });
 
-test('the saveNotice scan found all three of its sentences', () => {
-  // One per outcome — saved, cancelled, could not be written. If that module
-  // grows a fourth ending, this is where the missing translations surface.
-  assert.equal(
-    SAVE_STRINGS.length, 3,
-    `expected 3 translated sentences in saveNotice.js, found ${SAVE_STRINGS.length}:\n  ${SAVE_STRINGS.join('\n  ')}`,
-  );
-  for (const s of SAVE_STRINGS) {
-    assert.ok(STRINGS.includes(s), `${s} was scanned but not carried into the coverage check`);
-  }
+for (const m of SCANNED) {
+  test(`${m.file}: every translated sentence was scanned`, () => {
+    // saveNotice: one per outcome — saved, cancelled, could not be written.
+    // printOutcome: the dialog was raised, the window is open but was not, and
+    // the export fell back to a file. If either grows an ending, this is where
+    // the missing translations surface instead of at a user in Bangkok.
+    assert.equal(
+      m.strings.length, m.expected,
+      `expected ${m.expected} translated sentences in ${m.file}, found ${m.strings.length}:\n  ${m.strings.join('\n  ')}`,
+    );
+    for (const s of m.strings) {
+      assert.ok(STRINGS.includes(s), `${s} was scanned but not carried into the coverage check`);
+    }
+  });
+}
+
+test('printOutcome does not restate saveNotice\'s sentences', () => {
+  // printNotice delegates the cancelled/failed endings rather than repeating
+  // them, so that one wording covers one situation. A sentence appearing in
+  // both files is that delegation having been undone by hand.
+  const save = new Set(SCANNED.find((m) => m.file === 'core/saveNotice.js').strings);
+  const dup = SCANNED.find((m) => m.file === 'core/printOutcome.js').strings.filter((s) => save.has(s));
+  assert.deepEqual(dup, [], `printOutcome.js re-words what it should delegate:\n  ${dup.join('\n  ')}`);
 });
 
 // ── Coverage: no locale may be missing a message ─────────────────────────────
@@ -149,9 +185,11 @@ test('the six locales cover exactly the same keys', () => {
 test('no dictionary entry is left behind after a rule is reworded', () => {
   // The opposite drift: dead keys accumulate, and the next person cannot tell
   // which of two similar entries is the live one.
+  // It also catches the reverse mistake: rows added for a module nobody
+  // remembered to list in SCANNED look exactly like dead keys from here.
   const live = new Set(STRINGS);
   const orphans = Object.keys(DICT.ko).filter((k) => !live.has(k));
-  assert.deepEqual(orphans, [], `in ERROR_DICT but no longer in friendlyError.js:\n  ${orphans.join('\n  ')}`);
+  assert.deepEqual(orphans, [], `in ERROR_DICT but in none of the scanned sources:\n  ${orphans.join('\n  ')}`);
 });
 
 // ── The wiring, not just the data ────────────────────────────────────────────

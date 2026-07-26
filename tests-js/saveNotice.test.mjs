@@ -42,9 +42,16 @@
 //    and the anchor tier is `downloadText(...); return SAVED;` with no callback
 //    at all. That is precisely why the SAVED sentence describes the app's side
 //    of the handover rather than a filesystem state.
-//  - Whether the print dialog appeared. PRINTED means `window.open` succeeded.
-//  - Whether the three new sentences have dictionary rows in the seven locales.
-//    They do not yet; `translate` falls back to English silently until they do.
+//
+// Two entries that used to be on this list have since been dealt with, and are
+// recorded here rather than deleted because "we know we cannot see this" and
+// "we checked" are different states and the difference is worth keeping:
+//  - The print dialog. PRINTED meant `window.open` had succeeded, nothing more.
+//    core/printOutcome.js now inspects the window after the layout delay and
+//    tryAutoPrint's three endings are tested in printOutcome.test.mjs.
+//  - The dictionary rows. The three sentences below shipped with none, so
+//    `translate` fell back to English in six locales; they have rows now, and
+//    errorI18n.test.mjs fails if a fourth sentence arrives without them.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import test from 'node:test';
@@ -221,23 +228,50 @@ test('openPrintReportHtml reports which ending happened', () => {
     !/\breturn\s+(true|false)\s*;/.test(fn),
     'openPrintReportHtml is back to returning a bare boolean'
   );
-  assert.match(fn, /\breturn\s+PRINTED\s*;/, 'no PRINTED return');
+  // The print ending is no longer decided here. `return PRINTED` used to sit in
+  // this function, fired 300ms before the print was attempted; the decision now
+  // belongs to tryAutoPrint, which looks at the window *after* the delay, and
+  // whatever it answers is handed straight up.
+  assert.match(
+    fn,
+    /const\s+how\s*=\s*await\s+tryAutoPrint\s*\(/,
+    'the print attempt is not awaited — its answer cannot be the return value'
+  );
+  assert.match(fn, /\breturn\s+how\s*;/, 'tryAutoPrint’s answer is not returned');
+  // A closed window is not an ending of its own here: it falls through to the
+  // file, so the user gets something rather than a pointer at a missing window.
+  assert.match(fn, /if\s*\(\s*how\s*!==\s*CLOSED\s*\)/, 'CLOSED no longer falls through to the file');
+  assert.match(fn, /\breturn\s+await\s+downloadOrSaveText\s*\(/, 'the fallback outcome is not returned');
   assert.match(fn, /\breturn\s+UNAVAILABLE\s*;/, 'no failure return');
 });
 
-test('the "Save as PDF" line only appears when a print dialog exists', () => {
-  const src = read(VISUAL_QC);
-  const lines = src.split('\n');
-  const hits = lines
+test('the "Save as PDF" line is not written at the call site', () => {
+  // It used to be a literal in a setProgress() call that ran whatever had
+  // happened. The sentence now has exactly one home — printOutcome.js's PRINTED
+  // branch — so that "there is a print dialog on screen" is asserted in the one
+  // place that knows whether there is.
+  const vqc = read(VISUAL_QC).split('\n');
+  const inlined = vqc
+    .map((l, i) => `${i + 1}: ${l.trim()}`)
+    .filter((_, i) => /Save as PDF/.test(vqc[i]) && /setProgress\s*\(/.test(vqc[i]));
+  assert.deepEqual(inlined, [], `the "Save as PDF" line is hardcoded at a call site again:\n${inlined.join('\n')}`);
+
+  // Comments first: printOutcome.js's header quotes the sentence to explain what
+  // it is for, and a quotation in prose is not a string the user can be shown.
+  const printSrc = read('src/scripts/core/printOutcome.js');
+  const printCode = printSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(printCode.length < printSrc.length, 'floor: comment stripping did nothing');
+  const print = printCode.split('\n');
+  const say = print
     .map((l, i) => ({ l, i }))
-    .filter(({ l }) => /Save as PDF/.test(l) && /setProgress\s*\(/.test(l));
-  assert.equal(hits.length, 1, `expected 1 "Save as PDF" status line, saw ${hits.length}`);
-  // It has to sit inside a branch that established the window actually opened.
-  const context = lines.slice(Math.max(0, hits[0].i - 4), hits[0].i).join('\n');
+    .filter(({ l }) => /Save as PDF" in the print dialog|Save as PDF” in the print dialog/.test(l));
+  assert.equal(say.length, 1, `expected 1 print-dialog sentence in printOutcome.js, saw ${say.length}`);
+  // And it has to sit inside the branch that established the dialog was raised.
+  const context = print.slice(Math.max(0, say[0].i - 3), say[0].i).join('\n');
   assert.match(
     context,
-    /\bPRINTED\b/,
-    'the "Save as PDF" line is announced unconditionally again'
+    /outcome\s*===\s*PRINTED/,
+    'the "Save as PDF" sentence is no longer gated on PRINTED'
   );
 });
 

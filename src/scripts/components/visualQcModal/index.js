@@ -8,7 +8,8 @@ import { getCachedProxyForFile } from '../../modules/proResProxy.js';
 // The tiers here throw on cancel rather than returning it, so runSaveCascade's
 // own catch classifies them and this file never needs isUserCancel directly.
 import { SAVED, UNAVAILABLE, runSaveCascade } from '../../core/saveOutcome.js';
-import { saveNotice } from '../../core/saveNotice.js';
+import { saveNotice, TONE_OK } from '../../core/saveNotice.js';
+import { CLOSED, printNotice, tryAutoPrint } from '../../core/printOutcome.js';
 
 /**
  * Resolve the best playable URL for a clip used by hidden analysis video elements
@@ -758,14 +759,13 @@ function buildPrintHtmlReport({ title, subtitle, metaLines, items }){
   </html>`;
 }
 
-// The print window opened. Distinct from SAVED, because the two endings need
-// different sentences: one points at a dialog on screen, the other at a file.
-const PRINTED = 'printed';
-
-// Returns PRINTED, or the save cascade's own outcome for the HTML fallback.
-// It used to return a bare `true` in both of those cases *and* after a
-// cancelled or failed fallback save, which is how the caller ended up
-// announcing a print dialog that had never opened.
+// Returns one of core/printOutcome.js's endings, or the save cascade's own
+// outcome for the HTML fallback. It used to return a bare `true` in both of
+// those cases *and* after a cancelled or failed fallback save, which is how the
+// caller ended up announcing a print dialog that had never opened. That was
+// fixed for the fallback; the print path itself still returned PRINTED 300ms
+// before it had tried to print anything, so all three ways the attempt can fail
+// were reported as success. tryAutoPrint is what looks at the window afterwards.
 async function openPrintReportHtml({ filenameBase, html }){
   // Try open in a new tab/window and auto-print. If blocked, download HTML as fallback.
   try{
@@ -779,9 +779,14 @@ async function openPrintReportHtml({ filenameBase, html }){
         const btn = w.document.getElementById('btnPrint');
         if (btn) btn.addEventListener('click', ()=>{ try{ w.focus(); w.print(); }catch(e){} });
       }catch{}
-      // Auto-open print dialog (best-effort).
-      setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 300);
-      return PRINTED;
+      const how = await tryAutoPrint(w);
+      // PRINTED and OPENED both mean the report is on screen in front of the
+      // user, so the file fallback would be a second copy nobody asked for.
+      // CLOSED means a pop-up blocker or the user took the window away before
+      // it could print — that is the same situation as never opening one, so
+      // it falls through and writes the file, rather than pointing at a window
+      // that is not there.
+      if (how !== CLOSED) return how;
     }
   }catch{}
   // Fallback: save HTML for user to open and Print to PDF. Hand the caller the
@@ -1863,15 +1868,12 @@ export async function openVisualQcModal({
 
       setProgress(0.95, 'Opening print dialog…');
       const how = await openPrintReportHtml({ filenameBase: nameBase, html });
-      if (how === PRINTED){
-        setProgress(1, 'Ready. Use “Save as PDF” in the print dialog.');
-      } else if (how === SAVED){
-        // The popup was blocked, so there is no print dialog to point at. Point
-        // at the file that did get written instead.
-        setProgress(1, 'Report saved as HTML. Open it and print to PDF.');
-      } else {
-        setProgress(0, saveNotice(how).text);
-      }
+      // Every ending this button has — dialog raised, window open but not
+      // printing, fell back to a file, cancelled, nothing worked — is worded in
+      // one place now. The branch here is only "did it end well", because the
+      // three-way if this replaced is what let a failure keep the success text.
+      const notice = printNotice(how);
+      setProgress(notice.tone === TONE_OK ? 1 : 0, notice.text);
     }catch(err){
       setProgress(0, err?.message || String(err));
     }finally{
