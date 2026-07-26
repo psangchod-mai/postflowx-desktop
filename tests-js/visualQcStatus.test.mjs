@@ -33,10 +33,11 @@
 // WHAT THIS CANNOT SEE
 // - Whether `pre-line` actually renders as two lines. linkedom has no layout;
 //   this asserts the property is set, not that a browser honoured it.
-// - Errors with no friendlyError rule. "NotAllowedError: play() failed" still
-//   passes through verbatim after the prefix — routing the call sites is what
-//   is checked here; widening the rules table is a separate change with a
-//   six-locale dictionary cost.
+// - Whether the string that arrives has a friendlyError rule at all. This file
+//   checks the routing only. Which exceptions the table recognises is pinned
+//   separately, in friendlyErrorDomExceptions.test.mjs — that is where the
+//   DOM's own errors ("NotAllowedError", tainted-canvas "SecurityError") were
+//   given rules once this routing existed to carry them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

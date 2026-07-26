@@ -118,7 +118,7 @@ const DICT = errorDict(i18nSrc);
 // find nothing and every coverage test below would vacuously pass.
 
 test('the source scan actually found the rule strings', () => {
-  assert.ok(STRINGS.length >= 48, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
+  assert.ok(STRINGS.length >= 62, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
   // Spot-check one of each shape so a half-broken scan cannot slip through.
   assert.ok(STRINGS.includes('Disk full'), 'missed a literal title');
   assert.ok(STRINGS.includes('Free up space or choose another drive, then try again.'), 'missed a literal hint');

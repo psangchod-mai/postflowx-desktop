@@ -115,6 +115,17 @@ const RULES = [
     hint: 'Free up space or choose another drive, then try again.',
   },
   {
+    // The browser's own refusal, not the filesystem's. Microphone capture and
+    // video playback both reject this way, and the fix is never the one the
+    // EACCES rule below gives: there is no folder to pick instead. Placed above
+    // that rule because "NotAllowedError" is the more specific statement of the
+    // two whenever a string somehow carries both.
+    test: /\bnotallowederror\b|\bpermissiondeniederror\b|not allowed by the user agent|didn'?t interact with the document|permission dismissed/i,
+    title: 'Not allowed',
+    message: 'The system blocked this, so PostFlowX could not continue.',
+    hint: 'Click inside the window and try again, or allow PostFlowX in System Settings › Privacy & Security.',
+  },
+  {
     test: /eacces|eperm|permission denied|operation not permitted|not authorized to access/i,
     title: 'Permission denied',
     message: "PostFlowX doesn't have permission to open that location.",
@@ -150,6 +161,25 @@ const RULES = [
     hint: 'Check the file size or connection and try again.',
   },
   {
+    // Deliberately worded as "stopped", not "cancelled". An AbortError means the
+    // user dismissed a picker at three sites in this app (reviews, ui, and
+    // tl_convert all check for it by name) — but it is ALSO what comes back from
+    // the eight places that arm `setTimeout(() => ctrl.abort())` on a fetch, and
+    // the DOM gives both the identical text "The user aborted a request." There
+    // is no way to tell them apart from here, so claiming "you cancelled this"
+    // would be a false statement to a user whose companion had simply gone
+    // quiet. What is true in both cases is that it stopped early and nothing
+    // was written.
+    //
+    // Must stay BELOW the timeout rule: AbortSignal.timeout() rejects with text
+    // that names the timeout, and "Timed out" carries the better advice of the
+    // two. Below, that string reaches the timeout rule first.
+    test: /\baborterror\b|the user aborted|(operation|request) was aborted|request was interrupted by a call to pause/i,
+    title: 'Stopped before it finished',
+    message: 'The action was stopped before it finished.',
+    hint: 'Nothing was changed. Try it again if you still need it.',
+  },
+  {
     // Explicit write/encode/mux wording only. Deliberately narrow: a bare
     // "ffmpeg exited with code 1" stays with the decode rule below, because
     // nothing in that string says which end failed and guessing wrong sends the
@@ -160,7 +190,26 @@ const RULES = [
     hint: 'Check the output folder has space and is writable, then try again.',
   },
   {
-    test: /(could not|failed to|unable to).*(decode|read media)|ffmpeg|codec|unsupported (format|codec)|no decoder|decode (error|failed)|moov atom|invalid data found|malformed|truncated (file|stream)/i,
+    // The canvas refusing to hand back pixels. Visual QC reads every frame it
+    // measures with getImageData, and so does the IMF scope panel — if the
+    // video came from a URL rather than a local file the canvas is tainted and
+    // the read throws, with nothing in the text a colourist could act on.
+    //
+    // Anchored on the exception name and the canvas wording only. A bare
+    // "cross-origin" alternative was tried and removed: a blocked CORS fetch
+    // says that too, and it belongs to the network rule further down.
+    test: /\bsecurityerror\b|canvas (has been )?tainted|tainted by cross-origin|the operation is insecure/i,
+    title: 'Could not read the video frame',
+    message: 'PostFlowX was not allowed to read the picture out of this video.',
+    hint: 'This happens with media opened from a web address. Copy the file to a local drive and try again.',
+  },
+  {
+    // "no supported sources" / NotSupportedError / MEDIA_ELEMENT_ERROR are the
+    // <video> element's way of saying the same thing the decoder rules below
+    // say, so they are widened into this rule rather than given their own: the
+    // advice — unsupported format, or install the media helper — is identical,
+    // and a separate rule would have cost six locales to say it twice.
+    test: /(could not|failed to|unable to).*(decode|read media)|ffmpeg|codec|unsupported (format|codec)|no decoder|decode (error|failed)|moov atom|invalid data found|malformed|truncated (file|stream)|no supported sources|\bnotsupportederror\b|media_element_error/i,
     title: 'Could not decode media',
     message: "This media couldn't be decoded.",
     hint: 'The format may be unsupported, or the media helper needs installing (Settings › Resolve Engine).',
@@ -193,7 +242,12 @@ const RULES = [
   },
   {
     // Raw JS programming errors — never show the stack-y text to a user.
-    test: /cannot read propert|is not a function|is not defined|undefined is not|null is not|maximum call stack|out of memory/i,
+    // InvalidStateError and "Illegal invocation" are the DOM's spelling of the
+    // same thing (imf_ui re-attaching an AudioContext to a <video> that already
+    // has one), and they are widened in here rather than given a rule: the user
+    // can do nothing about either beyond what this hint already says, and this
+    // rule is last, so widening it cannot take a match from anything above.
+    test: /cannot read propert|is not a function|is not defined|undefined is not|null is not|maximum call stack|out of memory|\binvalidstateerror\b|illegal invocation/i,
     title: 'Something went wrong',
     message: 'Something went wrong inside PostFlowX.',
     hint: 'Please try again. If it keeps happening, restart the app.',
