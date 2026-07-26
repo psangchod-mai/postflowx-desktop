@@ -1502,3 +1502,111 @@ Stated so the green tick is not read as more than it is:
 - `friendlyError.js` / `friendlyError.test.mjs` were in-flight uncommitted
   work that iteration 2 committed in `887b161`; still awaiting a decision on
   whether to `git rm --cached` them back out.
+
+---
+
+## Audit 12 — a defect species the existing gate is structurally blind to
+
+### 12.1 The phantom-id-as-map-value
+
+`tests-js/domContract.test.mjs` finds an id that does not exist by scanning
+`getElementById('literal')` call sites. That is the right scan for the shape
+it covers, and it is blind to this:
+
+```js
+const _tutModalMap = { …, trlconf: 'tconformTutorialModal', … };
+const modal = document.getElementById(_tutModalMap[tabKey]);
+if (!modal) return;
+```
+
+The id never appears next to `getElementById`. It arrives as a variable. The
+scan sees `getElementById(<expression>)` and has nothing to check.
+
+This is worth stating generally: **a contract gate keyed on a syntactic shape
+covers exactly that shape.** Every layer of indirection between the literal
+and the call is a hole. Table lookup is the common one here, but
+`` `${kind}Modal` `` and `ids[i]` are the same hole. `modalIds.test.mjs`
+closes the table-lookup case by checking the *literal* against the element
+inventory regardless of how it is consumed — which is the more durable
+framing, and the one to reach for next time.
+
+### 12.2 "No static id" is not the same as "does not exist"
+
+The first reading of the probe returned six unresolved `*Modal` literals. Five
+of them were real modals built at runtime with an explicit `el.id = 'name'`.
+Reporting those five would have been a gate that is wrong the day it lands.
+
+Checking all six individually before drawing the conclusion is what made the
+gate shippable. The rule that survived — *static id **or** creation site* —
+is a narrowing that distinguishes the two states the gate exists to tell
+apart, not one chosen to make the number come out zero. Iteration 11 hit the
+identical fork with `opacity:0` controls. It is now twice; treat the question
+"does this exclusion answer the gate's question, or just quiet it?" as
+standing procedure whenever a first reading is trimmed.
+
+### 12.3 Two negative results, recorded so nobody re-runs them
+
+Audit 11.5 predicted two accessibility species. Neither exists here.
+
+- **Click targets unreachable by Tab: 0.** 144 ids receive a JS click handler;
+  32 resolve against static markup; every one is natively focusable or carries
+  `tabindex="0"`.
+- **`role="button"` without an Enter/Space handler: 0.** All 6 (four
+  `.fun-launcher-item`, two bwav `#dropzone`) have `tabindex="0"` *and* a
+  keydown handler. `ui.js:18377` is the model.
+
+A negative result costs the same to produce as a positive one and is worth
+the same words in the report. Without this section the next iteration pays
+for the search again and finds the same nothing.
+
+### 12.4 A static scan of `[onclick]` measures almost nothing in this codebase
+
+The first reachability probe read `[onclick]` and `[role=button]` out of the
+markup and returned zero offenders. Zero, because static `onclick` is
+essentially unused here — handlers attach via `addEventListener` (86
+`getElementById(…).addEventListener('click'`, 206 `$('#…')`).
+
+The standing rule caught it: *a scan reporting a suspiciously clean result is
+a scan to distrust before celebrating.* The rewrite cross-referenced JS
+binding sites against HTML focusability, and its zero (12.3) is a real one.
+The tell is not the number — it is whether the denominator was ever plausible.
+
+### 12.5 One control, two handlers, two sources of truth
+
+The underlying defect is not the typo. It is that one button has two
+listeners, each with its own copy of the same mapping, and **nothing detects
+that the copies disagree**. The typo is what made it visible; a table that had
+agreed on the *wrong existing* id would have looked identical from outside and
+passed every gate in the repo, including the new one.
+
+`modalIds.test.mjs` can prove a name resolves to an element. It cannot prove
+it resolves to the *right* element — the assertion pinning `trlconf` to
+`tlcTutorialModal` is a human reading, hardcoded. Duplicated state read by two
+handlers on one control is worth its own sweep.
+
+### 12.6 What the new gate cannot see
+
+- **Only names ending in `Modal`.** The suffix is what makes a bare string
+  unambiguously an element reference; widening the net drowns it in prose.
+  Ids reached through a variable that are *not* `*Modal` remain uncovered.
+- **Not runtime-assembled ids.** `` `${kind}TutorialModal` `` is invisible.
+- **Not correctness of the target** — see 12.5.
+- **Not reachability.** `#tlcTutorialModal` existed, was authored in seven
+  languages, and was unreachable from the header for however long this has
+  shipped. Nothing in the repo measures "authored content the UI has no path
+  to". That is the most interesting open question this iteration raised.
+
+### 12.7 Follow-ups this iteration created
+
+- The global How to Use button **silently does nothing** on `bwav`,
+  `preflight`, `renderq` and `home`: neither table has an entry, and no
+  tutorial modal exists for them. Pressing help and getting nothing is a
+  worse experience than the button being absent. Either author the four
+  tutorials or hide the button on those tabs.
+- The global button shows `#tlcTutorialModal` in static English rather than
+  the user's stored tutorial language (`_renderTlcTutorial` is closure-private
+  and `tl_convert/index.js` exports nothing on `window`).
+- Consolidating the duplicate `#btnTutorial` handler pair.
+- A tab-name consistency sweep. `trlconf` was called "Timeline Conform" in one
+  place and "Trailers Conform" in three; the feature inside it is "Timeline
+  Convert". Whether the other ten tabs are consistent is unmeasured.

@@ -1702,3 +1702,100 @@ as a blob reconstructed from `HEAD` plus only this iteration's 25 edits, and
 181 — exactly what was written. The ~689 pre-existing dirty files were
 untouched, and `src/index.html`'s uncommitted work measured 56/21 both before
 and after the commit.
+
+---
+
+## Iteration 12 — the tutorial button that answered the wrong question
+
+The global **How to Use** button in the header is the single most important
+control in the app for a non-technical user: it is what you press when you do
+not know what you are looking at. On the Trailers Conform tab it opened the
+**Settings** tutorial.
+
+### What was wrong
+
+`#btnTutorial` has **two** independent `click` listeners, registered from two
+different places in `ui.js`, each carrying its own tab-key → modal-id table.
+Both fire on every click. Where the tables agree, the second open is a
+harmless repeat of the first. Where they disagree, the second one wins
+visually — and nothing anywhere reports that they disagreed.
+
+They disagreed about `trlconf`:
+
+| table | value | what happened |
+|---|---|---|
+| A (`_tutModalMap`, ~11903) | `tconformTutorialModal` | no such element — `getElementById` → `null`, `if (!modal) return` |
+| B (~23990) | `settingsTutorialModal` | opened, and was what the user saw |
+
+`tconformTutorialModal` appeared **exactly once in the entire codebase**: as
+that map value. No element, no runtime creation, not even a stale comment.
+
+Meanwhile `#tlcTutorialModal` — a fully authored, seven-language Timeline
+Convert tutorial, already in `index.html`, already carrying
+`aria-label="Timeline Convert How to Use"` — was reachable from exactly one
+place: `#tlcHelpBtn`, which lives *inside* the Timeline Convert modal. You had
+to already be in the feature to find the help for the feature.
+
+### The fix, and what was deliberately not done
+
+Both tables now say `tlcTutorialModal`. Handler B **stays**. Its comment
+justifies it as a fallback for when `wireEDLTimeline` exits early, and that
+justification is stale — `_wirePfxTutorials()` is called on its own at 23980,
+not from `wireEDLTimeline` — but it is still a real `try`/`catch` fallback,
+and deleting ~30 lines to prove a point is a rewrite, not a repair. A
+one-line "keep in sync" comment marks the coupling; consolidating the pair is
+its own change.
+
+Opening `#tlcTutorialModal` from the global button shows the static English
+body rather than the user's stored tutorial language, because
+`_renderTlcTutorial` is closure-private in `tl_convert/index.js` and that
+module exports nothing on `window`. English help for the right feature beats
+localised help for the wrong one; the language path is backlog, not blocker.
+
+### Two more user-facing names
+
+- `#imfFolderConfirm` and `#pmOtioModal` are `aria-modal="true"` dialogs with
+  no accessible name — a screen reader announced "dialog" and stopped. Both
+  had visible titles already; they are now wired via `aria-labelledby`
+  (`#pmOtioTitle` had to be minted). `#imfFolderConfirm` also got
+  `aria-describedby` pointing at its existing status line.
+- The permission-denied screen called the tab **"Timeline Conform"**. The tab
+  button reads `TRAILERS CONFORM`, its tooltip says "Trailers Conform", the
+  feedback form says "Trailers Conform". One string, in the one moment a user
+  most needs to recognise the name of the thing they just clicked.
+
+### The gate
+
+`tests-js/modalIds.test.mjs`, four tests, 26 ms.
+
+- **Rule:** every `*Modal` string literal in `src/**/*.js` must match either a
+  static id in `src/**/*.html` **or** an `el.id = '...'` creation site in JS.
+- **The second route is not a convenience.** Five of the six unresolved
+  literals found during research are modals genuinely constructed at runtime.
+  Without that clause the gate reports five false positives and gets
+  disabled. It is the same principled-vs-convenient test as iteration 11: the
+  narrowing has to distinguish *built later* from *does not exist*, which is
+  the entire question being asked.
+- **Zero tolerance, no baseline** — clean after the fix.
+- **Negative-verified against the real shipped defect.** `git show
+  HEAD:src/scripts/ui.js` restored in place turns the gate red and names
+  `tconformTutorialModal — referenced at src/scripts/ui.js:11907`. A synthetic
+  probe stays inside the test so the proof survives HEAD moving on.
+- One extra assertion pins the specific regression: every `trlconf:` entry
+  whose value is a modal id must be `tlcTutorialModal`, and that modal must
+  still exist and still be about Timeline Convert. The first draft of this
+  regex matched `trlconf: 'trl_conf'` from an unrelated project-scope map and
+  failed on a non-defect — narrowed to `*Modal` values only.
+
+### Verification
+
+`npm run build-verify` exit 0 (250 Python passed / 7 skipped; XSS, XXE and
+fail-open gates clean; `modalIds` picked up automatically).
+`npm run build:renderer` — 372 files, v2026.6.1.
+
+Audit 10.5's process check applied and passed: both `src/scripts/ui.js` and
+`src/index.html` were already dirty with the user's own work, so both were
+staged as blobs reconstructed from `HEAD` plus only this iteration's edits.
+`git show --stat` after the commit read 13 / 6 / 162 — exactly what was
+written. The working-tree diff for those two files shrank by exactly 13 and 6
+lines, confirming nothing of the user's was swept in.
