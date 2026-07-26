@@ -2899,3 +2899,150 @@ exit 0, 375 files. Committed as `ac1840a`, five files, verified with
 `reviews/index.js` were confirmed intact afterwards. A signed/notarized
 `npm run build:mac` needs the user's Apple credentials and pushes an artifact
 outward; it has not been authorized and was not run.
+
+## Audit 22 — a comment that reasoned about CSS it never read
+
+Audit 21 closed with a line on the still-open list: *"The three new sentences
+have no dictionary rows in the seven locales."* That is one half of this audit.
+The other half started as a note in `friendlyAlert.js` and turned out to be the
+more interesting finding, because the note was wrong.
+
+### 22.1 The advice ran on from the end of the path
+
+`friendlyText()` is what every one of the ~66 `showError()` call sites reaches
+through, since `errorBanner.js` humanizes at the display boundary. It joined a
+rule's `message` and its `hint` with a space. Two of the sixteen rules end their
+message with a filesystem path — the ENOENT rule builds
+`` `${_t("That file or folder couldn't be found:")}\n${p}` `` — so on those two
+the space join produced:
+
+```
+That file or folder couldn't be found:
+/Volumes/SHOW DRIVE 01/reel3/A003C012.ari Check that it still exists and…
+```
+
+A post-house volume name has spaces in it. Nothing in that line tells a reader
+where the path stops and the advice starts, and the path is the one part of the
+message an assistant is actually meant to act on. ENOENT is also the single most
+common failure this app produces: a drive that is not mounted.
+
+### 22.2 The comment was the bug's cover story
+
+Iteration 20 added a paragraph to `friendlyAlert.js` explaining why the alert
+composes from `friendlyError()` PARTS rather than post-processing
+`friendlyText()`. It went on to assert that the banner could not be fixed the
+same way, because it "renders through `textContent` with default `white-space`,
+where a newline collapses to a space anyway — fixing that one needs CSS, not a
+different join."
+
+`.pfx-error-banner` in `src/styles/main.css:55999` has carried
+`white-space: pre-wrap` since `d0ab098` — the commit that created the banner.
+The CSS half was never missing. Only the join was.
+
+The comment was written from a reading of `errorBanner.js` alone: `el.textContent
+= msg` is there in plain sight, and the conclusion follows from it *if* you
+assume the default. Nobody grepped the stylesheet. A comment that reasons about
+code it has not read is a comment that can be confidently, durably wrong, and
+this one had been sitting for two iterations telling the next reader not to try.
+It is corrected in place rather than deleted, because the correction is the more
+useful artifact.
+
+New species: **comment-asserting-unread-CSS** (1 site, fixed). The general form
+is a comment that reasons about a *different file's* behaviour without citing
+it. Worth a sweep later; not attempted here.
+
+### 22.3 The inline rule, and why it is not redundant
+
+`errorBanner.js` now also sets `el.style.whiteSpace = 'pre-wrap'` on the banner
+it mounts. That looks like a duplicate of the stylesheet until you note why the
+banner mounts itself in the first place: `src/index.html` is not shared by the
+extension target or by the bwav/preflight tool pages, and **no tool page links
+`main.css`**. On those hosts the newlines would collapse and the defect would
+come back on exactly the surfaces nobody checks. Same reasoning that already put
+`opacity` inline. A host-supplied `#errors` is left untouched — that slot owns
+its presentation, which is the point of deferring to it.
+
+### 22.4 Three sentences no locale had
+
+`core/saveNotice.js`, added last iteration, localises its three ending sentences
+through `friendlyError`'s exported `translate` shim. It shipped with **zero**
+rows in `ERROR_DICT` for all six non-English locales. Every Korean, Japanese,
+Traditional Chinese, Thai, Indonesian and Filipino user read "Export finished."
+in English.
+
+`errorI18n.test.mjs` exists precisely to make that loud. It did not fire, because
+it scans `friendlyError.js` and nothing else. **A gate that scans one file cannot
+notice a second file borrowing the same shim.** The gate now scans
+`saveNotice.js` through its own extractor — the shim is spelled `translate(` there,
+not `_t(`, and widening the existing regex would have started matching the
+`_t as translate` re-export.
+
+The two edits are coupled and had to land together: adding rows to `ERROR_DICT`
+alone trips the gate's own orphan test, which compares `Object.keys(DICT.ko)`
+against a `STRINGS` set derived from `friendlyError.js` only.
+
+18 rows added (6 locales × 3 sentences). They are machine-authored, and go on the
+same native-speaker list as the 486 in `UI_DICT_ROWS`.
+
+### 22.5 What was measured before editing
+
+- `friendlyText` has exactly one consumer: `errorBanner.js:53`, via `humanize()`.
+- `showErrorBanner` has exactly one caller: `src/scripts/ui.js:3288`.
+- No tool page links `main.css`; none mounts the banner today.
+- All six target files were clean in the worktree, so no reconstructed blobs were
+  needed. `src/styles/main.css` is 301/326 dirty with the user's work and was
+  **read only** — the `pre-wrap` it needs was already there.
+
+### 22.6 Gates
+
+`errorBanner.test.mjs` +93 lines: one raw string per rule (16 samples, ≥14 must
+match a rule carrying advice, so the loop cannot pass by never running) asserting
+`friendlyText(raw) === message + '\n' + hint` and that the advice appears on no
+earlier line; the three-line shape of the file-not-found case with a
+space-containing volume name; the inline `pre-wrap`; that a host-supplied
+`#errors` is *not* given one; and `white-space: pre-wrap` in the stylesheet rule
+itself.
+
+`errorI18n.test.mjs` +36 lines: the `saveNotice.js` scan, its merge into
+`STRINGS`, the `>= 45` → `>= 48` threshold, and a three-sentence spot-check —
+without which a half-broken second scan would let every coverage test below it
+pass vacuously.
+
+### 22.7 Mutation testing
+
+Seven mutations, all applied with the occurrence-guarded Node form and all
+restored byte-identical:
+
+| mutation | caught by |
+| --- | --- |
+| `friendlyText` joins with a space again | errorBanner |
+| the inline `pre-wrap` is dropped | errorBanner |
+| the stylesheet stops honouring newlines | errorBanner |
+| a locale loses one of the new rows | errorI18n |
+| a locale stubs a row with the English | errorI18n |
+| the `saveNotice` scan quietly matches nothing | errorI18n |
+| `saveNotice` grows a fourth sentence with no rows | errorI18n |
+
+7 applied, 7 caught, 0 survived. Two of the seven were setup-failures on the
+first pass (a Korean value written as `\uXXXX` escapes in the harness, where the
+file holds the characters literally) — reported as `SETUP-FAIL`, not as a pass,
+which is the whole reason the occurrence guard is there.
+
+### 22.8 Still open
+
+- The 18 new translations are machine-authored.
+- The anchor tier's evidence-free `return SAVED` in both cascades, unchanged.
+- `openPrintReportHtml`'s `PRINTED` still only means `window.open` succeeded.
+- The general **comment-asserting-unread-CSS** sweep has not been run.
+- `_path()` still truncates an *unquoted* path at its first space. Every observed
+  ENOENT string quotes the path, so this is latent, not live — recorded, not
+  guessed at.
+
+### 22.9 Deploy
+
+`npm run build-verify` exit 0 (250 passed, 7 skipped; XSS, XXE and fail-open
+gates clean). `npm run build:renderer` exit 0, 375 files. Committed as `1b80df1`,
+six files, `git diff --cached --summary` empty and `git show --stat` confirming
+no foreign hunks. A signed/notarized `npm run build:mac` needs the user's Apple
+credentials and pushes an artifact outward; it has not been authorized and was
+not run.

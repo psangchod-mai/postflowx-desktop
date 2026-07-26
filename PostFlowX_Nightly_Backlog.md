@@ -2758,3 +2758,74 @@ evidence-free `return SAVED` is unchanged in both cascades — making it honest
 needs a real completion signal from the platform layer. `PRINTED` means
 `window.open` succeeded, not that a print dialog appeared. `pfxPlatform.saveFile`
 still collapses cancel into failure; zero callers, still left alone.
+
+## Iteration 22 — the advice glued to the end of a path
+
+Two defects, both on the failure-message path, both closed. Commit `1b80df1`
+(six files).
+
+### What a user saw
+
+Every `showError()` call site now reaches a visible banner, and `friendlyText()`
+glued the hint onto the message with a space. Two rules end their message with a
+filesystem path:
+
+```
+That file or folder couldn't be found:
+/Volumes/SHOW DRIVE 01/reel3/A003C012.ari Check that it still exists and…
+```
+
+Post-house volume names have spaces. There is nothing in that line showing where
+the path ends and the advice begins — and the path is the actionable part. Now
+joined with a newline.
+
+### The comment that said it couldn't be done
+
+`friendlyAlert.js` had carried a paragraph since iteration 20 asserting the
+banner rendered with default `white-space`, so a newline would collapse and
+"fixing that one needs CSS, not a different join."
+
+`.pfx-error-banner` has had `white-space: pre-wrap` since `d0ab098` — the commit
+that created the banner. The comment had reasoned from `el.textContent = msg`
+without ever opening the stylesheet, and had been telling the next reader not to
+try, for two iterations. Corrected in place, not deleted; the correction is the
+useful part.
+
+**Carry this one:** a comment that reasons about a file it has not read can be
+wrong in a way that outlives the person who wrote it. Grep before you assert.
+
+### Three sentences no locale had
+
+`saveNotice.js` (iteration 21) localises its three ending sentences through
+`friendlyError`'s `translate` shim and shipped with **zero** `ERROR_DICT` rows in
+all six locales. `errorI18n.test.mjs` — the gate whose whole job is catching
+exactly that — scanned `friendlyError.js` only, so it never looked. It now scans
+`saveNotice.js` through its own extractor, and the 18 rows are in.
+
+**Carry this one too:** a gate that scans one file cannot notice a second file
+borrowing the same shim. And the two edits were coupled — rows without a widened
+scan trip the gate's own orphan test.
+
+### Gates and mutations
+
+`errorBanner.test.mjs` +93 lines (one raw string per rule, ≥14 must match a rule
+with advice so the loop cannot pass vacuously; the three-line file-not-found
+shape with a spacey volume; inline `pre-wrap`; a host `#errors` left alone; the
+stylesheet rule). `errorI18n.test.mjs` +36 lines (the saveNotice scan, the
+`>= 45` → `>= 48` threshold, a three-sentence spot-check).
+
+7 mutations applied with the occurrence-guarded Node form, 7 caught, all files
+restored byte-identical. Two reported `SETUP-FAIL` on the first pass — Korean
+values written as `\uXXXX` in the harness where the file holds them literally.
+That is the guard doing its job; a `perl -0pi` would have reported success.
+
+`npm run build-verify` exit 0, `npm run build:renderer` exit 0 (375 files).
+
+### Still open on this front
+
+The 18 new translations are machine-authored and want a native-speaker pass —
+same list as the 486 in `UI_DICT_ROWS`. The anchor tier's evidence-free
+`return SAVED` is unchanged in both cascades. `PRINTED` still only means
+`window.open` succeeded. `_path()` truncates an unquoted path at its first
+space — latent, since every observed ENOENT string quotes it. The general sweep
+for comments that assert things about files they never read has not been run.
