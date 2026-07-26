@@ -2312,3 +2312,110 @@ The 250 identity entries are not claimed as correct — they are *recorded*. Som
 are right (a locale keeping a proper noun), some are almost certainly a
 translator writing the English back. Telling those apart needs a native speaker,
 not a script, and I stopped at the line where I would have been guessing.
+
+## Iteration 17 — the strings the parity scan could not see
+
+Iteration 16 fixed the inward half of i18n: of the keys the dictionary holds,
+which locales are missing one. This iteration asked the outward question, which
+is the one a user actually experiences: of the strings on screen, how many has
+the dictionary never heard of at all?
+
+The answer, measured against `src/index.html`: **1849 of 2076 prose strings.**
+
+That failure is worse than a locale gap and much harder to notice. `applyI18n`
+derives its lookup key from the rendered English wording, so a label with no key
+falls through in ALL SIX locales at once. Nothing looks asymmetric — every
+language is equally broken — so `i18nParity.test.mjs` reports a clean bill of
+health while a Korean user reads English. A per-locale scan is structurally
+incapable of seeing this.
+
+### What shipped
+
+**`FOLD_INDEX` (`src/scripts/modules/i18n.js`).** `_candKeys` folds the string
+coming out of the DOM but never the dictionary keys, so markup written `"NAME"`
+missed the existing key `"Name"` and 20 strings lost a translation that was
+already sitting in the dictionary. The fold index is consulted only after an
+exact match fails, and it holds only folds owned by exactly one key: `"PULL
+PREP"` and `"Pull Prep"` are both real keys and may carry different
+translations, so nothing can pick between them from the folded form. 15 such
+collision groups exist (31 keys), and none of the 20 fixable strings falls in
+one — checked before the fix, not assumed. 743 keys in, 712 folds out.
+
+**`UI_DICT_ROWS`.** 83 keys the dictionary had never held, all of them strings
+already on screen in English: all 69 aria-labels and 14 of the 16 placeholders,
+× 6 locales = 486 translations. Gap-fill only, same contract as `PARITY_DICT`:
+it never replaces a string somebody already authored. Three cells are
+deliberately empty — `id` and `fil` keep "Mix", `id` keeps "Volume" — because an
+honest hole beats a key→key pair that satisfies a presence check while changing
+nothing a user reads.
+
+**`tests-js/uiCoverage.test.mjs` + `tests-js/lib/uiStrings.mjs`.** 12 tests. The
+library executes the app's real `toEnglishKey` and `KEY_SET` via a base64
+`data:` module rather than re-implementing them, for the same reason
+`i18nDict.mjs` does: a gate that re-implements the thing it measures drifts away
+from it.
+
+### What is gated, and what deliberately is not
+
+aria-label and placeholder are hard-gated at **zero**. They are small, stable,
+and they are exactly the strings a sighted mouse user never notices and a
+screen-reader or keyboard user cannot avoid — least visible to whoever is
+testing, most costly to whoever is affected.
+
+Body text, title and `<option>` are **not** shrink-only. `src/index.html` is
+edited daily; a tight bound over 1800 strings would turn every ordinary copy
+edit into a red build, and a gate that cries wolf gets deleted rather than
+obeyed. What guards them instead is a landslide bound (1900 against a measured
+1744) that will not notice one new sentence and will notice the i18n path
+breaking wholesale. That is a real weakening, and it is written into the test
+header rather than hidden behind a number.
+
+### Coverage after
+
+| kind | before | after |
+|---|---|---|
+| aria-label | 69 missing | **0** |
+| placeholder | 16 missing | **2** (both excluded, with reasons) |
+| body text | 1490 | 1463 |
+| title | 294 | 286 |
+| `<option>` | 56 | 56 |
+| **total** | **1849** | **1744** |
+
+Dictionary keys 660 → 743. Parity absent 31 → 34, identity unchanged at 250.
+
+### Two things this iteration got wrong first
+
+**A test of mine was vacuous and a mutation caught it.** The collision guard was
+asserted through `toEnglishKey('PULL PREP') === 'PULL PREP'`, which looks like
+the stronger test and is actually the empty one: `_candKeys` already tries the
+all-caps spelling, so for any collision group the exact-match loop wins and
+`FOLD_INDEX` is never consulted no matter what it holds. Mutating the guard away
+left all 12 tests green. The test now asserts against the index directly and
+carries an anti-vacuity guard that fails if no two keys differ only by case —
+because on that day the test proves nothing and should be deleted along with the
+guard, not left standing as decoration. A gate that has never failed has not
+been shown to work.
+
+**linkedom drops a bare fragment silently.** `parseHTML("<body>…</body>")`
+returns a document whose `body` is empty, with no error. The first detector
+probe therefore reported zero problems and looked like a bug in the scanner.
+`scanUI` now throws on an empty body: a detector that never fires is worse than
+no detector, because it reports "fine".
+
+Five mutations, each anchor-guarded, restored, and verified byte-identical with
+`diff -q`. Four failed on the first pass; M4 is the one above.
+
+### Still open
+
+The **1744 remaining** body/title/option strings are now measured and bounded
+rather than fixed — the largest open i18n item, and the honest description of it
+is "we know the size of the debt now", not "we paid it". `src/index.html` still
+carries **zero** `data-i18n` attributes, which is why all of this has to be
+inferred from wording in the first place. The 41 wording-drift near-misses
+(`"Pull Prep How to Use"` vs `"Pull Prep — How to Use"`) are moot for the 85
+gated strings and still live for the rest.
+
+**The 486 new translations are machine-authored.** They are present, which is
+strictly better than English-in-every-locale, and presence is not quality. A
+native speaker should read them. That is a review question, not a build one, and
+no gate here should be read as claiming otherwise.

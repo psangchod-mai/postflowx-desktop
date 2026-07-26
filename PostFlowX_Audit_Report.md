@@ -2238,3 +2238,71 @@ An authored dataset is data. Verify it like data.
   `#btnTutorial` handler pair; the global How to Use button showing
   `#tlcTutorialModal` in static English; the tab-name consistency sweep;
   `.pm-controls` being the only panel with a help affordance.
+
+## Audit 17 — measuring the UI instead of the dictionary
+
+### 17.1 The measurement
+
+`tests-js/lib/uiStrings.mjs` walks `src/index.html` exactly the way `applyI18n`
+walks the live DOM — same explicit stack, same `script`/`style` skip, same five
+kinds (text node, `title`, `placeholder`, `aria-label`, `<option>` text) — and
+resolves every string through the app's own `toEnglishKey`. 2310 distinct keys
+reach a lookup; 2060 survive the prose filter; **1744** have no dictionary key.
+
+The prose filter errs toward keeping: a false keep is one more visible line of
+debt somebody can dismiss in review, a false drop hides a real gap forever. It
+drops only strings with no two consecutive letters, URLs, anything containing
+braces (command templates — translating `{metafier} -e {out}` would break the
+command), pure digits/punctuation, bare file extensions, and filesystem paths.
+
+### 17.2 Species found
+
+- **case-mismatch-miss** (new) — markup `"NAME"`, dictionary `"Name"`, no match.
+  20 instances, all now resolved by `FOLD_INDEX`. The translation existed the
+  whole time; the lookup could not reach it.
+- **vacuous-assertion** (new) — a test that survives the mutation it was written
+  to catch. One instance, mine, found by mutation testing rather than by review.
+- **absent-translation** — 34 (up from 31 by measurement growth, not regression).
+- **identity-translation** — 250, unchanged.
+
+### 17.3 Gate honesty
+
+Two of the twelve tests exist only to keep the other ten meaningful:
+
+- *"the walk reaches every kind of string applyI18n translates"* — a walk that
+  silently stopped early would report zero misses and look perfect.
+- *"the scan can tell a covered string from an uncovered one"* — probed both
+  directions, because a detector that never fires and one that always fires both
+  report "no problem" on the day it matters.
+
+The exclusion list (`X-PostFlowX-Token`, `name@example.com`) is checked for
+staleness — an exclusion for a placeholder that no longer exists is a claim
+about the UI that stopped being true — and capped at 2. It is an exclusion list
+with a reason per entry, not a baseline, and the cap is what keeps it from
+quietly becoming one.
+
+`MAX_ABSENT` went 31 → 34. The justification is written into
+`i18nParity.test.mjs` rather than left in a commit message, because a baseline
+is a debt list and raising one should be an edit somebody has to defend in
+review. The three new entries are honest holes in `UI_DICT_ROWS`, not
+regressions: filling them with key→key pairs would have held the number at 31
+while changing nothing a user reads — the same silent no-op this repo keeps
+finding in other forms.
+
+### 17.4 What the gate cannot see
+
+Stated in the test header so nobody reads a green build as more than it is:
+strings built in JavaScript at runtime (`ui.js` creates plenty of DOM, none of
+it measured here); whether any translation is *good*; the other two dictionaries
+(bwav's `I18N`, preflight's `locale.js`) which are separate implementations with
+separate coverage; and wording drift, which it reports as a miss without being
+able to say a near-identical key already exists.
+
+### 17.5 Deployment
+
+`npm run build:mac-dir` (unsigned, local). Verified end-to-end by extracting
+`dist/desktop/scripts/modules/i18n.js` from the packaged `app.asar`: `FOLD_INDEX`
+present, `UI_DICT_ROWS` present, and the Tagalog aria-label "Laki ng brush"
+present in the shipped bundle. A signed/notarized `npm run build:mac` needs the
+user's Apple credentials and pushes an artifact outward; that has not been
+authorized and was not run.
