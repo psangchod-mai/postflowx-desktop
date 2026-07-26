@@ -757,3 +757,67 @@ New fixture `test/fixtures/fcpx_ntsc.fcpxml` plus four tests: the golden, an exa
 
 - **Build:** `build-verify` exit 0 (250 passed / 7 skipped; XSS/XXE/fail-open gates clean), `build:renderer` → 368 files. Grepped the suite output for `fcpx_ntsc.fcpxml` to confirm the new tests ran *inside* the suite, not just standalone.
 - **Commit hygiene:** `store.js` was already dirty — the CSV formula-injection guard, 2 ins / 1 del, not mine. Caught by filtering the diff for lines I did not write, split by hunk, residual verified intact afterwards. A 644→755 mode flip on the new test file was caught by `git diff --cached --summary | grep -i mode` and cleared before committing.
+
+---
+
+## Iteration 15 — `7791423` — the two-rate contract
+
+The last five iterations each fixed one file that had guessed wrong about what `fps` meant. This one removes the reason there was anything to guess.
+
+### RESEARCH — `fps` had no single meaning, and that *is* the bug class
+
+Surveying all six live parsers for what they actually put in the `fps` field:
+
+| parser | what `fps` was | for a 23.976 show |
+|---|---|---|
+| `fcpxml.js` | nominal whole base | `24` |
+| `prproj.js` | nominal whole base | `24` |
+| `otio.js` | nominal whole base | `24` |
+| `xml.js` | **true playback rate** | `23.976023976…` |
+| `edl.js` | **whatever the header said** | `23.976` (from `FRAME_RATE:`) |
+| `ale.js` | **whatever the header said** | `23.976` (from `FPS\t`) |
+
+Three different answers under one name. Every downstream module had to guess which it had been handed — and **the workarounds are a census of the defect**: `prep_mark` learned to reach past `fps` for `timecodeBase`; `trlconf` did not, and ran whole NTSC conforms on fractional frame counts.
+
+**This corrects iteration 14's sibling scan**, which recorded that "`ale.js` and `edl.js` have no rate arithmetic." They have no rate *arithmetic*, which was true and beside the point — they `parseFloat` a header rate directly into `fps` and stamp every event with it. A fractional rate reaching `fps` is the same defect whether it was computed or copied. The scan asked the wrong question.
+
+### CODE — both rates, named
+
+Every parser now exports:
+
+- **`fps`** — the whole-frame timecode base: how many frame fields fit in a timecode second. Always an integer. What TC↔frames math must use.
+- **`fpsExact`** — the true playback rate. What real-time math must use: seconds↔frames, an A/V clock, an AE comp's frame rate.
+
+0.1% apart on every NTSC rate — 3.6 seconds per hour. Small enough to look like nothing in a unit test, large enough to lose sync.
+
+`nominalBase()` from `utils_time.js` (leaf module, zero imports) is the shared derivation. `edl.js` and `ale.js` previously had *zero* imports; before adding one I verified both are real ES modules and checked every load site, including the `await import(...)` and `chrome.runtime.getURL` paths a static grep does not see.
+
+### The finding that changed the shape of the fix
+
+Mid-iteration, tracing who consumes `xml.js`'s rate turned up `_pmFpsToRational` (`prep_mark.js:77`). It matches 23.976 → `24000/1001`, but **falls through to `{num: Math.round(fps), den: 1}`**.
+
+So the FrameClock was right for XMEML and quietly wrong for everything else: an NTSC **FCPXML** reported `24`, matched no NTSC entry, and ran the A/V clock at `24/1` — **0.1% fast, 3.6s of drift per hour against the media.** XMEML was the only source that got the rational right, and it got it right *because of the very line that broke trlconf's conform math*.
+
+That settled the design. Under a one-rate contract the two consumers **could not both be correct** — so the split is the fix, not a tidy-up. Making `xml.js` merely match its siblings would have fixed trlconf and broken the clock for all six sources. `prep_mark` now reads `fpsExact` first, so every source feeds the clock the true rational rate.
+
+### AUDIT
+
+Same show, same `01:00:00:00`, downstream `_tcToFrames(tc, result.fps)` in trlconf's shape:
+
+| | before | after |
+|---|---|---|
+| XMEML | **86313.68631368632** | **86400** ✓ |
+| FCPXML | 86400 ✓ | 86400 ✓ |
+
+Enforced centrally in `test/_contract.mjs` — `fps` integer, `fpsExact` positive, `round(fpsExact) === fps` — rather than per-parser, because per-parser assertions are exactly how the three answers diverged in the first place. All five existing parser test files are subject to it.
+
+**`xml.js` had five call sites and no test file at all.** Added `test/parsers/xml.test.mjs` (5 tests) with NDF and NTSC fixtures, a six-rate sweep, an error-path shape check, and a regression that runs a downstream conform and asserts it reaches 86400 *whole* frames.
+
+**A first draft of the fixtures was wrong and got caught by looking at the output before writing assertions.** I had set each clipitem's `<file><timecode><frame>` equal to its own `<in>`, so a 4-second in-point step produced an 8-second `srcIn` step. The parser was correct — XMEML `<in>` is an offset *into* the media and `srcIn = fileTC + in`, so my fixture double-counted. Asserting the observed numbers would have baked my own fixture error into the suite as expected parser behaviour.
+
+**Two ALE assertions failed, correctly.** `tests-js/aleParser.test.mjs` asserted `fps === 29.97` and `fps === 23.976` — the old single-rate contract. Updated to assert *both* halves, which is stronger than before: the header rate is still read verbatim (now `fpsExact`), and the derived base is checked too. The fact the old tests protected is not lost, it is checked in the right place.
+
+- **Build:** `build-verify` exit 0 (250 pytest passed / 7 skipped; XSS/XXE/fail-open gates clean), `build:renderer` → 368 files.
+- **Commit hygiene — two catches.** `prep_mark.js` was dirty with ~60 foreign hunks (835 ins / 138 del) against my 11 lines; `edl.js` carried a foreign `isVideoTrack` hunk. Both split out by patch surgery and verified absent from the staged diff. Then `git update-index --chmod=-x` **silently re-registered the whole working-tree file**, putting all 973 lines back into the index — caught only because the staged stat was re-read after the chmod rather than assumed. Restaged from the isolated patch. Final commit: 346 insertions across 12 files, no mode flips.
+
+**Heuristic for the file:** `git update-index --chmod` is not a mode-only operation — it re-stages content. Never run it on a file that is partially staged, and always re-read `git diff --cached --stat` afterwards.

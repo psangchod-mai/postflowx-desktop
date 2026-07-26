@@ -532,3 +532,33 @@ Converged: `reviews/store.js`, `modules/cutdiff.js`, `parsers/fcpxml.js` (this i
 Remaining, in priority order: **`modules/amf_convert.js`** — three private copies (`:1563` `tcToFramesLocal` + a `framesToTc`-alike at `:1571`, `:2517`, `:4337`) with consumers at 1626, 4594, 4595, 4740 (`framesToSec` — check which kind of conversion that is before touching it) and 4800. Then `features/edl/filters.js` (not yet surveyed) and `features/edl/timelineAutoInject.js` (private `tcToFrames` at `:53` returns NaN on failure, uses the raw fps, but has no `/ fps` anywhere and its values are used relatively for lane allocation — low impact, DOM-dependent, hard to test here).
 
 Do **not** touch `parsers/fcpxm.js` or `features/edl/pipeline/recOffset.js`. Both have zero importers, confirmed against dynamic imports.
+
+---
+
+## Iteration 15 — `fps` meant three different things
+
+**Severity: high.** Not a single defect — a defect *class*, and the source of most of the rate bugs iterations 10–14 fixed one file at a time.
+
+### The finding
+
+Six parsers, one field name, three meanings. `fcpxml`/`prproj`/`otio` reported the nominal whole-frame base; `xml.js` reported the true playback rate; `edl.js`/`ale.js` reported the file header verbatim, which for `FRAME_RATE: 23.976` is fractional. Consumers cannot introspect which they received, so each guessed. `trlconf` guessed "nominal" and conformed an NTSC hour to **86313.686** frames instead of 86400 — short *and* fractional. `prep_mark` guessed "playback" and reached past `fps` for `timecodeBase`.
+
+### The finding underneath it
+
+`_pmFpsToRational` (`prep_mark.js:77`) maps 23.976 → `24000/1001` but **falls through to `{num: Math.round(fps), den: 1}`**. Because `xml.js` alone reported the exact rate, XMEML was the only import whose A/V clock ran at the correct rational. An NTSC **FCPXML** reported `24`, matched no NTSC branch, and drove the clock at `24/1` — **0.1% fast, 3.6 seconds of drift per hour against the media.**
+
+The two consumers of that one number needed opposite values and **both were right**. That is the proof the field was overloaded rather than merely wrong: no single value could satisfy both, so no amount of correcting `xml.js` would have fixed it. Splitting into `fps` (whole timecode base) and `fpsExact` (true playback rate) is the only fix that leaves both consumers correct.
+
+### Heuristics added
+
+- **When two correct consumers demand different values from one field, the field is overloaded — stop fixing the producers.** Iterations 10–14 were each a locally-correct fix to a globally-underspecified contract. The tell is a wrapper or consumer that *reaches past* the obvious field for a sibling (`timecodeBase`): it is reporting the contract gap.
+- **A scan can be accurate and still ask the wrong question.** Iteration 14 recorded that `ale.js`/`edl.js` "have no rate arithmetic." True — and irrelevant. They copy a fractional header value straight into `fps`. A rate does not have to be *computed* wrong to *be* wrong; the scan should have asked what the field contains, not what math produced it.
+- **Look at real output before writing assertions.** My own NTSC fixture double-counted source timecode (`<in>` is an offset into the media, so `srcIn = fileTC + in`). Writing assertions from the observed numbers would have recorded my fixture bug as correct parser behaviour, in a file whose name claims to protect the parser.
+- **A failing pre-existing test may be asserting the contract you just replaced.** Two ALE assertions read the fractional rate off `fps`. The repair is to move the assertion to the field that now carries the fact — not to relax it, and not to delete it.
+- **`git update-index --chmod` re-stages file content.** It re-registered all 973 dirty lines of `prep_mark.js` over my carefully isolated 11-line hunk. Caught only by re-reading `git diff --cached --stat` after the chmod. Verify the index after every operation on it, including ones that sound metadata-only.
+
+### Still open (unblocked by this contract)
+
+- `trlconf/index.js:2303` — `delta / state.fps` is the one site in that file wanting the *true* rate; repoint at `fpsExact`.
+- `modules/amf_convert.js` — three private TC helper copies, plus `framesToSec` at `:4342` and the `ensureComp` comp rate at `:4740` inside **generated After Effects ExtendScript**, which cannot import `nominalBase`. Both rates must be threaded in via `JOB`.
+- `aaf_wasm.js` is not covered by `assertParseResult` and was not converted.
