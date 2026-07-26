@@ -89,6 +89,17 @@ Not fixed because: the functions are private to `ui.js` and unreachable from `te
 3. **A sentinel that passes the caller's validity check is worse than a value that fails it.** `ui.js`'s parser returning `0` instead of `NaN` is exactly what killed its own fallback chain.
 4. **A green suite tells you the assertions passed, not that they ran against the thing their names claim.** Four times this run a mutation survived every new test. The sharpest case: a *property* test — `tcToFrames(framesToTC(f)) === f` — holds for any self-consistent base, so flooring 23.976 to 23 round-trips perfectly. Invertibility cannot distinguish base 24 from base 23; only a known absolute frame count can.
 
+## Packaging — done once, at the end, and verified
+
+`npm run build:mac-dir` at 07:07, exit 0. `dist/mac-arm64/PostFlowX.app` rebuilt. The sealed `dist/desktop/scripts/modules/edl_export.js` extracted from `app.asar` is **byte-identical to the worktree source** and contains both the fix (3 `nominalBase` references) and your `FCM: DROP FRAME` line — so the EDL fix and your drop-frame work are both live in the packaged app.
+
+Two side effects on tracked files, left uncommitted for you to judge:
+
+- **The universal Swift build is no longer broken on this machine.** `build:avf` ran the full arm64 + x86_64 + `lipo` path and succeeded. `electron/native/avf_bridge` went from 288,872 bytes (arm64-only, what's at HEAD) to 571,504 bytes; `lipo -archs` reports `x86_64 arm64`, and the copy sealed into `app.asar.unpacked` is identical (`shasum 95419ec…`). The June 2026 report's note that the universal build is broken here is now out of date.
+- `electron/native/avf_bridge_arm64` shows as deleted, which is just the `build:avf` script's own `rm` of its intermediates — the script creates and removes that file on every run, so the end state is the same either way.
+
+Two unrelated build-environment notes from the log, neither an error: the optional Metal HTJ2K decoder was skipped (`brew install openjph` to enable it), and `GOOGLE_DESKTOP_CLIENT_ID` was unset so Google login is disabled in this build. Code signing was skipped, as expected for `build:mac-dir`.
+
 ## Suggested first moves
 
 1. Confirm your drop-frame work in `src/scripts/modules/edl_export.js` is intact (item 2 above) before `/tmp` clears.
