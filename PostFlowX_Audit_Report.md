@@ -1738,3 +1738,214 @@ The repair deliberately made one of those branches live rather than deleting it.
 - Open question worth the next iteration: `.pm-controls` now has a help
   affordance. No other panel in the app does. Which other panels have authored
   help that is reachable only from somewhere non-obvious?
+
+## Audit 14
+
+### 14.1 A new species: the silent no-op control
+
+Every defect species catalogued so far has been a *reference* problem — an id
+that points at nothing, a global that is never assigned, content with no door.
+This one is different in kind. Every reference involved was valid. The table
+`_tutModalMap` was well-formed, every id in it existed, every tutorial it named
+was reachable. The defect was a **missing table row**, and the code's response
+to a missing row was `return`.
+
+    const modalId = _tutModalMap[tabKey];
+    if (!modalId) return;
+
+That is a correct-looking guard. It is the same idiom as the `if (!modal)
+return` from iteration 12 and the dead equality guards from iteration 13: a
+construct whose stated purpose is defensive, quietly converting a structural
+gap into silence. Three iterations, three different shapes, one habit.
+
+What makes it the most user-visible of the three is that the silence lands on a
+click. A user who presses How to Use and sees nothing does not conclude "this
+screen has no guide". They conclude the application is broken — and they
+conclude it at the exact moment they had already admitted to being stuck. One
+third of the tabs did this.
+
+The honest framing for the next occurrence: **a control that can do nothing must
+say so.** A no-op that is indistinguishable from a crash is a crash, as far as
+the only person whose opinion counts.
+
+### 14.2 Three questions about the same two sets, three different blind spots
+
+The gate set now reads:
+
+| Gate | Question | Found |
+|---|---|---|
+| `modalIds.test.mjs` | does every id a router names exist? | phantom ids |
+| `reachableTutorials.test.mjs` | does every authored tutorial have a router? | the stranded player tutorial |
+| `tutorialCoverage.test.mjs` | does every **tab** get an answer? | four silent tabs |
+
+The first two were green while a third of the app had no help at all. They are
+both about the mapping between *routers* and *modals*, in opposite directions —
+iteration 13 already recorded that a one-directional gate has a blind spot
+exactly the size of the other direction. What this iteration adds is that
+**both directions of a mapping can be complete while the mapping is pointed at
+the wrong set entirely.** Neither gate mentioned tabs. Tabs are what the user
+touches.
+
+Generalised: before writing a gate over a mapping, name the set the *user*
+inhabits and check that it appears on one side of the mapping. Here that set was
+`.tabs .tab[data-main]` — twelve elements, eight of them covered, and nothing in
+the suite counted them.
+
+A related note on gate honesty. Widening `reachableTutorials.test.mjs` to see
+`_openTutorial`'s direct assignment was the second option considered. The first
+was a fake `_tutModalMap` entry keyed to a tab that does not exist, which would
+have turned the gate green without making anything reachable. The rule the gate
+states — "authored content must be reachable" — was right; its *implementation*
+had narrowed to "must appear in a table". Fixing the implementation and proving
+the widened gate still fails on HEAD's real defect is the difference between
+maintaining a gate and decorating one.
+
+### 14.3 HEAD does not contain its own source
+
+This is the largest finding of the run and it was found by accident, while
+trying to verify iteration 14 honestly.
+
+Verifying against a `git archive HEAD` tree — the closest thing available to a
+fresh clone — does not produce a working checkout. It dies here:
+
+    Error [ERR_MODULE_NOT_FOUND]: Cannot find module
+      …/src/scripts/features/aceslook/services/ocfIdtResolver.js
+      imported from …/src/scripts/features/vfxPull/colorPlanEngine.js
+
+`colorPlanEngine.js:25` is tracked and committed. `ocfIdtResolver.js` is 9,990
+bytes on this disk, dated 27 June, and was never `git add`ed.
+
+A systematic scan of every relative import in every tracked `src/**/*.{js,mjs}`
+found this is not one file. **10 tracked files hold 19 static imports of 15
+distinct untracked modules:**
+
+| Tracked importer | Untracked module(s) |
+|---|---|
+| `features/aceslook/services/amfBuilder.js` | `ocfIdtResolver.js` |
+| `features/aceslook/services/presetService.js` | `defaultPresets.js` |
+| `features/home/homeScreen.js` | `setupWizard.js`, `appTour.js` |
+| `features/trlconf/index.js` | `core/resolveVideoTransport.js`, `modules/conform/{pictureMatcher,endRefine,multiMaster,shotDetect,mergeMatches}.js` |
+| `features/vfxPull/colorPlanEngine.js` | `ocfIdtResolver.js` |
+| `features/vfxPull/fdlGenerator.js` | `ocfIdtResolver.js` |
+| `features/vfxPull/vfxPullPanel.js` | `idtBadge.js`, `mediaSearch/mediaSearchBox.js`, `dbLibrarySource.js` |
+| `modules/imf/imf_player.js` | `imf_gl_present.js` |
+| `modules/imf/imf_ui.js` | `mediaSearchBox.js` |
+| `scripts/prep_mark.js` | `modules/conform/pictureMatcher.js`, `vfxPull/backendStatusBadge.js` |
+
+19 edges, 15 modules: `modules/conform/pictureMatcher.js` and
+`features/mediaSearch/mediaSearchBox.js` are each imported from two different
+tracked files.
+
+The consequences are worse than "a clone is missing some features", for a
+reason specific to how the suite runs. `npm run test:js` is a shell loop:
+
+    for f in tests-js/*.test.mjs; do echo "• $f"; node "$f" || exit 1; done
+
+An `ERR_MODULE_NOT_FOUND` is a dead process, so the run stops at
+`aeScript.test.mjs` — third file, alphabetically — and **every gate after it
+never executes.** That includes `modalIds`, `reachableTutorials`,
+`tutorialCoverage`, `domContract`, `accessibleNames`, and the two gates this
+loop committed today. On a fresh clone the automated auditing this whole
+exercise is building does not run at all, and the failure it reports is a
+missing file, not a failing gate.
+
+Local green is green. It is green for a reason that will not survive a clone,
+which is a different property from the one the gates claim to establish.
+
+Two ways out, and the choice is the user's, not this loop's:
+
+1. **`git add` the 15 modules.** Fixes HEAD outright. But these are the user's
+   in-flight files, and the loop's standing git policy is to commit only the
+   files each iteration touches. There is precedent for asking rather than
+   assuming — `friendlyError.js` was swept in at `887b161` and a standing offer
+   to `git rm --cached` it back out is still open and unanswered.
+2. **A shrink-only baseline gate.** `tests-js/selfContained.test.mjs` plus
+   `tests-js/fixtures/untracked-imports.json`, modelled exactly on
+   `domContract.test.mjs` and its `phantom-ids.json`. Green today against the
+   known 19 edges, red the moment a twentieth appears, and the number can only
+   go down. This is already the repo's established convention for visible,
+   monotonically decreasing debt.
+
+Recommended: (2) now, because it costs the user nothing and stops the debt
+growing; (1) whenever the user says the word.
+
+### 14.4 A mixed-state worktree manufactures failures that are not regressions
+
+The first verification attempt swapped HEAD blobs for `index.html` and `ui.js`
+into the live worktree. `domContract.test.mjs` promptly went red on three
+phantom ids — `#pfxVfxModeToggle`, `#pfxVfxVfFpsVal`, `#pfxVfxVfVisualMatchVal`
+— all from `src/scripts/prep_mark.js`.
+
+None of them were caused by the patch. `prep_mark.js` is one of the user's
+dirty files and looks up elements that exist only in the user's *uncommitted*
+`index.html`. Restoring HEAD's `index.html` beneath it produced a state that has
+never existed in any commit and never will.
+
+The lesson is a procedure, not an observation. When verifying against a
+baseline in a dirty tree, **the meaningful question is not "does anything fail"
+but "is the failure set identical with and without my change".** Here it was,
+which is what made the result usable. Building the baseline with `git archive`
+instead of in-place swaps avoids the question entirely, and is what the second
+attempt did — which is also how 14.3 surfaced.
+
+### 14.5 A gate that reads untracked text is green for the wrong reason
+
+Caught in the new gate before commit, and worth recording because it is the
+same defect as 14.3 in miniature. `tutorialCoverage.test.mjs` verifies that
+`window.pfxOpenSetupGuide` is actually assigned, by reading
+`src/scripts/features/home/setupWizard.js` — which is untracked. On a clone that
+`readFileSync` throws `ENOENT`, the process dies, and by the mechanism in 14.3
+every later gate silently never runs.
+
+It now reads defensively and `assert.fail`s with the real cause named. This is
+the second time in the run that a gate has been found depending on uncommitted
+text (two tests in `authConfigInherit.test.mjs` were rescoped for the same
+reason before the login fix was committed). Worth treating as a standing check
+on every new gate: *would this file's every assertion still be evaluable on a
+clean clone?*
+
+Tooling note from the same verification: `asar extract-file <archive> <path>
+--output <file>` and the `asar ef` alias both exit 0 and write a **0-byte
+file**, which briefly looked like evidence that the packaged app lacked the fix.
+The form that works is `cd <tmpdir> && <repo>/node_modules/.bin/asar
+extract-file <archive> <path>`, which writes the basename into the current
+directory. A tool that reports success and produces nothing is the same species
+as everything else in this audit.
+
+### 14.6 What the new gate cannot see
+
+- **Whether the help is correct.** Every assertion is satisfied by an entry
+  existing. Prose describing a button removed last year passes.
+- **Whether the help is current, or about the right feature.** Same blind spot
+  `modalIds.test.mjs` and `reachableTutorials.test.mjs` both have.
+- **Whether the user can find the How to Use button**, or whether the modal is
+  readable once open. Reachability is not usability, and nothing in the suite
+  measures the second.
+- **Tabs built at runtime.** Only authored markup is scanned.
+- **The other eight tabs' content quality.** The gate proves an answer exists
+  for all twelve; it says nothing about the eight that already had one.
+
+### 14.7 Follow-ups
+
+- **Resolved, carried since 12.7:** the global How to Use button silently doing
+  nothing on `bwav`, `preflight`, `renderq` and `home`. Fixed in `ff1ec07` and
+  gated by `tutorialCoverage.test.mjs`.
+- **New, highest value:** the 19 tracked → untracked imports of 14.3. Needs
+  the user's decision between `git add` and a baseline gate; the baseline gate
+  is the next iteration's candidate deliverable either way.
+- `_tutModalMap` holds keys `edl`, `cutdiff`, `shotmarker` and `amf` that are
+  not in the `data-main` tab set. They are legacy keys `#btnTutorial` can never
+  dispatch. The new gate checks the reverse direction for `_tutFallbackContent`
+  but not for `_tutModalMap`; extending it, or deleting the keys, would close
+  the last gap in this mapping.
+- The duplicate `#btnTutorial` handler pair is now five iterations old.
+  Consolidating it would remove both iteration 12's now-inaccurate "keep in
+  sync" comment and the entire bug class.
+- Carried, unchanged: the global button shows `#tlcTutorialModal` in static
+  English rather than the stored tutorial language; a tab-name consistency sweep
+  across the other ten tabs.
+- Open question from 13.7, still open and now sharper: `.pm-controls` has a help
+  affordance and no other panel does. Iteration 14 answered the *tab* level of
+  this question exhaustively. The *panel* level is unmeasured — there is no set
+  of "panels" in the markup to enumerate the way `data-main` enumerates tabs,
+  which is itself the reason nothing has ever checked it.

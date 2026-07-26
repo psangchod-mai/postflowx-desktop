@@ -1890,3 +1890,192 @@ direction found what the first could not.
 - Working-tree diff for the three source files shrank 82→77, 60→43, 631→627,
   with deletions unchanged at 356. Exactly the 5, 17 and 4 lines added; none of
   the user's in-flight work was swept in.
+
+## Interruption — the login screen that locked everybody out
+
+Not an iteration. The user sent a screenshot of the PostFlowX login card with a
+red banner reading:
+
+    PostFlowX access policy service is not configured for this build.
+
+Sign-in was impossible. The cause was `npm run build:renderer` — the command
+this loop runs every single iteration, and one of the two commands the loop is
+required to end green on.
+
+`build-renderer.js` resolved two credentials like this:
+
+```js
+const apiUrl = (process.env.POSTFLOWX_AUTH_API_URL || '').trim();
+```
+
+and then wrote the result straight over `authConfig.json`, which
+electron-builder ships as `Resources/authConfig.json` — the only auth config the
+packaged main process reads. So an absent env var did not mean *leave the
+existing value alone*; it meant *delete the working URL that is already there*.
+Nothing failed. The build printed success and the app launched, into a login
+screen nobody could get past.
+
+A second, independent defect made the first one fatal.
+`_getPostflowxAuthApiUrl()` read exactly two sources — env, then
+`Resources/authConfig.json` — while `_getGoogleClientId()` beside it has always
+had four. One empty string was therefore enough to take access checking offline
+with nothing behind it.
+
+### The fix
+
+- `tools/authConfigInherit.js` (new) — `resolveInherited()` takes the first
+  source that actually holds a value: env, then the previous build's output,
+  then the developer's local config. Only a value nobody has ever supplied
+  resolves to empty.
+- `build-renderer.js` — routes both credentials through it, and prints
+  `✓ access policy service: configured` so a build that silently disarmed auth
+  can no longer look identical to one that did not.
+- `electron/ipc.js` — `_getPostflowxAuthApiUrl()` gains the same fallback chain
+  `_getGoogleClientId()` already had.
+
+`meechumClientSecret` was deliberately left out of the inheritance chain. The
+comment in `build-renderer.js` is explicit that it is for local testing only and
+must never be written into a file that ships inside the bundle; inheriting it
+would have done exactly that.
+
+### The gate
+
+`tests-js/authConfigInherit.test.mjs` (182 lines). The rule it enforces is
+narrow on purpose: **a build must not erase a credential that already exists.**
+Absence is not the failure — erasure is. Phrased that way, a fresh clone with no
+env and no prior build does not trip it, while the exact regression that locked
+the user out does.
+
+Two of the ten tests originally read code that is still uncommitted in the
+user's tree and had to be rescoped before commit; a gate that depends on
+untracked text is green for a reason that will not survive a clone.
+
+### Verification
+
+- Negative-verified on both defects: with the shipped `build-renderer.js` and
+  `electron/ipc.js` restored, the gate went red on each independently, while the
+  five access-policy tests stayed green throughout.
+- `npm run build-verify` exit 0.
+- `git show --stat 9a08615` read `build-renderer.js | 61`,
+  `electron/ipc.js | 14`, `tests-js/authConfigInherit.test.mjs | 182`,
+  `tools/authConfigInherit.js | 52` — 297 insertions, 12 deletions, every hunk
+  this fix's own.
+- Repackaged with `npm run build:mac-dir`.
+
+Still open and flagged to the user: `GOOGLE_DESKTOP_CLIENT_ID` is empty in this
+build, so Google sign-in stays disabled. That predates the loop and no value was
+invented for it. The one step that cannot be verified from here is the user
+relaunching the app and confirming sign-in works.
+
+## Iteration 14 — the help button that did nothing
+
+Twelve tabs carry `data-main`. `_tutModalMap` named a bespoke tutorial modal for
+eight. The other four — HOME, BWAV INSPECTOR, PREFLIGHT, RENDER QUEUE — reached
+this:
+
+```js
+const modalId = _tutModalMap[tabKey];
+if (!modalId) return;          // <- one third of the app
+```
+
+Press How to Use on any of those four and nothing happens. No modal, no message,
+no console warning, no throw, no visual acknowledgement that the click landed.
+
+That is worse than having no help button. "No guide for this screen yet" is
+information a user can act on. A button that visibly does nothing reads as *this
+application is broken* — and it reads that way to precisely the non-technical
+user who pressed it because they were already stuck.
+
+Both existing gates were green the whole time:
+
+| Gate | Question it asks | Saw this? |
+|---|---|---|
+| `modalIds.test.mjs` | does every id a router names exist? | no |
+| `reachableTutorials.test.mjs` | does every authored tutorial have a router? | no |
+
+Neither asks about tabs, and the tab is what the user is standing on.
+
+### The fix
+
+**HOME** does not get a modal. It routes to `window.pfxOpenSetupGuide` — the
+Setup Guide is a real interactive walkthrough that inspects this machine and
+offers to fix what it finds, and any modal written here would be a worse copy of
+something better that already exists.
+
+**BWAV, PREFLIGHT and RENDER QUEUE** get `#genericTutorialModal` (21 lines of
+markup in `src/index.html`), filled at runtime from `_tutFallbackContent` — a
+plain JS table of `{title, steps:[{t,p}], tip}`.
+
+Content as data, not as markup, on purpose: the two routing tables in `ui.js`
+have already drifted apart once, and each new hand-authored modal is another
+copy of the same structure waiting to drift. `_fillFallbackTutorial` builds the
+DOM with `createElement` and `textContent` — never `innerHTML` — so the new
+content cannot become an argument with the XSS scanner pointed at that file.
+
+`_openTutorial`'s head now reads:
+
+```js
+let modalId = _tutModalMap[tabKey];
+if (!modalId) {
+  if (tabKey === 'home' && typeof window.pfxOpenSetupGuide === 'function') {
+    try { window.pfxOpenSetupGuide(); return; } catch (_) {}
+  }
+  modalId = _fillFallbackTutorial(tabKey) ? 'genericTutorialModal' : '';
+}
+if (!modalId) return;
+```
+
+### What the non-technical user gets
+
+Three screens that answered a help request with silence now answer it with a
+walkthrough, and the fourth opens the guide that was built for exactly that
+moment. Nothing in the app now responds to How to Use by doing nothing.
+
+### The gate
+
+`tests-js/tutorialCoverage.test.mjs` (227 lines, 9 tests) asks the third
+question in the set: **does every *tab* get an answer?** A tab passes only if it
+has a `_tutModalMap` entry naming a modal that exists, or is `home` with a live
+Setup Guide route, or has an entry in `_tutFallbackContent`.
+
+`_fillFallbackTutorial` does have a generic "no walkthrough yet" branch for an
+unknown key, and the gate deliberately does **not** accept it. A newly added tab
+should make this gate fail, so that whoever adds the tab decides what its help
+says. The net is there for the case nobody planned; it is not a plan.
+
+`tests-js/reachableTutorials.test.mjs` was widened in the same commit. It went
+red on `#genericTutorialModal` — correctly by its own reading, and wrongly in
+fact, because a user can open that modal from three tabs. The rule was always
+*reachable*, never *in a table*; the scan had quietly conflated the two. It now
+also reads `_openTutorial`'s direct `modalId = '…TutorialModal'` assignment. The
+tempting alternative was a fake table entry keyed to a tab that does not exist,
+which would have turned a true gate into a decorative one.
+
+### Verification
+
+- Both tutorial gates green in the worktree: **13/13**.
+- Negative-verified: with HEAD's `ui.js` and `index.html` restored in place,
+  `tutorialCoverage.test.mjs` went 6 red / 3 green, naming exactly `bwav`,
+  `preflight` and `renderq`; the separate Setup-Guide test covered `home`. The
+  worktree was restored byte-identical (sha256 match, no mode change).
+- The widened `reachableTutorials.test.mjs` was run against HEAD and stayed
+  green — proof the widening did not loosen it into uselessness.
+- Verified on a real `git archive HEAD` tree rather than by swapping blobs into
+  the dirty worktree. An earlier in-place swap produced two `domContract`
+  failures that were a mixed-state artifact, not a regression: HEAD's
+  `index.html` meeting the user's uncommitted `prep_mark.js`. The decisive test
+  is whether the failure set is identical with and without the patch — it was.
+- `npm run build-verify` exit 0 — 250 Python passed / 7 skipped, XSS / XXE /
+  fail-open gates clean.
+- `npm run build:renderer` — `✓ access policy service: configured`, 372 files,
+  v2026.6.1.
+- `git show --stat ff1ec07` read `src/index.html | 21`,
+  `src/scripts/ui.js | 131`, `tests-js/reachableTutorials.test.mjs | 53`,
+  `tests-js/tutorialCoverage.test.mjs | 227` — 417 insertions, 15 deletions.
+- Working-tree diff for the two source files shrank 98→77 and 174→43 — exactly
+  the 21 and 131 lines added. Arithmetic exact, zero foreign hunks, none of the
+  user's ~690 dirty entries disturbed.
+- Packaged with `npm run build:mac-dir` (unsigned, identity explicitly null).
+  The shipped `app.asar` was extracted and confirmed to contain
+  `genericTutorialModal`, `_fillFallbackTutorial`, and the new
+  `let modalId … if (!modalId) {` shape.
