@@ -3267,3 +3267,69 @@ build:renderer` exit 0 (376 files, v2026.6.1). Committed as `32271b4`, two
 files, `git diff --cached --summary` clean of mode changes. A signed/notarized
 `npm run build:mac` needs the user's Apple credentials and pushes an artifact
 outward; it has not been authorized and was not run.
+
+## Audit 26 — error-with-no-rule-passes-through-verbatim
+
+**Species.** A classifier is only as good as its table. `friendlyError` has had
+sixteen rules and a full six-locale dictionary since iteration 22, and every
+iteration since has been routing more call sites into it — which quietly made
+the table's *coverage* the whole remaining problem. Its rules were written
+against Node and ffmpeg: errno codes, decoder complaints, `Failed to fetch`.
+Nothing in it spoke DOM.
+
+**Measured, not assumed.** Thirteen exception strings, each one traced to the
+line of this repo that produces it, run through the real function
+(`/tmp/probe26.mjs`): **13/13 fell through**. The worst is not hypothetical —
+Visual QC reads every frame it measures with `getImageData`, and iteration 25
+had just finished routing that strip through `friendlyStatus`, so a tainted
+canvas gave a colourist a clean two-line layout containing
+`SecurityError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D'`.
+Presentation without classification.
+
+**Finding: `AbortError` is ambiguous in this codebase and must not be reported
+as a cancellation.** Three sites (`features/reviews/index.js:141`, `ui.js:15413`,
+`features/tl_convert/index.js:1856`) check the name to mean *the user dismissed
+a picker* — reviews even says so in a comment. Eight others arm
+`setTimeout(() => ctrl.abort())` on a fetch (`auth/policyApi.js:33`,
+`features/trlconf/index.js:191`, `workers/renderWorkerClient.js:22` and `:36`,
+`modules/proResProxy.js:480`, `components/annotateModal/index.js:1659`,
+`modules/imf/imf_player.js:5367`, `modules/imf/imf_ui.js:8093`), and several
+more use `AbortSignal.timeout()`. The DOM hands back the same sentence for all
+of them. From inside `friendlyError` the two are indistinguishable, so any
+wording that asserts intent is wrong most of the time. The rule states only
+what holds in both cases. This is the kind of finding that only surfaces by
+counting call sites; the plausible rule was already written when the count
+killed it.
+
+**Finding: rule cost is asymmetric, and it should drive scope.** Widening an
+existing regex costs nothing to translate. A new rule costs eighteen rows.
+Five candidates, three rules, two widenings — 36 rows not spent on advice that
+would have been word-for-word identical. Recorded because the instinct is to
+give every distinct exception its own entry, and the user-visible result of
+doing so is a dictionary that is harder to have reviewed by a native speaker
+for no gain in what anyone reads.
+
+**Two exceptions deliberately left raw.** `QuotaExceededError` and
+`NotReadableError`. prep_mark handles the quota case locally at 4113 and the
+microphone path has its own handler, so neither rule could fire. Stating this
+is the point: an audit that lists 13 findings and 13 fixes when two of them
+were unreachable has inflated its own numbers.
+
+**Two mutations escaped the first gate, and that is the useful part.** The
+harness re-added the bare `cross-origin` alternative — the exact alternative
+dropped during design — and the gate passed, because the CORS string chosen for
+the test says "CORS policy", not "cross-origin". A second miss showed the
+ordering assertion could not fail: the EACCES rule and the NotAllowed rule
+share no words today, so *moving* them proves nothing; what would actually
+regress is someone widening NotAllowed by one plausible word. Both assertions
+were rewritten against measured strings. **11/11 caught** on the second run.
+A gate written from intent rather than from a mutation that must fail it is a
+gate that tests its author's memory.
+
+**Verified.** 21 new tests, 11 mutations applied and 11 caught
+(`/tmp/mut26.mjs`), file byte-restored. `errorI18n` floor 48 → 62.
+`npm run build-verify` exit 0, `npm run build:renderer` exit 0 (376 files).
+Committed as `2f3601e`, five files, `git diff --cached --summary` clean of mode
+changes, dirty count unchanged at 693. A signed/notarized `npm run build:mac`
+needs the user's Apple credentials and pushes an artifact outward; it has not
+been authorized and was not run.

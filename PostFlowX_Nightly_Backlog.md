@@ -2985,3 +2985,63 @@ of dictionary. That is the obvious next target. The five hardcoded English
 progress strings in `visualQcModal` are unchanged and deliberately out of scope
 here. The anchor tier in both save cascades still returns `SAVED` with no
 evidence.
+
+## Iteration 26 — the DOM's own errors
+
+Iteration 25 ended by naming its own successor: an error with no `friendlyError`
+rule still reaches the user verbatim, and `NotAllowedError: play() failed` was
+the guess for what a media scan would hit. This iteration measured the guess
+instead of trusting it.
+
+**Research.** Thirteen DOMException strings, each traced to the line of this
+repo that can produce it — not invented for the corpus. `getImageData` in
+`visualQcModal/index.js:425` and `imf_player.js:1530` (whose catch already
+special-cases `SecurityError`); `getUserMedia` in `prep_mark.js:29280`;
+`createMediaElementSource` in `imf_ui.js:594`; the eight
+`setTimeout(() => ctrl.abort())` fetch timeouts; `.play()` in 38 places. Run
+through the real function (`/tmp/probe26.mjs`): **13 of 13 unclassified**.
+
+**Code.** Three rules added, two widened. `Not allowed`,
+`Stopped before it finished`, `Could not read the video frame`;
+`NotSupportedError` / `MEDIA_ELEMENT_ERROR` / "no supported sources" folded into
+the existing decode rule and `InvalidStateError` / "Illegal invocation" into the
+generic one. Widening an existing rule costs **zero** translation rows; a new
+rule costs **eighteen** (3 strings × 6 locales). That arithmetic, not taste,
+decided which of the five became a rule. 13 unmatched → 2.
+
+**The one that changed its own wording.** The obvious title for `AbortError` is
+"Cancelled". Grepping proved it false: three sites in this app check
+`err.name === 'AbortError'` to mean a dismissed file picker, but eight arm a
+`setTimeout` abort on a fetch, and the DOM gives both the identical sentence.
+"You cancelled this" would be wrong for the majority case — a user whose
+companion had gone quiet. Retitled `Stopped before it finished`, which is true
+either way, and placed below the timeout rule so `AbortSignal.timeout()` keeps
+the better hint. A test now pins the wording so it cannot drift back.
+
+**Two deliberate non-fixes.** `QuotaExceededError` and `NotReadableError` are
+still unclassified. prep_mark already catches the quota case with its own toast
+at 4113, and NotReadableError only reaches the microphone path, which has its
+own handler. Neither rule would ever fire. Documented rather than papered over.
+
+**i18n.** 54 rows across ko/ja/zh-TW/th/id/fil via `/tmp/dict26.mjs`, anchored
+on each locale's own text and verified to land exactly six times per key.
+`errorI18n.test.mjs`'s extraction floor bumped 48 → 62 (the scan now finds 65).
+
+**Gate.** `tests-js/friendlyErrorDomExceptions.test.mjs`, 21 tests: eleven
+string→title pins, the four ordering collisions, the honest-wording constraint,
+a jargon-leak and hint-length pass over the new set, a vacuity floor, and a
+floor asserting the constructs in `src/` that produce these exceptions still
+exist — a rule for an exception nothing can throw is dead weight that reads
+like coverage. **11 mutations applied (`/tmp/mut26.mjs`), 11 caught**, file
+byte-restored. Two initially escaped and the assertions were rewritten until
+they didn't; the misses are recorded in the audit rather than smoothed away.
+
+**Verified.** `npm run build-verify` exit 0, `npm run build:renderer` exit 0
+(376 files). Committed as `2f3601e`, five files, no mode changes, dirty count
+unchanged at 693.
+
+Still open: the eight `setTimeout(() => ctrl.abort())` sites could abort with
+`new DOMException('timed out', 'TimeoutError')` and route themselves to the
+better hint — its own iteration. The five hardcoded English progress strings in
+`visualQcModal`. The anchor tier in both save cascades still returns `SAVED`
+with no evidence.
