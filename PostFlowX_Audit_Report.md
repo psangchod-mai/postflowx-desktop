@@ -3150,3 +3150,67 @@ uncommitted 100755 mode change in the user's tree, so it was staged with
 `git add --chmod=-x`). A signed/notarized `npm run build:mac` needs the user's
 Apple credentials and pushes an artifact outward; it has not been authorized
 and was not run.
+
+## Audit 24 — the print dialog that was announced before it was asked for
+
+**Finding 1 — success-returned-before-the-attempt.**
+`src/scripts/components/visualQcModal/index.js`, `openPrintReportHtml`. The
+print branch scheduled `w.focus(); w.print()` on a 300 ms `setTimeout` inside a
+swallowing `try/catch` and returned `PRINTED` immediately. Nothing in the
+function ever observed the outcome it was reporting. Four reachable failures —
+a pop-up blocker returning a window it closes, the user closing it during the
+layout delay, `print()` throwing, `print` absent — all produced the success
+path, and the caller announced *"Ready. Use “Save as PDF” in the print
+dialog."* with no dialog on screen. Severity: this is the wording defect
+`core/saveNotice.js` exists to prevent, surviving in the function that
+iteration 21 partially fixed.
+
+**Finding 2 — unverified-disk-claim at a site that bypasses saveNotice.**
+Same function, fallback branch: *"Report saved as HTML."* Every other export
+route in the app goes through `saveNotice()`, whose SAVED sentence deliberately
+describes the handover and not a filesystem state, because no tier of the
+cascade can prove the bytes landed. This was the one site that did not, and so
+the one site still claiming it.
+
+**Finding 3 — test-fixture-passing-for-the-wrong-reason.** In the new
+`tests-js/printOutcome.test.mjs`, `fakeWindow` applied overrides with
+`Object.defineProperties(win, Object.getOwnPropertyDescriptors(over))`. `over`
+was already a descriptor map, so `getOwnPropertyDescriptors` wrapped each entry
+in a second descriptor and `win.print` became the object `{value: fn}`, `closed`
+became `{get: fn}`. Five tests passed against a window that was not the window
+they described. Both readings happen to be OPENED/CLOSED, so the assertions
+were green and vacuous. Detected only by the mutation harness — two mutations
+it should have caught were missed. Correct form is
+`Object.defineProperties(win, over)`; a self-check test now asserts all five
+descriptor shapes produce the object the tests assume.
+
+**Finding 4 — two stale claims in a "what this cannot see" list.**
+`tests-js/saveNotice.test.mjs`'s header listed the print dialog and the missing
+dictionary rows as known blind spots. Both had been closed by this iteration.
+They are now recorded as closed rather than deleted, because "we know we cannot
+see this" and "we checked" are different states.
+
+**Fix.** New `src/scripts/core/printOutcome.js` (133 lines) with `PRINTED`,
+`OPENED`, `CLOSED`, `tryAutoPrint(win, {delayMs = 300, wait})` and
+`printNotice(outcome)`. `tryAutoPrint` awaits the delay and *then* inspects the
+window; `printNotice` owns the three print endings and delegates save outcomes
+to `saveNotice` so one situation has one wording. The call site collapsed from
+a three-way `if` to `const notice = printNotice(how)`. `CLOSED` falls through
+to the file save — a behavioural improvement, not only better wording. 18
+`ERROR_DICT` rows added for the three sentences across all six locales.
+
+**Verification.** `tests-js/printOutcome.test.mjs`, 25 tests: the three endings,
+the delay actually elapsing before any print (a held promise proves nothing was
+printed early), the clock receiving the caller's delay, the fixture self-check,
+plus source gates over the call site scoped to the export-PDF handler — the
+first draft of that gate flagged two *legitimate* `setProgress(1, …)` lines and
+was wrong, not the code. `tests-js/errorI18n.test.mjs` extended to 22 tests
+with the `SCANNED` table. `tests-js/saveNotice.test.mjs`'s two assertions
+written against the old bare-`true` contract were rewritten against the new one
+rather than deleted. **21 mutations applied across two harnesses
+(`/tmp/mut24.mjs` 15, `/tmp/mut24b.mjs` 6), 21 caught**, all files
+byte-restored. `npm run build-verify` exit 0, `npm run build:renderer` exit 0
+(376 files, v2026.6.1). Committed as `5a1f8d6`, six files, `git diff --cached
+--summary` clean of mode changes. A signed/notarized `npm run build:mac` needs
+the user's Apple credentials and pushes an artifact outward; it has not been
+authorized and was not run.

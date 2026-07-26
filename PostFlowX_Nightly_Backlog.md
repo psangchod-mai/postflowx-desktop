@@ -2856,3 +2856,65 @@ cascades. `PRINTED` still only means `window.open` succeeded. The general sweep
 for comments asserting things about code or CSS they never read has still not
 been run — iteration 22 found one, iteration 23 found another, in unrelated
 files, which is the shape of a pattern rather than two accidents.
+
+## Iteration 24 — the success returned before the attempt
+
+Visual QC › Export PDF. `openPrintReportHtml` ended its print branch with
+
+    setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 300);
+    return PRINTED;
+
+and the caller then said **"Ready. Use “Save as PDF” in the print dialog."**
+The return happened 300 ms before anything was attempted, so a pop-up blocker
+handing back a window it then closes, a user closing that window during the
+layout delay, a `print()` that throws, and a window with no `print()` at all
+were four distinct failures all reported as the one success — and the sentence
+pointed at a dialog that was not on screen. That is the precise thing
+`core/saveNotice.js` was built to stop the app doing; the earlier pass fixed
+the fallback half of this same function and left the print half alone, which is
+the more useful finding: a fix scoped to the branch that was reported, in a
+function whose other branch had the same defect.
+
+The same site had the last unverified disk claim in the app: the fallback said
+"Report saved as HTML." It is the one export path that bypasses `saveNotice()`,
+which is exactly why it was the one place still saying "saved".
+
+**`src/scripts/core/printOutcome.js`** (new, 133 lines) mirrors the
+`saveOutcome`/`saveNotice` split for printing: `PRINTED`/`OPENED`/`CLOSED`,
+`tryAutoPrint(win, {delayMs, wait})` with an injectable clock so the delay is
+testable, and `printNotice(outcome)` which owns every print ending and
+*delegates* the save outcomes rather than re-wording them. `tryAutoPrint`
+treats an unreadable `.closed` as gone, a blocked `focus()` as irrelevant, and
+a missing or throwing `print()` as OPENED.
+
+**Behavioural, not cosmetic:** `CLOSED` now falls through to the HTML file
+save. A window that went away used to leave the user with no file and a pointer
+at a dialog that did not exist; they now get the file.
+
+18 `ERROR_DICT` rows for the three new sentences (3 × ko/ja/zh-TW/th/id/fil).
+`errorI18n.test.mjs` gained a `SCANNED` table — one row per module that
+localises through `translate()`, with the sentence count it should carry — so
+the coupling is now enforceable in both directions: a fourth sentence without
+rows fails, and rows added for a module nobody listed read as dead keys and
+also fail.
+
+**The lesson worth keeping.** Five of the new tests passed for the wrong
+reason. `fakeWindow` overrode properties with
+`Object.defineProperties(win, Object.getOwnPropertyDescriptors(over))` where
+`over` was already a descriptor map, so each descriptor got wrapped in a second
+one and `win.print` held the object `{value: fn}` instead of a function. "A
+non-function `print` is OPENED" and "a truthy `closed` is CLOSED" are both true,
+so the assertions passed while testing nothing they claimed to. No test failure
+could have shown this; only the mutation harness did, by missing two mutations
+it should have caught. The fixture now has a self-check test covering all five
+descriptor shapes. **Fixtures need gates of their own.**
+
+Still open after this iteration: the anchor tier in both save cascades still
+returns `SAVED` with no evidence — this fixed the wording at one site, not the
+tier. Three hardcoded English progress strings remain in `visualQcModal`
+(`'Opening print dialog…'` 1868, `'Done. No events.'` 1609, `'Done.'` 1700).
+`init()`'s `includes('Check Engines')` control flow, `imf_ui.js:997`'s code-over-
+message, and `_path()`'s latent unquoted-path truncation are unchanged. The
+general sweep for comments asserting behaviour they never verified has now
+found a third instance, in a third unrelated file, and still has not been run
+as a sweep.
