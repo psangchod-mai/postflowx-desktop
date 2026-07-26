@@ -12,6 +12,26 @@
 // window.pfxFriendlyText for classic-script consumers.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Localise a rule string. The renderer exposes window.PFX_t from
+// scripts/modules/i18n.js; this file deliberately does not import it, because
+// it is also loaded directly by Node tests where there is no window — and
+// English is the right answer there.
+//
+// Translation happens HERE, on the three parts separately, rather than being
+// left to the i18n MutationObserver. The observer only ever sees what
+// friendlyText() produces, which is `message + ' ' + hint` glued together, and
+// that concatenation is not a dictionary key — so an observer-only approach
+// silently leaves every error in English. Translating the parts also keeps the
+// dictionary keyed on short, reusable sentences instead of 20 long pairs.
+function _t(s) {
+  if (!s) return s;
+  try {
+    return (typeof window !== 'undefined' && window.PFX_t) ? window.PFX_t(s) : s;
+  } catch (_) {
+    return s;
+  }
+}
+
 // Normalize any thrown thing → raw string.
 function _raw(err) {
   if (err == null) return '';
@@ -97,7 +117,12 @@ const RULES = [
     title: 'File not found',
     message: (raw) => {
       const p = _path(raw);
-      return p ? `That file or folder couldn't be found:\n${p}` : "That file or folder couldn't be found.";
+      // The path is data, not prose — it is appended after the translated
+      // sentence rather than interpolated into it, so no locale has to carry a
+      // placeholder and the filename an assistant needs is never reworded.
+      return p
+        ? `${_t("That file or folder couldn't be found:")}\n${p}`
+        : _t("That file or folder couldn't be found.");
     },
     hint: 'Check that it still exists and the drive is connected.',
   },
@@ -169,14 +194,20 @@ export function friendlyError(err) {
 
   for (const rule of RULES) {
     if (rule.test.test(raw) || rule.test.test(stripped)) {
-      const message = typeof rule.message === 'function' ? rule.message(raw) : rule.message;
-      const hint = typeof rule.hint === 'function' ? rule.hint(raw) : rule.hint;
-      return { title: rule.title, message, hint: hint || '', raw };
+      // Function-valued message/hint localise their own static parts (see the
+      // ENOENT rule); literal ones are translated here. `raw` stays in English
+      // — it is for a support log, not for the user.
+      const message = typeof rule.message === 'function' ? rule.message(raw) : _t(rule.message);
+      const hint = typeof rule.hint === 'function' ? rule.hint(raw) : _t(rule.hint);
+      return { title: _t(rule.title), message, hint: hint || '', raw };
     }
   }
 
-  // Pass-through: keep the app's already-friendly messages intact.
-  return { title: '', message: stripped || 'Something went wrong.', hint: '', raw };
+  // Pass-through: keep the app's already-friendly messages intact. Those are
+  // rendered into the DOM, so the i18n observer translates them by the normal
+  // route; only this fallback literal never reaches the DOM as a dictionary
+  // key on its own, so it is localised here.
+  return { title: '', message: stripped || _t('Something went wrong.'), hint: '', raw };
 }
 
 /**
