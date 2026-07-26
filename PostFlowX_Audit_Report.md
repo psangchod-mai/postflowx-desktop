@@ -1036,3 +1036,67 @@ unconsolidated `_showToast` implementations, `setStatus` in
 `modules/amf_convert.js:4988`/`:5175` writing `STATE.statusText.text` instead of
 the DOM, a package-size gate with a defensible threshold (7.2), and the
 `git rm --cached` offer for `friendlyError.js` / `friendlyError.test.mjs`.
+
+---
+
+## Iteration 8 findings (2026-07-26 17:12)
+
+### 8.1 — Third confirmed instance of the phantom-element species, now fixed
+`src/tools/preflight/app/app.js` bound its language picker to
+`qs("localeSelect")`, an id `app/index.html` has never contained. Eighteen
+locale config files — six complete language sets, roughly 148K of translated
+check text — were packaged into every build and unreachable. Fixed in `4c63a5d`
+by taking the language from the title bar's existing `pfx:lang` broadcast
+instead of from a control that does not exist.
+
+Notable: this case was already written down. It appears by name in the header of
+`tests-js/domContract.test.mjs` and `tests-js/lib/domIds.mjs` as one of the three
+examples that motivated the phantom-id contract in iteration 6. The contract
+stopped a *fourth* instance from being added; it did not fix the three known
+ones, and was never meant to. Worth being clear about the division: a baseline
+freezes the debt, it does not pay it.
+
+### 8.2 — A test that fails on the comment explaining the fix
+The new gates search `app.js` for `location.reload(` and `localeSelect`. Both
+failed on first run — because the comments explaining *why* those two things are
+gone contain those strings.
+
+This is the exact mirror of the trap recorded in `tests-js/lib/domIds.mjs`, where
+a comment reading `id="errors"` convinced the scanner the element existed and the
+documentation of a bug registered as its fix. Here the documentation of a fix
+registered as the bug. Same root cause, opposite direction: **a source grep does
+not distinguish code from prose, and both directions of that confusion are
+silent.** The scan now strips whole-line comments, matching `domIds.mjs`'s
+`COMMENT_LINE`. Any future gate written against raw source in this repo should
+do the same.
+
+### 8.3 — A negative-verification that verified nothing
+The ordering gate — `relocalize` must load the new config *before* mutating
+`state.config`, so a failed load leaves the pane in its old language rather than
+half-translated — was negative-verified by injecting a `state.config = {}`
+assignment. The gate did not fire, and the first reading was "the gate is
+broken."
+
+It was not. The injection had been placed *after* the `await loadConfig`, so it
+was not the defect the gate describes; the correct injection (assigning before
+the load) fired it immediately. The lesson is narrow and worth keeping:
+**negative verification only proves something if the injected defect is actually
+the one the gate claims to catch.** An injection that fails to trip a gate is
+ambiguous — it means either the gate is broken or the injection is wrong, and
+those must be told apart before either conclusion is recorded.
+
+### 8.4 — Deliberate non-decision: no second language control
+Adding the missing `#localeSelect` would have been the smaller diff and is what
+the dead code asked for. Declined. The app has one language control in the title
+bar; a per-pane picker is a second place for the answer to differ from itself,
+and a user who set the app to Thai has already stated their preference. The
+per-pane control is only justified if a pane can be usefully read in a different
+language from its host, which is not true here.
+
+**Still open from earlier runs:** the missing `zh-TW` BWAV dictionary (~92
+strings — authoring, not repair), the four unconsolidated `_showToast`
+implementations, `setStatus` in `modules/amf_convert.js:4988`/`:5175` writing
+`STATE.statusText.text` instead of the DOM, `window._pmShowToast` /
+`window._pfxToast` read by `render_queue.js:1426` and assigned nowhere, a
+package-size gate with a defensible threshold (7.2), and the `git rm --cached`
+offer for `friendlyError.js` / `friendlyError.test.mjs`.

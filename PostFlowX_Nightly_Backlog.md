@@ -1312,3 +1312,89 @@ title-bar language broadcast, the phantom-element contract — improves the app
 once it is installed. This one is about whether it gets installed at all. A
 2.1 GB download over a hotel connection, or onto a nearly-full laptop on set, is
 a refusal that never reaches the UI. It cost one line of config and no code.
+
+---
+
+## Iteration 8 — Preflight speaks the app's language (2026-07-26 17:12)
+
+**Shipped:** `4c63a5d` — `src/tools/preflight/app/locale.js` (new),
+`src/tools/preflight/app/app.js`, `tests-js/preflightLocale.test.mjs`.
+
+This was the top item on the measured backlog from iteration 5, and it is the
+largest single piece of translated text in the app that nobody could reach.
+
+### What was on disk versus what shipped
+
+| Locale | `ui_strings` | `checks.i18n` | `requirements.i18n` | Reachable before |
+|---|---|---|---|---|
+| en | ✓ | ✓ | ✓ | yes |
+| ja | ✓ | ✓ | ✓ | no |
+| ko | ✓ | ✓ | ✓ | no |
+| zh-TW | ✓ | ✓ | ✓ | no |
+| th | ✓ | ✓ | ✓ | no |
+| id | ✓ | ✓ | ✓ | no |
+| fil | ✓ | ✓ | ✓ | no |
+
+Twenty-one files, roughly 148K of translated check text and fix guidance. Six
+of the seven language sets were being packaged into every build and rendered by
+nobody.
+
+### Why
+
+`settings.locale` defaulted to `"en"`, and the only code that ever wrote it hung
+off `qs("localeSelect")`. That id does not exist in `app/index.html`, and
+`git log -S localeSelect` finds no commit on any ref that ever added one. The
+listener was never attached. This is the third instance of the same species —
+the one `tests-js/domContract.test.mjs` was written for in iteration 6 — and it
+was already sitting in that test's own header comment as a known case.
+
+An extra detail found while removing it: the dead picker offered six options and
+Filipino was not among them. Even a repaired version of that control could not
+have reached `fil`.
+
+### The shape of the fix
+
+Not a picker. The app has one language control, in the title bar, and a second
+one inside a pane is a second way for them to disagree. `paneLang.js` has
+broadcast `pfx:lang` across the iframe boundary since iteration 5; this wires up
+the receiving end.
+
+The interesting part is what replaces `location.reload()`. That call never ran,
+but it is worth being precise about why it was the wrong shape anyway:
+
+- `state.files` holds the `File` objects the user selected. It is deliberately
+  not persisted, because File handles do not survive serialisation. A reload
+  therefore discards the user's entire scope.
+- What comes back after the reload is `pfx_last_run` — a *stored* run whose card
+  titles were baked at scan time (`run.js:630`) in the previous language.
+
+So the reload would have cost the user their files and still shown them stale
+text. Re-localising in place wins on both: `ui.js` reads
+`state.config.ui.labels` at render time in about twenty places, so swapping the
+config and calling `render()` re-translates every piece of live chrome — and
+because the files are still in memory, the completed run can actually be redone
+in the new language, which `relocalize()` does, following the precedent already
+set by `_onEpCountChange`.
+
+### Two decisions inside `normalizeLocale`
+
+The host and the pane offer the same seven languages, so this is close to an
+identity map — and "close to identity" is exactly where the interesting failures
+live.
+
+- **`zh-CN` maps to English, not to `zh-TW`.** Only Traditional is translated.
+  Serving Traditional to a Simplified reader looks like it worked; English does
+  not pretend.
+- **Nothing may return a locale with no files.** `loadConfig`'s `safeJson`
+  swallows a 404 and returns an empty dictionary, so a wrong locale does not
+  throw — it renders blank labels. That is the same silent-failure shape as the
+  bug being fixed, and a property test asserts every possible return value is a
+  locale with files behind it.
+
+### Verification
+
+`npm run build-verify` green (250 Python passed / 7 skipped, all JS suites, XSS
+/ XXE / fail-open gates clean); `npm run build:renderer` green, 371 files,
+`locale.js` present in `dist/desktop/`. Each of the seven gates in the new test
+was negative-verified by injecting its specific defect and confirming that gate
+and only that gate fired.
