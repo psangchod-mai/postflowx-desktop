@@ -3214,3 +3214,56 @@ byte-restored. `npm run build-verify` exit 0, `npm run build:renderer` exit 0
 --summary` clean of mode changes. A signed/notarized `npm run build:mac` needs
 the user's Apple credentials and pushes an artifact outward; it has not been
 authorized and was not run.
+
+## Audit 25 — `raw-exception-in-status-line`, counted properly this time
+
+**The species was undercounted.** It had been tracked as 22 occurrences with 20
+fixed. A construct-based sweep across all of `src/` —
+`(textContent|setProgress|setStatus|_setStatusText)` receiving
+`err?.message`/`err.message`/`String(err)`, minus anything already wrapped in
+`friendlyStatus` — returns **17 remaining**, not 2. The earlier count was of the
+files that had been looked at, not of the codebase.
+
+    6  src/scripts/features/trlconf/index.js
+    4  src/scripts/features/reviews/index.js
+    3  src/scripts/modules/imf/imf_ui.js
+    2  src/scripts/prep_mark.js
+    1  src/scripts/features/user/index.js
+    1  src/scripts/features/cutdiff/index.js
+
+**All six of those files are the user's uncommitted in-flight work** (`git
+status` reports ` M` for every one), so none of the 17 can be fixed under the
+commit-only-what-this-iteration-touches policy. This is not a deferral for lack
+of time; it is a hard block, and it is why the two sites in
+`visualQcModal/index.js` — the only file in the species that was clean at HEAD —
+were the ones taken. Worst of the blocked set by user impact:
+`features/user/index.js:357` (`errEl.textContent = err.message`, a raw exception
+on the sign-in card) and `features/cutdiff/index.js:6626`
+(`"Error: " + (err?.message || String(err))`).
+
+**A second, quieter finding: the fix has two halves and the second is easy to
+miss.** Six call sites in `smart_engine_settings.js` already route through
+`friendlyStatus`, and every one of them lands via `_setStatusText`, which sets
+`white-space: pre-wrap` — or, at line 105, via an inline
+`style="…white-space:pre-wrap;"`. `errorBanner.js` does the same. That is three
+independent places that discovered the newline collapse and handled it locally,
+and one — `visualQcModal` — that would have hit it the moment it adopted the
+pattern. **Adopting `friendlyStatus` at a new site is not a one-line change**;
+it is a two-line change, and the second line is invisible unless you know the
+function returns two lines. Recorded here so the next adopter does not have to
+rediscover it, and gated in `tests-js/visualQcStatus.test.mjs` for this
+component.
+
+**Limit of the fix, stated rather than hidden.** `friendlyStatus` rewrites only
+what its rules table matches. `Visual QC scan failed: NotAllowedError: play()
+failed` comes out unchanged apart from the prefix, and a permission or decode
+error is a plausible Visual QC failure. The gate's header says so; widening the
+rules table means six new locale rows per rule and a bump to
+`errorI18n.test.mjs`'s `SCANNED` counts, which is its own iteration.
+
+**Verified.** 7 new tests, **10 mutations applied, 10 caught**
+(`/tmp/mut25.mjs`), file byte-restored. `npm run build-verify` exit 0, `npm run
+build:renderer` exit 0 (376 files, v2026.6.1). Committed as `32271b4`, two
+files, `git diff --cached --summary` clean of mode changes. A signed/notarized
+`npm run build:mac` needs the user's Apple credentials and pushes an artifact
+outward; it has not been authorized and was not run.

@@ -2918,3 +2918,70 @@ message, and `_path()`'s latent unquoted-path truncation are unchanged. The
 general sweep for comments asserting behaviour they never verified has now
 found a third instance, in a third unrelated file, and still has not been run
 as a sweep.
+
+## Iteration 25 — the error message nobody could read
+
+**Research.** The Visual QC modal has exactly one place it reports a failure:
+the progress strip under the buttons, `.pfx-qc-progressTxt`. There is no toast
+behind it and no dialog, so whatever lands there is the whole message. Both of
+its catch handlers put the exception's own text there —
+`setProgress(0, err?.message || String(err))` at the Run button's `.catch` and
+in the Export-PDF handler's `catch` — which means a colourist reads
+`ENOENT: no such file or directory, open /Vol/Show_A/A001.mov` or a bare
+`Failed to fetch`. Both of those already have a friendlyError rule carrying a
+hint that names what to do. Nothing routed the text through `friendlyStatus`,
+so neither rule was ever reached. The rules existed; the two call sites did not
+use them.
+
+**The thing that would have made it worse.** `friendlyStatus` returns
+`message\nhint`, and `.pfx-qc-progressTxt` has exactly one rule in the whole
+stylesheet — `main.css:11316`, `font-size:12px`. `white-space` is therefore
+`normal`, the break collapses, and the hint would have arrived welded onto the
+end of the message: *"…could not finish writing.Free up space or choose another
+drive"*. Routing the two sites without fixing that would have shipped a line
+worse than the raw exception. This is the same collapse iteration 22 removed
+from the error banner and iteration 23 from the engine-settings status lines,
+which is where the fix came from: `smart_engine_settings.js`'s `_setStatusText`
+already does `el.style.whiteSpace = 'pre-wrap'` for exactly this reason, with a
+comment saying so. `visualQcModal` was the one status surface that had not
+gotten the same treatment. Set from the component rather than the stylesheet
+because the element is built here and `main.css` is 301/326 lines of the user's
+in-flight work.
+
+**The third consumer.** `onStatus` is a callback into the caller's own status
+element — a one-line strip in `reviews/index.js` whose CSS this component does
+not own. Giving it the two-line text would collapse the break to *nothing*
+there. It now gets the break replaced with a space on the way out, so the mirror
+is correct regardless of how the caller styles it, and `reviews/index.js` — also
+the user's in-flight work — did not have to be touched.
+
+**Prefixes.** `friendlyStatus` only preserves an operation prefix its own regex
+accepts: at most 40 characters before the colon, and containing a space. A
+prefix that fails is not an error — it is silently dropped, taking the "which
+operation" half of the message with it. `Visual QC scan failed` (21) and
+`Exporting the PDF report failed` (31) were both run through the real function
+before being trusted, and the gate re-runs that check against whatever prefixes
+the source actually contains.
+
+**Gate.** `tests-js/visualQcStatus.test.mjs`, 7 tests, checked against real
+`friendlyStatus` output rather than a hand-written string that might have no
+newline in it at all: a floor that the file still has ≥12 `setProgress` calls
+and the import; no `setProgress` call may pass `err.message`/`String(err)`
+unwrapped; both prefixes present and both surviving the prefix regex with their
+tail rewritten; a floor that `friendlyStatus` still emits a newline; the element
+preserving newlines from *either* CSS or the component, so moving the rule into
+the stylesheet later is a refactor and not a failure; and the mirror's
+replacement leaving no newline and welding no two sentences together.
+**10 mutations applied (`/tmp/mut25.mjs`), 10 caught**, file byte-restored.
+
+**Verified.** `npm run build-verify` exit 0 (after `git add` of the new test —
+the untracked-gate caught it, as designed), `npm run build:renderer` exit 0 (376
+files). Committed as `32271b4`, two files, no mode changes, no foreign hunks.
+
+Still open after this iteration: an error with **no** friendlyError rule still
+passes through verbatim after the prefix — `NotAllowedError: play() failed` is
+the likely one for a media scan, and widening the rules table costs six locales
+of dictionary. That is the obvious next target. The five hardcoded English
+progress strings in `visualQcModal` are unchanged and deliberately out of scope
+here. The anchor tier in both save cascades still returns `SAVED` with no
+evidence.
