@@ -7,7 +7,10 @@
 //   import { loadModel, extractEmbedding, searchMasterAI, AI_W, AI_H } from './ai_matcher.js';
 //   await loadModel(progressCallback);          // one-time; TF.js caches in IndexedDB
 //   const emb = await extractEmbedding(videoEl, canvas);
-//   const { bestSec, confidence } = await searchMasterAI(emb, masterVideo, canvas, fps, approxSec);
+//   const { bestSec, confidence } = await searchMasterAI(emb, masterVideo, canvas, fpsExact, approxSec);
+//
+// The rate argument is the TRUE playback rate, not the timecode base — see the
+// searchMasterAI docblock. On NTSC those are different numbers.
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -167,15 +170,24 @@ export function simToConfidence(sim) {
  * @param {Float32Array} refEmb       Embedding of the reference frame.
  * @param {HTMLVideoElement} masterVideo
  * @param {HTMLCanvasElement} canvas  224 × 224
- * @param {number} fps
+ * @param {number} fpsExact           TRUE playback rate (23.976023976…), NOT the
+ *                                    whole-frame timecode base. Everything this
+ *                                    function measures is real media time — a
+ *                                    seek position and a one-frame step — so
+ *                                    there is no timecode arithmetic in here to
+ *                                    want the base. Passing 24 for a 23.976 show
+ *                                    makes FINE_STEP 0.1 % short, which the ±1.5 s
+ *                                    fine window still absorbs; the caller's
+ *                                    approxSec is where a base/exact mix-up
+ *                                    actually costs you.
  * @param {number} approxSec          Proxy srcIn as a coarse hint.
  * @returns {Promise<{bestSec: number, distance: number, confidence: number}>}
  */
-export async function searchMasterAI(refEmb, masterVideo, canvas, fps, approxSec) {
+export async function searchMasterAI(refEmb, masterVideo, canvas, fpsExact, approxSec) {
   const duration    = masterVideo.duration || 0;
   const COARSE_STEP = 2;
   const COARSE_WIN  = 30;
-  const FINE_STEP   = 1 / fps;
+  const FINE_STEP   = 1 / fpsExact;
   const FINE_WIN    = 1.5;
 
   let bestSec = Math.max(0, Math.min(approxSec, duration));

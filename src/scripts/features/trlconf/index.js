@@ -36,6 +36,20 @@ function _stem(name) {
   return String(name || '').replace(/\.[^/.]+$/, '').trim();
 }
 
+// ── Two clocks run through this file; they are not the same number ──────
+// `state.fps`      whole-frame TIMECODE BASE   — 24 on a 23.976 show, 30 on 29.97
+// `state.fpsExact` true PLAYBACK RATE          — 23.976023976…, 29.97002997…
+//
+// Timecode arithmetic (_tcToFrames / _framesToTC / _eventFrameMetrics) counts
+// frame FIELDS and must use the base. Anything that reaches real media time —
+// a video.currentTime seek, a frames→seconds display, a seconds→frames result
+// coming back OUT of a seek — must use the exact rate, or it is 0.1% off on
+// every NTSC show: 3.6 seconds, ~86 frames, at the one-hour mark.
+//
+// The visual conform engine below seeks the REFERENCE video with no search
+// window at all, so a rate error there does not degrade a match — it hashes a
+// different shot and matches that instead. Parsers now report both halves
+// (see src/scripts/parsers/*.js); this file is the consumer that needs them.
 function _tcToFrames(tc, fps = DEFAULT_FPS) {
   const m = String(tc || '').trim().match(/^(\d{2})[:;](\d{2})[:;](\d{2})[:;](\d{2})$/);
   if (!m) return 0;
@@ -563,13 +577,19 @@ function _seekVideo(video, timeSec) {
 //   Coarse pass: ±30 s, 2 s step (30 seeks).
 //   Fine pass:   ±1.5 s, 1-frame step around coarse best.
 // Returns { bestSec, confidence(0–100), distance }.
-async function _searchMasterForFrame(refHash, masterVideo, canvas, ctx, approxSec, fps, opts = {}) {
+//
+// `fpsExact` is the TRUE playback rate, not the timecode base. Every use of it
+// in here is real media time — a one-frame seek step and a seconds→frame-index
+// cache key — so there is no timecode arithmetic to want the nominal base.
+// Callers that still pass the base get today's behaviour; on NTSC that makes
+// FINE_STEP 0.1% short and the cache key drift by one frame per ~41 seconds.
+async function _searchMasterForFrame(refHash, masterVideo, canvas, ctx, approxSec, fpsExact, opts = {}) {
   // NaN duration (streaming proxy without Content-Length) → treat as unknown; coarse/wide
   // loops will clamp via Math.min(duration-0.1, ...) which still bounds them correctly.
   const duration    = Number.isFinite(masterVideo.duration) && masterVideo.duration > 0 ? masterVideo.duration : 0;
   const COARSE_STEP = Number(opts.coarseStepSec || 2);
   const COARSE_WIN  = Number(opts.coarseWindowSec || 30);
-  const FINE_STEP   = 1 / fps;
+  const FINE_STEP   = 1 / fpsExact;
   const FINE_WIN    = Number(opts.fineWindowSec || 1.5);
   const WIDE_STEP   = Number(opts.wideStepSec || Math.max(0.75, Math.min(3, duration / 160 || 2)));
   const wideSearch  = !!opts.wideSearch;
@@ -582,7 +602,7 @@ async function _searchMasterForFrame(refHash, masterVideo, canvas, ctx, approxSe
   const testAt = async (t) => {
     try {
       const tt       = Math.max(0, Math.min(t, duration - 0.001));
-      const frameIdx = Math.round(tt * fps);
+      const frameIdx = Math.round(tt * fpsExact);
       const fpKey    = fileKey ? `h|${fileKey}|${frameIdx}` : '';
 
       let hash;
@@ -720,7 +740,11 @@ function _median(values) {
   return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
 }
 
-async function _matchEventByVisualWave({ ev, refVideo, masterVideo, canvas, ctx, dhCanvas, dhCtx, fps, seqBaseFrames, useAI = false, masterFileKey = '', tcOffset = 0 }) {
+// `fps` is the timecode base (frame metrics, sample offsets); `fpsExact` is the
+// true playback rate (every seek and every seconds→frames result below). It
+// defaults to `fps` so a caller that has not been threaded through yet keeps
+// exactly today's behaviour rather than silently changing rate underneath.
+async function _matchEventByVisualWave({ ev, refVideo, masterVideo, canvas, ctx, dhCanvas, dhCtx, fps, fpsExact = fps, seqBaseFrames, useAI = false, masterFileKey = '', tcOffset = 0 }) {
   const metrics = _eventFrameMetrics(ev, fps);
   const sampleOffsets = _sampleOffsetsForEvent(ev, fps);
   const sampleMatches = [];
@@ -731,27 +755,30 @@ async function _matchEventByVisualWave({ ev, refVideo, masterVideo, canvas, ctx,
 
   for (const eventOffsetF of sampleOffsets) {
     const refFrameF = metrics.recInF - seqBaseFrames + eventOffsetF;
-    const refSec = refFrameF / fps;
+    // Real media time: the reference is seeked straight here and hashed, with
+    // no search window to absorb an error. On NTSC the base would land 3.6 s
+    // late at the hour mark — a different shot, matched with full confidence.
+    const refSec = refFrameF / fpsExact;
     if (refSec < 0 || refSec >= refDur - 0.001) continue;
 
     await _seekVideo(refVideo, refSec);
     const approxSrcFrameF = _expectedSourceFrameAtOffset(metrics, eventOffsetF);
     // Subtract the master's embedded start TC so tape-TC srcIn values (e.g. 08:37:xx:xx)
     // translate to file-time seconds rather than clamping to the end of the file.
-    const approxSec = Math.max(0, Math.min((approxSrcFrameF - tcOffset) / fps, Math.max(0, masterDur - 0.001)));
+    const approxSec = Math.max(0, Math.min((approxSrcFrameF - tcOffset) / fpsExact, Math.max(0, masterDur - 0.001)));
 
     let result;
     // Use hash search for the first production implementation. It now supports
     // wide/global search, which is more important than deep embeddings when TC is wrong.
     if (useAI) {
       const refEmb = await extractEmbedding(refVideo, canvas);
-      result = await searchMasterAI(refEmb, masterVideo, canvas, fps, approxSec);
+      result = await searchMasterAI(refEmb, masterVideo, canvas, fpsExact, approxSec);
       // AI helper currently searches locally. If confidence is weak, fall back to
       // whole-clip hash search for trailer conforms with unreliable source TC.
       if ((result?.confidence ?? 0) < 68 && ctx) {
         await _seekVideo(refVideo, refSec);
         const refHash = _grabHash(refVideo, canvas, ctx);
-        result = await _searchMasterForFrame(refHash, masterVideo, canvas, ctx, approxSec, fps, {
+        result = await _searchMasterForFrame(refHash, masterVideo, canvas, ctx, approxSec, fpsExact, {
           wideSearch: true,
           minLocalConfidence: 68,
           wideStepSec: 2,
@@ -803,7 +830,9 @@ async function _matchEventByVisualWave({ ev, refVideo, masterVideo, canvas, ctx,
       }
     }
 
-    const matchedFrameF = Math.round((result.bestSec || 0) * fps);
+    // bestSec is real media time coming back out of a seek, so it converts to
+    // frames on the exact rate — the inverse of the approxSec computed above.
+    const matchedFrameF = Math.round((result.bestSec || 0) * fpsExact);
     const derivedSrcInF = _deriveSourceInFromMatched(metrics, eventOffsetF, matchedFrameF);
     sampleMatches.push({
       refFrame: Math.round(metrics.recInF + eventOffsetF),
@@ -1113,7 +1142,8 @@ export function createTrlConformFeature(deps = {}) {
     timelineFile:       null,
     timelineText:       '',
     events:             [],
-    fps:                DEFAULT_FPS,
+    fps:                DEFAULT_FPS,   // whole-frame timecode base
+    fpsExact:           DEFAULT_FPS,   // true playback rate (differs on NTSC)
     projectName:        '',
     masterFiles:        [],
     reelMap:            [],
@@ -1836,7 +1866,11 @@ export function createTrlConformFeature(deps = {}) {
         const origF = ev?._srcInFrames ?? _tcToFrames(ev?.srcIn || '00:00:00:00', state.fps);
         const corrF = _tcToFrames(corr.srcIn, state.fps);
         const delta = corrF - origF;
-        waveOffsetEl.textContent = `${delta === 0 ? '0f' : (delta > 0 ? `+${delta}f` : `${delta}f`)} · ${(delta / (state.fps || DEFAULT_FPS)).toFixed(3)}s`;
+        // delta is a frame COUNT (base arithmetic, above); the seconds beside it
+        // are real elapsed time, so they divide by the exact rate. The error here
+        // is only ~1 ms on a 24-frame offset — cosmetic, unlike the seeks — but a
+        // duration in seconds has exactly one right denominator and it is this one.
+        waveOffsetEl.textContent = `${delta === 0 ? '0f' : (delta > 0 ? `+${delta}f` : `${delta}f`)} · ${(delta / (state.fpsExact || state.fps || DEFAULT_FPS)).toFixed(3)}s`;
       } else {
         waveOffsetEl.textContent = '—';
       }
@@ -1866,10 +1900,16 @@ export function createTrlConformFeature(deps = {}) {
     if (!ev) return;
 
     const fps = state.fps || DEFAULT_FPS;
+    // Timecode arithmetic below stays on the base; the three conversions that
+    // reach real media time — the two seek positions and the waveform lag —
+    // use the exact rate. This panel is what an assistant looks at to decide a
+    // match is right, so a 3.6 s error here is not a display bug: it is the
+    // wrong frame presented as proof.
+    const fpsExact = state.fpsExact || fps;
     const visibleEvents = state.events.filter(e => !e.disabled && e.type === 'video');
     const seqBaseFrames = Math.min(...visibleEvents.map(e => e._recInFrames ?? _tcToFrames(e.recIn, fps)));
     const recInF = ev._recInFrames ?? _tcToFrames(ev.recIn, fps);
-    const unmrefSec = (recInF - seqBaseFrames) / fps;
+    const unmrefSec = (recInF - seqBaseFrames) / fpsExact;
 
     const refCanvasEl = _$('trcRefCanvas');
     const srcCanvasEl = _$('trcSrcCanvas');
@@ -1907,7 +1947,7 @@ export function createTrlConformFeature(deps = {}) {
         // For unmatched events ev.srcIn is tape TC; subtract the reel's tcOffset
         // (populated from ffprobe startTimecode) to get file-time seek position.
         const tcOffsetF = corr ? 0 : (entry?.tcOffset || 0);
-        const srcSec = Math.max(0, (corrSrcInF - tcOffsetF) / fps);
+        const srcSec = Math.max(0, (corrSrcInF - tcOffsetF) / fpsExact);
         capturedSrcSec = srcSec;
         const { video } = await _loadVideo(masterFile);
         await _seekVideo(video, srcSec);
@@ -1957,7 +1997,7 @@ export function createTrlConformFeature(deps = {}) {
         const waveEl = _$('trcWaveOffset');
         if (waveEl) {
           const secPerSample = 2.5 / Math.max(1, refEnv.length - 1);
-          const lagFrames    = Math.round(sync.lag * secPerSample * fps);
+          const lagFrames    = Math.round(sync.lag * secPerSample * fpsExact);
           const pct          = Math.round(sync.corr * 100);
           const sign         = lagFrames > 0 ? '+' : '';
           waveEl.textContent = `${sign}${lagFrames}f · ${pct}% sync`;
@@ -2278,6 +2318,9 @@ export function createTrlConformFeature(deps = {}) {
       const result = await _parseTimeline(state.timelineFile);
       state.events      = result.events || [];
       state.fps         = result.fps    || DEFAULT_FPS;
+      // Falls back to the base when a producer predates the two-rate contract,
+      // which is exactly the behaviour this file had before it was threaded.
+      state.fpsExact    = result.fpsExact || state.fps;
       state.projectName = result.projectName || _stem(state.timelineFile.name);
 
       if (!state.events.length) throw new Error('No video events found in timeline');
@@ -2462,7 +2505,14 @@ export function createTrlConformFeature(deps = {}) {
 
           try {
             const recInF    = ev._recInFrames || _tcToFrames(ev.recIn, state.fps);
-            const unmrefSec = (recInF - seqBaseFrames) / state.fps;
+            // recInF is a frame COUNT off the timecode base; unmrefSec is where we
+            // physically seek the reference, so it divides by the exact rate. The
+            // guard underneath makes the difference load-bearing rather than
+            // merely inaccurate: on NTSC the base overshoots by 3.6 s at the hour
+            // mark, so an event near the tail of a long reference trips
+            // `>= refDuration - 0.1`, logs to a console nobody has open, and is
+            // dropped from the conform with no row and no error.
+            const unmrefSec = (recInF - seqBaseFrames) / (state.fpsExact || state.fps);
 
             if (unmrefSec < 0 || unmrefSec >= refDuration - 0.1) {
               console.warn('[TrlConform] Reference position out of range', unmrefSec, refDuration);
@@ -2479,6 +2529,7 @@ export function createTrlConformFeature(deps = {}) {
               dhCanvas,
               dhCtx,
               fps: state.fps,
+              fpsExact: state.fpsExact || state.fps,
               seqBaseFrames,
               useAI,
               masterFileKey: group.file ? _fpFileKey(group.file) : '',
@@ -2492,7 +2543,12 @@ export function createTrlConformFeature(deps = {}) {
             let audioConfidence = null;
             let finalConfidence = result.visualConfidence;
             try {
-              const corrSrcSec = _tcToFrames(result.srcIn, state.fps) / state.fps;
+              // Two rates in one expression, deliberately: _tcToFrames reads a
+              // timecode string so it takes the base, and the result is then a
+              // seek position for _captureVideoEnvelope, so it leaves on the
+              // exact rate. Writing `/ state.fps` twice was the tell that one
+              // number was being asked to do both jobs.
+              const corrSrcSec = _tcToFrames(result.srcIn, state.fps) / (state.fpsExact || state.fps);
               const [refEnv, srcEnv] = await Promise.all([
                 state.refFile ? _captureVideoEnvelope(state.refFile, unmrefSec) : Promise.resolve(null),
                 group.file    ? _captureVideoEnvelope(group.file, corrSrcSec)  : Promise.resolve(null),
@@ -2610,6 +2666,9 @@ export function createTrlConformFeature(deps = {}) {
       const result = await _parseTimeline(state.timelineFile);
       state.events      = result.events || [];
       state.fps         = result.fps    || DEFAULT_FPS;
+      // Falls back to the base when a producer predates the two-rate contract,
+      // which is exactly the behaviour this file had before it was threaded.
+      state.fpsExact    = result.fpsExact || state.fps;
       state.projectName = result.projectName || _stem(state.timelineFile.name);
 
       const extMatch = state.timelineFile.name.match(/\.(\w+)$/i);
@@ -3597,6 +3656,7 @@ ${clipItems}
     state.timelineText       = '';
     state.events             = [];
     state.fps                = DEFAULT_FPS;
+    state.fpsExact           = DEFAULT_FPS;
     state.projectName        = '';
     state.masterFiles        = [];
     state.reelMap            = [];
@@ -3637,6 +3697,7 @@ ${clipItems}
     return {
       events:           state.events,
       fps:              state.fps,
+      fpsExact:         state.fpsExact,
       projectName:      state.projectName,
       epId:             state.epId,
       reelMap:          state.reelMap.map(r => ({
@@ -3659,6 +3720,8 @@ ${clipItems}
     if (!saved?.analyzed) { clear(); return; }
     state.events           = saved.events           || [];
     state.fps              = saved.fps              || DEFAULT_FPS;
+    // Sessions saved before this field existed restore with base === exact.
+    state.fpsExact         = saved.fpsExact         || state.fps;
     state.projectName      = saved.projectName      || '';
     state.epId             = saved.epId             ?? null;
     state.eventCorrections = saved.eventCorrections || {};
