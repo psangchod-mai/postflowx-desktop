@@ -2673,3 +2673,88 @@ failure summary interpolates `r.error` per shot — N errors, not one exception,
 so it needs its own shape. `errorBanner`'s hint glue needs CSS plus the join,
 not the join alone. `runSaveCascade`'s `UNAVAILABLE` is still unsurfaced at all
 seven call sites.
+
+---
+
+## Iteration 21 — an export that fails should say so
+
+### What a user would have seen
+
+Two very different endings, one indistinguishable result:
+
+- you press Cancel in the Save dialog → nothing happens, no message
+- every save route fails and no bytes are written → nothing happens, no message
+
+Silence is an answer, and it is the wrong one. Clicking "Export CSV" and getting
+neither a file nor a word about why is the least explainable thing an app can do
+to someone who will not open a console to find out.
+
+The Visual QC PDF button was worse than silent. It announced *"Ready. Use 'Save
+as PDF' in the print dialog"* unconditionally — including when the popup had
+been blocked and the HTML fallback had failed or been cancelled. It pointed at a
+dialog that was not on screen.
+
+### Seven sites, two files
+
+`runSaveCascade` has always returned `SAVED`, `CANCELLED` or `UNAVAILABLE`. All
+seven consumers threw it away: four in `features/reviews/index.js` (two export
+menu items, two panel buttons) and three in `components/visualQcModal/index.js`
+(JSON, CSV, PDF). All seven now branch on it.
+
+### The new module, and the helper it deliberately does not have
+
+`src/scripts/core/saveNotice.js` maps an outcome to `{ tone, text }`. No DOM, no
+i18n import beyond the guarded shim, so it is importable in Node tests and in
+both build targets.
+
+There is no `show()` helper, because the two surfaces genuinely differ.
+`visualQcModal` has a progress line, so it **should** report a cancel there —
+the line is on screen and the user is looking at it. `reviews` has no status
+surface at all (measured: grep for `setStatus|toast|setProgress` in that file
+returns nothing), so its only channel is a modal, and it **must not** report a
+cancel: nobody needs a popup confirming that their own Cancel button worked.
+`isDialogWorthy()` is that asymmetry, written down.
+
+### "Export finished." and not "Saved to disk."
+
+No tier can prove the bytes landed. `chrome.downloads.download` resolves an id
+when the download is *accepted*; the anchor tier is `downloadText(...); return
+SAVED;` with no callback at all. A "Saved to disk" confirmation would have
+swapped one unverified success claim for another. The shipped sentence describes
+what the app actually knows — the export finished — and a test asserts the
+stronger claim stays out.
+
+### The print button now says one of three things
+
+`openPrintReportHtml` returns `PRINTED`, the fallback save's real outcome, or
+`UNAVAILABLE`, instead of a bare `true` for all three. Its caller says "use Save
+as PDF in the print dialog" only when a print dialog exists, "report saved as
+HTML, open it and print to PDF" when the popup was blocked but the file got
+written, and the failure sentence otherwise.
+
+### Gate
+
+`tests-js/saveNotice.test.mjs`, 15 tests. Half module, half source gate over the
+call sites — a module returning perfect sentences is worth nothing if a call
+site goes back to discarding the outcome, and no unit test can see that. The
+gate matches constructs, not literal wordings.
+
+Seven mutations applied, seven caught. M5 failed to apply on the first attempt
+(a `perl -0pi` pattern carrying the UI string's curly quotes matched nothing);
+redone as an occurrence-guarded Node script it applied and was caught. Second
+silent `perl` miss in two iterations — the Node form is the default now. All
+three files restored byte-identical.
+
+### A gate from iteration 20 had to move, and that is the gate working
+
+`friendlyAlert.test.mjs` counts calls per converted file. `reviews` went 4 → 5
+because `announceExport()` adds one. Raised with a comment saying why.
+
+### Still open on this front
+
+The three new sentences have no dictionary rows in the seven locales, so they
+show in English until a native speaker adds them. The anchor tier's
+evidence-free `return SAVED` is unchanged in both cascades — making it honest
+needs a real completion signal from the platform layer. `PRINTED` means
+`window.open` succeeded, not that a print dialog appeared. `pfxPlatform.saveFile`
+still collapses cancel into failure; zero callers, still left alone.

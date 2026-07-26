@@ -2740,3 +2740,162 @@ build:renderer` exit 0, 374 files. Committed as `1ffde29`, eight files, verified
 with `git show --numstat` to carry no foreign hunks. A signed/notarized
 `npm run build:mac` needs the user's Apple credentials and pushes an artifact
 outward; it has not been authorized and was not run.
+
+---
+
+## Audit 21 — the export that finished without saying anything
+
+Audit 20 closed with a line on the still-open list: *"`runSaveCascade` returning
+`UNAVAILABLE` is still not surfaced at any of its seven call sites."* This is
+that item, measured properly and closed.
+
+### 21.1 What a user would have seen
+
+`runSaveCascade` answers with one of three outcomes — `SAVED`, `CANCELLED`,
+`UNAVAILABLE`. All seven consumers in the app discarded it. So two endings that
+could not be more different were indistinguishable from the user's chair:
+
+| What happened | What the app did |
+|---|---|
+| You pressed Cancel in the Save dialog | nothing, silently |
+| Every route failed, no bytes written | nothing, silently |
+
+Clicking "Export CSV" and getting no file and no message is the least
+explainable thing an app can do to someone who is not going to open a console to
+find out why. There is no diagnostic to report, no place to look, and no way to
+tell whether to try again.
+
+One site was worse than silent. The Visual QC PDF button called
+`openPrintReportHtml()` — which returned a bare `true` whether the print window
+had opened, the HTML fallback had been saved, *or* the fallback had failed or
+been cancelled — and then announced:
+
+> Ready. Use "Save as PDF" in the print dialog.
+
+unconditionally. In two of those three cases there was no print dialog on
+screen. The app was telling the user to use a thing that did not exist.
+
+### 21.2 The seven sites
+
+| File | Sites | Surface available |
+|---|---|---|
+| `src/scripts/features/reviews/index.js` | 4 (two menu items, two panel buttons) | none — dialog only |
+| `src/scripts/components/visualQcModal/index.js` | 3 (JSON, CSV, PDF) | `setProgress(p, text)` at 1257 |
+
+That second column was measured, not assumed. Grepping `reviews/index.js` for
+`setStatus|_setStatus|toast|__toast|setProgress` returns nothing: the panel has
+no status strip of any kind, so its only channel is a modal.
+
+### 21.3 Why the module returns a tone, and why there is no `show()` helper
+
+The obvious shape here is a helper that takes an outcome and displays it. It is
+the wrong shape, because the two surfaces genuinely differ and not by accident:
+
+- `visualQcModal` **should** report a cancel on its progress line. The line is
+  already on screen and the user is looking at it; going blank is worse.
+- `reviews` **must not** report a cancel. Its only channel is a popup, and
+  interrupting someone with a dialog to tell them their own Cancel button worked
+  is noise, not service.
+
+So `saveNotice(outcome)` returns `{ tone, text }` and each call site branches.
+`isDialogWorthy(notice)` is the encoding of the asymmetry — true only for
+`TONE_ERROR` — and dialog-only surfaces call it before they speak.
+
+### 21.4 Why `SAVED` does not say "Saved to disk"
+
+Because no tier can prove it:
+
+- `chrome.downloads.download` resolves an id when the download is **accepted**,
+  not when the bytes land.
+- The `showSaveFilePicker` tier writes and closes, which is closer, but the
+  cascade does not distinguish it.
+- The anchor tier is literally `downloadText(...); return SAVED;` — no callback
+  of any kind.
+
+A "Saved to disk" confirmation would have replaced one unverified claim with
+another, which would have missed the point of the fix. The sentence shipped
+describes the app's side of the handover — *"Export finished."* — which is true
+of all three tiers. The test asserts the absence of the stronger claim, so a
+future edit cannot quietly upgrade it.
+
+### 21.5 Translate whole sentences
+
+Each of the three outcomes gets one complete sentence through `translate()`,
+rather than a stem plus a glued-on clause. The dictionary is keyed on sentences,
+and assembling clauses produces word order that is wrong in most of the seven
+languages the app ships. This is the same lesson as `friendlyText`'s
+`message + ' ' + hint` glue, recorded in audit 19 and still open there.
+
+### 21.6 The gate, and what it checks
+
+`tests-js/saveNotice.test.mjs`, 15 tests in two halves.
+
+**The module** — a distinct tone and a distinct whole sentence per outcome;
+`SAVED` not claiming a filesystem state; the cancel sentence naming the cancel;
+the failure sentence offering a next step; `isDialogWorthy` true only for a real
+failure. And, deliberately, that an **unrecognised** outcome — `undefined`,
+`null`, `''`, `0`, `{}` — comes back as an error rather than as nothing.
+`undefined` is exactly what a call site would pass if some future cascade forgot
+to return, and silence is the one answer that must not be reachable by accident.
+
+**The call sites** — a module returning perfect sentences is worth nothing if a
+call site goes back to discarding the outcome, and no unit test of
+`saveNotice.js` can see that happen. `discardedCalls()` walks the source for a
+call used as a complete statement with no assignment, no `return`, and no
+`.then` chain within three lines. It matches the **construct**, not a wording:
+enumerating forbidden spellings is guessing at the next mutation, which is the
+M7 lesson from audit 20.
+
+### 21.7 Mutation results
+
+Seven mutations, each checked with `diff -q` to confirm it actually landed
+before its result was trusted — a mutation that fails to apply proves nothing,
+and one did fail to apply on the first attempt here.
+
+| # | Mutation | Applied | Caught |
+|---|---|---|---|
+| M1 | `btnExportJSON` discards the outcome again | yes | yes (2 tests) |
+| M2 | drop the `saveNotice` import from `visualQcModal` | yes | yes |
+| M3 | `saveNotice` returns `''` for a failure | yes | yes (3 tests) |
+| M4 | `openPrintReportHtml` returns a bare boolean again | yes | yes |
+| M5 | the "Save as PDF" line announced unconditionally | **no** — retried | yes, on the retry |
+| M6 | `announceExport` alerts on every outcome, cancel included | yes | yes |
+| M7 | `visualQcModal` CSV site stops using the progress line | yes | yes |
+
+M5's first attempt was a `perl -0pi` substitution containing the curly quotes
+from the UI string; it silently matched nothing. Re-done as a Node script with
+an explicit occurrence-count guard, it applied and was caught. This is the
+second time in two iterations that a `perl` mutation has failed to apply
+silently — the occurrence-guarded Node form is now the default.
+
+All three files were restored and proved byte-identical afterwards.
+
+### 21.8 A gate of iteration 20's had to move
+
+`friendlyAlert.test.mjs` counts `friendlyAlert(` calls per converted file so
+that deleting one is a failure rather than a quiet regression. `reviews` moves
+4 → 5, because `announceExport()` adds a call inside the new helper. The count
+was raised with a comment saying why. The gate did exactly what it was built to
+do: it noticed a change to a converted file and made someone justify it.
+
+### 21.9 Out of scope, on purpose
+
+- `pfxPlatform.saveFile` collapses cancel and failure the same way. It has zero
+  callers; still deliberately left.
+- The anchor tier's evidence-free `return SAVED` in **both** cascades. Making it
+  honest needs a real completion signal from the platform layer.
+- `openPrintReportHtml`'s `PRINTED` means `window.open` succeeded. It does not
+  know whether the print dialog actually appeared.
+- The three new sentences have no dictionary rows in the seven locales, so
+  `translate()` falls back to English. Recorded, not guessed at.
+
+### 21.10 Deploy
+
+`npm run build-verify` exit 0 after the commit (the two `selfContained.test.mjs`
+failures present beforehand are the new-untracked-file gates, and clear once the
+files are in the index — the gate working, not a flake). `npm run build:renderer`
+exit 0, 375 files. Committed as `ac1840a`, five files, verified with
+`git show --numstat` to carry no foreign hunks; the user's 6/6 in
+`reviews/index.js` were confirmed intact afterwards. A signed/notarized
+`npm run build:mac` needs the user's Apple credentials and pushes an artifact
+outward; it has not been authorized and was not run.
