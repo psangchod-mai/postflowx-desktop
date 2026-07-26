@@ -1949,3 +1949,129 @@ as everything else in this audit.
   this question exhaustively. The *panel* level is unmeasured — there is no set
   of "panels" in the markup to enumerate the way `data-main` enumerates tabs,
   which is itself the reason nothing has ever checked it.
+
+## Audit 15
+
+### 15.1 A new species: the doubled path segment inside an empty catch
+
+`render_queue.js:807` imported `'./scripts/modules/native_helper_client.js'`
+from a file already inside `src/scripts/`. The resolved path,
+`src/scripts/scripts/modules/`, has never existed. The import threw on every
+single execution, and `catch {}` discarded the throw.
+
+What makes this its own species rather than another silent no-op is the
+*direction of the lie*. Iterations 12–14 found controls that did nothing and
+said nothing. This one did nothing and said something — it said:
+
+    Native helper not available — start Resolve manually, then retry
+
+That is a confident, specific, actionable diagnosis of a problem on the user's
+machine, emitted by code that never looked at the user's machine. The failure
+was one directory name in the same file, and the only artifact that named it
+was destroyed by the catch a microsecond after it was created.
+
+An empty catch converts "this program has a bug" into "your environment is
+missing something". That conversion is the defect. The fix logs through the
+file's existing `_dbgRe` channel, so the next failure arrives with a reason.
+
+### 15.2 `src/` is not the tree this code runs in
+
+The gate's first scan reported `src/sandbox/j2k_decoder.js -> src/assets/imf/jpeg2000_pure.js`
+as **absent**, and it was wrong.
+
+`build-renderer.js:85-90` copies the *contents* of repo-root `assets/` and the
+*contents* of `src/` into one directory, as siblings. Line 143 does the matching
+rewrite for HTML: `html.replace(/(["'(])\.\.\/assets\//g, '$1assets/')`. So
+`sandbox/j2k_decoder.js` importing `'../assets/imf/jpeg2000_pure.js'` is correct
+at runtime — it lands on `dist/desktop/assets/` — and looks broken to anyone who
+resolves it against the source layout, where `src/assets/` does not exist.
+
+Resolving in the shipped tree's coordinates and mapping back is the difference
+between a gate reporting a real dead import and a gate reporting the repository's
+own directory structure at somebody. Getting it wrong made the first run accuse a
+working decoder fallback of being dead. Absent edges went 4 → 2 once corrected.
+
+The general lesson for every future scanner in this repo: **the import graph must
+be resolved in the coordinates of the tree that runs, not the tree that is
+edited.** Two other paths through `build-renderer.js` do the same relocation.
+
+### 15.3 The arithmetic of a suite that only runs here
+
+Audit 14.3 established that HEAD does not contain its own source. Iteration 15
+measured the blast radius.
+
+- `tests-js/` holds **103** `*.test.mjs` on disk. **73** are tracked. **30** are not.
+- Ten tracked `src/` files hold **21** distinct relative import edges — 19 static,
+  2 dynamic — to **15** modules nobody committed.
+- `git archive HEAD` dies at `tests-js/aeScript.test.mjs` with
+  `ERR_MODULE_NOT_FOUND` on `ocfIdtResolver.js`, which is 9,990 bytes on this
+  disk and was never `git add`ed.
+
+`aeScript.test.mjs` is the **third tracked test file alphabetically**. With a
+runner that exited on first failure, that single missing file meant a fresh clone
+executed **2 gates out of 73** while this machine executed 103. The XSS scan, the
+DOM contract, the accessibility names, the tutorial coverage — seventy-one gates
+in between — never ran anywhere but here, and reported nothing, and reported it
+as success right up until the exit code.
+
+These figures supersede and extend audit 14.3's "19 tracked files import 14
+distinct untracked modules", which was itself corrected pre-commit to 19 edges /
+15 modules / 10 importers. The complete set is: **10 importers, 21 edges, 15
+modules, 103 test files, 73 tracked.**
+
+### 15.4 A better failure mode is not a fix
+
+`package.json`'s `test:js` now collects failures instead of exiting on the first
+one. A crash costs one gate rather than all of them.
+
+This is worth stating plainly because it is exactly the kind of change that reads
+as a fix in a changelog and is not one. The fifteen modules are still missing. A
+clone still cannot run `aeScript.test.mjs`. What changed is that the other
+seventy-one gates now get to speak, so the *next* person to clone this repository
+learns seventy-two things instead of one. The underlying debt is untouched and is
+recorded in three baselines rather than resolved.
+
+### 15.5 Two dead fallbacks that are harmless, and why they stay baselined
+
+`ui.js:118-127` has a two-tier legacy import for `nuke_import_script.js` and
+`amf_convert.js`. The first tier, `./modules/…`, exists and ships. The second
+tier, `./amf_convert.js` and `./nuke_import_script.js` at `src/scripts/` root,
+exists nowhere — not in git, not on disk, not in the bundle.
+
+They are the only two `absent` edges in the tree. They are also genuinely
+harmless: `catch`-guarded, unreachable in practice because tier one always
+resolves. Deleting them is correct and is not this iteration's business — they
+are two lines in a file with 594 modified siblings in the user's working tree.
+Baselined at exactly 2, shrink-only, so removing them is a one-line edit to a
+fixture and adding a third is a failure.
+
+### 15.6 What the new gate cannot see
+
+- **Anything not written as a string literal.** `import(dynamicPath)` is
+  invisible in both directions — a broken dynamic path will not be caught, and a
+  module reached only that way will look unused.
+- **CommonJS.** `electron/` is `require()`-based and entirely out of scope. This
+  is the most important gap: the *same defect* there breaks the application
+  rather than the test suite. It deserves its own pass.
+- **Whether an imported module is correct.** Only whether it will be there.
+- **Whether a file that exists is reachable at runtime.** A tracked module
+  nothing imports passes, as it should.
+- **Node built-ins and packages.** Bare specifiers resolve through
+  `node_modules` and are the lockfile's problem.
+
+### 15.7 Follow-ups
+
+- **Resolved from 14.7:** the untracked-import debt now has the baseline gate
+  that 14.7 named as "the next iteration's candidate deliverable either way".
+  The underlying decision — `git add` the 15 modules and 30 test files, or leave
+  them baselined — is still the user's and is still open. The gate holds the line
+  in the meantime.
+- **New, highest value:** the CommonJS `require()` graph under `electron/`. A
+  doubled path segment there is not a dead button, it is a dead application. The
+  gate built this iteration cannot see it, and nothing else does either.
+- **New:** `ui.js`'s two dead second-tier legacy fallbacks (15.5), removable
+  whenever that file is next opened for a real reason.
+- Carried, unchanged: `_tutModalMap`'s four legacy keys; the five-iteration-old
+  duplicate `#btnTutorial` handler pair; the global How to Use button showing
+  `#tlcTutorialModal` in static English; the tab-name consistency sweep;
+  `.pm-controls` being the only panel with a help affordance.

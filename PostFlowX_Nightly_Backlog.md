@@ -2079,3 +2079,109 @@ which would have turned a true gate into a decorative one.
   The shipped `app.asar` was extracted and confirmed to contain
   `genericTutorialModal`, `_fillFallbackTutorial`, and the new
   `let modalId … if (!modalId) {` shape.
+
+## Iteration 15 — the button that blamed your machine for its own typo
+
+### The defect
+
+`render_queue.js` lives in `src/scripts/`. The native helper lives one level
+down, at `./modules/native_helper_client.js`. The file asked for
+`./scripts/modules/native_helper_client.js` — one doubled path segment,
+resolving to `src/scripts/scripts/modules/`, a directory that has never
+existed in this repository.
+
+The import sat inside `catch {}`:
+
+    try { helper = await import('./scripts/modules/native_helper_client.js'); } catch {}
+
+So the throw was discarded. `helper` was always `null`. `startFn` below it was
+always `undefined`. And every press of **Start Resolve Engine** or **Fix &
+Retry** fell into the same branch and produced the same toast:
+
+    Native helper not available — start Resolve manually, then retry
+
+That message is a diagnosis, and it was the wrong one. It told the user their
+DaVinci Resolve integration was missing. No amount of installing Resolve
+correctly, configuring it correctly, or restarting anything could change the
+outcome, because nothing about the user's machine was ever consulted. The app
+was reporting its own typo as the user's problem, and the empty catch is what
+made that possible — the one line of evidence that would have identified the
+real cause was thrown away at the moment it was produced.
+
+This is the third iteration in a row to land on the same family: a control that
+appears functional, does nothing, and says nothing about why.
+
+### The fix
+
+The path is corrected, and the catch now speaks:
+
+    try { helper = await import('./modules/native_helper_client.js'); }
+    catch (e) { _dbgRe('native_helper_client import failed', { message: e?.message }); }
+
+`_dbgRe` is the file's existing debug channel (`render_queue.js:239`), gated on
+`window.PFX_DEBUG_RESOLVE_ENGINE`, so this is quiet in normal use and
+diagnosable when it is not. A silent catch is what let a wrong path masquerade
+as a missing feature for this long; the next time this import fails it will
+fail with a reason attached.
+
+### What the non-technical user gets
+
+A working button. "Start Resolve Engine" now reaches the code that starts
+Resolve, and "Fix & Retry" can actually fix and retry. For anyone who took the
+old toast at face value and went looking for a broken Resolve install, the
+search is over — there was never anything to find.
+
+### The gate
+
+`tests-js/selfContained.test.mjs` — 11 tests, on the `domContract.test.mjs`
+shrink-only-baseline model — plus the scan library `tests-js/lib/moduleGraph.mjs`,
+mirroring the `lib/domIds.mjs` convention.
+
+It resolves every relative import in the committed `src/` tree and sorts each
+edge into `tracked` (a clone gets it), `untracked` (this disk only) or `absent`
+(nowhere at all). Absent is a hard failure with a two-entry baseline. Untracked
+and the 30 untracked test files are baselined debt with hard literal bounds,
+because those files are somebody's uncommitted work and are not mine to commit;
+what the gate can insist on is that the numbers stop going up.
+
+The last test is specific and deliberate: *the render queue can still reach the
+native helper*. The general rule would catch a regression of this bug, but a
+named test says why the rule exists.
+
+### The runner
+
+`test:js` was `node "$f" || exit 1`, so one dead process ended the entire run.
+Now it collects failures and exits non-zero at the end. Identical exit code, but
+one crash costs one gate instead of seventy-one. **This is a better failure
+mode, not a fix** — the modules are still missing and the gates still have
+nothing to check on a clone; only the arithmetic changed.
+
+### Verification
+
+- New gate green: **11/11**.
+- Five negative-verifications, each re-broken, each caught by the intended test,
+  each restored to green: drop a baseline entry → `no committed file imports a
+  module nobody committed`; leave a stale absent entry → `the baselines do not
+  outlive what they describe`; add an untracked test file → `no new test file is
+  left out of git`; re-break `render_queue.js` → `no import resolves to nothing
+  at all` **and** the named render-queue test; push a baseline past its bound →
+  `the baselines only ever shrink`.
+- Runner fix proven with a deliberately crashing `aaCrash.test.mjs`: exit 1, 104
+  files attempted, files after the crash still ran. Clean: exit 0, 103 files.
+- `npm run build-verify` exit 0 — 250 Python passed / 7 skipped, XSS / XXE /
+  fail-open gates clean.
+- `npm run build:renderer` — 372 files, v2026.6.1,
+  `✓ access policy service: configured`.
+- Committed as `645d0e5`, seven files, 516 insertions / 2 deletions.
+  `git show --numstat` filtered to anything outside those seven paths returned
+  nothing. The user's own uncommitted `priority` clamp in the same file, and the
+  worktree's `100644 → 100755` mode change, were both left in the working tree
+  untouched — the blob was reconstructed from `HEAD` and patched with one hunk
+  rather than staged from disk.
+- Packaged with `npm run build:mac-dir` (unsigned, identity explicitly null).
+  The shipped `app.asar` was extracted and proves the fix end to end: the
+  packaged `render_queue.js:819` imports `./modules/native_helper_client.js`;
+  that file is present at `/dist/desktop/scripts/modules/native_helper_client.js`;
+  it exports both `nativeResolveStartEngine` and `nativeResolveStartBackground`,
+  which is exactly what `startFn` reads; and `scripts/scripts/` appears nowhere
+  in the archive.
