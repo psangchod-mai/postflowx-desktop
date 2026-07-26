@@ -8,6 +8,7 @@ import { getCachedProxyForFile } from '../../modules/proResProxy.js';
 // The tiers here throw on cancel rather than returning it, so runSaveCascade's
 // own catch classifies them and this file never needs isUserCancel directly.
 import { SAVED, UNAVAILABLE, runSaveCascade } from '../../core/saveOutcome.js';
+import { saveNotice } from '../../core/saveNotice.js';
 
 /**
  * Resolve the best playable URL for a clip used by hidden analysis video elements
@@ -757,6 +758,14 @@ function buildPrintHtmlReport({ title, subtitle, metaLines, items }){
   </html>`;
 }
 
+// The print window opened. Distinct from SAVED, because the two endings need
+// different sentences: one points at a dialog on screen, the other at a file.
+const PRINTED = 'printed';
+
+// Returns PRINTED, or the save cascade's own outcome for the HTML fallback.
+// It used to return a bare `true` in both of those cases *and* after a
+// cancelled or failed fallback save, which is how the caller ended up
+// announcing a print dialog that had never opened.
 async function openPrintReportHtml({ filenameBase, html }){
   // Try open in a new tab/window and auto-print. If blocked, download HTML as fallback.
   try{
@@ -772,15 +781,15 @@ async function openPrintReportHtml({ filenameBase, html }){
       }catch{}
       // Auto-open print dialog (best-effort).
       setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 300);
-      return true;
+      return PRINTED;
     }
   }catch{}
-  // Fallback: save HTML for user to open and Print to PDF
+  // Fallback: save HTML for user to open and Print to PDF. Hand the caller the
+  // real outcome so it can say what actually happened.
   try{
-    await downloadOrSaveText(`${safeName(filenameBase)}_visual_qc_report.html`, html, 'text/html');
-    return true;
+    return await downloadOrSaveText(`${safeName(filenameBase)}_visual_qc_report.html`, html, 'text/html');
   }catch{}
-  return false;
+  return UNAVAILABLE;
 }
 
 // Same three-route cascade the review notes export uses, and it had the same
@@ -1702,14 +1711,16 @@ export async function openVisualQcModal({
     const rep = currentReport || (store?.state?.clips?.find(x=>x.id===c.id)?.visualQc) || null;
     if (!rep) return;
     const name = safeName((rep.clip?.name || c.name || c.file?.name || 'clip'));
-    await downloadOrSaveText(`${name}_visual_qc.json`, JSON.stringify(rep, null, 2), 'application/json');
+    const outcome = await downloadOrSaveText(`${name}_visual_qc.json`, JSON.stringify(rep, null, 2), 'application/json');
+    setProgress(outcome === SAVED ? 1 : 0, saveNotice(outcome).text);
   });
 
   btnExportCsv.addEventListener('click', async ()=>{
     const rep = currentReport || (store?.state?.clips?.find(x=>x.id===c.id)?.visualQc) || null;
     if (!rep) return;
     const name = safeName((rep.clip?.name || c.name || c.file?.name || 'clip'));
-    await downloadOrSaveText(`${name}_visual_qc.csv`, reportToCsv(rep), 'text/csv');
+    const outcome = await downloadOrSaveText(`${name}_visual_qc.csv`, reportToCsv(rep), 'text/csv');
+    setProgress(outcome === SAVED ? 1 : 0, saveNotice(outcome).text);
   });
 
   btnExportPdf.addEventListener('click', async ()=>{
@@ -1851,8 +1862,16 @@ export async function openVisualQcModal({
       });
 
       setProgress(0.95, 'Opening print dialog…');
-      await openPrintReportHtml({ filenameBase: nameBase, html });
-      setProgress(1, 'Ready. Use “Save as PDF” in the print dialog.');
+      const how = await openPrintReportHtml({ filenameBase: nameBase, html });
+      if (how === PRINTED){
+        setProgress(1, 'Ready. Use “Save as PDF” in the print dialog.');
+      } else if (how === SAVED){
+        // The popup was blocked, so there is no print dialog to point at. Point
+        // at the file that did get written instead.
+        setProgress(1, 'Report saved as HTML. Open it and print to PDF.');
+      } else {
+        setProgress(0, saveNotice(how).text);
+      }
     }catch(err){
       setProgress(0, err?.message || String(err));
     }finally{

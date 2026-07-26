@@ -64,6 +64,7 @@ import { iconSvg, setIconButton, setLabeledIcon, setPlayPauseIconButton, setTime
 import { resolveShortcutAction, getShortcutsConfig } from '../../core/shortcuts.js';
 import { SAVED, CANCELLED, UNAVAILABLE, isUserCancel, runSaveCascade } from '../../core/saveOutcome.js';
 import { friendlyAlert } from '../../core/friendlyAlert.js';
+import { saveNotice, isDialogWorthy } from '../../core/saveNotice.js';
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -159,6 +160,16 @@ async function downloadOrSaveText(filename, text, mime='text/plain'){
     // 3) Anchor download — always available, so the cascade ends here.
     () => { downloadText(filename, text, mime); return SAVED; },
   ]);
+}
+
+// Every export button here used to discard the cascade's answer, so "you
+// cancelled" and "no route worked, nothing was written" both ended in silence.
+// This panel has no status strip, so a real failure has to be a dialog — and by
+// the same token a cancel must not be one. Nobody needs a popup confirming that
+// their own Cancel button worked.
+function announceExport(outcome, label){
+  const notice = saveNotice(outcome);
+  if (isDialogWorthy(notice)) friendlyAlert(notice.text, label);
 }
 
 function clampTcInput(v) {
@@ -8649,7 +8660,9 @@ const __rvCtxTargetOk = (target) => {
       window.__rqAddJob('rvw_json', `Reviews JSON — ${stem}`, { fmt: 'rvw_json', stem, module: 'reviews' });
       try { window.setMainTab('renderq'); } catch {}
     } else {
-      downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', store.exportMarkersJSON(), 'application/json').catch(err => friendlyAlert(err, 'Reviews JSON export failed'));
+      downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', store.exportMarkersJSON(), 'application/json')
+        .then(outcome => announceExport(outcome, 'Reviews JSON export failed'))
+        .catch(err => friendlyAlert(err, 'Reviews JSON export failed'));
     }
   });
 
@@ -8662,7 +8675,9 @@ const __rvCtxTargetOk = (target) => {
       window.__rqAddJob('rvw_csv', `Reviews CSV — ${stem}`, { fmt: 'rvw_csv', stem, module: 'reviews' });
       try { window.setMainTab('renderq'); } catch {}
     } else {
-      downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', store.exportMarkersCSV(), 'text/csv').catch(err => friendlyAlert(err, 'Reviews CSV export failed'));
+      downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', store.exportMarkersCSV(), 'text/csv')
+        .then(outcome => announceExport(outcome, 'Reviews CSV export failed'))
+        .catch(err => friendlyAlert(err, 'Reviews CSV export failed'));
     }
   });
 
@@ -8702,12 +8717,14 @@ const __rvCtxTargetOk = (target) => {
 
   btnExportJSON.addEventListener('click', async () => {
     const json = store.exportMarkersJSON();
-    await downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', json, 'application/json');
+    const outcome = await downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', json, 'application/json');
+    announceExport(outcome, 'Reviews JSON export failed');
   });
 
   btnExportCSV.addEventListener('click', async () => {
     const csv = store.exportMarkersCSV();
-    await downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', csv, 'text/csv');
+    const outcome = await downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', csv, 'text/csv');
+    announceExport(outcome, 'Reviews CSV export failed');
   });
 
   const exportNotesPDF = () => {

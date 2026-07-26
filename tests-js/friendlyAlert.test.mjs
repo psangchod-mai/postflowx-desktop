@@ -119,7 +119,9 @@ test('an alert that throws still returns the text', () => {
 // not a quiet regression — the same reason the save-cascade gate counts returns.
 const CONVERTED = [
   ['src/scripts/features/vfxPull/vfxPullPanel.js', 1],
-  ['src/scripts/features/reviews/index.js', 4],
+  // 4 from this pass, plus the one inside announceExport() — the reviews panel
+  // has no status strip, so a failed export has nowhere to speak but a dialog.
+  ['src/scripts/features/reviews/index.js', 5],
   ['src/scripts/modules/smart_engine_settings.js', 1],
   ['src/scripts/modules/imf/imf_package_ui.js', 1],
 ];
