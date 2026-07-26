@@ -933,3 +933,63 @@ Say the word and I'll `git rm --cached` them back out.
 **Next:** the three `_showToast` implementations now all call `pfxFriendlyText`,
 so the only remaining duplication is the toast plumbing itself — a candidate for
 one shared notifier.
+
+### 21:00 run — iteration 2 · error messages in the user's own language (`1b2fdf1`)
+
+**Why this over the carried item.** The backlog's next entry was consolidating
+the three `_showToast` implementations. Under the new objective — accessibility
+for non-technical users — that is internal hygiene: it changes no pixel and no
+word. The app ships in 7 languages to an audience that is largely not
+native-English, so a failure message the user cannot read is the more expensive
+defect, and it is measurable rather than a matter of taste.
+
+**The measurement.** Ran all 50 user-facing strings from `friendlyError.js`
+against the 3,678-line dictionary in `scripts/modules/i18n.js`. **0 of 50** were
+present. Every error in the app was English-only regardless of the chosen
+language.
+
+**The trap this nearly walked into.** The obvious fix is to add 50 dictionary
+entries and let the existing MutationObserver apply them. Reading the observer
+first showed it would not work: the observer only ever sees what `friendlyText()`
+produces, which is `message + ' ' + hint` glued into one string, and that
+concatenation is not a dictionary key. 300 translations would have been dead
+data, and every error would have stayed English with a green test suite. This is
+the same shape as iteration 1's miss — *check what the code actually does before
+building against what it appears to do* — and it cost one file read to avoid.
+
+**What shipped.**
+- `friendlyError.js` gained a `_t()` helper that goes through `window.PFX_t`
+  (already exposed at `i18n.js:3676`, the same global-hook pattern as
+  `window.pfxFriendlyText`). It deliberately does **not** import `i18n.js`: the
+  module is loaded directly by Node tests where there is no `window`, and
+  English is correct there. Translation happens on the three parts while they
+  are still separate.
+- The ENOENT message appends the path *after* the translated sentence instead of
+  interpolating it, so no locale carries a placeholder and the filename an
+  assistant actually needs is never reworded.
+- `ERROR_DICT` in `i18n.js`, 50 strings × 6 languages, merged **before**
+  `KEY_SET`/`REVERSE` are built so the entries are indexed for language
+  switching.
+- `tests-js/errorI18n.test.mjs` — 19 tests, the durable part (see audit report).
+
+**Vocabulary decisions, made by checking the existing dict rather than by ear.**
+`"Settings"` is already translated (설정 / 設定 / 設定 / ตั้งค่า / Pengaturan /
+Settings) but `"Resolve Engine"`, `"Simple Mode"` and `"IMF Validation"` are in
+no dict at all — the UI shows them in English. So `"Settings › Resolve Engine"`
+renders with the translated word and the untranslated product name, which is
+what is actually on the user's screen. macOS ships no Indonesian or Filipino
+localisation, so those two locales keep `"System Settings › Privacy & Security"`
+verbatim while ko/ja/zh-TW/th use the localised pane names.
+
+**Verification.** Simulated the browser path with a fake `window.PFX_t` per
+locale and read the output for four representative failures in th/ko/fil, plus
+the no-`window` case to confirm Node still gets English. The `/Volumes/` path
+came through byte-identical in all three. `test:js` 91 files exit 0 (46 existing
+friendlyError tests unchanged), `build-verify` 250 passed / 7 skipped with
+XSS/XXE/fail-open gates clean, `build:renderer` 368 files.
+
+**Left for later (measured, not guessed).** The app's own hand-written messages
+that `friendlyError` passes through untouched — `"Scan a VFX folder first."`,
+`"Open the Cut Diff tab, then retry"` and their kind — are also absent from the
+dictionary. Those live at call sites across the app rather than in one table, so
+they are a separate sweep, not a rider on this one.

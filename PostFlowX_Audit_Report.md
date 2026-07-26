@@ -716,3 +716,63 @@ have been a regression. Guarded by test.
 miss instead of delegating to `friendlyText`. Fixing it needs the
 reconstructed-blob staging technique — the file carries unrelated pending user
 changes — so it is deferred rather than dropped.
+
+### 21:00 run — iteration 2 · what a non-English user reads when things break
+
+**Finding 1 — every failure message was English-only, in all 6 non-English
+locales.** Not a gap in the dictionary: a structural one. `i18n.js` translates by
+walking the DOM and matching text against a dictionary, but `friendlyError.js`
+assembles its text in JS and hands the renderer a finished string. 0 of 50
+user-facing strings were in the dictionary. Fixed by translating at source
+(`1b2fdf1`).
+
+**Finding 2 — the fix that suggests itself would have failed silently.**
+Adding the 50 strings to the dictionary and relying on the observer looks
+correct and is not: `friendlyText()` concatenates `message + ' ' + hint`, and the
+observer would have called `toEnglishKey()` on that concatenation, which is not a
+key. The symptom would have been 300 translations in the repo, a green test
+suite, and English errors in production. Worth recording as a pattern: *a
+translation layer that keys on rendered text is defeated by any string built
+after the last dictionary lookup.*
+
+**Finding 3 — the coupling between the two files is invisible.** Anyone adding a
+rule to `friendlyError.js` sees 46 tests pass and has no signal that six locales
+just lost coverage. `tests-js/errorI18n.test.mjs` closes this. It parses both
+files as text — `i18n.js` cannot be imported in Node, it touches `window` at
+load, and the literal is what we want to check anyway rather than whatever a
+running app merged — and asserts: full coverage per locale; no translation
+byte-identical to its English (the signature of a copy-paste stub); identical key
+sets across all six; no orphaned entries left behind after a reword; that
+`ERROR_DICT` is merged *before* `KEY_SET` is built, since merging after would
+leave the entries present in the file but dead at runtime; that `friendlyError.js`
+reaches i18n via the global and not an import; and a 170-char toast budget, which
+Thai and Filipino run closest to.
+
+The test also guards itself: if a refactor changed how rules are written, the
+source-scanning regexes would find nothing and every coverage assertion would
+pass vacuously, so there is an assertion that the scan found ≥45 strings and
+one of each shape. **Negative-tested:** adding an untranslated rule breaks
+exactly the six coverage tests and nothing else.
+
+**Non-finding — the observer does catch banner text.** Worth writing down since
+it was checked and is counter-intuitive: the MutationObserver watches
+`childList` but **not** `characterData`. `showError()` assigns `el.textContent`,
+which *replaces* the child text node rather than mutating it, so it fires
+`childList` and is caught. Assigning to a text node's `.data` anywhere would not
+be. Also confirmed `toEnglishKey()` does a reverse lookup, so already-translated
+text maps back to its English key — round-tripping is safe and there is no
+double-translation risk from translating at source.
+
+**Open item — pass-through messages are still English.** `friendlyError` is
+conservative by design: text it does not classify is returned unchanged, which
+is right, because the app already writes good messages at those call sites. But
+those messages — `"Scan a VFX folder first."`, `"Load a proxy video file in the
+tab, then retry"`, `"Open the Cut Diff tab, then retry"`, `"Ensure shots/markers
+are set in the tab, then retry"` — are **also absent from the dictionary**
+(verified, not assumed). They do reach the DOM, so unlike the classified errors
+they are fixable by dictionary entries alone. Scattered across call sites rather
+than collected in one table, so extracting them is its own pass.
+
+**Still open from iteration 1.** `friendlyError.js` and `friendlyError.test.mjs`
+were uncommitted in-flight user work that this loop committed in `887b161`. Say
+the word and they come back out with `git rm --cached`.
