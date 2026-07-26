@@ -804,7 +804,17 @@
     _save(); _render();
 
     let helper = null;
-    try { helper = await import('./scripts/modules/native_helper_client.js'); } catch {}
+    // This file lives in src/scripts/, so the path is './modules/…'. It read
+    // './scripts/modules/…' — a doubled segment that resolved to
+    // src/scripts/scripts/modules/, which has never existed. The import threw
+    // every single time and the empty catch swallowed it, so `helper` was
+    // always null, `startFn` below was always undefined, and every attempt to
+    // start Resolve ended in "Native helper not available — start Resolve
+    // manually", no matter how correctly Resolve was installed and configured.
+    // Log the reason if it ever fails for real; a silent catch is what let a
+    // wrong path masquerade as a missing feature for this long.
+    try { helper = await import('./modules/native_helper_client.js'); }
+    catch (e) { _dbgRe('native_helper_client import failed', { message: e?.message }); }
 
     // For background_auto, prefer nativeResolveStartBackground; fall back to nativeResolveStartEngine.
     const startFn = isBackground

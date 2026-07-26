@@ -12,7 +12,7 @@
     "test:pipeline": "node --test test/pipeline/*.test.mjs",
     "test:color": "node --test test/color/*.test.mjs",
     "test:node": "node --test test/parsers/*.test.mjs test/pipeline/*.test.mjs test/color/*.test.mjs",
-    "test:js": "for f in tests-js/*.test.mjs; do echo \"\u2022 $f\"; node \"$f\" || exit 1; done",
+    "test:js": "fail=0; for f in tests-js/*.test.mjs; do echo \"\u2022 $f\"; node \"$f\" || fail=1; done; exit $fail",
     "test:py": "node tools/run-pytest.mjs",
     "build-verify": "npm run test:node && npm run test:js && npm run test:py && node tools/scan-innerhtml.mjs --gate && node tools/scan-rawxml.mjs --gate && node tools/scan-failopen.mjs --gate",
     "scan:xss": "node tools/scan-innerhtml.mjs",
