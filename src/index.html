@@ -6479,7 +6479,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   </div>
 
 <!-- ── IMF Folder Confirm Modal ─────────────────────────────────────────────── -->
-<div id="imfFolderConfirm" class="pfx-confirm-backdrop" style="display:none" role="dialog" aria-modal="true">
+<div id="imfFolderConfirm" class="pfx-confirm-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="imfConfirmTitle" aria-describedby="imfConfirmDesc">
   <div class="pfx-confirm-modal">
     <div class="pfx-confirm-icon">
       <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
@@ -6502,10 +6502,10 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 <div id="pfxParseProgress" class="pfx-parse-progress" aria-live="polite" aria-atomic="true"></div>
 
 <!-- OTIO Export Mode Picker ─────────────────────────────────────────────── -->
-<div id="pmOtioModal" class="pfx-confirm-backdrop" style="display:none" role="dialog" aria-modal="true">
+<div id="pmOtioModal" class="pfx-confirm-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="pmOtioTitle">
   <div class="pfx-confirm-modal pm-otio-modal">
     <div class="pfx-confirm-body">
-      <div class="pfx-confirm-title">Export OTIO</div>
+      <div class="pfx-confirm-title" id="pmOtioTitle">Export OTIO</div>
       <div class="pfx-confirm-desc">Select export mode — sets which clips and markers are included in the <code>.otio</code> file.</div>
     </div>
     <div class="pm-otio-grid">

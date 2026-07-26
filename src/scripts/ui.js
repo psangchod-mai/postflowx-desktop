@@ -3663,7 +3663,7 @@ function setMainTab(key){
   // cutdiff2, about, renderq) are always accessible and are not listed here.
   const _gatedTabs = {
     aceslook:   'ACES Look',
-    trlconf:    'Timeline Conform',
+    trlconf:    'Trailers Conform',
     platelink2: 'Plate Link',
     reviews:    'Visual QC',
     imf:        'IMF Tools',
@@ -11895,6 +11895,12 @@ function _wirePfxTutorials(){
   }
 
   // ── Unified How to Use modal handler (global button in header) ──
+  // Every value must be an id that exists. This one read 'tconformTutorialModal',
+  // which is present nowhere in the codebase, so getElementById returned null and
+  // the handler returned silently — while the duplicate handler near the end of
+  // this file opened the *Settings* tutorial instead. A user on Timeline Convert
+  // pressed How to Use and got help for a different feature, with the authored
+  // #tlcTutorialModal sitting unreachable. tests-js/modalIds.test.mjs now gates it.
   const _tutModalMap = {
     edl:         'pullPrepTutorialModal',
     prepmark:    'pullPrepTutorialModal',
@@ -11904,7 +11910,7 @@ function _wirePfxTutorials(){
     reviews:     'reviewsTutorialModal',
     amf:         'plateLinkTutorialModal',
     platelink2:  'plateLinkTutorialModal',
-    trlconf:     'tconformTutorialModal',
+    trlconf:     'tlcTutorialModal',
     imf:         'settingsTutorialModal',
     aceslook:    'settingsTutorialModal',
     about:       'settingsTutorialModal',
@@ -23962,7 +23968,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       cutdiff: 'cutDiffTutorialModal', cutdiff2: 'cutDiff2TutorialModal',
       shotmarker: 'markersTutorialModal', reviews: 'reviewsTutorialModal',
       amf: 'plateLinkTutorialModal', platelink2: 'plateLinkTutorialModal',
-      trlconf: 'settingsTutorialModal', imf: 'settingsTutorialModal', aceslook: 'settingsTutorialModal', about: 'settingsTutorialModal',
+      // keep in sync with _tutModalMap above — both handlers fire on one click
+      trlconf: 'tlcTutorialModal', imf: 'settingsTutorialModal', aceslook: 'settingsTutorialModal', about: 'settingsTutorialModal',
     };
     let _tutClose = null;
     document.getElementById('btnTutorial')?.addEventListener('click', () => {
