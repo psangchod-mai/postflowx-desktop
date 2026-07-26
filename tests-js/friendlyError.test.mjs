@@ -8,6 +8,13 @@ function has(text, sub, l) { ok(String(text).toLowerCase().includes(sub.toLowerC
 // Technical → friendly
 has(friendlyText('Error: ENOENT: no such file, open /Volumes/X/a.mxf'), 'found', 'ENOENT → not found');
 has(friendlyText('ENOENT: no such file, open /Volumes/X/a.mxf'), '/Volumes/X/a.mxf', 'file path preserved in hint');
+// Volumes in a post house have spaces in their names. Node quotes the path, so
+// there is no excuse for truncating it at the first space — a half path is
+// worse than none, because it names a real-looking folder that isn't the one.
+has(friendlyText("ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/sh010/a.ari'"),
+  '/Volumes/SHOW DRIVE 01/sh010/a.ari', 'quoted path with spaces kept whole');
+ok(!friendlyText("ENOENT: open '/Volumes/SHOW DRIVE 01/a.ari'").includes('/Volumes/SHOW\n'),
+  'no truncated path left behind');
 has(friendlyText('EACCES: permission denied'), 'permission', 'EACCES → permission');
 has(friendlyText('ENOSPC: no space left on device'), 'disk is full', 'ENOSPC → disk full');
 has(friendlyText('Request failed with status 403 Forbidden'), 'authorize', '403 → authorize');

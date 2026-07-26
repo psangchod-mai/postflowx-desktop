@@ -63,6 +63,7 @@ import { openVisualQcModal } from '../../components/visualQcModal/index.js';
 import { iconSvg, setIconButton, setLabeledIcon, setPlayPauseIconButton, setTimelineFitToggleButton } from '../../core/iconButtons.js';
 import { resolveShortcutAction, getShortcutsConfig } from '../../core/shortcuts.js';
 import { SAVED, CANCELLED, UNAVAILABLE, isUserCancel, runSaveCascade } from '../../core/saveOutcome.js';
+import { friendlyAlert } from '../../core/friendlyAlert.js';
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -8648,7 +8649,7 @@ const __rvCtxTargetOk = (target) => {
       window.__rqAddJob('rvw_json', `Reviews JSON — ${stem}`, { fmt: 'rvw_json', stem, module: 'reviews' });
       try { window.setMainTab('renderq'); } catch {}
     } else {
-      downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', store.exportMarkersJSON(), 'application/json').catch(err => alert(err?.message || String(err)));
+      downloadOrSaveText('PostFlowX_VFXReviews_Notes.json', store.exportMarkersJSON(), 'application/json').catch(err => friendlyAlert(err, 'Reviews JSON export failed'));
     }
   });
 
@@ -8661,7 +8662,7 @@ const __rvCtxTargetOk = (target) => {
       window.__rqAddJob('rvw_csv', `Reviews CSV — ${stem}`, { fmt: 'rvw_csv', stem, module: 'reviews' });
       try { window.setMainTab('renderq'); } catch {}
     } else {
-      downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', store.exportMarkersCSV(), 'text/csv').catch(err => alert(err?.message || String(err)));
+      downloadOrSaveText('PostFlowX_VFXReviews_Notes.csv', store.exportMarkersCSV(), 'text/csv').catch(err => friendlyAlert(err, 'Reviews CSV export failed'));
     }
   });
 
@@ -8684,7 +8685,7 @@ const __rvCtxTargetOk = (target) => {
       await __pfxHydrateThumbs({ all: true, trim: false, emit: false });
       exportNotesPDF();
     } catch (err) {
-      alert(err?.message || String(err));
+      friendlyAlert(err, 'Reviews PDF export failed');
     } finally {
       try { __pfxScheduleHydrateThumbs({ delay: 260 }); } catch {}
     }
@@ -9196,7 +9197,7 @@ const __rvCtxTargetOk = (target) => {
         }
       };
     }catch(err){
-      alert(err?.message || String(err));
+      friendlyAlert(err, 'Reviews PDF export failed');
     }
   };
 

@@ -13,6 +13,7 @@
  */
 
 import { buildBadge, engineColor } from './smart_playback_engine.js';
+import { friendlyAlert } from '../core/friendlyAlert.js';
 
 const STATUS_COLOR = {
   ready:   '#2ecc71',
@@ -254,7 +255,9 @@ async function generateTestProxy() {
       if (imgEl) imgEl.src = '';
     }
   } catch (err) {
-    alert(`Proxy error: ${err.message}`);
+    // "Proxy error: <errno>" named the feature but not the operation, and left
+    // the errno on screen. The button says Generate Test Proxy; so does this.
+    friendlyAlert(err, 'Test proxy generation failed');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Generate Test Proxy'; }
   }

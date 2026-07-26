@@ -32,6 +32,11 @@ function _t(s) {
   }
 }
 
+// Exported for core/friendlyAlert.js, which is handed an operation label at the
+// call site ("Reviews CSV export failed") and has to localise it with exactly
+// this shim — guarded, and with no import of i18n, for the same reason.
+export { _t as translate };
+
 // Normalize any thrown thing → raw string.
 function _raw(err) {
   if (err == null) return '';
@@ -53,8 +58,20 @@ function _strip(s) {
 }
 
 // First filesystem-looking path in the text, if any (for file-not-found hints).
+//
+// Two passes, and the order is the whole point. Node quotes the path in every
+// fs error — "ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/a.ari'"
+// — and inside the quotes the end of the path is unambiguous, so a quoted path
+// is taken whole, spaces and all. Post-house volumes are named "SHOW DRIVE 01"
+// and "Client Delivery", not "showdrive01"; the unquoted scan below has to stop
+// at whitespace, and on its own it handed back "/Volumes/SHOW" — a path that
+// does not exist, sending the user to look in the wrong place. It stays only as
+// the fallback for messages that were assembled without quotes.
 function _path(s) {
-  const m = String(s).match(/(?:[A-Za-z]:)?(?:\/[^\s:'"]+)+/);
+  const t = String(s);
+  const quoted = t.match(/['"]((?:[A-Za-z]:)?(?:[\\/][^'"\n]+)+)['"]/);
+  if (quoted) return quoted[1];
+  const m = t.match(/(?:[A-Za-z]:)?(?:\/[^\s:'"]+)+/);
   return m ? m[0] : '';
 }
 

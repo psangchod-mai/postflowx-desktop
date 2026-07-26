@@ -26,6 +26,7 @@ import { decodeWithRetry, isTimeout, runDecodeChain } from '../../modules/mediaD
 import { createBridgeMonitor } from '../../modules/bridgeHealth.js';
 import { nativeHelperPing } from '../../modules/native_helper_client.js';
 import { friendlyStatus } from '../../core/friendlyError.js';
+import { friendlyAlert } from '../../core/friendlyAlert.js';
 
 // ---------------------------------------------------------------------------
 // Native companion helpers (direct chrome.runtime.sendMessage wrappers)
@@ -8095,7 +8096,9 @@ window.__vfxPullExportExr = async function() {
     res = await nativeCopyExrDelivery(shots, outputDir);
   } catch (err) {
     _setStatus('EXR copy failed');
-    alert(`EXR export failed:\n${err?.message || err}`);
+    // The status strip keeps the short form; the dialog is where there is room
+    // to say what to do about it. Both now go through the same rule table.
+    friendlyAlert(err, 'EXR export failed');
     return;
   }
 

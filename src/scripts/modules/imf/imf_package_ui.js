@@ -19,6 +19,7 @@
  */
 
 import { createIMFPlayer } from './imf_player_engine.js';
+import { friendlyAlert } from '../../core/friendlyAlert.js';
 
 const _pfx = () => window.pfxPlatform;
 
@@ -680,7 +681,7 @@ export function mountIMFPackageUI(container, opts = {}) {
   // ── Wire events ───────────────────────────────────────────────────────────
 
   els.openBtn.addEventListener('click', () => _openPackage(null));
-  els.diagBtn.addEventListener('click', () => _showDiagnostics().catch(err => alert('Diagnostics error: ' + err.message)));
+  els.diagBtn.addEventListener('click', () => _showDiagnostics().catch(err => friendlyAlert(err, 'IMF diagnostics failed')));
   els.dropzone.addEventListener('click', () => _openPackage(null));
   els.dropzone.addEventListener('dragover', _onDragOver);
   els.dropzone.addEventListener('dragleave', _onDragLeave);
