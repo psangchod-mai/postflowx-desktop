@@ -10,6 +10,11 @@ import { getCachedProxyForFile } from '../../modules/proResProxy.js';
 import { SAVED, UNAVAILABLE, runSaveCascade } from '../../core/saveOutcome.js';
 import { saveNotice, TONE_OK } from '../../core/saveNotice.js';
 import { CLOSED, printNotice, tryAutoPrint } from '../../core/printOutcome.js';
+// The progress strip is the only place a Visual QC failure is reported — there
+// is no toast and no dialog behind it — so a raw exception landing there is the
+// whole message the user gets. friendlyStatus keeps the "<what failed>:" prefix
+// and rewrites the tail into a sentence with an action in it.
+import { friendlyStatus } from '../../core/friendlyError.js';
 
 /**
  * Resolve the best playable URL for a clip used by hidden analysis video elements
@@ -973,6 +978,12 @@ export async function openVisualQcModal({
   `;
   const progFill = prog.querySelector('.pfx-qc-progressFill');
   const progTxt = prog.querySelector('.pfx-qc-progressTxt');
+  // friendlyStatus returns "message\nhint" for the rules that carry advice, and
+  // .pfx-qc-progressTxt has no white-space rule of its own, so the default
+  // `normal` would collapse that break and run the hint into the message. Set
+  // here rather than in main.css because the element is built here and the rule
+  // is a requirement of what this component puts in it, not a look.
+  progTxt.style.whiteSpace = 'pre-line';
 
   controls.append(ctlRow, presetInfo, sourceInfo, preflightInfo, prog);
 
@@ -1272,7 +1283,11 @@ export async function openVisualQcModal({
     const pct = Math.max(0, Math.min(100, Math.round((Number(p)||0) * 100)));
     progFill.style.width = `${pct}%`;
     progTxt.textContent = text || '';
-    try{ onStatus?.(text || ''); }catch{}
+    // The mirror is a single-line status strip owned by the caller (reviews'
+    // `status` element), and its CSS is not this component's to change, so a
+    // two-line friendlyStatus message would arrive there with the hint welded
+    // onto the message. Flatten the break for the mirror only.
+    try{ onStatus?.(String(text || '').replace(/\s*\n\s*/g, ' ')); }catch{}
   };
 
   const setBusy = (on)=>{
@@ -1709,7 +1724,7 @@ export async function openVisualQcModal({
   }
 
   btnRun.addEventListener('click', ()=> scan().catch(err=>{
-    try{ setProgress(0, err?.message || String(err)); }catch{}
+    try{ setProgress(0, friendlyStatus(`Visual QC scan failed: ${err?.message || String(err)}`)); }catch{}
   }));
 
   btnExportJson.addEventListener('click', async ()=>{
@@ -1875,7 +1890,7 @@ export async function openVisualQcModal({
       const notice = printNotice(how);
       setProgress(notice.tone === TONE_OK ? 1 : 0, notice.text);
     }catch(err){
-      setProgress(0, err?.message || String(err));
+      setProgress(0, friendlyStatus(`Exporting the PDF report failed: ${err?.message || String(err)}`));
     }finally{
       setBusy(false);
       cancelBtn.style.display = 'none';
