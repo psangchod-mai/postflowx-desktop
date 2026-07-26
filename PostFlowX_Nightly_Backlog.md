@@ -697,3 +697,26 @@ Also why my **first probe came back clean**: I tested the pass-through export pa
 **The scoped daytime pass this hands over:** lift `durFramesFor` into `src/scripts/modules/` as an exported helper, point `ui.js` at it, test it directly, and converge `ui.js:273`/`:279` onto `nominalBase` exactly as `edl_export.js` was converged. Probes are already written — `/tmp/probe12b.mjs` reproduces the dead fallback in isolation.
 
 - **Files committed:** `PostFlowX_Audit_Report.md`, `PostFlowX_Nightly_Backlog.md`. No source, so `build-verify` and `build:renderer` are unchanged from iteration 11 — both green (250 passed / 7 skipped; 367 files).
+
+---
+
+## Iteration 13 — 08:13-08:25 · the handover item, shipped · commit `64b2848`
+
+The overnight pass ended by writing this exact task down: *"lift `durFramesFor` into `src/scripts/modules/` as an exported helper, point `ui.js` at it, test it directly, and converge `ui.js:273`/`:279` onto `nominalBase`."* Done, with two things the note did not anticipate.
+
+**The first: there are two chains, not one.** `computeEdlRecMap`'s `durFramesFor` was the known site. The Inspector has its own hand-inlined copy at `ui.js:12971-12986` — same three steps, same `Number.isFinite` guard on a parser that returns `0`, same unreachable third step. It renders to a user-visible label (`insDuration`), so a malformed or drop-frame source timecode printed **`00:00:00:00 / 0 fr`** while the event's own record columns said four seconds.
+
+**The second: `0` and NaN are both right answers, to different callers.** The record map sums durations across a timeline — one NaN there poisons every row after it, so it needs `0`. The Inspector displays a single duration and already had a `"—"` for unknown — giving it `0` would have replaced an honest "unknown" with a confident false zero. So the module exports both: `measuredDurationFrames` (NaN when the event says nothing readable) and `durationFramesFor` (folds that to 0 for callers that add). Collapsing them would have quietly downgraded the Inspector.
+
+**What shipped**
+- `src/scripts/modules/eventDuration.js` (new) — `parseTimecodeFrames` answers **NaN**, counts on `nominalBase`, accepts `;` and Resolve's subframe suffix; the two duration entry points above.
+- `src/scripts/ui.js` — both chains call it. The private `tcToFrames`/`framesToTC` pair **keeps its `0` sentinel** (thirty call sites in that file add its result into a running total) but both now use `nominalBase`, closing the fractional-rate defect that produced `"00:00:05:0.12000000000000455"`.
+- `tests-js/eventDuration.test.mjs` — 54 assertions, picked up automatically by `build-verify`.
+
+**Verified, not assumed.** `/tmp/probe13.mjs` runs the pre-fix chain transcribed verbatim from `ui.js` beside the new module on the same inputs. Empty, absent, malformed, three-part and drop-frame source timecodes each measured **0** and now measure the record span (96, 96, 60, 96, 120); a four-second span at 23.976 measured **95.904** and now measures **96**. Every `(was 0)` in the test names is a number that probe printed, not a label I chose.
+
+**On overnight's third reason for not shipping** — *"`ui.js` cannot be exercised at all in this environment"* — that is still true of `ui.js` and is why the logic left the file. What remains in `ui.js` is three call-through lines and a two-line change to each private helper; the staged version was extracted with `git show :` and parsed clean as ESM. The logic itself now has real assertions behind it for the first time.
+
+**Commit hygiene.** `ui.js` still carries 32 insertions / 7 deletions of pre-existing work (friendly error text; Fun-box iframe lifecycle). Rather than the backup-restore-reapply dance, I split the diff by hunk — `git diff` → drop the four foreign hunks → `git apply --cached --recount` — then confirmed the worktree residual was exactly the original 32/7 and that the staged file contains none of the user's identifiers. This is the manoeuvre `6e14ec6` needed and did not get.
+
+- **Build:** `build-verify` green (250 passed / 7 skipped; all `tests-js` green, exit 0). `build:renderer` → 368 files (was 367 — the new module).

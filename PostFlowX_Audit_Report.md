@@ -442,3 +442,55 @@ Three reasons, all of which would have to be false before this is a safe change:
 3. **`ui.js` cannot be exercised at all in this environment.** It is the DOM-coupled renderer entry point; `node` cannot load it and `build:renderer` only copies files, so a broken edit produces a green build and a broken app. Reasons 1 and 2 are the deciding ones — this was *not* a clock decision. There was roughly an hour left when I stopped, and I stopped anyway, because more time does not create a way to verify the change.
 
 The correct fix is a small extraction — lift `durFramesFor` into `src/scripts/modules/` as an exported helper, point `ui.js` at it, and test it directly — together with converging `ui.js:273`/`:279` onto `nominalBase` the way `edl_export.js` was converged. That is a scoped daytime pass with a clean working tree, not an unattended one.
+
+---
+
+## Iteration 13 — the survey behind the fix, and what it turned up
+
+The fix itself is in the backlog and in `64b2848`. This is the part that changes what the next iteration should do.
+
+### There are seventeen private `tcToFrames`, not five
+
+Overnight I had mapped five. A sweep of `src/` found **seventeen** files defining their own timecode parser. Classified by the two defects this run has been chasing — counting on the fractional playback rate instead of the whole-frame base, and returning a sentinel that passes the caller's own validity check:
+
+| File | Base | Sentinel |
+|---|---|---|
+| `modules/utils_time.js` | `nominalBase` ✅ (it10) | `0` / NaN |
+| `modules/edl_export.js` | `nominalBase` ✅ (it11) | `0` |
+| `modules/eventDuration.js` | `nominalBase` ✅ (it13, new) | **NaN** |
+| `modules/conform/edlParser.js` | `Math.round` ✅ + real drop-frame math | `0` |
+| `modules/workers/aaf_worker.js` | `Math.round` ✅ | `0` |
+| `features/tl_convert/index.js` | `Math.round` ✅ | `0` |
+| `parsers/xml.js` | `normFps` ✅ | `0` |
+| `ui.js` | **raw fps** → fixed it13 | `0` (kept, deliberately) |
+| `features/edl/timelineAutoInject.js` | **raw fps** ❌ | NaN |
+| `features/edl/pipeline/recOffset.js` | **raw fps** ❌ | `0` |
+| `features/reviews/store.js` | **raw fps** ❌ | `0` |
+| `modules/cutdiff.js` | **raw fps** ❌ | `0` |
+| `modules/filters.js` | **raw fps** ❌ | `0` |
+| `modules/amf_convert.js` | **raw fps** ❌ | `null` |
+| `parsers/fcpxml.js` | **raw fps** ❌ | `0` |
+| `parsers/otio.js` | **raw fps** ❌ | `0` |
+| `smart/smartExrPullPlanner.js` | **raw fps** ❌ | NaN |
+| `parsers/fcpxm.js` | raw fps — **no importers, do not touch** (it3) | `0` |
+
+**Eight live files still count timecode on the playback rate.** At 23.976 or 29.97 every one of them produces a non-integer frame count from a valid timecode. That is iteration 14: converge them onto the exported `nominalBase`, one file at a time, each with its own before/after probe — *not* a sweep. Iteration 10's lesson stands: converging duplicated logic without diffing the behaviours first is how the next defect gets introduced. The base is the only thing worth sharing; each file's regex and sentinel are load-bearing for its own callers and must be left alone.
+
+### `nominalBase` has a small hole of its own
+
+`nominalBase(fps)` guards `fps <= 0` and then returns `Math.round(n)`, so a rate in `(0, 0.5)` returns **`0`** — a base of zero, which makes `framesToTC` divide by zero. `ui.js`'s local `normalizeFpsNominal` does not have this hole; it falls back to 24. No caller can currently produce such a rate, so this is recorded rather than patched: changing a function four modules now share is not a change to make on the strength of an input nobody can supply. If iteration 14 touches `utils_time.js` for another reason, `Math.round(n) || 1` closes it.
+
+### A sixth caller-side workaround, and what the count now means
+
+`ui.js:7970` carries this, in the caller's own words:
+
+```js
+// tcToFrames() returns 0 on parse fail; we need strict parsing here.
+const parseTC = (s) => { ... return Number.isFinite(f) ? f : null; };
+```
+
+That is the sixth place in this codebase where a caller writes a private workaround for a defect in something it calls, and the second where the comment names the defect outright. The running lesson — *a wrapper that defends itself against its own callee hides the callee's defect from every other caller* — now has a corollary worth stating separately: **the workarounds are a census of the defect.** Six callers wrote a guard; the two duration chains did not, and those are exactly the two that were broken. Grepping for the defence found the sites missing it faster than reading the parser did.
+
+### Method note: the test names had to be earned
+
+The new suite's assertions are labelled `(was 0)`. A label is a claim, and iteration 12's lesson is that *a green suite tells you the assertions passed, not that they ran against the thing their names claim*. So the pre-fix chain was transcribed verbatim into `/tmp/probe13.mjs` and run beside the new module on the same inputs; every `(was 0)` is a number that probe printed. The one case where old and new agree — a reversed source span, which already fell through to the record columns — is labelled as agreeing, because it did.
