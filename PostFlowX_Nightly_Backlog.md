@@ -2419,3 +2419,92 @@ gated strings and still live for the rest.
 strictly better than English-in-every-locale, and presence is not quality. A
 native speaker should read them. That is a review question, not a build one, and
 no gate here should be read as claiming otherwise.
+
+---
+
+## Iteration 18 — the status line was still speaking in error codes
+
+`errorBanner.js` (iteration 5) closed the banner path: `showError()` humanizes at
+the display boundary, so nothing reaches the banner unrewritten. That fix was
+narrower than it looked. It covered one surface. The panel status lines — the
+row of text under the VFX Pull card, the one under the IMF validator — were
+never covered, and fifteen call sites across three files build their text as:
+
+```js
+_setStatus(`Rescan failed: ${e?.message || e}`);
+setStatus('error', 'Load failed: ' + err.message);
+```
+
+So an editor who points PostFlowX at a folder on a disconnected volume reads
+`Rescan failed: ENOENT: no such file or directory, open /Volumes/OCF/A001.ari`.
+Everything after the colon is addressed to a programmer.
+
+### Why this is not a copy of errorBanner's fix
+
+The obvious move is to reuse `humanize()` verbatim. It is wrong here, and the
+reason is worth writing down because it will come up again on the next surface.
+
+`friendlyText()` rewrites the WHOLE string. Feed it the status text above and it
+returns "PostFlowX couldn't find that file. Check the drive is mounted…" — good
+English, and `Rescan failed` is gone. A banner can afford to lose the prefix; it
+has a title, an icon, a position on screen that says "this is an error". A
+status line has none of that. It is one unlabelled row, and the prefix is the
+only thing on it naming which operation broke. Humanizing naively would have
+traded jargon for lost context and called it an improvement.
+
+`friendlyStatus()` splits the difference: hold the label back, rewrite only the
+tail, glue them together. The user learns both what broke and why.
+
+### The load-bearing `\s`
+
+```js
+const m = s.match(/^([^:]{1,40}\s[^:]{0,40}):\s+([\s\S]+)$/);
+```
+
+The `\s` in the label group forces the label to be a PHRASE — "Rescan failed",
+"Review proxy error (sh010)". Without it, `ENOENT: no such file…` parses as
+label `ENOENT` + tail, the tail gets rewritten, and the exact jargon this exists
+to remove ends up promoted to a heading. Single-token codes have to fall through
+to the whole-string path. This is one character and it is the difference between
+the fix working and the fix making the display worse.
+
+### Wired at two boundaries, not fifteen call sites
+
+| boundary | sites |
+|---|---|
+| `vfxPullPanel.js::_setStatus` | 9 |
+| `imf_ui.js::setStatus` | 4 |
+| `prep_mark.js` — NOT wired | 2 |
+
+Same reasoning as `errorBanner`: fixing call sites one at a time leaves the next
+one to be written unprotected.
+
+`prep_mark.js` is deferred on purpose. It has six separate ad-hoc `setStatus`
+closures and 824 lines of the user's in-flight uncommitted work; routing it
+means touching all six or picking one arbitrarily. It is recorded in the gate's
+`UNROUTED` list with that reason and bounded at 1, so it is debt with a name on
+it rather than a silent omission.
+
+### Validated before it was written
+
+The prototype ran over a 29-string corpus harvested from the two target files
+before any source was edited: **11 rewritten with the operation label intact, 18
+success/progress lines byte-identical, empty string byte-identical.** `Ready`,
+`Relinked: plate_sh010_v002.ari`, `Visual match: scanning 4/57…` and
+`Blocked: QC error` all round-trip unchanged — the last three matter because
+they DO have a colon, and a careless implementation mangles them.
+
+### Still open on this front
+
+Measured across `src/` this iteration, raw exception text reaching a user:
+
+| surface | sites | covered? |
+|---|---|---|
+| `showError()` | 16 (all `ui.js`) | yes — `errorBanner.js` |
+| `setStatus()` | 15 | 13 now, 2 recorded as debt |
+| `alert()` | 12 across 5 files | **no** |
+| `__toast()` | 1 (`modules/amf_convert.js:2068`) | **no** |
+
+`alert()` is the next one and it is harder: a modal has no boundary function to
+wrap, so it is twelve edits or a shared `pfxAlert()` helper. Five of the twelve
+are in `src/tools/preflight/app/app.js`, which is a separate mini-app.

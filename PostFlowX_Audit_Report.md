@@ -2306,3 +2306,98 @@ present, `UI_DICT_ROWS` present, and the Tagalog aria-label "Laki ng brush"
 present in the shipped bundle. A signed/notarized `npm run build:mac` needs the
 user's Apple credentials and pushes an artifact outward; that has not been
 authorized and was not run.
+
+---
+
+## Audit 18 — how far "we fixed the error messages" actually got
+
+Iteration 5 landed `errorBanner.js` and the note in this file said the raw-error
+problem was closed. It was closed on one surface. This audit measures the rest.
+
+### 18.1 Raw exception text by display surface
+
+Scan: every `.js` under `src/`, comments stripped, counting lines where a
+display call and an interpolated exception field (`.message` / `.code`) appear
+together.
+
+| surface | sites | files | state after this iteration |
+|---|---|---|---|
+| `showError()` | 16 | 1 (`ui.js`) | covered since iteration 5 |
+| `setStatus()` / `_setStatus()` | 15 | 3 | **13 covered, 2 recorded as debt** |
+| `alert()` | 12 | 5 | not covered |
+| `__toast()` | 1 | 1 | not covered |
+
+Total 44 sites; 29 now route through a rewriter, 15 do not.
+
+The scan is line-based and therefore undercounts: `const m = 'X: ' + e.message;
+setStatus(m)` reads clean. Those are still rewritten at the boundary — the scan
+just cannot count them. It does not overcount, since comments are blanked first.
+
+### 18.2 A correction to an earlier note
+
+A previous iteration recorded the remaining toast site as
+`features/amf/amf_convert.js:2068`. The file is `modules/amf_convert.js:2068`
+and the call is `__toast(...)`, not `toast(...)`. The line number was right; the
+path and the function name were not. Noting it because a wrong path in a backlog
+is worse than no entry — somebody looks, finds nothing, and concludes the item
+is done.
+
+### 18.3 The gate, and what it is worth
+
+`tests-js/friendlyStatus.test.mjs`, 13 tests. Shape:
+
+- **scan sanity** — the walk must find ≥3 files and ≥15 sites, and must report
+  exactly 9 for `vfxPullPanel.js` and 4 for `imf_ui.js`. A silently-broken
+  detector reports zero offenders and looks like success.
+- **comment stripping** — `friendlyError.js` documents the bug it fixes by
+  quoting a real call site. Without stripping, the fixer is reported as an
+  offender. There is a test that pins this.
+- **boundary extraction, not grep** — the routing check pulls the single named
+  function out of the file and asserts `friendlyStatus` is called inside it. A
+  plain file-level grep would pass on a file that imports the helper and calls
+  it anywhere at all while every call site stayed raw. That is the vacuous
+  version of this test and it was written the other way on purpose.
+- **shrink-only debt list** — `UNROUTED` must be sorted, unique, bounded by a
+  hard literal (1), and every entry must still describe a file that actually has
+  raw-error sites. An exemption that outlives its subject is a claim about the
+  code that stopped being true.
+- **both directions on the rewriter** — six real raw-exception strings must be
+  rewritten with their label intact; nine real success/progress strings must
+  come back byte-identical.
+
+### 18.4 Mutation results
+
+Five mutations, each anchor-guarded to exactly one occurrence, each restored and
+proven byte-identical with `diff -q`:
+
+| mutation | expected | result |
+|---|---|---|
+| M1 boundary stops calling `friendlyStatus`, import left in place | catch | **2 fail** |
+| M2 prefix-preserving branch removed (becomes `friendlyText`) | catch | **3 fail** |
+| M3 `\s` dropped so a single-token label is allowed | catch | **1 fail** |
+| M4 `prep_mark.js` quietly deleted from `UNROUTED` | catch | **1 fail** |
+| M5 comment stripping disabled | catch | **1 fail** |
+
+M3 is the one worth keeping. It is a one-character change that makes the feature
+actively harmful rather than merely absent, and only one test in the file
+notices it.
+
+### 18.5 Deploy
+
+`npm run build-verify` exit 0, `npm run build:renderer` exit 0 (372 files).
+`npm run build:mac-dir` and asar verification below. A signed/notarized
+`npm run build:mac` needs the user's Apple credentials and pushes an artifact
+outward; that has not been authorized and was not run.
+
+Verified inside the shipped `app.asar` (packaged 2026-07-27 01:12):
+
+- `dist/desktop/scripts/core/friendlyError.js` exports `friendlyStatus`.
+- `vfxPullPanel.js:4150` `_setStatus` calls it, guarded by a `catch` that falls
+  back to the raw text — a rewriter that throws must never swallow the status it
+  was handed.
+- `imf_ui.js:5500` `setStatus` likewise.
+
+One behaviour change worth recording rather than discovering later:
+`setStatus('x', undefined)` used to render the literal string `"undefined"` and
+now renders empty. That is an improvement, but it is a change, and if some
+caller was relying on seeing `undefined` to notice a bug, it no longer will.
