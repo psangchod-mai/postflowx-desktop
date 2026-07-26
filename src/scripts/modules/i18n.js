@@ -1,5 +1,11 @@
 // scripts/modules/i18n.js
 // UI localization (safe + reversible): English (default), Korean, Japanese, Chinese (Taiwan), Thai, Indonesian, Filipino
+//
+// The observer below watches this document only. The BWAV and Preflight panes
+// are iframes with documents of their own and are unreachable from here, so
+// their language is pushed across the frame boundary — see core/paneLang.js.
+
+import { broadcastLang } from "../core/paneLang.js";
 
 const STORAGE_KEY = "mps.lang";
 
@@ -3920,6 +3926,10 @@ export function applyI18n(lang){
     resumeObserver();
     _APPLYING = false;
   }
+
+  // The tool panes are separate documents; the walk above cannot reach them.
+  // Outside the try so a pane that throws can never leave the observer paused.
+  try{ broadcastLang(L); }catch{}
 }
 
 function applyI18nTo(root, L){

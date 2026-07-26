@@ -726,17 +726,55 @@ function applyLocale(locale){
 
 }
 
+// Which language this pane should be in.
+//
+// The host app's title-bar flag selector is authoritative. It stores its choice
+// under "mps.lang" (scripts/modules/i18n.js), and this pane is an iframe in the
+// same window, so that value is the user's actual stated preference — read it
+// first. "bwav_locale" is only ever a mirror this file wrote earlier, and the
+// navigator guess is a last resort.
+//
+// Before this existed the guess was effectively the *only* input: the element
+// read below has never existed in app.html, so the six translations in this
+// file were reachable only when the OS locale happened to agree with them. A
+// user who picked Thai in the app got an English pane.
+function preferredLocale(){
+  for (const key of ["mps.lang", "bwav_locale"]) {
+    let v = null;
+    try { v = localStorage.getItem(key); } catch {}
+    if (v) return normalizeLocale(v);
+  }
+  return normalizeLocale((navigator.languages && navigator.languages[0]) || navigator.language);
+}
+
 function initLocaleUI(){
   const sel = document.getElementById("localeSelect");
-  let saved = null;
-  try { saved = localStorage.getItem("bwav_locale"); } catch {}
-  const guess = normalizeLocale((navigator.languages && navigator.languages[0]) || navigator.language);
-  const initial = saved || guess || "en";
+  const initial = preferredLocale();
 
   if (sel){
     sel.value = SUPPORTED_LOCALES.includes(initial) ? initial : "en";
     sel.addEventListener("change", ()=> applyLocale(sel.value));
   }
+
+  // Host pushes the language across the frame boundary (core/paneLang.js). This
+  // is the channel that carries a *change* — the read above only runs once, and
+  // the pane is not reloaded when the user picks a new flag.
+  window.addEventListener("message", (ev) => {
+    const d = ev && ev.data;
+    if (!d || d.type !== "pfx:lang" || !d.lang) return;
+    const next = normalizeLocale(d.lang);
+    if (next !== currentLocale) applyLocale(next);
+  });
+
+  // Free fallback where file:// frames do share storage. Keyed on "mps.lang"
+  // only: applyLocale writes "bwav_locale", and reacting to our own write would
+  // loop.
+  window.addEventListener("storage", (ev) => {
+    if (!ev || ev.key !== "mps.lang" || !ev.newValue) return;
+    const next = normalizeLocale(ev.newValue);
+    if (next !== currentLocale) applyLocale(next);
+  });
+
   applyLocale(SUPPORTED_LOCALES.includes(initial) ? initial : "en");
 }
 // ---- end i18n ----
