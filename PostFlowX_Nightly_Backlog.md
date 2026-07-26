@@ -668,3 +668,32 @@ Also why my **first probe came back clean**: I tested the pass-through export pa
 - **`edl_export.js` was already dirty before I touched it, and this nearly repeated the iteration-5 contamination.** `git diff` showed 40 changed lines where mine were ~22. The extra hunks are the user's **pre-existing uncommitted drop-frame work**: `[:;]` separator regexes in `tcToFrames` and `safeTC`, `buildHeader(..., isDropFrame)` emitting `FCM: DROP FRAME`, and an `isDF` detection block in `buildPartEDL`. `git add -p` is interactive and unavailable here, so I backed the worktree file up (`/tmp/edl_worktree_BACKUP.js`, sha recorded), restored it from HEAD, re-applied only my three edits, verified the diff was 19/3, committed, and **restored the backup byte-for-byte afterwards**. The user's drop-frame work remains uncommitted and unchanged, which is where they left it.
 - **Corrected a claim I committed in iteration 10.** Area-14 finding #8 and the `8bb0ed6` commit message both say the local copies "shadow the file's own imports from `utils_time.js`, making those imports dead." **False** — `edl_export.js` had *no imports at all*. Private copies with nothing to shadow. The severity was also understated: Medium, when the actual consequence was a corrupt REC timeline in a delivered EDL. Both documents now carry the correction; the commit message cannot be amended without rewriting history and is noted in the morning report instead.
 - **Logged, not fixed:** `utils_time.js::tcToFrames` returns `NaN` for short or garbage input (area-15 finding #5) — the reason convergence was partial, and worth its own scoped pass. `fcpxml.js:336` and `prproj.js:465` remain from iteration 10's list, both read-side.
+
+---
+
+## Iteration 12 — 2026-07-26 ~06:58–07:05 · The follow-up I logged was wrong, and finding out why exposed a dead fallback chain
+
+**No source changed. This iteration retracts one of my own logged items and replaces it with four evidenced findings.** Full detail in the audit report, 16th area.
+
+**What I set out to fix.** Iteration 11 ended by logging: *"`utils_time.js::tcToFrames` returns `NaN` for short or garbage input — worth its own scoped pass."* A `NaN` leaking out of a parser looks like an obvious defect, and it was the natural next item.
+
+**Load-bearing check first** (iteration 7's lesson) — and it stopped the change cold. About twenty call sites, including `ui.js:362`, `:394`, `:398` and `shotWorkItems.js:77`, wrap the result in `Number.isFinite(...)` and use a false result to mean *"this timecode is unusable — skip it, or try the next strategy."* The `NaN` **is** that signal. Making `tcToFrames('01:00:00')` return a number would have converted twenty loud skips into twenty silent wrong values. **The item is retracted, not deferred.**
+
+**And `ui.js` is the proof, because it already made that exact mistake.** `ui.js:273` holds a **fourth** private `tcToFrames` (after `utils_time`, `edl_export`, `fcpxml`, `prproj`). It returns **`0`** on a non-match instead of `NaN`. Consequence, measured against an exact transcription of `durFramesFor` (`ui.js:389-400`):
+
+| Event — all are genuine 5-second events with valid REC timecode | duration @24 |
+|---|---|
+| src + rec both valid | 120 ✅ |
+| src absent / empty / malformed / **drop-frame `01:00:00;00`** / 3-part | **0** ❌ |
+
+`Number.isFinite(tcToFrames(t))` is `true` for `null`, `''`, `'garbage'`, `'01:00:00;00'`, `'1:2:3'` — every input. So the guard at `ui.js:394` is a **tautology**, malformed src gives `0 >= 0`, the branch returns 0, and **the rec-duration fallback at `ui.js:397-399` is unreachable dead code** — dead in precisely the cases it was written to handle. The `Number.isFinite` check at `ui.js:362` is likewise a branch that can never be taken.
+
+**The lesson, added to the running list:** *a sentinel that passes the caller's validity check is worse than a value that fails it.* This is iteration 11's `safeTC` lesson in a second costume — there a sanitizer replaced a rejectable timecode with an acceptable one; here a parser replaces an unusable frame count with a usable-looking one. Both turn a loud failure quiet, and both read as defensive programming. I walked into the same trap from the other side by proposing to *remove* the `NaN`.
+
+**Also found:** `ui.js:273`/`:279` carry the identical fractional-rate defect fixed in `edl_export.js` an hour earlier (`*fps`, `fr % fps`) — `tcToFrames('01:00:00:00', 23.976)` → `86313.6`, `framesToTC(120, 23.976)` → `"00:00:05:0.12000000000000455"` — and this file has **no `safeTC`**, so the malformed string reaches the UI verbatim rather than being zeroed. `normalizeFpsNominal` (`ui.js:294`) exists to prevent exactly this and is the **fifth** caller-side workaround for a callee defect found this run, but `ui.js:6344` and `:19205` read `view[0].fps` raw — which `parseALE` sets to `23.976` on the ordinary dailies path.
+
+**Why nothing shipped.** `durFramesFor`/`computeEdlRecMap` are private to `ui.js` — unreachable from `tests-js/`, so any test would have to transcribe them, which iteration 3 established is not coverage. `src/scripts/ui.js` is already dirty with 32 insertions / 7 deletions of pre-existing work, needing the same backup-restore-reapply manoeuvre `edl_export.js` needed this morning — a risk worth taking only behind a verified change. And `ui.js` is the DOM-coupled renderer entry point: `node` cannot load it and `build:renderer` only copies files, so a broken edit yields a **green build and a broken app**. There was about an hour left on the clock; I stopped anyway, because the extra time does not create a way to verify the edit.
+
+**The scoped daytime pass this hands over:** lift `durFramesFor` into `src/scripts/modules/` as an exported helper, point `ui.js` at it, test it directly, and converge `ui.js:273`/`:279` onto `nominalBase` exactly as `edl_export.js` was converged. Probes are already written — `/tmp/probe12b.mjs` reproduces the dead fallback in isolation.
+
+- **Files committed:** `PostFlowX_Audit_Report.md`, `PostFlowX_Nightly_Backlog.md`. No source, so `build-verify` and `build:renderer` are unchanged from iteration 11 — both green (250 passed / 7 skipped; 367 files).
