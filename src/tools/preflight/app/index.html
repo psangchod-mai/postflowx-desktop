@@ -32,7 +32,7 @@
         <div class="pfx-type-toggle-wrap">
           <span class="pfx-type-lbl pfx-type-lbl--on" id="pfxTypeLblStandalone">Standalone</span>
           <label class="pfx-np-toggle">
-            <input type="checkbox" id="pfxTypeToggle" />
+            <input type="checkbox" id="pfxTypeToggle" aria-label="Series project (off = standalone)" />
             <span class="pfx-np-toggle-track"><span class="pfx-np-toggle-thumb"></span></span>
           </label>
           <span class="pfx-type-lbl" id="pfxTypeLblSeries">Series</span>
@@ -182,8 +182,8 @@
   </main>
 
   <!-- hidden pickers -->
-  <input id="folderPicker" class="filePickerHidden" type="file" webkitdirectory directory multiple />
-  <input id="filePicker" class="filePickerHidden" type="file" multiple />
+  <input id="folderPicker" aria-label="Choose a folder to validate" class="filePickerHidden" type="file" webkitdirectory directory multiple />
+  <input id="filePicker" aria-label="Choose files to validate" class="filePickerHidden" type="file" multiple />
 
   <!-- drawer -->
   <div id="drawer" class="drawer" aria-hidden="true">

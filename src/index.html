@@ -2098,7 +2098,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
                 </select>
                 <div class="cd-vcmp-tcwrap" title="Go to REC timecode">
                   <span class="cd-vcmp-tclabel mono">TC</span>
-                  <input id="cd2x-vc-tc" class="cd-vcmp-tc mono" value="00:00:00:00" inputmode="numeric" spellcheck="false" />
+                  <input id="cd2x-vc-tc" aria-label="Go to REC timecode" class="cd-vcmp-tc mono" value="00:00:00:00" inputmode="numeric" spellcheck="false" />
                 </div>
               </div>
               <!-- Icon buttons -->
@@ -2185,7 +2185,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         <div class="cd2x-insp-section">
           <div class="cd2x-insp-row">
             <span class="cd2x-insp-lbl">Status</span>
-            <select id="cd2x-insp-status" class="cd2x-insp-select">
+            <select id="cd2x-insp-status" aria-label="Status" class="cd2x-insp-select">
               <option value="none">— Unset</option>
               <option value="ok">&#10003; Approved</option>
               <option value="skip">&#8856; Skip</option>
@@ -2497,7 +2497,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <div class="pm-qa-sep"></div>
             <div class="pm-qa-size-wrap">
               <svg class="pm-qa-size-icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>
-              <input type="range" id="pmQaSize" class="pm-qa-size" min="1" max="20" value="3">
+              <input type="range" id="pmQaSize" aria-label="Brush size" class="pm-qa-size" min="1" max="20" value="3">
               <svg class="pm-qa-size-icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>
             </div>
             <div class="pm-qa-sep"></div>
@@ -2540,7 +2540,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <div class="pm-vid-bright-popup" id="pmVidBrightPopup" style="display:none;">
               <div class="pm-vid-bright-row">
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" opacity="0.5"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1" x2="8" y2="3" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="8" y2="15" stroke="currentColor" stroke-width="1.5"/><line x1="1" y1="8" x2="3" y2="8" stroke="currentColor" stroke-width="1.5"/><line x1="13" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width="1.5"/></svg>
-                <input type="range" id="pmVidBrightSlider" min="20" max="250" value="100" step="5" class="pm-vid-bright-slider">
+                <input type="range" id="pmVidBrightSlider" aria-label="Video brightness" min="20" max="250" value="100" step="5" class="pm-vid-bright-slider">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="4"/><line x1="8" y1="0.5" x2="8" y2="3" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="13" x2="8" y2="15.5" stroke="currentColor" stroke-width="1.5"/><line x1="0.5" y1="8" x2="3" y2="8" stroke="currentColor" stroke-width="1.5"/><line x1="13" y1="8" x2="15.5" y2="8" stroke="currentColor" stroke-width="1.5"/><line x1="2.9" y1="2.9" x2="4.7" y2="4.7" stroke="currentColor" stroke-width="1.5"/><line x1="11.3" y1="11.3" x2="13.1" y2="13.1" stroke="currentColor" stroke-width="1.5"/><line x1="13.1" y1="2.9" x2="11.3" y2="4.7" stroke="currentColor" stroke-width="1.5"/><line x1="4.7" y1="11.3" x2="2.9" y2="13.1" stroke="currentColor" stroke-width="1.5"/></svg>
               </div>
               <div class="pm-vid-bright-val-row">
@@ -2625,7 +2625,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <!-- Playhead cursor — tracks scrub bar position in real time -->
             <div id="pmMkRailPH" class="pm-mk-rail-ph" style="display:none;"></div>
           </div>
-          <input id="pmScrub" type="range" min="0" max="10000" value="0" class="pm-scrub">
+          <input id="pmScrub" aria-label="Scrub playhead" type="range" min="0" max="10000" value="0" class="pm-scrub">
         </div>
         <button id="pmAddMarkerBtn"  class="pm-mark-btn"   title="Add marker at playhead (M)">M</button>
         <button id="pmAnnotateBtn"   class="pm-annot-btn"  title="Annotate frame (N)">&#x270F;</button>
@@ -2940,7 +2940,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             </div>
             <div class="pm-sly-cmp-overlay-ctrl" id="pmSlyCmpOverlayCtrl" style="display:none;">
               <span class="pm-sly-cmp-ol-lbl">Mix</span>
-              <input id="pmSlyCmpMix" type="range" min="0" max="100" value="50" class="pm-sly-cmp-mix-slider">
+              <input id="pmSlyCmpMix" aria-label="Mix" type="range" min="0" max="100" value="50" class="pm-sly-cmp-mix-slider">
               <span id="pmSlyCmpMixPct">50%</span>
             </div>
             <div class="pm-sly-cmp-match" id="pmSlyCmpMatch" style="display:none;">
@@ -3350,7 +3350,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             </div>
           </div>
           <div class="pfx-vfx-plr-row pfx-vfx-plr-scrub-row">
-            <input type="range" id="pfxVfxPlrSlider" class="pfx-vfx-plr-slider" min="0" max="1000" value="0" step="1">
+            <input type="range" id="pfxVfxPlrSlider" aria-label="Scrub playhead" class="pfx-vfx-plr-slider" min="0" max="1000" value="0" step="1">
           </div>
         </div>
 
@@ -3488,7 +3488,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   <div class="pl2-filter-bar">
     <!-- Select all checkbox -->
     <label class="pl2-sel-all-wrap" title="Select / deselect all shots">
-      <input type="checkbox" id="pl2SelectAll">
+      <input type="checkbox" id="pl2SelectAll" aria-label="Select or deselect all shots">
     </label>
     <span id="pl2SelMeta" class="pl2-sel-meta">0 shots</span>
     <div class="pl2-filter-sep"></div>
@@ -3782,13 +3782,13 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           <div class="imf-labels-toolbar">
             <span class="imf-labels-title">Labels</span>
             <input id="imfLabelFilterText" class="imf-label-input" type="text" placeholder="Search…" />
-            <select id="imfLabelFilterStatus" class="imf-label-select">
+            <select id="imfLabelFilterStatus" aria-label="Filter labels by status" class="imf-label-select">
               <option value="ALL">All</option>
               <option value="PASS">Pass</option>
               <option value="WARN">Warn</option>
               <option value="REJECT">Reject</option>
             </select>
-            <select id="imfLabelFilterGroup" class="imf-label-select">
+            <select id="imfLabelFilterGroup" aria-label="Filter labels by group" class="imf-label-select">
               <option value="ALL">All groups</option>
               <option value="Dialogue">Dialogue</option>
               <option value="Music">Music</option>
@@ -4078,7 +4078,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         <div class="imf-proxy-panel">
           <div class="imf-proxy-panel-head" style="display:flex;align-items:center;gap:8px;">
             <div class="imf-proxy-panel-title">Delivery Schema</div>
-            <select id="imfDeliverySchemaPreset" style="font-size:9px;font-family:monospace;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.8);padding:2px 6px;border-radius:3px;">
+            <select id="imfDeliverySchemaPreset" aria-label="Delivery schema preset" style="font-size:9px;font-family:monospace;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.8);padding:2px 6px;border-radius:3px;">
               <option value="app2e">Generic IMF App #2E (built-in)</option>
               <option value="custom">Custom Schema XML…</option>
             </select>
@@ -4134,7 +4134,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           </div>
           <div class="imf-proxy-panel-body">
             <div class="imf-dovi-config-label">Resolution preset</div>
-            <select id="imfProxyQualitySelect" style="width:100%;font-size:9px;font-family:monospace;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.8);padding:3px 7px;border-radius:3px;box-sizing:border-box;">
+            <select id="imfProxyQualitySelect" aria-label="Resolution preset" style="width:100%;font-size:9px;font-family:monospace;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.8);padding:3px 7px;border-radius:3px;box-sizing:border-box;">
               <option value="turbo">Turbo — 854×480, ultrafast J2K decode (default)</option>
               <option value="balanced">Balanced — 720p, veryfast encode</option>
               <option value="full">Full — 1080p, high quality (slowest)</option>
@@ -4263,12 +4263,12 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <!-- NLE-style viewer topbar overlay -->
             <div class="imf-viewer-topbar">
               <div class="imf-viewer-topbar-left">
-                <select id="imfCplSel" class="imf-viewer-sel"><option>CPL —</option></select>
-                <select id="imfVersionSel" class="imf-viewer-sel imf-viewer-sel-sm"><option>v 1</option></select>
+                <select id="imfCplSel" aria-label="Composition playlist (CPL)" class="imf-viewer-sel"><option>CPL —</option></select>
+                <select id="imfVersionSel" aria-label="CPL version" class="imf-viewer-sel imf-viewer-sel-sm"><option>v 1</option></select>
               </div>
               <div class="imf-viewer-topbar-mid">
                 <span id="imfTCOverlay" class="imf-tc">–:––:––:––</span>
-                <select id="imfFpsSel" class="imf-viewer-sel imf-viewer-sel-sm">
+                <select id="imfFpsSel" aria-label="Playback frame rate" class="imf-viewer-sel imf-viewer-sel-sm">
                   <option>24.000</option><option>23.976</option><option>25.000</option><option>30.000</option>
                 </select>
               </div>
@@ -4320,7 +4320,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         </div>
         <!-- Full-width scrubber -->
         <div class="imf-scrubber-wrap">
-          <input id="imfSeek" class="imf-scrubber" type="range" min="0" max="0" value="0">
+          <input id="imfSeek" aria-label="Scrub playhead" class="imf-scrubber" type="range" min="0" max="0" value="0">
         </div>
         <!-- Audio waveform strip -->
         <div id="imfWaveformWrap" class="imf-waveform-wrap" style="display:none">
@@ -4370,7 +4370,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           </div>
           <div class="imf-transport-vol">
             <button class="imf-tbtn imf-tbtn2 imf-tbtn2-sm" id="imfTbMute" title="Mute">🔊</button>
-            <input type="range" id="imfVolSlider" class="imf-vol-slider" min="0" max="100" value="85">
+            <input type="range" id="imfVolSlider" aria-label="Volume" class="imf-vol-slider" min="0" max="100" value="85">
           </div>
           <div class="imf-transport-middle">
             <div class="imf-transport-actions">
@@ -4388,11 +4388,11 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <div class="imf-tl-section">
         <div class="imf-tl-section-hdr imf-tl-section-hdr-v2">
           <div class="imf-tl-hdr-left">
-            <select id="imfTlViewSel" class="imf-tl-sel">
+            <select id="imfTlViewSel" aria-label="Timeline view" class="imf-tl-sel">
               <option>Timeline</option>
               <option>Storyboard</option>
             </select>
-            <select id="imfTlOrderSel" class="imf-tl-sel">
+            <select id="imfTlOrderSel" aria-label="Clip order" class="imf-tl-sel">
               <option>Reel Order</option>
               <option>CPL Order</option>
             </select>
@@ -4567,7 +4567,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
         <div class="imf-right-scopes-hdr">
           <span class="imf-scope-title">Scopes</span>
           <div class="imf-scope-type-sel">
-            <select id="imfScopeTypeSel" class="imf-scope-sel">
+            <select id="imfScopeTypeSel" aria-label="Scope type" class="imf-scope-sel">
               <option value="parade">Parade</option>
               <option value="waveform">Waveform</option>
               <option value="vector">Vectorscope</option>
@@ -4728,7 +4728,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <div class="imf-meta-kv">
               <span class="imf-meta-k">Proxy</span>
               <span class="imf-meta-v">
-                <select id="imfProxyModeSel" class="imf-meta-sel">
+                <select id="imfProxyModeSel" aria-label="Proxy mode" class="imf-meta-sel">
                   <option>Resolve Proxy</option>
                   <option>Direct</option>
                   <option>FFmpeg</option>
@@ -5375,7 +5375,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <span class="tlc-count" id="tlcEventCount">0 events</span>
             <div class="tlc-reel-ctrl" title="How to derive the reel name in the exported file">
               <span class="tlc-opt-lbl">REEL NAME</span>
-              <select id="tlcReelSource" class="tlc-select" style="border:none;background:transparent;padding:0 2px;color:rgba(255,255,255,.7);">
+              <select id="tlcReelSource" aria-label="Reel name source" class="tlc-select" style="border:none;background:transparent;padding:0 2px;color:rgba(255,255,255,.7);">
                 <option value="orig">Keep Original</option>
                 <option value="filename">From Filename</option>
                 <option value="clipname">From Clip Name</option>
@@ -5410,7 +5410,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           <div id="tlcFlatFilter">
             <div class="tlc-opt-sep"></div>
             <span class="tlc-opt-lbl" style="color:rgba(255,158,108,.5);">FILTER</span>
-            <select id="tlcFlatSrc" class="tlc-select">
+            <select id="tlcFlatSrc" aria-label="Filter clips" class="tlc-select">
               <option value="ocf">OCF only</option>
               <option value="real">Real media</option>
               <option value="all">All clips</option>
@@ -5423,7 +5423,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 
         <!-- Preview / AAF Panel -->
         <div style="flex:1;overflow:hidden;padding:10px 14px 14px;display:flex;flex-direction:column;min-height:0;">
-          <textarea id="tlcPreview" readonly spellcheck="false"></textarea>
+          <textarea id="tlcPreview" aria-label="Export preview" readonly spellcheck="false"></textarea>
           <div id="tlcAafPanel" style="display:none;flex:1;overflow-y:auto;"></div>
         </div>
       </div>
@@ -6178,7 +6178,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <div class="fun-card-title">💣 Minesweeper</div>
             <div class="fun-card-head-actions fun-card-head-actions-mines">
               <div class="fun-mines-level-wrap">
-                <select id="fbMinesLevel" class="fun-mines-level">
+                <select id="fbMinesLevel" aria-label="Difficulty" class="fun-mines-level">
                   <option value="easy" selected>Beginner (9×9 · 10 mines)</option>
                   <option value="medium">Intermediate (16×16 · 40 mines)</option>
                   <option value="hard">Expert (16×30 · 99 mines)</option>
