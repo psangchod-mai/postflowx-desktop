@@ -921,3 +921,57 @@ iteration's finding: a string that exists, is correct, and reaches nobody.
 
 **Still open from earlier runs:** the `git rm --cached` offer for
 `friendlyError.js` / `friendlyError.test.mjs`.
+
+---
+
+## Iteration 6 — phantom element lookups, measured
+
+**Correction to iteration 5's own ranking.** That audit recorded the phantom-id
+sweep as "the single highest-value open item," on the reasoning that any
+`getElementById` whose id appears in no HTML file is a defect. Having run it:
+the premise is right and the ranking was wrong. There are 311 such ids across
+440 lookup sites, and the breakdown is **0 crash / 6 fallback / 434 silent**.
+Nothing in that population is reaching a user as a broken control today; the
+three that were are the three already fixed by hand in iterations 3–5.
+
+**Finding 1 — the population is drift, not defects.** Sampled desktop-facing
+entries all have a working alternate beside them: `#aboutVersion` (superseded by
+`versionBtn` + `setBtn`), `#loadingMsg` (superseded by `_parseProgressShow`),
+`#eventTable`, and six `main-*` panel ids read against the thirteen that
+`src/index.html` actually defines. Some are explicitly intentional —
+`bwav/popup.js` carries `// (Mode UI removed)` next to its `#modeSelect` read,
+and that file is the extension popup, not the desktop pane. **A sweep that
+treats every phantom as a defect generates busywork**, which is why the baseline
+records them as known rather than as a to-do list.
+
+**Finding 2 — the scan was under-reporting until a comment was disqualified.**
+`errorBanner.js:11` reads `No element with id="errors" has ever existed`. The
+scan counted that comment as a definition, and `#errors` — iteration 3's entire
+premise — dropped out of the results. Three other ids were hidden identically.
+This is the sharpest instance yet of the recurring lesson: **a test that greps
+must prove its grep works.** The measurement before the fix (310 ids / 437
+sites) was wrong in the direction that makes a guard weaker, and nothing about
+running it would have said so.
+
+**Finding 3 — a unit test can cover a branch that never runs.**
+`classify`'s two-line-dereference path required the assignment to end at `=`.
+That holds for `$("#x")` and fails for `document.getElementById("x")`, where the
+receiver sits between. The unit test passed; the branch was dead against every
+real file in the tree. It was caught by injecting the defect into `src/` and
+watching the gate *not* fire. **Negative-verification found what the test
+suite could not**, which is the argument for doing it on every gate rather than
+on the ones that look risky.
+
+**Finding 4 — the baseline needs an anti-rot clause, and it has one.** A frozen
+list of known-bad ids decays exactly the way iteration 5's stale audit entry
+did: silently, while still being read as current. The contract test therefore
+fails not only on a new phantom but on any baseline entry whose id now exists,
+so a fix cannot be made without the record of it being updated in the same
+commit.
+
+**Still open from earlier runs:** the Preflight reload-free re-localisation, the
+missing `zh-TW` BWAV dictionary (~92 strings — authoring, not repair), the four
+unconsolidated `_showToast` implementations, `setStatus` in
+`modules/amf_convert.js:4988`/`:5175` writing `STATE.statusText.text` instead of
+the DOM, and the `git rm --cached` offer for `friendlyError.js` /
+`friendlyError.test.mjs`.

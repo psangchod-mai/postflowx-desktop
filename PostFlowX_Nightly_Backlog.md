@@ -1189,3 +1189,66 @@ re-localisation, which is its own iteration.
 broadcast fails 2, consulting the stale mirror first fails 1, removing the load
 re-send fails 3. `test:js` 23 files, `build-verify` 250 passed / 7 skipped with
 all three gates clean, `build:renderer` 370 files.
+
+---
+
+## Iteration 6 — the phantom-element sweep, and what it actually found
+
+Iterations 3, 4 and 5 each tripped over the same bug independently: code that
+looks up an element id nothing in the tree creates. `$("#errors")` in `ui.js`
+(66 error messages, none displayed), `#localeSelect` in `bwav/app.js` (six
+translations, none selectable), `#localeSelect` in `preflight/app.js` (eighteen
+locale files, none selectable). Three discoveries, three files, none of which
+threw. The iteration-5 audit called finding them by grep "the single
+highest-value open item," so this iteration ran the sweep.
+
+**The measurement corrected the framing.** 311 phantom ids across 440 lookup
+sites — and of those 440: **0 crash, 6 deliberate `a || b` fallback, 434
+silent.** Every desktop-facing case sampled by hand turned out to be a guarded
+leftover sitting beside a working replacement. `#aboutVersion` is dead because
+`versionBtn` already receives the version through `setBtn`. `#loadingMsg` is
+dead because `_parseProgressShow` carries the progress. `src/index.html` defines
+thirteen `main-*` panels and the code reads six others that do not exist —
+`main-edl` seven times — all guarded. And `bwav/popup.js` labels its own
+phantoms: `// (Mode UI removed)` sits directly beside `#modeSelect`.
+
+So the deliverable changed. This is drift, not a backlog of 311 bugs, and
+"fixing" it wholesale would be busywork with a real chance of breaking something
+that works. **The value is in making 312 impossible**, and that is what shipped:
+a shared extractor (`tests-js/lib/domIds.mjs`), a frozen baseline
+(`tests-js/fixtures/phantom-ids.json`), and a contract test that fails on a new
+phantom, on any unguarded dereference, and on a baseline entry that has since
+been fixed. `test:js` globs `tests-js/*.test.mjs` and `build-verify` runs
+`test:js`, so the guard landed inside the build gate with no wiring changes.
+
+**Making the scan trustworthy was most of the work,** and two of the three
+problems found had it silently under-reporting:
+
+1. **Most of this renderer's markup is minted from template literals.**
+   `grep 'id="eventScroll"' src/index.html` returns nothing, yet `#eventScroll`
+   is a live element — `ui.js:6320` builds it inside a backtick string. A scan
+   that read `.html` files alone would have reported hundreds of working
+   elements as missing and the baseline would have been worthless. That
+   `eventScroll` comes back *defined* is the proof the extractor works, and it
+   is pinned as a test.
+
+2. **A comment cannot create an element.** `errorBanner.js` opens by explaining
+   that no element with `id="errors"` has ever existed — and that sentence,
+   quoting the attribute verbatim, convinced the scan the element was there. The
+   documentation of a bug registered as its fix. Three more ids were masked the
+   same way. Lines that begin a comment are now skipped, and the `errors` case
+   is a named regression test.
+
+3. **A branch that passed its unit test and had never once run.** The two-line
+   `const el = ...; el.foo = x` dereference anchored hard on `=`, so `before`
+   had to end in `= ` — true for the repo's own `$("#x")` helper, false for
+   `document.getElementById("x")`, where `before` ends in `document.`. Caught
+   only by negative-verification against real source, not by the unit test that
+   covered it.
+
+**Verification.** Every gate was negative-verified by injecting the defect it
+guards and confirming the failure: a new phantom id, an unguarded dereference, a
+two-line dereference, a stale baseline entry, an unsorted baseline, and an
+extractor that finds nothing. Six for six, then clean source re-measured at
+crash=0. 11 tests. `build-verify` 250 passed / 7 skipped with all three gates
+clean; `build:renderer` 370 files.
