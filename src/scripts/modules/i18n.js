@@ -3453,7 +3453,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "다시 시도해 주세요. 계속 발생하면 앱을 다시 시작하세요.",
     "That file or folder couldn't be found:": "해당 파일 또는 폴더를 찾을 수 없습니다:",
     "That file or folder couldn't be found.": "해당 파일 또는 폴더를 찾을 수 없습니다.",
-    "Something went wrong.": "문제가 발생했습니다."
+    "Something went wrong.": "문제가 발생했습니다.",
+    "Export finished.": "내보내기를 완료했습니다.",
+    "Export cancelled. Nothing was saved.": "내보내기를 취소했습니다. 저장된 항목이 없습니다.",
+    "The file couldn't be saved. Try again, or choose a different folder.": "파일을 저장하지 못했습니다. 다시 시도하거나 다른 폴더를 선택하세요."
   },
   ja: {
     "Helper not responding": "ヘルパーが応答していません",
@@ -3505,7 +3508,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "恐れ入りますが、もう一度お試しください。繰り返す場合はアプリを再起動してください。",
     "That file or folder couldn't be found:": "そのファイルまたはフォルダが見つかりませんでした:",
     "That file or folder couldn't be found.": "そのファイルまたはフォルダが見つかりませんでした。",
-    "Something went wrong.": "問題が発生しました。"
+    "Something went wrong.": "問題が発生しました。",
+    "Export finished.": "書き出しが完了しました。",
+    "Export cancelled. Nothing was saved.": "書き出しをキャンセルしました。何も保存されていません。",
+    "The file couldn't be saved. Try again, or choose a different folder.": "ファイルを保存できませんでした。もう一度お試しいただくか、別のフォルダを選んでください。"
   },
   "zh-TW": {
     "Helper not responding": "協助程式沒有回應",
@@ -3557,7 +3563,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "請再試一次。若持續發生，請重新啟動應用程式。",
     "That file or folder couldn't be found:": "找不到該檔案或檔案夾：",
     "That file or folder couldn't be found.": "找不到該檔案或檔案夾。",
-    "Something went wrong.": "發生問題。"
+    "Something went wrong.": "發生問題。",
+    "Export finished.": "匯出完成。",
+    "Export cancelled. Nothing was saved.": "已取消匯出，未儲存任何檔案。",
+    "The file couldn't be saved. Try again, or choose a different folder.": "無法儲存檔案。請再試一次，或選擇其他資料夾。"
   },
   th: {
     "Helper not responding": "ตัวช่วยไม่ตอบสนอง",
@@ -3609,7 +3618,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "โปรดลองอีกครั้ง หากยังเกิดขึ้นอีก ให้รีสตาร์ทแอป",
     "That file or folder couldn't be found:": "ไม่พบไฟล์หรือโฟลเดอร์นั้น:",
     "That file or folder couldn't be found.": "ไม่พบไฟล์หรือโฟลเดอร์นั้น",
-    "Something went wrong.": "เกิดข้อผิดพลาด"
+    "Something went wrong.": "เกิดข้อผิดพลาด",
+    "Export finished.": "ส่งออกเสร็จแล้ว",
+    "Export cancelled. Nothing was saved.": "ยกเลิกการส่งออกแล้ว ไม่มีการบันทึกไฟล์",
+    "The file couldn't be saved. Try again, or choose a different folder.": "บันทึกไฟล์ไม่สำเร็จ ลองอีกครั้ง หรือเลือกโฟลเดอร์อื่น"
   },
   id: {
     "Helper not responding": "Layanan pembantu tidak merespons",
@@ -3661,7 +3673,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "Silakan coba lagi. Jika terus terjadi, mulai ulang aplikasi.",
     "That file or folder couldn't be found:": "Berkas atau folder tersebut tidak ditemukan:",
     "That file or folder couldn't be found.": "Berkas atau folder tersebut tidak ditemukan.",
-    "Something went wrong.": "Terjadi kesalahan."
+    "Something went wrong.": "Terjadi kesalahan.",
+    "Export finished.": "Ekspor selesai.",
+    "Export cancelled. Nothing was saved.": "Ekspor dibatalkan. Tidak ada yang disimpan.",
+    "The file couldn't be saved. Try again, or choose a different folder.": "File tidak dapat disimpan. Coba lagi, atau pilih folder lain."
   },
   fil: {
     "Helper not responding": "Hindi tumutugon ang helper",
@@ -3713,7 +3728,10 @@ const ERROR_DICT = {
     "Please try again. If it keeps happening, restart the app.": "Pakisubukan muli. Kung paulit-ulit ito, i-restart ang app.",
     "That file or folder couldn't be found:": "Hindi natagpuan ang file o folder na iyon:",
     "That file or folder couldn't be found.": "Hindi natagpuan ang file o folder na iyon.",
-    "Something went wrong.": "May nangyaring mali."
+    "Something went wrong.": "May nangyaring mali.",
+    "Export finished.": "Tapos na ang pag-export.",
+    "Export cancelled. Nothing was saved.": "Kinansela ang pag-export. Walang na-save.",
+    "The file couldn't be saved. Try again, or choose a different folder.": "Hindi na-save ang file. Subukan ulit, o pumili ng ibang folder."
   }
 };
 for (const [lang, map] of Object.entries(ERROR_DICT)){

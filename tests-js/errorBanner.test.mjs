@@ -25,6 +25,10 @@ freshDoc();
 
 const { showErrorBanner, hideErrorBanner, bannerHost, dismissDelay } =
   await import('../src/scripts/core/errorBanner.js');
+// Imported for the line-layout tests below: they assert against the parts
+// friendlyError() returns rather than against copies of the wordings, which
+// drift. Same module the banner itself humanizes through.
+const { friendlyError, friendlyText } = await import('../src/scripts/core/friendlyError.js');
 
 // ── It appears at all — the whole point ──────────────────────────────────────
 
@@ -129,6 +133,88 @@ test('the filesystem path survives the rewrite — it is the actionable part', (
   const el = showErrorBanner('ENOENT: no such file or directory, open /Volumes/SHOW/reel.mxf', doc);
   assert.match(el.textContent, /\/Volumes\/SHOW\/reel\.mxf/, 'the path was reworded away');
   assert.match(el.textContent, /\n/, 'the path must stay on its own line');
+});
+
+// ── The advice goes on its own line, never glued to a path ───────────────────
+//
+// friendlyText() used to join message and hint with a space. Two rules end
+// their message with a filesystem path, and post-house volumes have spaces in
+// their names, so the result was a line with no visible boundary between the
+// path and the advice:
+//
+//   /Volumes/SHOW DRIVE 01/reel3/A003C012.ari Check that it still exists and…
+//
+// One raw string per rule, so this notices a rule added later with the old
+// join — enumerating the rules, not the wordings, which drift.
+
+const CORPUS = [
+  'ECONNREFUSED connecting to the companion',
+  'HTTP 401 unauthorized',
+  'unknown native action: probeMedia',
+  'DaVinci Resolve not installed',
+  'Resolve scripting is disabled on this machine',
+  'ENOSPC: no space left on device',
+  "EACCES: permission denied, open '/Volumes/SHOW A/out.mxf'",
+  'EBUSY: resource busy or locked',
+  "ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/reel3/A003C012.ari'",
+  'ETIMEDOUT',
+  'failed to write output file',
+  'ffmpeg exited with code 1',
+  'Unexpected end of JSON input',
+  'Failed to fetch',
+  'memory access out of bounds',
+  "cannot read properties of undefined (reading 'frames')",
+];
+
+test('every rule with advice puts it on its own line', () => {
+  let hinted = 0;
+  for (const raw of CORPUS) {
+    const f = friendlyError(raw);
+    if (!f.hint) continue;
+    hinted++;
+    const text = friendlyText(raw);
+    assert.equal(text, `${f.message}\n${f.hint}`, `advice is not on its own line for: ${raw}`);
+    const lines = text.split('\n');
+    assert.equal(lines[lines.length - 1], f.hint, `last line is not the advice for: ${raw}`);
+    assert.ok(
+      !lines.slice(0, -1).some((l) => l.includes(f.hint)),
+      `the advice also appears above its own line for: ${raw}`,
+    );
+  }
+  // Guards the corpus itself: if the rules stopped matching these strings the
+  // loop above would pass by never running.
+  assert.ok(hinted >= 14, `only ${hinted} of ${CORPUS.length} samples matched a rule with advice`);
+});
+
+test('file-not-found reads as three lines: what, where, what next', () => {
+  // The volume name has a space in it on purpose — that is the case the space
+  // join made unreadable, and the one every post house actually has.
+  const doc = freshDoc();
+  const raw = "ENOENT: no such file or directory, open '/Volumes/SHOW DRIVE 01/reel3/A003C012.ari'";
+  const lines = showErrorBanner(raw, doc).textContent.split('\n');
+  assert.equal(lines.length, 3, `expected 3 lines, got ${lines.length}:\n  ${lines.join('\n  ')}`);
+  assert.equal(lines[1], '/Volumes/SHOW DRIVE 01/reel3/A003C012.ari', 'the path is not alone on its line');
+  assert.equal(lines[2], friendlyError(raw).hint, 'the advice is not alone on the last line');
+});
+
+test('the banner carries pre-wrap inline, not only via the stylesheet', () => {
+  // The tool pages mount this without main.css. Without the inline rule the
+  // newlines above collapse there and the defect comes back on those hosts
+  // only, which is the version of it nobody would find.
+  const doc = freshDoc();
+  const el = showErrorBanner('ENOSPC: no space left on device', doc);
+  assert.equal(el.style.whiteSpace, 'pre-wrap');
+});
+
+test('a host-supplied #errors is left to its own styling', () => {
+  // Same reasoning as the class/opacity handling: that slot owns its
+  // presentation, and this module must not start overriding it.
+  const doc = freshDoc('<div id="errors"></div>');
+  const el = showErrorBanner('ENOSPC: no space left on device', doc);
+  assert.equal(el.id, 'errors', 'precondition: the host slot was used');
+  // Unset reads back as '' in a browser and undefined in linkedom; both mean
+  // untouched, which is the thing being asserted.
+  assert.ok(!el.style.whiteSpace, 'the module imposed white-space on a host slot');
 });
 
 test('an unrewritable message is still shown rather than replaced', () => {
@@ -315,4 +401,11 @@ test('the stylesheet defines the classes the module sets', () => {
   assert.match(css, /\.pfx-error-banner--on\s*\{/, '.pfx-error-banner--on rule missing');
   const on = css.slice(css.indexOf('.pfx-error-banner--on'));
   assert.match(on.slice(0, on.indexOf('}')), /opacity:\s*1/, 'the visible state is not visible');
+
+  // The messages are multi-line. This has been here since the banner was added
+  // — pinning it so a stylesheet tidy-up cannot quietly collapse them back into
+  // one run-on paragraph on the pages that DO load main.css.
+  const base = css.slice(css.indexOf('.pfx-error-banner {'));
+  assert.match(base.slice(0, base.indexOf('}')), /white-space:\s*pre-wrap/,
+    'the banner no longer honours newlines, so the advice runs on from the path');
 });

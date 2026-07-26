@@ -15,9 +15,17 @@ import { fileURLToPath } from 'node:url';
 // neither can be imported here, i18n.js because it touches window/document at
 // load, and it is the dictionary literal we want to check anyway, not whatever
 // a running app merged into DICT.
+//
+// core/saveNotice.js is checked here too, and for exactly the same reason: it
+// borrows friendlyError's translate() shim to localise the three sentences an
+// export ends on, so its strings need rows in ERROR_DICT and nothing else would
+// notice if they did not have them. When it was added it shipped with no rows
+// at all and six locales silently read English — which is the failure this file
+// exists to make loud, so leaving it unscanned was the gap, not the strings.
 
 const SRC_DIR = fileURLToPath(new URL('../src/scripts/', import.meta.url));
 const friendlySrc = readFileSync(SRC_DIR + 'core/friendlyError.js', 'utf8');
+const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
 const i18nSrc = readFileSync(SRC_DIR + 'modules/i18n.js', 'utf8');
 
 const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
@@ -40,6 +48,17 @@ function userFacingStrings(src) {
     found.add(unquote(m[1]));
   }
   found.delete('');   // `title: ''` on the pass-through return — no label shown.
+  return [...found];
+}
+
+// saveNotice.js has no rules table; it calls the shim by its exported name.
+// Same job, different spelling, so it gets its own scan rather than a widened
+// regex that would start matching the `_t as translate` re-export.
+function translatedStrings(src) {
+  const found = new Set();
+  for (const m of src.matchAll(new RegExp(`\\btranslate\\(\\s*${STRING_LIT}\\s*\\)`, 'g'))) {
+    found.add(unquote(m[1]));
+  }
   return [...found];
 }
 
@@ -67,7 +86,8 @@ function errorDict(src) {
   return new Function('return ' + src.slice(open, end))();
 }
 
-const STRINGS = userFacingStrings(friendlySrc);
+const SAVE_STRINGS = translatedStrings(saveNoticeSrc);
+const STRINGS = [...new Set([...userFacingStrings(friendlySrc), ...SAVE_STRINGS])];
 const DICT = errorDict(i18nSrc);
 
 // ── The extraction itself has to be trustworthy ──────────────────────────────
@@ -75,11 +95,23 @@ const DICT = errorDict(i18nSrc);
 // find nothing and every coverage test below would vacuously pass.
 
 test('the source scan actually found the rule strings', () => {
-  assert.ok(STRINGS.length >= 45, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
+  assert.ok(STRINGS.length >= 48, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
   // Spot-check one of each shape so a half-broken scan cannot slip through.
   assert.ok(STRINGS.includes('Disk full'), 'missed a literal title');
   assert.ok(STRINGS.includes('Free up space or choose another drive, then try again.'), 'missed a literal hint');
   assert.ok(STRINGS.includes("That file or folder couldn't be found."), 'missed a _t() call');
+});
+
+test('the saveNotice scan found all three of its sentences', () => {
+  // One per outcome — saved, cancelled, could not be written. If that module
+  // grows a fourth ending, this is where the missing translations surface.
+  assert.equal(
+    SAVE_STRINGS.length, 3,
+    `expected 3 translated sentences in saveNotice.js, found ${SAVE_STRINGS.length}:\n  ${SAVE_STRINGS.join('\n  ')}`,
+  );
+  for (const s of SAVE_STRINGS) {
+    assert.ok(STRINGS.includes(s), `${s} was scanned but not carried into the coverage check`);
+  }
 });
 
 // ── Coverage: no locale may be missing a message ─────────────────────────────

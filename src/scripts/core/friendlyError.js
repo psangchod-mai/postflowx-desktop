@@ -229,10 +229,22 @@ export function friendlyError(err) {
 
 /**
  * friendlyText(err) → single string suitable for a toast / error banner.
+ *
+ * The hint goes on its own line, not glued to the message with a space. Two of
+ * the rules above end their message with a filesystem path, and a space-joined
+ * hint lands directly after it:
+ *
+ *   That file or folder couldn't be found:
+ *   /Volumes/SHOW DRIVE 01/reel3/A003C012.ari Check that it still exists and…
+ *
+ * Post-house volumes have spaces in their names, so there is nothing in that
+ * line telling a reader where the path stops and the advice starts. The only
+ * consumer is core/errorBanner.js, whose element carries `white-space: pre-wrap`
+ * — the newline is honoured, and a two-line banner is what it was sized for.
  */
 export function friendlyText(err) {
   const f = friendlyError(err);
-  return f.hint ? `${f.message} ${f.hint}` : f.message;
+  return f.hint ? `${f.message}\n${f.hint}` : f.message;
 }
 
 /**

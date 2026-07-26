@@ -82,6 +82,14 @@ export function bannerHost(doc) {
   const el = doc.createElement('div');
   el.id = BANNER_ID;
   el.className = 'pfx-error-banner';
+  // Two of the messages this shows are genuinely multi-line — the file-not-found
+  // rule puts the path on its own line, and friendlyText puts every hint on one.
+  // main.css sets this on .pfx-error-banner already; repeating it inline means a
+  // page that mounts the banner without that stylesheet still gets the line
+  // breaks rather than one run-on paragraph, for the same reason the opacity
+  // below is set inline. A host-supplied #errors keeps its own styling — that
+  // slot owns its presentation, which is the point of deferring to it.
+  el.style.whiteSpace = 'pre-wrap';
   // Announced by a screen reader the moment it appears. A banner that only
   // sighted users notice is the same defect in a smaller form.
   el.setAttribute('role', 'alert');

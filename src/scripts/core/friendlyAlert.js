@@ -23,20 +23,25 @@
 //
 // ── Why this is not just friendlyText() ──────────────────────────────────────
 //
-// friendlyText() glues message and hint with a space, which is right for a
-// one-line status strip. An alert is a paragraph box, and the two most useful
-// error rules in a post house both end in a filesystem path:
+// friendlyText() returns message and hint as two lines. That is the right
+// shape for the error banner, which is a compact strip; it is not the right
+// shape for an alert, which is a paragraph box and also has to carry the
+// operation label that friendlyText knows nothing about. So this composes from
+// the friendlyError() PARTS instead, one per paragraph separated by a blank
+// line, rather than post-processing a string friendlyText already assembled.
+//
+// Both surfaces are solving the same underlying problem: the two most useful
+// error rules in a post house end their message with a filesystem path, and on
+// a volume whose name contains spaces — most of them — a space-joined hint is
+// unreadable, because nothing shows where the path stops and the advice starts:
 //
 //   That file or folder couldn't be found:
 //   /Volumes/SHOW DRIVE 01/reel3/A003C012.ari Check that it still exists and…
 //
-// On a volume with spaces in its name — which is most of them — you cannot see
-// where the path stops and the advice starts. So this composes from the
-// friendlyError() PARTS instead, one per paragraph, and lets alert()'s own
-// newline handling do the separating. (The banner in core/errorBanner.js has
-// the same glue, but it renders through textContent with default white-space,
-// where a newline collapses to a space anyway — fixing that one needs CSS, not
-// a different join, so it is deliberately left alone here.)
+// An earlier version of this comment claimed the banner could not be fixed the
+// same way because it renders through textContent with default white-space.
+// That was wrong: .pfx-error-banner has carried `white-space: pre-wrap` since
+// the banner was added, so the newline was always going to be honoured there.
 //
 // ── Testability ──────────────────────────────────────────────────────────────
 //
