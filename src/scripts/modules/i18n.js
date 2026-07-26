@@ -4120,6 +4120,130 @@ for (const [lang, map] of Object.entries(PARITY_DICT)){
   }
 }
 
+// Strings the UI shows that the dictionary had never heard of.
+//
+// PARITY_DICT above closes the other kind of gap: a key the dictionary knows
+// but one locale lacks, which shows English to one audience. These are worse.
+// applyI18n derives its lookup key from the rendered English wording, so a
+// label the dictionary has no key for at all falls through in ALL SIX locales
+// at once, and no per-locale parity scan can see it — every locale is equally
+// missing, so nothing looks asymmetric.
+//
+// This block covers the two kinds a sighted mouse user never notices and a
+// screen-reader or keyboard user cannot avoid: aria-label and placeholder.
+// Those are exactly the strings where an untranslated fall-through is least
+// visible to whoever is testing and most costly to whoever is affected, which
+// is why tests-js/uiCoverage.test.mjs gates them at zero rather than baselining
+// them like the remaining body text.
+//
+// Rows are keyed by the English string with one value per locale, in
+// UI_LOCALES order, so a missing translation is visible as a hole in a row
+// rather than something you would have to diff six objects to notice.
+//
+// An empty string means the locale keeps the English term on purpose and no
+// entry is written. Same rule as PARITY_DICT: a key→key pair would satisfy a
+// presence check while changing nothing a user reads, which is the silent no-op
+// this repo keeps finding in other forms. Absence is recorded honestly instead.
+const UI_LOCALES = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
+const UI_DICT_ROWS = {
+  // --- aria-label ---
+  "Brush size": ["브러시 크기", "ブラシサイズ", "筆刷大小", "ขนาดหัวแปรง", "Ukuran kuas", "Laki ng brush"],
+  "CPL version": ["CPL 버전", "CPL バージョン", "CPL 版本", "เวอร์ชัน CPL", "Versi CPL", "Bersyon ng CPL"],
+  "CUT DIFF 2.0 How to Use": ["CUT DIFF 2.0 사용법", "CUT DIFF 2.0 の使い方", "CUT DIFF 2.0 使用說明", "วิธีใช้ CUT DIFF 2.0", "Cara pakai CUT DIFF 2.0", "Paano gamitin ang CUT DIFF 2.0"],
+  "CUT DIFF How to Use": ["CUT DIFF 사용법", "CUT DIFF の使い方", "CUT DIFF 使用說明", "วิธีใช้ CUT DIFF", "Cara pakai CUT DIFF", "Paano gamitin ang CUT DIFF"],
+  "Clear in/out": ["인/아웃 지우기", "イン/アウトをクリア", "清除入點/出點", "ล้างจุดเข้า/ออก", "Hapus in/out", "I-clear ang in/out"],
+  "Clip order": ["클립 순서", "クリップの並び順", "片段順序", "ลำดับคลิป", "Urutan klip", "Pagkakasunod ng clip"],
+  "Close clear memory dialog": ["메모리 정리 창 닫기", "メモリクリアのダイアログを閉じる", "關閉清除記憶體對話框", "ปิดหน้าต่างล้างหน่วยความจำ", "Tutup dialog bersihkan memori", "Isara ang dialog ng clear memory"],
+  "Compare modes": ["비교 모드", "比較モード", "比較模式", "โหมดเปรียบเทียบ", "Mode perbandingan", "Mga mode ng paghahambing"],
+  "Composition playlist (CPL)": ["컴포지션 플레이리스트(CPL)", "コンポジションプレイリスト（CPL）", "合成播放清單（CPL）", "เพลย์ลิสต์คอมโพสิชัน (CPL)", "Playlist komposisi (CPL)", "Playlist ng komposisyon (CPL)"],
+  "Current item": ["현재 항목", "現在の項目", "目前項目", "รายการปัจจุบัน", "Item saat ini", "Kasalukuyang item"],
+  "Current job": ["현재 작업", "現在のジョブ", "目前工作", "งานปัจจุบัน", "Pekerjaan saat ini", "Kasalukuyang trabaho"],
+  "Delivery schema preset": ["딜리버리 스키마 프리셋", "納品スキーマのプリセット", "交付結構預設", "พรีเซ็ตสคีมาการส่งงาน", "Preset skema delivery", "Preset ng delivery schema"],
+  "Difficulty": ["난이도", "難易度", "難度", "ระดับความยาก", "Tingkat kesulitan", "Antas ng hirap"],
+  "Dismiss": ["닫기", "閉じる", "關閉", "ปิด", "Tutup", "Isara"],
+  "Export preview": ["내보내기 미리보기", "書き出しプレビュー", "匯出預覽", "ดูตัวอย่างการส่งออก", "Pratinjau ekspor", "Preview ng export"],
+  "Filter clips": ["클립 필터", "クリップを絞り込む", "篩選片段", "กรองคลิป", "Saring klip", "Salain ang mga clip"],
+  "Filter labels by group": ["그룹으로 라벨 필터", "グループでラベルを絞り込む", "依群組篩選標籤", "กรองป้ายกำกับตามกลุ่ม", "Saring label menurut grup", "Salain ang mga label ayon sa grupo"],
+  "Filter labels by status": ["상태로 라벨 필터", "ステータスでラベルを絞り込む", "依狀態篩選標籤", "กรองป้ายกำกับตามสถานะ", "Saring label menurut status", "Salain ang mga label ayon sa status"],
+  "Fullscreen": ["전체 화면", "全画面", "全螢幕", "เต็มหน้าจอ", "Layar penuh", "Buong screen"],
+  "Fun box items": ["펀 박스 항목", "ファンボックスの項目", "趣味盒項目", "รายการในกล่องสนุก", "Item fun box", "Mga item sa fun box"],
+  "Go to REC timecode": ["REC 타임코드로 이동", "REC タイムコードへ移動", "前往 REC 時間碼", "ไปที่ไทม์โค้ด REC", "Ke timecode REC", "Pumunta sa REC timecode"],
+  "How the player transport works": ["플레이어 트랜스포트 작동 방식", "プレーヤーのトランスポートの仕組み", "播放控制列的運作方式", "การทำงานของแถบควบคุมเพลเยอร์", "Cara kerja transport pemutar", "Paano gumagana ang player transport"],
+  "How to Use": ["사용법", "使い方", "使用說明", "วิธีใช้", "Cara pakai", "Paano gamitin"],
+  "How to Use language": ["사용법 언어", "使い方の言語", "使用說明語言", "ภาษาของวิธีใช้", "Bahasa cara pakai", "Wika ng paano gamitin"],
+  "IAB label QC": ["IAB 라벨 QC", "IAB ラベル QC", "IAB 標籤 QC", "ตรวจสอบป้ายกำกับ IAB", "QC label IAB", "QC ng IAB label"],
+  "Interactive player reference": ["인터랙티브 플레이어 참조", "インタラクティブなプレーヤーリファレンス", "互動式播放器參考", "คู่มืออ้างอิงเพลเยอร์แบบโต้ตอบ", "Referensi pemutar interaktif", "Interaktibong sanggunian ng player"],
+  "Jump to end": ["끝으로 이동", "最後へ移動", "跳至結尾", "ไปที่ท้ายสุด", "Lompat ke akhir", "Tumalon sa dulo"],
+  "Jump to start": ["처음으로 이동", "先頭へ移動", "跳至開頭", "ไปที่จุดเริ่มต้น", "Lompat ke awal", "Tumalon sa simula"],
+  "Markers How to Use": ["마커 사용법", "マーカーの使い方", "標記使用說明", "วิธีใช้มาร์กเกอร์", "Cara pakai Markers", "Paano gamitin ang Markers"],
+  "Mix": ["믹스", "ミックス", "混音", "มิกซ์", "", ""],
+  "Mute audio": ["음소거", "ミュート", "靜音", "ปิดเสียง", "Bisukan audio", "I-mute ang audio"],
+  "Navigation pod": ["내비게이션 패널", "ナビゲーションパネル", "導覽面板", "แผงนำทาง", "Panel navigasi", "Panel ng nabigasyon"],
+  "Next marker": ["다음 마커", "次のマーカー", "下一個標記", "มาร์กเกอร์ถัดไป", "Marker berikutnya", "Susunod na marker"],
+  "Pinned tool shortcuts": ["고정한 도구 단축키", "ピン留めしたツールのショートカット", "已釘選的工具捷徑", "ทางลัดเครื่องมือที่ปักหมุด", "Pintasan alat yang disematkan", "Mga naka-pin na tool shortcut"],
+  "Plate Link How to Use": ["Plate Link 사용법", "Plate Link の使い方", "Plate Link 使用說明", "วิธีใช้ Plate Link", "Cara pakai Plate Link", "Paano gamitin ang Plate Link"],
+  "Playback frame rate": ["재생 프레임 레이트", "再生フレームレート", "播放影格速率", "อัตราเฟรมการเล่น", "Frame rate pemutaran", "Frame rate ng playback"],
+  "Player Transport Deep Dive": ["플레이어 트랜스포트 자세히 보기", "プレーヤートランスポート徹底解説", "播放控制列深入介紹", "เจาะลึกแถบควบคุมเพลเยอร์", "Ulasan mendalam transport pemutar", "Malalim na gabay sa player transport"],
+  "Prev marker": ["이전 마커", "前のマーカー", "上一個標記", "มาร์กเกอร์ก่อนหน้า", "Marker sebelumnya", "Nakaraang marker"],
+  "Proxy mode": ["프록시 모드", "プロキシモード", "代理模式", "โหมดพร็อกซี", "Mode proxy", "Proxy na mode"],
+  "Pull Prep How to Use": ["Pull Prep 사용법", "Pull Prep の使い方", "Pull Prep 使用說明", "วิธีใช้ Pull Prep", "Cara pakai Pull Prep", "Paano gamitin ang Pull Prep"],
+  "Reel name source": ["릴 이름 소스", "リール名のソース", "卷名來源", "แหล่งชื่อรีล", "Sumber nama reel", "Pinagmulan ng reel name"],
+  "Render views": ["렌더 뷰", "レンダービュー", "算圖檢視", "มุมมองเรนเดอร์", "Tampilan render", "Mga render view"],
+  "Resolution preset": ["해상도 프리셋", "解像度プリセット", "解析度預設", "พรีเซ็ตความละเอียด", "Preset resolusi", "Preset ng resolusyon"],
+  "Resolve connection status": ["Resolve 연결 상태", "Resolve の接続状態", "Resolve 連線狀態", "สถานะการเชื่อมต่อ Resolve", "Status koneksi Resolve", "Katayuan ng koneksyon sa Resolve"],
+  "Scope type": ["스코프 종류", "スコープの種類", "示波器類型", "ชนิดสโคป", "Jenis scope", "Uri ng scope"],
+  "Scrub": ["스크럽", "スクラブ", "拖曳播放", "เลื่อนดู", "Geser", "I-scrub"],
+  "Scrub compare source": ["비교 소스 스크럽", "比較ソースをスクラブ", "拖曳比較來源", "เลื่อนดูแหล่งเปรียบเทียบ", "Geser sumber perbandingan", "I-scrub ang compare source"],
+  "Scrub playhead": ["플레이헤드 스크럽", "再生ヘッドをスクラブ", "拖曳播放磁頭", "เลื่อนหัวอ่าน", "Geser playhead", "I-scrub ang playhead"],
+  "Scrub reference": ["레퍼런스 스크럽", "リファレンスをスクラブ", "拖曳參考影像", "เลื่อนดูภาพอ้างอิง", "Geser referensi", "I-scrub ang reference"],
+  "Scrub timeline": ["타임라인 스크럽", "タイムラインをスクラブ", "拖曳時間軸", "เลื่อนไทม์ไลน์", "Geser timeline", "I-scrub ang timeline"],
+  "Select or deselect all shots": ["전체 샷 선택/해제", "全ショットを選択・選択解除", "全選或取消全選鏡頭", "เลือกหรือยกเลิกเลือกช็อตทั้งหมด", "Pilih atau batalkan semua shot", "Piliin o alisin ang pagpili sa lahat ng shot"],
+  "Set in point": ["인 포인트 설정", "インポイントを設定", "設定入點", "ตั้งจุดเข้า", "Setel titik in", "Itakda ang in point"],
+  "Set out point": ["아웃 포인트 설정", "アウトポイントを設定", "設定出點", "ตั้งจุดออก", "Setel titik out", "Itakda ang out point"],
+  "Settings How to Use": ["설정 사용법", "設定の使い方", "設定使用說明", "วิธีใช้การตั้งค่า", "Cara pakai Pengaturan", "Paano gamitin ang Settings"],
+  "Snake game": ["스네이크 게임", "スネークゲーム", "貪食蛇遊戲", "เกมงู", "Gim ular", "Larong ahas"],
+  "Step back 1 frame": ["1 프레임 뒤로", "1 フレーム戻る", "後退 1 影格", "ถอยหลัง 1 เฟรม", "Mundur 1 frame", "Umatras ng 1 frame"],
+  "Step forward 1 frame": ["1 프레임 앞으로", "1 フレーム進む", "前進 1 影格", "เดินหน้า 1 เฟรม", "Maju 1 frame", "Sumulong ng 1 frame"],
+  "Timeline Convert How to Use": ["Timeline Convert 사용법", "Timeline Convert の使い方", "Timeline Convert 使用說明", "วิธีใช้ Timeline Convert", "Cara pakai Timeline Convert", "Paano gamitin ang Timeline Convert"],
+  "Timeline view": ["타임라인 보기", "タイムライン表示", "時間軸檢視", "มุมมองไทม์ไลน์", "Tampilan timeline", "Tanawin ng timeline"],
+  "Toggle VFX Pull view": ["VFX Pull 보기 전환", "VFX Pull 表示を切り替え", "切換 VFX Pull 檢視", "สลับมุมมอง VFX Pull", "Alihkan tampilan VFX Pull", "Palitan ang VFX Pull view"],
+  "Toggle loop": ["반복 재생 전환", "ループを切り替え", "切換循環播放", "สลับการเล่นวน", "Alihkan pengulangan", "Palitan ang loop"],
+  "Transport": ["재생 컨트롤", "トランスポート", "播放控制", "แถบควบคุมการเล่น", "Kontrol pemutaran", "Kontrol ng playback"],
+  "Video brightness": ["영상 밝기", "映像の明るさ", "影像亮度", "ความสว่างวิดีโอ", "Kecerahan video", "Liwanag ng video"],
+  "Visual QC How to Use": ["Visual QC 사용법", "Visual QC の使い方", "Visual QC 使用說明", "วิธีใช้ Visual QC", "Cara pakai Visual QC", "Paano gamitin ang Visual QC"],
+  "Volume": ["볼륨", "音量", "音量", "ระดับเสียง", "", "Lakas ng tunog"],
+  "Wipe position": ["와이프 위치", "ワイプ位置", "擦除位置", "ตำแหน่งไวป์", "Posisi wipe", "Posisyon ng wipe"],
+  "Workspace tabs": ["작업 공간 탭", "ワークスペースのタブ", "工作區分頁", "แท็บพื้นที่ทำงาน", "Tab ruang kerja", "Mga workspace tab"],
+  "mines remaining": ["남은 지뢰", "残りの地雷", "剩餘地雷", "ทุ่นระเบิดที่เหลือ", "sisa ranjau", "natitirang mina"],
+  "time elapsed": ["경과 시간", "経過時間", "經過時間", "เวลาที่ผ่านไป", "waktu berlalu", "lumipas na oras"],
+  // --- placeholder ---
+  "Add a note…": ["메모 추가…", "メモを追加…", "新增備註…", "เพิ่มบันทึก…", "Tambah catatan…", "Magdagdag ng tala…"],
+  "Auto-detect or enter path…": ["자동 검색 또는 경로 입력…", "自動検出またはパスを入力…", "自動偵測或輸入路徑…", "ตรวจหาอัตโนมัติหรือใส่พาธ…", "Deteksi otomatis atau masukkan path…", "Awtomatikong hanapin o ilagay ang path…"],
+  "Auto-detect — or enter full path to Metafier…": ["자동 검색 — 또는 Metafier 전체 경로 입력…", "自動検出 — または Metafier のフルパスを入力…", "自動偵測 — 或輸入 Metafier 完整路徑…", "ตรวจหาอัตโนมัติ — หรือใส่พาธเต็มของ Metafier…", "Deteksi otomatis — atau masukkan path lengkap Metafier…", "Awtomatikong hanapin — o ilagay ang buong path ng Metafier…"],
+  "Drop or paste .otio / .edl / .fcpxml…": ["파일을 끌어다 놓거나 붙여넣기: .otio / .edl / .fcpxml…", ".otio / .edl / .fcpxml をドロップまたは貼り付け…", "拖放或貼上 .otio / .edl / .fcpxml…", "ลากวางหรือวาง .otio / .edl / .fcpxml…", "Jatuhkan atau tempel .otio / .edl / .fcpxml…", "I-drop o i-paste ang .otio / .edl / .fcpxml…"],
+  "Filter settings…": ["설정 검색…", "設定を絞り込む…", "篩選設定…", "กรองการตั้งค่า…", "Saring pengaturan…", "Salain ang mga setting…"],
+  "New note type…": ["새 메모 유형…", "新しいメモの種類…", "新增備註類型…", "ประเภทบันทึกใหม่…", "Jenis catatan baru…", "Bagong uri ng tala…"],
+  "New scope preset…": ["새 작업 범위 프리셋…", "新しい作業範囲プリセット…", "新增工作範圍預設…", "พรีเซ็ตขอบเขตงานใหม่…", "Preset lingkup kerja baru…", "Bagong preset ng saklaw ng trabaho…"],
+  "Note…": ["메모…", "メモ…", "備註…", "บันทึก…", "Catatan…", "Tala…"],
+  "Scope of work…": ["작업 범위…", "作業範囲…", "工作範圍…", "ขอบเขตงาน…", "Lingkup pekerjaan…", "Saklaw ng trabaho…"],
+  "Search actions…": ["작업 검색…", "アクションを検索…", "搜尋動作…", "ค้นหาการดำเนินการ…", "Cari tindakan…", "Maghanap ng aksyon…"],
+  "Search checks…": ["검사 항목 검색…", "チェック項目を検索…", "搜尋檢查項目…", "ค้นหารายการตรวจสอบ…", "Cari pemeriksaan…", "Maghanap ng check…"],
+  "Search projects…": ["프로젝트 검색…", "プロジェクトを検索…", "搜尋專案…", "ค้นหาโปรเจกต์…", "Cari proyek…", "Maghanap ng proyekto…"],
+  "Search shot name…": ["샷 이름 검색…", "ショット名を検索…", "搜尋鏡頭名稱…", "ค้นหาชื่อช็อต…", "Cari nama shot…", "Maghanap ng shot name…"],
+  "name / vendor / team": ["이름 / 벤더 / 팀", "名前 / ベンダー / チーム", "名稱 / 廠商 / 團隊", "ชื่อ / ผู้ให้บริการ / ทีม", "nama / vendor / tim", "pangalan / vendor / koponan"]
+};
+// Gap-fill only, same contract as PARITY_DICT above: never replace a string
+// somebody already authored.
+for (const [k, row] of Object.entries(UI_DICT_ROWS)){
+  for (let i = 0; i < UI_LOCALES.length; i++){
+    const v = row[i];
+    if (!v) continue;
+    const lang = UI_LOCALES[i];
+    const target = DICT[lang] || (DICT[lang] = {});
+    if (!(k in target)) target[k] = v;
+  }
+}
+
 // Build key set + reverse maps so switching languages always works.
 const KEY_SET = new Set();
 const REVERSE = {};
@@ -4132,6 +4256,34 @@ for (const [lang, map] of Object.entries(DICT)){
       REVERSE[lang][v.trim()] = k;
     }
   }
+}
+
+// Case/whitespace-folded index, consulted only after an exact match fails.
+//
+// _candKeys folds the string coming out of the DOM but never the dictionary
+// keys, so a label written "NAME" in the markup misses the key "Name" and the
+// user reads English in all six locales despite a translation existing.
+//
+// Ambiguous folds are dropped rather than guessed: "PULL PREP" and "Pull Prep"
+// are both real keys and may carry different translations, so nothing can pick
+// between them from the folded form alone. Only folds owned by exactly one key
+// are kept, which makes this lookup deterministic — it can correct a case
+// mismatch but can never silently choose the wrong entry.
+const FOLD_INDEX = new Map();
+{
+  const foldKey = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+  const owner = new Map();
+  for (const k of KEY_SET){
+    const f = foldKey(k);
+    owner.set(f, owner.has(f) ? null : k);
+  }
+  for (const [f, k] of owner){
+    if (k) FOLD_INDEX.set(f, k);
+  }
+}
+
+function _foldKey(s){
+  return String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 function _candKeys(s){
@@ -4159,6 +4311,13 @@ function toEnglishKey(raw){
       if (k) return k;
     }
   }
+  // Last resort: the markup says "NAME" and the dictionary says "Name". The
+  // candidates above fold the incoming string but never the keys, so an
+  // exact-case mismatch loses a translation that already exists. FOLD_INDEX
+  // holds only folds owned by a single key, so this can correct the case but
+  // never pick between two keys that differ only by it.
+  const folded = FOLD_INDEX.get(_foldKey(raw));
+  if (folded) return folded;
   return String(raw ?? '').trim();
 }
 

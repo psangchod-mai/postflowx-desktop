@@ -81,8 +81,16 @@ const LOCALES = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
 
 // Hard ceilings, written as literals. A baseline is a debt list, not a parking
 // lot: raising one of these is an edit somebody has to justify in review, which
-// is the entire mechanism. 31 absent is down from 366.
-const MAX_ABSENT = 31;
+// is the entire mechanism. 34 absent is down from 366.
+//
+// It went 31 → 34 once, and the justification is recorded here rather than left
+// to a commit message: UI_DICT added 83 keys the dictionary had never held, all
+// of them strings already on screen in English. Three of those keys have an
+// honest hole — id and fil keep "Mix", id keeps "Volume" — so the measured
+// surface grew rather than a translation regressing. Filling them with key→key
+// pairs would have kept this number at 31 while changing nothing a user reads,
+// which is the silent no-op this repo keeps finding in other forms.
+const MAX_ABSENT = 34;
 const MAX_IDENTITY = 250;
 
 const DICT = await loadDict(ROOT);
