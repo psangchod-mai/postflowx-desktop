@@ -1069,3 +1069,56 @@ alone passes perfectly well with the caller disconnected, and that is precisely
 the shape of the bug being fixed. `npm run test:js` 22/22 files, `build-verify`
 250 passed / 7 skipped with all three security gates clean, `build:renderer` 369
 files.
+
+## 21:00 run — iteration 4 · plain language at the boundary (`9aa71c5`)
+
+**This iteration exists because of the last one.** Making the banner visible for
+the first time converted a latent problem into a user-facing one. Of the 70
+`showError()` call sites, **17 pass `err?.message || String(err)` straight
+through** — so the first thing a non-technical user now reads is
+
+```
+TypeError: cannot read properties of undefined (reading 'frames')
+```
+
+where they previously read nothing. Invisible bad wording became visible bad
+wording, and shipping iteration 3 without this would have been shipping half a
+fix.
+
+**Where the rewrite goes matters more than that it happens.** `friendlyText()`
+has existed since iteration 1. Applying it call site by call site fixes 17 places
+and leaves the eighteenth — the next one someone writes — unprotected, and misses
+`window.pfxShowErrorBanner` entirely. Applying it in `showErrorBanner()`, where
+the text meets the screen, means nothing can reach the user unrewritten. The
+53 sites that already say something useful are unaffected, because pass-through
+is `friendlyText`'s conservative default.
+
+**Two preconditions, both measured rather than assumed.**
+
+1. *Idempotence.* Some callers humanize before calling — including an in-flight
+   working-tree change to `showError` — and a rule's own output can re-match its
+   own pattern: "The disk is full, so PostFlowX could not finish writing." still
+   contains the literal "disk is full". I checked this over the errno set before
+   writing the code, rather than after. It holds, and a test now pins it. Without
+   it, those messages get their hint appended twice.
+2. *Empty text must not be rewritten.* `friendlyText('')` returns "Something went
+   wrong." — and an empty message is how every caller **hides** the banner. Left
+   unguarded, clearing the banner would have printed an error into it. This is
+   the trap of the iteration; four tests fail if the guard is removed.
+
+**Also.** Dismissal timing now measures the rewritten text. A three-word errno
+becomes two sentences, and timing the dismissal on the errno would pull the
+message off screen before it could be read — the exact defect iteration 3 fixed,
+reintroduced through the back door.
+
+**Verification.** 24 tests (up from 17), negative-verified twice: dropping the
+rewrite and applying it to empty text each fail four assertions. `test:js` 22/22,
+`build-verify` 250 passed / 7 skipped with all gates clean, `build:renderer` 369
+files. The `.app` was repackaged unsigned via `build:mac-dir` after iteration 3
+and the banner is confirmed present in `app.asar`.
+
+**Note on the working tree.** The committed `showError` is HEAD's body plus the
+delegation only; the `window.pfxFriendlyText` line in the working-tree copy is
+pre-existing uncommitted user work and was deliberately left unstaged. With the
+rewrite now at the boundary, that line is redundant but harmless — idempotence is
+what makes it so, and that is now a tested property rather than a hope.

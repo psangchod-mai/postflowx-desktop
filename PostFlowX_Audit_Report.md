@@ -835,3 +835,43 @@ translation sweep):**
 **Still open from iteration 1.** `friendlyError.js` and `friendlyError.test.mjs`
 were uncommitted in-flight user work that this loop committed in `887b161`. Say
 the word and they come back out with `git rm --cached`.
+
+## 21:00 run — iteration 4 · what a fix reveals
+
+**Finding 1 — a repair can promote a latent defect to a visible one.** Iteration 3
+restored a display path; 17 of the 70 messages flowing through it were raw
+exception text. Neither change was wrong, but the pair had to ship together, and
+the second was only discoverable by asking what the first had made visible.
+Generalised: **after restoring any output path, audit what that path carries.**
+The value of the content was irrelevant while nothing rendered it.
+
+Measured shape of the 70 call sites: 17 pass raw `err.message`, 53 pass
+hand-written prose. The 53 are why a blanket rewrite had to be conservative
+rather than clever.
+
+**Finding 2 — the boundary is the only place a rule of this kind holds.** Fixing
+17 call sites is a fix with an expiry date; the eighteenth is written next week.
+The rewrite belongs where the text meets the screen, which also covers
+`window.pfxShowErrorBanner` and any future caller. This is the same lesson as
+iteration 3's self-mounting banner in a different guise: **prefer the chokepoint
+to the enumeration.**
+
+**Finding 3 — `friendlyText('')` returns "Something went wrong."** An empty
+message is the hide signal for every caller of the banner. Composing the two
+without a guard means *clearing* an error displays one. Caught by checking the
+falsy cases before wiring anything, not by a test written afterwards. Now pinned.
+
+**Finding 4 — self-matching rules make idempotence non-obvious.** Several rules
+produce output containing their own trigger phrase ("disk is full", and by
+inspection the timeout and network rules are close to it). It happens to be
+stable today because the second pass reproduces the same message and hint
+verbatim, but that is a property of the current wording, not of the design. A
+future rule whose message reads naturally and re-matches differently would
+double-append silently. The idempotence test is therefore a guard on
+`friendlyError.js`'s wording as much as on `errorBanner.js`.
+
+**Carried forward unchanged from iteration 3:** the two-i18n-implementations
+finding, the `setStatus`-writes-to-STATE finding, the tool pages that never load
+`modules/i18n.js`, the phantom `window._pmShowToast`, and the four unrelated
+`_showToast` implementations. Also still open: the `git rm --cached` offer for
+`friendlyError.js` and `friendlyError.test.mjs`.
