@@ -1252,3 +1252,63 @@ two-line dereference, a stale baseline entry, an unsorted baseline, and an
 extractor that finds nothing. Six for six, then clean source re-measured at
 crash=0. 11 tests. `build-verify` 250 passed / 7 skipped with all three gates
 clean; `build:renderer` 370 files.
+
+---
+
+## Iteration 7 — 2026-07-26 16:30 +0700 — the download is 2.1 GB
+
+**How this was found.** Iteration 7 opened as Preflight-localization research.
+It became this instead because verifying that iterations 3–6 had actually
+reached the packaged app meant looking at the package, and the package was
+`app.asar` at **1,651,714,109 bytes**. The renderer that asar exists to carry
+is 36 MB. Nobody had looked, because nothing was broken — the app ran fine.
+
+**What was in there.**
+
+| path | size | what it is |
+|---|---|---|
+| `electron/native/PFXNativeMediaEngine/.build` | 1.4 GB | Swift Package Manager scratch: `checkouts/`, `build.db`, `debug/`, `release/`, `MediaStoreCheck.dSYM`, `manifest.pif` |
+| `electron/imf/metal-htj2k/vectors` | 169 MB | 100 HTJ2K conformance vectors (`.coeff`/`.j2c`/`.raw`/`.rt.raw`) |
+
+Both arrived via the `electron/**/*` glob in `package.json` `build.files`. A
+leading-dot directory is invisible in a casual `ls` of `electron/native/`, which
+is most of why 1.4 GB sat there unremarked.
+
+**Proving they are inert, rather than assuming it.** The tempting move is to
+exclude anything that looks like scratch and see if the app still starts. That
+tests one launch path, not the R3D decode path or the HTJ2K path, and those are
+exactly the ones a media tool fails on three weeks later. So the load sites were
+read instead:
+
+- `electron/native/pfx_native_engine.js:15-16` — `BINARY_NAME =
+  'pfx_native_media_engine'`, `BINARY_PATH = path.join(__dirname, BINARY_NAME)`.
+  The engine is a *sibling* of `.build/`, not a product of it at runtime.
+- `electron/imf/imf_metal_htj2k_backend.js:26-30` — every candidate path is
+  built from `native/pfx_htj2k_metal/pfx_htj2k_metal`, outside the excluded tree
+  in the dev, asar-unpacked, and `resourcesPath` variants alike.
+- No `electron/**/*.js` mentions `.build` (`buildFromTemplate` and
+  `buildReelList` are the only matches) or the vectors directory.
+- The sole reference to `vectors/` anywhere is `validate_m6.sh`, a dev script
+  resolving paths from the repo root. Excluding the directory from the
+  *package* leaves that script working in the *source tree*. These are
+  different questions and it is worth not conflating them.
+
+**Result.** Two negations added to `build.files`. `app.asar` 1,651,714,109 →
+**35,992,338** bytes; the `.app` ~2.1 GB → **488 MB**. Post-package verification
+confirmed every `asarUnpack` target survived — `pfx_native_media_engine`
+(1,186,072 B), `avf_bridge` (571,504 B), `pfx_r3d_decode` (137,056 B),
+`r3d_libs` (3 files), `pfx_htj2k_metal` with `libopenjph.0.26.dylib` and both
+`.metal` shaders, `native/*.py` — and that neither excluded path appears in the
+asar or in `app.asar.unpacked`. `electron/{main,ipc,preload}.js` and
+`dist/desktop/index.html` present; `extraResources` (assets, companion, bin,
+authConfig.json) untouched. `build-verify` 250 passed / 7 skipped, three gates
+clean; `build:renderer` 370 files; `build:mac-dir` exit 0, signing skipped as
+expected for an unsigned local package.
+
+**Why this belongs to the current objective and not to housekeeping.** The run's
+stated goal is a tool that stays accessible to non-technical users across all
+functionality. Everything else this run shipped — plain-language errors, the
+title-bar language broadcast, the phantom-element contract — improves the app
+once it is installed. This one is about whether it gets installed at all. A
+2.1 GB download over a hotel connection, or onto a nearly-full laptop on set, is
+a refusal that never reaches the UI. It cost one line of config and no code.

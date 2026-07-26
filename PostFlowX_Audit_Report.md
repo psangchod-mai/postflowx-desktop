@@ -975,3 +975,64 @@ unconsolidated `_showToast` implementations, `setStatus` in
 `modules/amf_convert.js:4988`/`:5175` writing `STATE.statusText.text` instead of
 the DOM, and the `git rm --cached` offer for `friendlyError.js` /
 `friendlyError.test.mjs`.
+
+---
+
+## Iteration 7 — 2026-07-26 16:30 +0700
+
+### Finding 7.1 — the shipped app was 2.1 GB, and 1.57 GB of it was scratch (fixed, `9f9dc4b`)
+
+`build.files` in `package.json` globbed `electron/**/*` with only `.DS_Store` and
+`__pycache__` excluded. That pulled `electron/native/PFXNativeMediaEngine/.build`
+(1.4 GB of Swift Package Manager intermediates, including a `.dSYM` and a full
+`checkouts/` tree) and `electron/imf/metal-htj2k/vectors` (169 MB of HTJ2K
+conformance vectors) into `app.asar`, which measured 1,651,714,109 bytes against
+a 36 MB renderer.
+
+Two negations fixed it. `app.asar` is now 35,992,338 bytes and the `.app` is
+488 MB. Verified after packaging that all eight `asarUnpack` patterns still
+resolve to real files and that neither excluded tree survives anywhere under
+`Contents/Resources`.
+
+**Severity is about reach, not risk.** Nothing was broken and nothing crashed —
+which is precisely why it lasted. An oversized download is a defect that is
+invisible from inside the running app and only visible to the person waiting for
+it to arrive.
+
+### Finding 7.2 — a leading-dot directory hides from review, not from a glob
+
+`.build` does not appear in `ls electron/native/`. `du -sh electron` reports
+1.6 GB, but nothing in the normal read-code-and-review loop surfaces the split
+between product and scratch. The general form: **`**/*` includes what you have
+forgotten you have.** Any repo that builds native code beside its source will
+accumulate this, and the accumulation is silent and monotonic.
+
+No gate is proposed for it yet. A package-size assertion is the obvious move,
+but a threshold picked today would either be so loose it never fires or so tight
+it fires on the next legitimately-added binary, and a gate that gets raised
+every time it trips is a gate that has been trained not to work. Recording the
+shape of the problem is worth more right now than an arbitrary number. Carried
+as open.
+
+### Finding 7.3 — "does the app still launch" would have passed a wrong exclusion
+
+Worth stating because it was the tempting shortcut. Launching the packaged app
+exercises the renderer and the main process. It does not exercise R3D decode,
+the AVFoundation bridge, or the Metal HTJ2K path — all of which load their
+binaries lazily, on first use of a feature. An exclusion that removed one of
+those would have produced a clean launch and a failure weeks later, in the
+field, on a specific file format.
+
+The check that actually holds is reading the resolution logic at each load site
+(`pfx_native_engine.js:15`, `imf_metal_htj2k_backend.js:26`) and then asserting
+against the packaged tree that each resolved path still exists. That is a
+statement about all three paths, made without running any of them. This is the
+same principle as the negative-verification rule from iteration 6, applied to
+packaging: **a check must be able to fail for the reason you care about.**
+
+**Still open from earlier runs:** the Preflight reload-free re-localisation, the
+missing `zh-TW` BWAV dictionary (~92 strings — authoring, not repair), the four
+unconsolidated `_showToast` implementations, `setStatus` in
+`modules/amf_convert.js:4988`/`:5175` writing `STATE.statusText.text` instead of
+the DOM, a package-size gate with a defensible threshold (7.2), and the
+`git rm --cached` offer for `friendlyError.js` / `friendlyError.test.mjs`.
