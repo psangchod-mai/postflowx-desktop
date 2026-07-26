@@ -2829,3 +2829,30 @@ same list as the 486 in `UI_DICT_ROWS`. The anchor tier's evidence-free
 `window.open` succeeded. `_path()` truncates an unquoted path at its first
 space — latent, since every observed ENOENT string quotes it. The general sweep
 for comments that assert things about files they never read has not been run.
+
+## Iteration 23 — the repair screen
+
+Fixed, in `src/scripts/modules/smart_engine_settings.js` (commit `0ee334d`):
+Repair Engines was a silent no-op on three of the four log tabs and clobbered
+the playback log on the fourth; seven status lines printed raw exception text
+on the panel four `friendlyError` hints send users to; `friendlyStatus`'s
+newline collapsed in the two `<div>`s it lands in; the brew instructions
+assumed a reader who already knew what Homebrew was; `Proxy failed: unknown`;
+and a header comment claiming the button opens a browser it has never opened.
+Gate: `tests-js/smartEngineSettings.test.mjs`, 13 tests, 8 mutations caught.
+
+New this iteration, still open: `init()` gates its auto-check on
+`list.textContent.includes('Check Engines')` — presentation text as control
+flow, safe only while that placeholder is not a dictionary key; fixing it means
+editing `index.html`, which is the user's uncommitted work. Three extension-only
+`alert()` calls (102, 158, 217) are unreachable in the desktop build.
+
+`_path()`'s unquoted-path truncation was chased and **stays latent**: four
+in-repo producers exist, but none of their wires reach `friendlyError` today.
+`imf_ui.js:997` still prefers `result.code` over `result.error`, so users see
+`FAILED · CPL_NOT_FOUND`; that file is the user's dirty work and cannot be
+committed. The anchor tier's evidence-free `return SAVED` is unchanged in both
+cascades. `PRINTED` still only means `window.open` succeeded. The general sweep
+for comments asserting things about code or CSS they never read has still not
+been run — iteration 22 found one, iteration 23 found another, in unrelated
+files, which is the shape of a pattern rather than two accidents.

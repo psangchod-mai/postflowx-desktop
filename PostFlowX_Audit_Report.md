@@ -3046,3 +3046,107 @@ six files, `git diff --cached --summary` empty and `git show --stat` confirming
 no foreign hunks. A signed/notarized `npm run build:mac` needs the user's Apple
 credentials and pushes an artifact outward; it has not been authorized and was
 not run.
+
+## Audit 23 — Settings › Resolve Engine (`smart_engine_settings.js`)
+
+**23.0 The opening lead was wrong, and measuring is what showed it.** Iteration
+22 left `_path()`'s unquoted-path truncation on the backlog as latent. Grepping
+turned up four in-repo producers of exactly that shape —
+`electron/ipc.js:853/854`, `electron/native/media_engine.js:184`,
+`electron/native/native_router.js:115`, `electron/imf/imf_frame_provider.js:828`
+— all `not found: <unquoted path>`, which looked like the lead going live.
+Tracing the wire end to end killed it: `imf_ui.js:995` prints
+`FAILED · ${result.code}` and `smart_engine_settings.js` printed
+`FAILED: ${msg}`, and **neither routes through `friendlyError`**, so `_path()`
+never sees those strings. The finding stays latent and stays on the backlog.
+All four producers are also the user's uncommitted work, so they were
+uncommittable regardless. Reading the two surfaces to disprove the lead is what
+surfaced this iteration's real target — worth recording as method, not luck.
+
+**23.1 A write to a fixed channel, read back from the active one (CONFIRMED,
+FIXED).** `repairEngines()` assigned `_logsData['playback']` and then called
+`_renderActiveLogTab()`, which resolves its channel from
+`#smartEngineLogsTabs .smart-log-tab.is-active`. `index.html:4273-4276` defines
+four tabs — playback, imf, proxy, resolve — with playback default-active. So on
+three of the four the instructions were written to a channel nobody was looking
+at and the button was a **silent no-op**; on the fourth it worked by
+**destroying the fetched playback log** until the next `showLogs()`. New species:
+**write-to-fixed-channel-render-from-active-channel**. Fixed by printing into
+the content element and leaving `_logsData` alone, which also means a tab click
+returns the panel to real logs.
+
+**23.2 Seven raw-exception status lines, on the screen that exists to answer
+them (FIXED).** Lines 91, 139, 145, 198, 204, 250 and 305 wrote `err.message`,
+`stderr` or a raw `error` field straight into the panel. This is the panel four
+of `friendlyError`'s sixteen hints direct the user to, so it is where somebody
+arrives *after* being told in plain language what went wrong — and was handed a
+second errno. One site (the proxy catch) had been converted to `friendlyAlert`
+in an earlier pass and the other seven left; the file was half-done. Now
+`friendlyStatus("<operation> failed: <raw>")` at each. `friendlyStatus`, not
+`friendlyAlert`: these are status lines rather than dialogs, and
+`friendlyAlert.test.mjs` carries a `CONVERTED` table expecting exactly 1 call in
+this file plus a `checked === 7` total, either of which a new `friendlyAlert`
+would have invalidated in a coupled edit.
+
+**23.3 The pre-wrap gap recurs at a new surface (FIXED).** `friendlyStatus`
+returns message and hint joined by a newline as of iteration 22.
+`smartEngineDecodeLabel` (`index.html:4265`) and `smartEngineStatusList`
+(`:4250`) are plain `<div>`s with default white-space, where that newline
+collapses back into the run-on line iteration 22 removed. Set at the write site
+via `_setStatusText`, matching `errorBanner.js`'s reason for doing the same:
+the markup is the user's uncommitted work and not editable from here.
+`smartEngineLogsContent` is already a `<pre>` with `white-space:pre-wrap`, so
+the instructions needed nothing.
+
+**23.4 "Repair Engines" repaired nothing and explained nothing (FIXED).** The
+button printed a bare brew list — `brew reinstall ffmpeg`, a comment about
+`--enable-libxml2`, `brew install libopenjph  # OpenJPH (ojph_expand)` — to a
+reader who had just pressed a button promising the app would fix it. It cannot:
+these are system-wide packages needing an admin password in a terminal. The
+honest version says what the engines are, that this is copy-and-paste and not
+code, how to open Terminal, what to do when `brew` is missing (brew.sh, not a
+pipe-to-shell line), that a password prompt shows nothing while you type, and
+that none of it touches your footage. Directly the directive's "highly
+accessible for non-technical users".
+
+**23.5 `Proxy failed: unknown` (FIXED).** Read as if the app knew a reason and
+would not give it. It does not know; it now says so.
+
+**23.6 A comment asserting a behaviour the function does not have (FIXED).**
+Header line 12: "Repair Engines → open brew install guide in external browser".
+It has never opened a browser — there is no `openExternal`, `shell.open` or
+`window.open` anywhere in the file, and the gate now asserts that too, so
+whichever of the two is wrong in future, one of them fails. Sibling of
+iteration 22's **comment-asserting-unread-CSS**, one step further along.
+
+**23.7 English-literal-as-control-flow (FOUND, NOT FIXED — backlog).**
+`init()` gates its auto-check on `list.textContent.includes('Check Engines')`,
+matching the placeholder authored at `index.html:4251`
+(`Click "Check Engines" to scan…`). Presentation text used as control flow. It
+survives today only because that placeholder carries no `data-i18n` and is not
+an `i18n.js` dictionary key — translate the panel and the auto-check dies
+silently. `resolve_engine_panel.js`'s mirrored listener has no such guard, so
+this is a singleton, and fixing it means touching `index.html`. Recorded.
+
+**23.8 Three untranslated `alert()` calls (FOUND, NOT FIXED — backlog).** Lines
+102, 158, 217, all guarded by `!_isElectron()` and therefore unreachable in the
+desktop build. Low value; recorded rather than fixed to keep the iteration
+scoped.
+
+**Verification.** `tests-js/smartEngineSettings.test.mjs`, 13 tests, drives the
+real exported `init()` against a fixture rather than calling internals —
+`repairEngines` and the tab handler are half of what went wrong, so exercising
+the wiring is the point. The fixture's ids and the four-tab order are asserted
+against `src/index.html`, so a fixture that drifts fails rather than testing a
+panel the app does not have. The raw-error scan enumerates constructs, not
+today's wordings, and carries a `hits.length >= 5` floor so it cannot pass by
+matching nothing — the failure mode that fooled iterations 20 and 21. Verified
+the gate fails under the plain `node <file>` invocation `test:js` actually uses,
+not just `node --test`. 8 mutations applied, 8 caught, all files byte-restored.
+`npm run build-verify` exit 0, `npm run build:renderer` exit 0 (375 files,
+v2026.6.1). Committed as `0ee334d`, two files, `git diff --cached --summary`
+clean of mode changes (`smart_engine_settings.js` is 100644 at HEAD with an
+uncommitted 100755 mode change in the user's tree, so it was staged with
+`git add --chmod=-x`). A signed/notarized `npm run build:mac` needs the user's
+Apple credentials and pushes an artifact outward; it has not been authorized
+and was not run.
