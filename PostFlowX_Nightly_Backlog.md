@@ -1608,3 +1608,97 @@ byte-identical to what it was before the repair began.
 The check that caught it is cheap and should be unconditional: **read
 `git show --stat` after every commit and confirm the line counts are the ones you
 wrote.**
+
+## Iteration 11 — the controls that had no name (2026-07-26 19:32) (`0325865`)
+
+### What was actually broken
+
+Thirty-four interactive controls across six HTML files had no accessible name.
+A screen reader announces such a control as its bare role and nothing more:
+"slider", "pop-up button", "check box". Not what it does, not its current
+value, not which of the seven sliders on this screen it is.
+
+The list is not obscure corners of the app. It includes the main playback
+scrubber (`#pmScrub`), the IMF viewer's scrubber and volume (`#imfSeek`,
+`#imfVolSlider`), the annotation brush size (`#pmQaSize`), the video
+brightness slider, the CPL / version / frame-rate pickers, the CutDiff
+inspector's Status dropdown, the timeline-convert reel-name and filter
+selects, and the shot-list select-all checkbox.
+
+### The one worth reading twice
+
+`#pl2SelectAll` looked labelled:
+
+```html
+<label class="pl2-sel-all-wrap" title="Select / deselect all shots">
+  <input type="checkbox" id="pl2SelectAll">
+</label>
+```
+
+A wrapping `<label>` does name its control without needing `for=` — but it
+does so from its **text**, and this label has none. The description is in a
+`title` on the *label*, and a title on an ancestor names nothing. So a sighted
+user hovers and gets a helpful tooltip, and a screen-reader user gets
+"check box". The markup that made it look handled is exactly what made it
+easy to walk past.
+
+`#folderPicker` and `#filePicker` in the preflight tool are positioned
+off-screen at `opacity: 0`. That is not `display: none` — they remain
+tabbable and remain in the accessibility tree. Visually hiding a control is
+not an exemption from naming it; it only means the screen-reader user is the
+*only* one who ever meets it.
+
+### The repair, not the rewrite
+
+Every fix is a single `aria-label` attribute. No markup restructured, no
+handler touched, no behaviour changed — 34 changed lines across six files.
+
+Where the control already sits next to visible text, the label reuses that
+text (Status, Mix, FILTER → "Filter clips", REEL NAME → "Reel name source")
+so the spoken name matches what is on screen. The Thai-language VisionScope
+popup gets a Thai label; an English one there would be read out in the wrong
+language by a Thai voice.
+
+Two labels required reading the code rather than the markup to get right:
+`#pmQaSize` is the annotation **brush size** (`_qaSize` feeds `size` on pen,
+erase, text and shape records in `prep_mark.js`), not a UI scale; and
+`#pfxTypeToggle` toggles Standalone ↔ Series, so it is named for its checked
+state, "Series project (off = standalone)".
+
+### What the non-technical user gets
+
+Nothing changes on screen. What changes is that the app is now navigable by
+someone who cannot see it, and — the wider case — that every control now
+carries a machine-readable statement of its own purpose. Tooltips already
+served the mouse user; this serves everyone else.
+
+### The gate
+
+`tests-js/accessibleNames.test.mjs`, four tests, 230 ms.
+
+- **Zero tolerance, no baseline.** All 34 were fixed, so the gate can demand
+  zero rather than "no worse than before".
+- **Visibility is judged from the element's own inline style only.** Walking
+  up to ancestors drops every control in an inactive tab panel — those are
+  inline `display:none` until clicked, which is most of this app. The first
+  version of the scan did walk ancestors and reported "82 controls" as
+  "2 controls". A control one tab click away still needs a name.
+- **Six naming routes accepted**, in spec order: `aria-label`,
+  `aria-labelledby`, `label[for]`, a wrapping `<label>` **with text**, the
+  button's own text, `title`, and `placeholder` last as a weak name.
+- **Negative-verified against the real shipped defect**: restoring all six
+  files from `HEAD` turns the gate red and enumerates all 34 by id and tag.
+  The synthetic control stays in the test so the proof survives HEAD moving.
+
+### Verification
+
+`npm run build-verify` exit 0 (250 Python passed / 7 skipped; XSS, XXE and
+fail-open gates clean; `accessibleNames` and `duplicateIds` both picked up
+automatically). `npm run build:renderer` — 372 files, v2026.6.1.
+
+Process check from audit 10.5 applied and passed: `src/index.html` was staged
+as a blob reconstructed from `HEAD` plus only this iteration's 25 edits, and
+`git show --stat` after the commit read 25/25 + 2/2 + 2/2 + 3/3 + 1/1 + 1/1 +
+181 — exactly what was written. The ~689 pre-existing dirty files were
+untouched, and `src/index.html`'s uncommitted work measured 56/21 both before
+and after the commit.

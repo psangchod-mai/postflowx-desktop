@@ -1368,3 +1368,137 @@ not loading `modules/i18n.js`, the app's two unrelated i18n implementations, a
 package-size gate with a defensible threshold (7.2), the 44 unnamed controls
 above (10.6), and the `git rm --cached` offer for `friendlyError.js` /
 `friendlyError.test.mjs`.
+
+## Iteration 11 findings (2026-07-26 19:32)
+
+### 11.1 — Markup that looks like a label and is not
+
+The phantom (iteration 9) and shadowed (iteration 10) species are both about
+a lookup returning the wrong thing. This one is about markup that *reads* as
+handled to anyone skimming it.
+
+```html
+<label class="pl2-sel-all-wrap" title="Select / deselect all shots">
+  <input type="checkbox" id="pl2SelectAll">
+</label>
+```
+
+There is a `<label>`. It wraps the input, which is the correct pattern and
+genuinely does supply a name with no `for=` needed. There is even a
+human-written description sitting right there. And the accessible name is
+empty, because:
+
+- a wrapping `<label>` names its control from its **text content**, and this
+  one has none; and
+- `title` names the element it is written on. On the label, it describes the
+  label. It does not descend to the input.
+
+Move the same string onto the input as `aria-label` and it works. The defect
+and the fix are three inches apart in the file. What makes this species worth
+naming is that the *presence* of correct-looking accessibility markup is what
+stops a reviewer from checking whether it does anything.
+
+**Detection rule:** a `<label>` whose text content is empty is not a label.
+The gate treats it as absent, which is why the synthetic control in
+`accessibleNames.test.mjs` includes exactly this shape.
+
+### 11.2 — `opacity: 0` is not `display: none`, and the difference is the whole point
+
+`#folderPicker` and `#filePicker` are styled:
+
+```css
+.filePickerHidden {
+  position: fixed; left: -10000px; top: -10000px;
+  width: 1px; height: 1px; opacity: 0; pointer-events: none;
+}
+```
+
+This is the standard "hidden file input triggered by a real button" pattern
+and it is fine — but it removes the control from *view*, not from the
+accessibility tree. `display:none` and `visibility:hidden` prune the a11y
+tree; off-screen positioning and `opacity:0` do not, and `pointer-events:none`
+governs the mouse only, not the Tab key.
+
+So these two inputs are reachable by keyboard and exposed to assistive tech,
+announced as "file upload button" twice in a row with no way to tell which is
+the folder and which is the files. The sighted user never encounters them at
+all. **Visual hiding inverts who is affected — it does not reduce the count.**
+
+### 11.3 — The visibility rule almost silently disabled the gate
+
+The first version of the scan walked ancestors looking for `display:none`.
+Result: **2 visible form controls, 0 unnamed.** The gate would have passed,
+permanently, having examined almost nothing.
+
+Cause: this app puts each tab in a panel that is inline `display:none` until
+its tab is clicked. Walking up therefore classified nearly the whole
+application as hidden. Restricting the check to the element's own inline style
+gave the true figure of **82 visible controls in `src/index.html`, 25 unnamed**
+— and 455 buttons, all of which turned out to be correctly named.
+
+This is the same failure the `'the scan actually sees the tree'` guard exists
+to catch, and it is the third iteration in a row where that guard mattered.
+Here it would have caught it: `82 > 500` fails outright at the repo level. But
+it was caught earlier, by the number simply looking absurd. **A scan reporting
+a suspiciously clean result is a scan to distrust before celebrating.** The
+orders-of-magnitude guard is now in this file too (`>= 8` files, `> 500`
+controls).
+
+Worth recording precisely because it cuts against iteration 10's lesson:
+there, the narrower scan was the stronger gate. Here, narrowing the scan
+by one plausible-sounding rule nearly eliminated it. The distinction is
+whether the narrowing is *principled* (static HTML only — runtime ids may
+legitimately repeat) or merely *convenient* (skip anything currently hidden).
+
+### 11.4 — Correcting iteration 10's own numbers
+
+Audit 10.6 reported **35 unnamed form controls and 9 unnamed buttons**. The
+accurate figures, measured with the corrected visibility rule and the full
+six-route name resolution, are **34 unnamed form controls across six files
+(25 of them in `src/index.html`) and 0 unnamed buttons**.
+
+The 9 "unnamed buttons" were false positives: buttons whose name comes from
+their own text content, which the earlier pass did not treat as a naming
+route. Every one of the 455 visible buttons in `src/index.html` is named.
+
+Both figures in 10.6 came from a scan that had not been negative-verified.
+**A measurement quoted in a report is a claim, and it needs the same
+verification a gate does** — the number was carried forward into a plan for
+the next iteration, which is exactly how a wrong figure becomes wrong work.
+
+Also correcting the record: the commit message and appended text of `79ce72f`
+state that **19** foreign hunks were swept into the aborted commit `2bbae9f`.
+The accurate count is **20**. Left as a correction here rather than an amend,
+since `79ce72f` is already in history.
+
+### 11.5 — What this gate cannot see
+
+Stated so the green tick is not read as more than it is:
+
+- **Only static markup**, and only `<input>`, `<select>`, `<textarea>`,
+  `<button>`. Controls constructed at runtime are invisible to it, as are
+  `div`/`span` elements carrying `role="button"` — a pattern this codebase
+  does use.
+- **Only absence, never quality.** `aria-label="Slider 3"` passes. Whether a
+  name is accurate and distinguishable is a review question, not a mechanical
+  one. The 34 labels written in this iteration were each chosen against the
+  surrounding markup or, in two cases, against the handler code — but the
+  gate would not have objected to worse ones.
+- **Not language.** The Thai VisionScope popup got a Thai label by inspection.
+  Nothing checks that a control's name matches its page's language.
+- **Not roles, focus order, contrast, or keyboard traps.** Naming is one
+  requirement among several, and the only one closed here.
+
+### Still open from earlier runs
+
+- `zh-TW` is in bwav's `SUPPORTED_LOCALES` (`app.js:651`) with no `I18N`
+  dictionary — ~92 Chinese strings. Authoring, not repair.
+- `src/tools/bwav/*` and `src/tools/visionscope/*` load no i18n at all; the
+  app carries two unrelated i18n implementations.
+- A package-size gate with a defensible threshold (7.2), still deliberately
+  deferred.
+- `render_queue.js`'s private `_parseError` and whether its `return null`
+  miss-path should delegate to `friendlyText`.
+- `friendlyError.js` / `friendlyError.test.mjs` were in-flight uncommitted
+  work that iteration 2 committed in `887b161`; still awaiting a decision on
+  whether to `git rm --cached` them back out.
