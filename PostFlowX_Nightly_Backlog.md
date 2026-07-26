@@ -1492,3 +1492,119 @@ Commit `7d1295c`, 8 files, +657 / −4. Five of the six tracked files carried
 pre-existing foreign hunks; each was staged as a reconstructed blob so the commit
 contains only this iteration's lines, and a post-commit diff confirmed every
 foreign hunk survived untouched in the working tree.
+
+---
+
+## Iteration 10 — the inspector that was always empty (2026-07-26 18:50) (`602956a`)
+
+### What was actually broken
+
+Open CutDiff 2x, load two timelines, click any row in the diff. The inspector
+slides open. The event number and the change type appear in its header. Every
+other field — Reel, Clip, Src In, Src Out, Rec In, Rec Out, Duration, FPS,
+Confidence, Reason, and the whole OLD Match block — stays `—`. Forever. Set the
+status dropdown, type a note, press Save Note: nothing is stored. Press Seek VC:
+nothing seeks.
+
+Nothing throws. Nothing is logged. There is no error state, no spinner, no
+"couldn't read this file". The panel simply looks like a row with no data in it,
+which for someone who is not an engineer is indistinguishable from a bad EDL.
+That is the same worst-case failure shape this project has now hit four times:
+the UI is present, it looks enabled, and it does nothing.
+
+### Why
+
+`src/index.html` contained the inspector **twice**. The inspector had been moved
+out of the video-compare pane into the right column, and the old copy was left
+behind under this comment:
+
+```html
+<!-- Inspector moved to .cd2x-left-col — stub kept for legacy DOM refs -->
+<div id="cd2x-inspector-stub" style="display:none">
+```
+
+Eighteen ids therefore existed twice. `document.getElementById` resolves
+**first-in-document-order** — unconditionally, with no preference for a visible
+element over a hidden one — and the stub came first. So all eighteen lookups in
+`features/cutdiff2/index.js:297-314` bound to the invisible copy. The code then
+worked perfectly, writing every value into a `display:none` subtree.
+
+The three ids that were *not* duplicated — `cd2x-insp-close`, `-event`, `-type`
+— resolved correctly. That is why the header populated and nothing else did, and
+why the bug reads as "empty data" rather than "broken panel".
+
+**A duplicate kept for compatibility does not add a fallback. It shadows the
+real element.** The stub was written as a safety net and was itself the fault.
+
+### The repair, not the rewrite
+
+Delete the stub. Forty-eight lines out, six lines of comment in explaining why it
+must not come back. No JavaScript changed at all — the code was already correct.
+
+Deletion is lossless, and this was checked rather than assumed: `#cd2x-inspector`
+carries 21 ids, a strict superset of the stub's 18; no JS anywhere references
+`#cd2x-inspector-stub`; the CSS is class-based and already scoped to
+`.cd2x-main-col .cd2x-inspector`; and the stub was not nested inside the real
+panel.
+
+### What the non-technical user gets
+
+* The inspector shows the shot's data. That is the entire feature, and it has
+  been off.
+* Save Note saves. Seek VC seeks. The status dropdown sticks.
+* No new setting, no new button, nothing to learn. A pane that looked broken
+  stops looking broken.
+
+### The gate
+
+`tests-js/duplicateIds.test.mjs`, four tests, zero-tolerance:
+
+* **the scan actually sees the markup** — ≥8 HTML files, >1000 elements carrying
+  an id. A gate that passes by parsing nothing is the failure it exists to stop.
+* **the detector reports a duplicate that is really there** — an in-test control
+  document whose defect is exactly the shipped one (a hidden earlier copy of an
+  id that also appears later), plus a clean document proving it does not invent
+  duplicates.
+* **no static html file defines an id twice** — the gate. Currently 0 across all
+  11 checked-in HTML files.
+* **every field the CutDiff 2x inspector reads is inside the visible panel** —
+  the regression. It reads the 22 `cd2x-insp*` lookups straight out of
+  `cutdiff2/index.js` and asserts each resolves inside `#cd2x-inspector`. It
+  fails if a stub is re-added anywhere, and it fails if the panel is moved again
+  and the fields are left behind.
+
+Only static markup is scanned. An id minted at runtime from a template literal
+may legitimately be produced once per row, so multiplicity there means nothing —
+which is precisely what keeps this gate at zero tolerance instead of needing a
+311-entry baseline like the phantom gate.
+
+### Verification
+
+Negative-verified against the markup that actually shipped, not a synthetic
+defect: `git show HEAD:src/index.html` restored in place, both gates go red and
+name all 18 ids by name; restored, both go green. `npm run build-verify` exit 0.
+`npm run build:renderer` green, 372 files.
+
+One rough edge found and fixed during that run: the regression test took **41
+seconds** to fail, because `assert.equal(node, null)` makes Node render a diff of
+a linkedom element — which renders its entire subtree. Comparing a boolean
+instead brought it to 17ms. A gate nobody wants to run is a gate that gets
+skipped.
+
+### The mistake in this iteration's own process
+
+The first commit attempt swept 19 foreign hunks — the user's uncommitted tab
+tooltips and tab-group labels — into the commit, because `git commit --only`
+stages from the working tree. Iteration 9 had already solved this and written it
+down: stage a reconstructed blob. I did not do it, and only caught it by reading
+`--stat` afterwards and finding 62 insertions where I had written 6.
+
+Repaired: `git reset --soft HEAD~1 && git reset`, rebuild `src/index.html` as
+HEAD plus only my splice, `git hash-object -w`, `git update-index --cacheinfo`,
+commit the index. Confirmed afterwards that the staged diff is one hunk, that the
+20 foreign hunks are uncommitted again, and that the working tree file is
+byte-identical to what it was before the repair began.
+
+The check that caught it is cheap and should be unconditional: **read
+`git show --stat` after every commit and confirm the line counts are the ones you
+wrote.**

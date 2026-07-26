@@ -1223,3 +1223,148 @@ package-size gate with a defensible threshold (7.2), and the `git rm --cached`
 offer for `friendlyError.js` / `friendlyError.test.mjs`. The `setStatus` entry is
 retracted per 9.4 and does not carry forward. The `_pmShowToast` / `_pfxToast`
 entry is closed by this iteration.
+
+---
+
+## Iteration 10 findings (2026-07-26 18:50)
+
+### 10.1 — The *shadowed element*: the mirror image of the phantom, and worse
+
+Nine iterations of this project have chased the phantom element — an id the code
+reads that nothing defines. This iteration found its opposite, and it is the more
+dangerous of the two.
+
+`src/index.html` defined 18 ids twice, all `cd2x-insp-*`. `getElementById`
+resolves first-in-document-order. The first copy was inside
+`<div id="cd2x-inspector-stub" style="display:none">`, so all 18 lookups in
+`features/cutdiff2/index.js` bound to a hidden element and the visible panel
+never received a value.
+
+Why this is worse than a phantom:
+
+| | phantom | shadowed |
+|---|---|---|
+| lookup returns | `null` | a real, live `HTMLElement` |
+| guard `if (!el) return` | fires | does not fire |
+| writes go | nowhere | into a `display:none` subtree, successfully |
+| looks like | a feature that is off | a feature that is on and has no data |
+
+A phantom at least trips every null-guard in the codebase. A shadow trips none of
+them. Every defensive check the author wrote passes, because there genuinely is
+an element there — just not the one anybody meant.
+
+**A duplicate kept "for compatibility" does not add a fallback. It shadows the
+real one.** This is the generalisable lesson. The comment on the stub read
+`stub kept for legacy DOM refs`, which is a reasonable-sounding intention that is
+exactly backwards: DOM id resolution has no notion of "fall back to the other
+one", no preference for visible over hidden, and no warning when the choice is
+ambiguous. First wins, silently.
+
+Note also which ids were *not* duplicated: `cd2x-insp-close`, `-event`, `-type`,
+the three in the panel header. That is why the failure presented as "the panel
+opens and the header fills in, then everything below is blank" — a symptom that
+points a reader at the data, not at the markup. The partial correctness is what
+made this survive.
+
+### 10.2 — Zero-tolerance is available here, and that is worth something
+
+The phantom gate needs a 311-entry frozen baseline, because most phantoms are
+harmless drift and fixing them wholesale would be busywork with real regression
+risk. The duplicate gate needs no baseline at all: after this fix there are **0
+duplicated ids across all 11 checked-in HTML files**, and a duplicate in static
+markup is never defensible.
+
+That is only true because the scan is deliberately restricted to static HTML. An
+id minted at runtime from a template literal may legitimately be produced once
+per table row, so multiplicity there carries no information. Widening the scan to
+JS would have forced a baseline and turned an unambiguous gate into a negotiable
+one. The narrower gate is the stronger gate.
+
+### 10.3 — Negative verification against the real defect, not a stand-in
+
+Audit 8.3 established that a negative verification only proves something if the
+injected defect is the one the gate claims to catch, placed where the gate
+actually looks. This iteration had the luxury of not needing to inject anything:
+the defect was in `HEAD`.
+
+`git show HEAD:src/index.html` was restored in place and the suite run. Both
+gates went red and enumerated all 18 ids. Restored, both went green. That is a
+stronger control than any synthetic fixture, and it is available for free any
+time the bug being fixed is one that shipped.
+
+The in-test control document was kept anyway, so the gate still has a proof of
+sensitivity that lives in the repo after `HEAD` moves on.
+
+### 10.4 — A gate that takes 41 seconds to fail is a gate that gets skipped
+
+The regression test's failure path ran for 41 seconds. Cause:
+`assert.equal(document.getElementById('cd2x-inspector-stub'), null, …)`. On
+failure Node renders a diff of the actual value, and rendering a linkedom element
+renders its whole subtree. Comparing `el === null` to `true` instead: 17ms.
+
+Worth stating as a rule, because it generalises past this file: **never pass a
+DOM node as the actual value to a Node assertion.** Assert on a boolean, an id
+string, or a count. Nobody reads a 48-line element dump anyway.
+
+### 10.5 — Process failure: the reconstructed-blob rule was known and skipped
+
+The first commit attempt swept 19 foreign hunks into the commit — the user's
+uncommitted tab tooltips and tab-group labels — because `git commit --only`
+re-stages from the working tree, and `src/index.html` was already dirty.
+
+This is not a new lesson. Iteration 9 hit it, solved it, and recorded the remedy
+in its own write-up: *"Five of the six tracked files carried pre-existing foreign
+hunks; each was staged as a reconstructed blob."* One iteration later the same
+file, the same trap, and the technique simply was not applied.
+
+It was caught by reading `git show --stat` and seeing 62 insertions where 6 had
+been written. Repaired via `reset --soft` + `hash-object -w` +
+`update-index --cacheinfo`, with three confirmations afterwards: the staged diff
+is one hunk, the 20 foreign hunks are uncommitted again, and the working-tree
+file is byte-identical to its pre-repair state.
+
+The remedy that failed was a *procedure to remember*. The remedy that worked was
+a *check that catches it*: read `--stat` after every commit and confirm the line
+counts match what you wrote. Audit 9.4 said carried findings need re-verification
+rather than re-typing; this is the same shape one level up — a carried *technique*
+needs a check, not a recollection.
+
+### 10.6 — Measured, not yet fixed: 35 controls with no accessible name
+
+A full accessible-name pass over the rendered `index.html`, using linkedom and a
+proper name-resolution walk (aria-label → aria-labelledby → `label[for]` →
+wrapping `<label>` → title → placeholder):
+
+* **111 visible form controls, 35 with no accessible name**
+* **503 visible buttons, 9 with no accessible name**
+
+Mixed severity, and it should not be treated as 44 identical bugs:
+
+* `pl2SelectAll` sits inside `<label title="Select / deselect all shots">`. A
+  sighted user gets a tooltip; a screen reader gets nothing at all.
+* `tlcFlatSrc` has an adjacent `<span class="tlc-opt-lbl">FILTER</span>` that is
+  not associated with it.
+* `imfCplSel` / `imfVersionSel` / `imfFpsSel` are partly self-describing through
+  their option text.
+* The range sliders — `pmScrub`, `imfVolSlider`, `imfSeek`, `pmQaSize`,
+  `pmVidBrightSlider`, `pmSlyCmpMix`, `pfxVfxPlrSlider` — are visually obvious
+  and completely invisible to a screen reader.
+
+Candidate for iteration 11.
+
+**A correction to how this number was reached.** The first pass at it was a
+regex scan, and it reported 68 of 135 unnamed — roughly double the truth. It
+missed that a **wrapping `<label>` names its control without `for=`**, which is
+the dominant pattern in this codebase
+(`<label>AR tolerance <input id="arTol"></label>`), and it counted `display:none`
+file-picker proxies as visible controls. Audit 9.4's lesson — that a grep cannot
+tell what it is reading — recurred inside a single iteration, one iteration after
+being written down. The figures above are from the linkedom re-implementation and
+supersede the regex ones entirely.
+
+**Still open from earlier runs:** the missing `zh-TW` BWAV dictionary (~92
+strings — authoring, not repair), `src/tools/bwav/*` and `src/tools/visionscope/*`
+not loading `modules/i18n.js`, the app's two unrelated i18n implementations, a
+package-size gate with a defensible threshold (7.2), the 44 unnamed controls
+above (10.6), and the `git rm --cached` offer for `friendlyError.js` /
+`friendlyError.test.mjs`.
