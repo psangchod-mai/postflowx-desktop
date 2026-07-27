@@ -3468,7 +3468,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "보고서를 새 창에서 열었습니다. 그 창에서 인쇄를 실행한 뒤 “PDF로 저장”을 선택하세요.",
     "Report exported as an HTML file. Open it and print it to PDF.": "보고서를 HTML 파일로 내보냈습니다. 파일을 열어 PDF로 인쇄하세요.",
     "Export cancelled. Nothing was saved.": "내보내기를 취소했습니다. 저장된 항목이 없습니다.",
-    "The file couldn't be saved. Try again, or choose a different folder.": "파일을 저장하지 못했습니다. 다시 시도하거나 다른 폴더를 선택하세요."
+    "The file couldn't be saved. Try again, or choose a different folder.": "파일을 저장하지 못했습니다. 다시 시도하거나 다른 폴더를 선택하세요.",
+    "ffmpeg not found on this machine": "이 컴퓨터에서 ffmpeg을 찾을 수 없습니다",
+    "native helper not available (Browser Mode only)": "네이티브 도우미를 사용할 수 없습니다 (브라우저 모드 전용)",
+    "the conversion took too long and was stopped": "변환이 너무 오래 걸려 중지되었습니다",
+    "the media helper stopped responding": "미디어 도우미가 응답을 멈췄습니다",
+    "the file could not be handed to the media helper": "파일을 미디어 도우미에 전달하지 못했습니다",
+    "this file could not be converted for preview": "이 파일을 미리보기용으로 변환하지 못했습니다",
+    "the source file could not be found — it may have moved": "원본 파일을 찾을 수 없습니다 — 이동되었을 수 있습니다"
   },
   ja: {
     "Helper not responding": "ヘルパーが応答していません",
@@ -3535,7 +3542,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "レポートを新しいウィンドウで開きました。そのウィンドウで印刷を実行し、「PDFに保存」を選択してください。",
     "Report exported as an HTML file. Open it and print it to PDF.": "レポートをHTMLファイルとして書き出しました。ファイルを開いてPDFに印刷してください。",
     "Export cancelled. Nothing was saved.": "書き出しをキャンセルしました。何も保存されていません。",
-    "The file couldn't be saved. Try again, or choose a different folder.": "ファイルを保存できませんでした。もう一度お試しいただくか、別のフォルダを選んでください。"
+    "The file couldn't be saved. Try again, or choose a different folder.": "ファイルを保存できませんでした。もう一度お試しいただくか、別のフォルダを選んでください。",
+    "ffmpeg not found on this machine": "このコンピューターで ffmpeg が見つかりません",
+    "native helper not available (Browser Mode only)": "ネイティブヘルパーを利用できません（ブラウザーモードのみ）",
+    "the conversion took too long and was stopped": "変換に時間がかかりすぎたため中止されました",
+    "the media helper stopped responding": "メディアヘルパーが応答しなくなりました",
+    "the file could not be handed to the media helper": "ファイルをメディアヘルパーに渡せませんでした",
+    "this file could not be converted for preview": "このファイルをプレビュー用に変換できませんでした",
+    "the source file could not be found — it may have moved": "元のファイルが見つかりません — 移動された可能性があります"
   },
   "zh-TW": {
     "Helper not responding": "協助程式沒有回應",
@@ -3602,7 +3616,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "報告已在新視窗開啟。請在該視窗執行列印，然後選擇「儲存為 PDF」。",
     "Report exported as an HTML file. Open it and print it to PDF.": "報告已匯出為 HTML 檔案。請開啟檔案並列印成 PDF。",
     "Export cancelled. Nothing was saved.": "已取消匯出，未儲存任何檔案。",
-    "The file couldn't be saved. Try again, or choose a different folder.": "無法儲存檔案。請再試一次，或選擇其他資料夾。"
+    "The file couldn't be saved. Try again, or choose a different folder.": "無法儲存檔案。請再試一次，或選擇其他資料夾。",
+    "ffmpeg not found on this machine": "這台電腦上找不到 ffmpeg",
+    "native helper not available (Browser Mode only)": "無法使用原生輔助程式（僅限瀏覽器模式）",
+    "the conversion took too long and was stopped": "轉換耗時過久，已停止",
+    "the media helper stopped responding": "媒體輔助程式停止回應",
+    "the file could not be handed to the media helper": "無法將檔案交給媒體輔助程式",
+    "this file could not be converted for preview": "無法將這個檔案轉換為預覽",
+    "the source file could not be found — it may have moved": "找不到原始檔案 — 它可能已被移動"
   },
   th: {
     "Helper not responding": "ตัวช่วยไม่ตอบสนอง",
@@ -3669,7 +3690,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "เปิดรายงานในหน้าต่างใหม่แล้ว สั่งพิมพ์ในหน้าต่างนั้น แล้วเลือก “บันทึกเป็น PDF”",
     "Report exported as an HTML file. Open it and print it to PDF.": "ส่งออกรายงานเป็นไฟล์ HTML แล้ว เปิดไฟล์แล้วสั่งพิมพ์เป็น PDF",
     "Export cancelled. Nothing was saved.": "ยกเลิกการส่งออกแล้ว ไม่มีการบันทึกไฟล์",
-    "The file couldn't be saved. Try again, or choose a different folder.": "บันทึกไฟล์ไม่สำเร็จ ลองอีกครั้ง หรือเลือกโฟลเดอร์อื่น"
+    "The file couldn't be saved. Try again, or choose a different folder.": "บันทึกไฟล์ไม่สำเร็จ ลองอีกครั้ง หรือเลือกโฟลเดอร์อื่น",
+    "ffmpeg not found on this machine": "ไม่พบ ffmpeg บนเครื่องนี้",
+    "native helper not available (Browser Mode only)": "ใช้ตัวช่วยแบบเนทีฟไม่ได้ (โหมดเบราว์เซอร์เท่านั้น)",
+    "the conversion took too long and was stopped": "การแปลงใช้เวลานานเกินไปจึงหยุดลง",
+    "the media helper stopped responding": "ตัวช่วยสื่อหยุดตอบสนอง",
+    "the file could not be handed to the media helper": "ส่งไฟล์ไปยังตัวช่วยสื่อไม่ได้",
+    "this file could not be converted for preview": "แปลงไฟล์นี้เพื่อดูตัวอย่างไม่ได้",
+    "the source file could not be found — it may have moved": "ไม่พบไฟล์ต้นฉบับ — อาจถูกย้ายไปแล้ว"
   },
   id: {
     "Helper not responding": "Layanan pembantu tidak merespons",
@@ -3736,7 +3764,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "Laporan terbuka di jendela baru. Jalankan Cetak di jendela itu, lalu pilih “Simpan sebagai PDF”.",
     "Report exported as an HTML file. Open it and print it to PDF.": "Laporan diekspor sebagai berkas HTML. Buka berkasnya lalu cetak ke PDF.",
     "Export cancelled. Nothing was saved.": "Ekspor dibatalkan. Tidak ada yang disimpan.",
-    "The file couldn't be saved. Try again, or choose a different folder.": "File tidak dapat disimpan. Coba lagi, atau pilih folder lain."
+    "The file couldn't be saved. Try again, or choose a different folder.": "File tidak dapat disimpan. Coba lagi, atau pilih folder lain.",
+    "ffmpeg not found on this machine": "ffmpeg tidak ditemukan di komputer ini",
+    "native helper not available (Browser Mode only)": "pembantu native tidak tersedia (hanya Mode Peramban)",
+    "the conversion took too long and was stopped": "konversi terlalu lama dan dihentikan",
+    "the media helper stopped responding": "pembantu media berhenti merespons",
+    "the file could not be handed to the media helper": "berkas tidak dapat diserahkan ke pembantu media",
+    "this file could not be converted for preview": "berkas ini tidak dapat dikonversi untuk pratinjau",
+    "the source file could not be found — it may have moved": "berkas sumber tidak ditemukan — mungkin sudah dipindahkan"
   },
   fil: {
     "Helper not responding": "Hindi tumutugon ang helper",
@@ -3803,7 +3838,14 @@ const ERROR_DICT = {
     "The report opened in a new window. Use Print there, then choose “Save as PDF”.": "Bumukas ang ulat sa bagong window. Mag-print doon, pagkatapos ay piliin ang “I-save bilang PDF”.",
     "Report exported as an HTML file. Open it and print it to PDF.": "Na-export ang ulat bilang HTML file. Buksan ito at i-print bilang PDF.",
     "Export cancelled. Nothing was saved.": "Kinansela ang pag-export. Walang na-save.",
-    "The file couldn't be saved. Try again, or choose a different folder.": "Hindi na-save ang file. Subukan ulit, o pumili ng ibang folder."
+    "The file couldn't be saved. Try again, or choose a different folder.": "Hindi na-save ang file. Subukan ulit, o pumili ng ibang folder.",
+    "ffmpeg not found on this machine": "Hindi makita ang ffmpeg sa computer na ito",
+    "native helper not available (Browser Mode only)": "hindi available ang native helper (Browser Mode lamang)",
+    "the conversion took too long and was stopped": "masyadong tumagal ang conversion kaya ito ay itinigil",
+    "the media helper stopped responding": "huminto sa pagtugon ang media helper",
+    "the file could not be handed to the media helper": "hindi maipasa ang file sa media helper",
+    "this file could not be converted for preview": "hindi ma-convert ang file na ito para sa preview",
+    "the source file could not be found — it may have moved": "hindi makita ang source file — maaaring nailipat na ito"
   }
 };
 for (const [lang, map] of Object.entries(ERROR_DICT)){

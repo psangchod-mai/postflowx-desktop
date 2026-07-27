@@ -8,6 +8,8 @@
  *   loadVideoWithProxyFallback(el, file, blobUrl, callbacks)
  */
 
+import { friendlyError, translate } from '../core/friendlyError.js';
+
 // Cache the HTTP port and auth token so concurrent restore calls only ping once.
 let _httpPortCached = null;
 let _httpTokenCached = null; // shared secret — included in every companion HTTP request
@@ -477,7 +479,14 @@ export async function getProxyStreamUrl(file, { onProgress } = {}) {
         // Per-fetch timeout: if the companion stops responding (hangs without crashing),
         // fetch() never rejects and the loop runs forever. 10 s is generous for a status check.
         const ctrl = new AbortController();
-        const fetchTimer = setTimeout(() => ctrl.abort(), 10_000);
+        // Abort with a *named* TimeoutError rather than a bare abort(). A bare
+        // one rejects with "The user aborted a request." — the same text the DOM
+        // gives when someone dismisses a file picker — so nothing downstream can
+        // tell a hung companion from a user who changed their mind.
+        const fetchTimer = setTimeout(
+          () => ctrl.abort(new DOMException('the media helper timed out', 'TimeoutError')),
+          10_000,
+        );
         try {
           const r = await fetch(progressUrl, { signal: ctrl.signal, headers: _tokenHeaders() });
           clearTimeout(fetchTimer);
@@ -557,6 +566,67 @@ export async function tryRestoreProxyForMeta(fileOrMeta) {
   } catch { return null; }
 }
 
+// ── Why a proxy build failed, in words that are true ─────────────────────────
+//
+// This was a three-branch ternary whose default asserted "unsupported codec".
+// Measured against every way getProxyStreamUrl can reject, that default was
+// wrong five times out of six: the 30-minute cap (transcode_timeout), a
+// companion that stops answering mid-poll (the 10 s per-fetch abort above), a
+// non-OK progress response (progress_fetch_failed), a failed upload
+// (upload_failed_NNN), and whatever ffmpeg itself reported (data.error) are
+// every one of them something other than the codec. "Unsupported codec" sends a
+// colourist off to re-transcode a plate that was never the problem — an hour of
+// wasted work in answer to a companion that needed restarting.
+//
+// Each pattern below is a rejection thrown by name in this file or handed over
+// by the companion in data.error; proResProxyFailure.test.mjs reads both sets
+// of tokens back out of the source, so a token that starts being thrown
+// without a rule fails the build rather than reaching a user as a guess.
+// input_missing is the one worth naming: it means the plate moved after the
+// job was queued, which is a thing the user can actually fix in ten seconds.
+//
+// The strings are thunks, not values: translate() reads the language the user
+// has chosen *now*, and this table is built at module load, before there is one.
+const _PROXY_FAIL_REASONS = [
+  [/ffmpeg_missing/,                () => translate('ffmpeg not found on this machine')],
+  [/input_missing|file_not_found/,  () => translate('the source file could not be found — it may have moved')],
+  [/host_unavailable|host_timeout/, () => translate('native helper not available (Browser Mode only)')],
+  [/transcode_timeout/,             () => translate('the conversion took too long and was stopped')],
+  [/progress_fetch_failed|timed out|\bTimeoutError\b/i,
+                                    () => translate('the media helper stopped responding')],
+  [/upload_failed_/,                () => translate('the file could not be handed to the media helper')],
+];
+
+/**
+ * One line, never two. Every onProxyFail consumer writes this into a one-line
+ * status element whose CSS this module does not own, so friendlyStatus — which
+ * puts its hint on a second line — is the wrong tool here and friendlyError,
+ * which hands back the parts separately, is the right one.
+ *
+ * Exported only so tests-js/proResProxyFailure.test.mjs can hand it the real
+ * rejections instead of standing up a <video> and a companion to reach them.
+ *
+ * @param {unknown} err  Whatever getProxyStreamUrl rejected with.
+ * @returns {string} A clause that can follow "<filename> — ".
+ */
+export function _proxyFailReason(err) {
+  // Name first, the way friendlyError's corpus is written ("TimeoutError: signal
+  // timed out"). A DOMException carries the useful half of its identity in .name
+  // — reading only .message throws that away and leaves a TimeoutError looking
+  // like any other string.
+  const name = err?.name && err.name !== 'Error' ? `${err.name}: ` : '';
+  const msg = `${name}${err?.message || err || ''}`.trim();
+  for (const [re, say] of _PROXY_FAIL_REASONS) {
+    if (re.test(msg)) return say();
+  }
+  // Whatever the companion or the browser said for itself. friendlyError knows
+  // the disk-full, permission and network cases and will say them plainly; when
+  // it recognises nothing it answers with an empty title, and then the only
+  // honest thing left to report is that the conversion did not happen.
+  const f = friendlyError(msg);
+  return f.title ? f.message : translate('this file could not be converted for preview');
+}
+
 /**
  * Wire a <video> element so that if the direct blob URL fails to decode
  * (ProRes, MXF, DNxHD…) the file is automatically proxied through the
@@ -618,14 +688,8 @@ export function loadVideoWithProxyFallback(videoEl, file, blobUrl, {
       videoEl._pfxProxySessionId = sessionId;
       onProxySuccess?.(streamUrl);
     } catch (e) {
-      const msg = String(e?.message || '');
       const label = file?.name || 'Clip';
-      const hint = msg.includes('ffmpeg_missing')
-        ? `${label} — ffmpeg not found on this machine`
-        : (msg.includes('host_unavailable') || msg.includes('host_timeout'))
-          ? `${label} — native helper not available (Browser Mode only)`
-          : `${label} — unsupported codec`;
-      onProxyFail?.(hint);
+      onProxyFail?.(`${label} — ${_proxyFailReason(e)}`);
     }
   };
 

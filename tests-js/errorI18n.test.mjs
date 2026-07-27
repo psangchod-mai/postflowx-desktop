@@ -34,6 +34,7 @@ const SRC_DIR = fileURLToPath(new URL('../src/scripts/', import.meta.url));
 const friendlySrc = readFileSync(SRC_DIR + 'core/friendlyError.js', 'utf8');
 const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
 const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
+const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const i18nSrc = readFileSync(SRC_DIR + 'modules/i18n.js', 'utf8');
 
 const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
@@ -104,6 +105,9 @@ function errorDict(src) {
 const SCANNED = [
   { file: 'core/saveNotice.js', src: saveNoticeSrc, expected: 3 },
   { file: 'core/printOutcome.js', src: printOutcomeSrc, expected: 3 },
+  // Not a core/ module: proResProxy is the only place that says WHY a proxy
+  // build failed, and it is the producer for eight consumers' status lines.
+  { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 
@@ -118,7 +122,7 @@ const DICT = errorDict(i18nSrc);
 // find nothing and every coverage test below would vacuously pass.
 
 test('the source scan actually found the rule strings', () => {
-  assert.ok(STRINGS.length >= 62, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
+  assert.ok(STRINGS.length >= 69, `only found ${STRINGS.length} strings — did the RULES table change shape?`);
   // Spot-check one of each shape so a half-broken scan cannot slip through.
   assert.ok(STRINGS.includes('Disk full'), 'missed a literal title');
   assert.ok(STRINGS.includes('Free up space or choose another drive, then try again.'), 'missed a literal hint');
