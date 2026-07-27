@@ -2,6 +2,7 @@ import { loadConfig } from "./loader.js";
 import { buildRun } from "./run.js";
 import { renderApp } from "./ui.js";
 import { normalizeLocale, preferredLocale } from "./locale.js";
+import { paneLabel, paneText, failureAlert } from "./paneText.js";
 
 // Chrome extension runtime bridge — works in extension context AND Electron iframe (no chrome runtime).
 // Falls back to localStorage so state persists across reloads in the desktop app.
@@ -282,7 +283,7 @@ async function reopenReq(reqId, { openPicker=false } = {}){
 }
 
 async function rescanReq(reqId){
-  if (!state.files.length) return alert("Add files first.");
+  if (!state.files.length) return alert(paneLabel(state.config, "add_files_first", "Add files first."));
   const profile = qs("profileSelect")?.value || state.settings.profile || "final_delivery";
   const cardCat = state.config.requirements?.[reqId]?.category || state.run?.cards?.find(c => c.id === reqId)?.category;
   if (!cardCat) return;
@@ -293,14 +294,18 @@ async function rescanReq(reqId){
     ? { ...state.run, draftAssignments: state.draftAssignments, disabledFileIdxs: Array.from(state.disabledFileIdxs) }
     : { draftAssignments: state.draftAssignments, disabledFileIdxs: Array.from(state.disabledFileIdxs) };
 
-  setProgress({ label: "Rescanning…", indeterminate: true, meta: `Category: ${cardCat}` });
+  setProgress({
+    label: paneLabel(state.config, "progress_rescanning", "Rescanning…"),
+    indeterminate: true,
+    meta: paneText(state.config, "meta_category", "Category: {category}", { category: cardCat })
+  });
   await tick();
   let partial;
   try {
     partial = await buildRun(state.config, tmpSettings, state.files, prev);
   } catch (e) {
     console.error(e);
-    alert(`Rescan failed: ${e?.message || e}`);
+    alert(failureAlert(state.config, "rescan_failed", "Rescanning failed.", e));
     return;
   } finally {
     clearProgress();
@@ -343,7 +348,7 @@ async function rescanFolderAndRun(reqId){
       // User cancelled
       if (e?.name === "AbortError") return;
       console.error(e);
-      alert(`Rescan failed: ${e?.message || e}`);
+      alert(failureAlert(state.config, "rescan_failed", "Rescanning failed.", e));
       return;
     }
     if (handle) state.folderHandles[reqId] = handle;
@@ -360,15 +365,15 @@ async function rescanFolderAndRun(reqId){
   // Collect fresh file list from the folder.
   let fresh = [];
   try {
-    fresh = await collectFilesFromDirectoryHandle(handle, { label: "Rescanning folder…", includeRoot: true });
+    fresh = await collectFilesFromDirectoryHandle(handle, { label: paneLabel(state.config, "progress_rescanning_folder", "Rescanning folder…"), includeRoot: true });
   } catch (e) {
     console.error(e);
-    alert(`Rescan failed: ${e?.message || e}`);
+    alert(failureAlert(state.config, "rescan_failed", "Rescanning failed.", e));
     return;
   }
 
   if (!fresh.length) {
-    alert("No files found in the selected folder.");
+    alert(paneLabel(state.config, "no_files_in_folder", "No files were found in the selected folder."));
     return;
   }
 
@@ -735,7 +740,7 @@ async function init() {
     if (!Array.isArray(cats) || cats.length === 0) {
       // Read live rather than from a captured `L` — this closure outlives any
       // number of language changes.
-      alert(state.config.ui?.labels?.select_scope_first || "Select at least one category to check (left sidebar).");
+      alert(paneLabel(state.config, "select_scope_first", "Select at least one category to check (left sidebar)."));
       return;
     }
 
@@ -745,9 +750,9 @@ async function init() {
 
     // Progress (large folders can take a while)
     setProgress({
-      label: "Running preflight…",
+      label: paneLabel(state.config, "progress_running_preflight", "Running preflight…"),
       indeterminate: true,
-      meta: `Analyzing ${getActiveFileCount()} files`
+      meta: paneText(state.config, "meta_analyzing", "Analyzing {count} files", { count: getActiveFileCount() })
     });
     await tick();
 
@@ -759,7 +764,7 @@ async function init() {
       state.run = await buildRun(state.config, state.settings, state.files, prev);
     } catch (e) {
       console.error(e);
-      alert(`Preflight failed: ${e?.message || e}`);
+      alert(failureAlert(state.config, "preflight_failed", "The preflight run failed.", e));
       return;
     } finally {
       clearProgress();
@@ -830,7 +835,7 @@ async function onFilesPicked(fileList) {
   );
 
   let added = 0;
-  setProgress({ label: `Importing files…`, current: 0, total: arr.length, meta: `0/${arr.length}` });
+  setProgress({ label: paneLabel(state.config, "progress_importing", "Importing files…"), current: 0, total: arr.length, meta: `0/${arr.length}` });
 
   for (let i=0; i<arr.length; i++) {
     const f = arr[i];
@@ -844,7 +849,11 @@ async function onFilesPicked(fileList) {
 
     // Update progress every ~100 items to keep UI responsive.
     if ((i+1) % 100 === 0) {
-      setProgress({ label: `Importing files…`, current: i+1, total: arr.length, meta: `${i+1}/${arr.length} • added:${added}` });
+      setProgress({
+        label: paneLabel(state.config, "progress_importing", "Importing files…"),
+        current: i+1, total: arr.length,
+        meta: paneText(state.config, "meta_imported", "{done}/{total} • added: {added}", { done: i+1, total: arr.length, added })
+      });
       await tick();
     }
   }
@@ -874,7 +883,7 @@ async function onFilesPickedToReq(fileList, reqId){
 
   const newIdxs = [];
   let added = 0;
-  setProgress({ label: `Importing files…`, current: 0, total: arr.length, meta: `0/${arr.length}` });
+  setProgress({ label: paneLabel(state.config, "progress_importing", "Importing files…"), current: 0, total: arr.length, meta: `0/${arr.length}` });
 
   for (let i=0; i<arr.length; i++) {
     const f = arr[i];
@@ -887,7 +896,11 @@ async function onFilesPickedToReq(fileList, reqId){
     added++;
 
     if ((i+1) % 100 === 0) {
-      setProgress({ label: `Importing files…`, current: i+1, total: arr.length, meta: `${i+1}/${arr.length} • added:${added}` });
+      setProgress({
+        label: paneLabel(state.config, "progress_importing", "Importing files…"),
+        current: i+1, total: arr.length,
+        meta: paneText(state.config, "meta_imported", "{done}/{total} • added: {added}", { done: i+1, total: arr.length, added })
+      });
       await tick();
     }
   }
@@ -927,7 +940,7 @@ async function collectFilesFromDirectoryHandle(rootHandle, { label = "Scanning f
         files.push(file);
         found++;
         if (found % 100 === 0) {
-          state.progress = { active: true, indeterminate: true, label, meta: `Found ${found}` };
+          state.progress = { active: true, indeterminate: true, label, meta: paneText(state.config, "meta_found", "Found {count}", { count: found }) };
           paintProgress();
           await tick();
         }
@@ -952,7 +965,7 @@ async function collectFilesFromDirectoryHandle(rootHandle, { label = "Scanning f
 
 // Drag & drop ingestion (supports folders via webkitGetAsEntry when available)
 async function ingestDataTransfer(dt, reqId=null){
-  setProgress({ label: "Collecting files…", indeterminate: true, meta: "" });
+  setProgress({ label: paneLabel(state.config, "progress_collecting", "Collecting files…"), indeterminate: true, meta: "" });
   const files = await collectFilesFromDataTransfer(dt);
   if (!files.length) {
     clearProgress();
@@ -993,7 +1006,11 @@ async function collectFilesFromDataTransfer(dt){
 
       if (files.length % 100 === 0) {
         // Indeterminate progress update
-        state.progress = { active: true, indeterminate: true, label: "Collecting files…", meta: `Found ${files.length}` };
+        state.progress = {
+          active: true, indeterminate: true,
+          label: paneLabel(state.config, "progress_collecting", "Collecting files…"),
+          meta: paneText(state.config, "meta_found", "Found {count}", { count: files.length })
+        };
         paintProgress();
         await tick();
       }
@@ -1020,7 +1037,7 @@ async function collectFilesFromDataTransfer(dt){
 
 function exportReport(){
   const run = state.run;
-  if (!run) return alert("No run yet. Please run preflight first.");
+  if (!run) return alert(paneLabel(state.config, "no_run_yet", "No run yet. Please run preflight first."));
   const html = state.config.renderReportHTML(run);
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -1084,12 +1101,12 @@ function render(){
           const handle = await window.showDirectoryPicker({ mode: "read" });
           if (!handle) return;
           state.folderHandles[reqId] = handle;
-          const files = await collectFilesFromDirectoryHandle(handle, { label: "Scanning folder…", includeRoot: true });
+          const files = await collectFilesFromDirectoryHandle(handle, { label: paneLabel(state.config, "progress_scanning_folder", "Scanning folder…"), includeRoot: true });
           await onFilesPickedToReq(files, reqId);
         } catch (e) {
           if (e?.name !== "AbortError") {
             console.error(e);
-            alert(`Folder import failed: ${e?.message || e}`);
+            alert(failureAlert(state.config, "folder_import_failed", "Importing that folder failed.", e));
           }
         }
         return;
