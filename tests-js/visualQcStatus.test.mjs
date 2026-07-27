@@ -57,7 +57,7 @@ const lines = modal.split('\n');
 test('floor: the file still looks like the file this checks', () => {
   const calls = lines.filter((l) => /\bsetProgress\s*\(/.test(l));
   assert.ok(calls.length >= 12, `only ${calls.length} setProgress calls — did the modal change shape?`);
-  assert.match(modal, /import \{ friendlyStatus \} from '\.\.\/\.\.\/core\/friendlyError\.js'/,
+  assert.match(modal, /import \{ friendlyStatus, translate \} from '\.\.\/\.\.\/core\/friendlyError\.js'/,
     'friendlyStatus is no longer imported');
 });
 
@@ -76,24 +76,34 @@ test('no setProgress call hands a raw exception to the user', () => {
   assert.deepEqual(raw, [], `a raw exception is being shown in the progress strip again:\n  ${raw.join('\n  ')}`);
 });
 
+// The prefix is now written as `${translate('…')}: ${err…}` — friendlyStatus
+// holds the label back from friendlyText on purpose, which makes localising it
+// the call site's job. Read the key out of the translate() call.
+const PREFIX_RE = /friendlyStatus\(`\$\{translate\((['"])([^'"]*?)\1\)\}:\s*\$\{/g;
+
 test('both failing operations say which operation failed', () => {
   // The prefix is the difference between "The disk is full" — which disk, doing
   // what? — and "Exporting the PDF report failed: The disk is full". Two of
   // them, one per button.
-  const found = [...modal.matchAll(/friendlyStatus\(`([^`]*?):\s*\$\{/g)].map((m) => m[1]);
+  const found = [...modal.matchAll(PREFIX_RE)].map((m) => m[2]);
   assert.equal(found.length, 2, `expected 2 prefixed friendlyStatus calls, found ${found.length}: ${found.join(' | ')}`);
   assert.ok(found.includes('Visual QC scan failed'), `the Run button lost its prefix: ${found.join(' | ')}`);
   assert.ok(found.includes('Exporting the PDF report failed'), `the Export button lost its prefix: ${found.join(' | ')}`);
 });
 
 test('the prefixes actually survive friendlyStatus', () => {
-  // friendlyStatus only keeps a prefix that its own regex accepts: at most 40
-  // characters before the colon, and containing a space. A prefix that fails
-  // that test is not an error — it is silently dropped, taking the "which
-  // operation" half of the message with it. The prefixes are read out of the
-  // source, so renaming one to something too long fails here rather than in
-  // front of a user.
-  const prefixes = [...modal.matchAll(/friendlyStatus\(`([^`]*?):\s*\$\{/g)].map((m) => m[1]);
+  // friendlyStatus only keeps a prefix that its own regex accepts:
+  // /^([^:]{1,40}\s[^:]{0,40}):\s+/ — no colon inside the label, a whitespace
+  // character somewhere in it, and 81 characters at the outside (40, the space,
+  // 40). A prefix that fails that test is not an error — it is silently
+  // dropped, taking the "which operation" half of the message with it. The
+  // prefixes are read out of the source, so renaming one to something the regex
+  // rejects fails here rather than in front of a user.
+  //
+  // Width is a separate concern and a tighter one: the strip truncates well
+  // before 81 characters, and visualQcProgress.test.mjs caps every locale cell
+  // at 60. This test is only about whether the prefix survives at all.
+  const prefixes = [...modal.matchAll(PREFIX_RE)].map((m) => m[2]);
   assert.equal(prefixes.length, 2, 'floor: prefix extraction found nothing to check');
   for (const p of prefixes) {
     const out = friendlyStatus(`${p}: ENOSPC: no space left on device`);
@@ -101,6 +111,34 @@ test('the prefixes actually survive friendlyStatus', () => {
     assert.doesNotMatch(out, /ENOSPC/, `the tail after "${p}" was not rewritten`);
     assert.match(out, /disk is full/i, `expected the disk-full rule after "${p}", got: ${out}`);
   }
+});
+
+test('the prefixes survive friendlyStatus in every language, not just English', () => {
+  // The half of the above that only became reachable once the label was
+  // translated — and it caught a real one. friendlyStatus's prefix regex is
+  // /^([^:]{1,40}\s[^:]{0,40}):\s+.../ : it REQUIRES a whitespace character in
+  // the label. Japanese does not put spaces between words, so
+  // "ビジュアルQCスキャンに失敗しました" failed the match, the whole string fell
+  // through to friendlyText, and a Japanese colourist got "The disk is full…"
+  // with nothing saying which operation produced it — the exact loss the test
+  // above exists to prevent, in the five locales it could not see.
+  //
+  // Both ja cells now space the Latin acronym, which is ordinary Japanese
+  // typography. This checks every cell of every locale, so the next
+  // translation that runs its words together fails here instead of shipping.
+  const i18n = read('src/scripts/modules/i18n.js');
+  const dropped = [];
+  for (const key of [...modal.matchAll(PREFIX_RE)].map((m) => m[2])) {
+    const row = i18n.match(new RegExp(`\\n\\s*${JSON.stringify(key).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}:\\s*\\[([^\\]]*)\\]`));
+    assert.ok(row, `no UI_DICT_ROWS row for the prefix "${key}" — it cannot be translated at all`);
+    for (const cell of JSON.parse(`[${row[1]}]`)) {
+      const out = friendlyStatus(`${cell}: ENOSPC: no space left on device`);
+      if (!out.startsWith(`${cell}: `)) dropped.push(`${key} -> ${JSON.stringify(cell)}`);
+    }
+  }
+  assert.deepEqual(dropped, [],
+    'friendlyStatus silently drops these translated labels — each needs a space in it, ' +
+    `or the message arrives with no operation name:\n  ${dropped.join('\n  ')}`);
 });
 
 // ── The hint has to arrive on its own line ───────────────────────────────────

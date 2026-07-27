@@ -4398,7 +4398,19 @@ const UI_DICT_ROWS = {
   "Search checks…": ["검사 항목 검색…", "チェック項目を検索…", "搜尋檢查項目…", "ค้นหารายการตรวจสอบ…", "Cari pemeriksaan…", "Maghanap ng check…"],
   "Search projects…": ["프로젝트 검색…", "プロジェクトを検索…", "搜尋專案…", "ค้นหาโปรเจกต์…", "Cari proyek…", "Maghanap ng proyekto…"],
   "Search shot name…": ["샷 이름 검색…", "ショット名を検索…", "搜尋鏡頭名稱…", "ค้นหาชื่อช็อต…", "Cari nama shot…", "Maghanap ng shot name…"],
-  "name / vendor / team": ["이름 / 벤더 / 팀", "名前 / ベンダー / チーム", "名稱 / 廠商 / 團隊", "ชื่อ / ผู้ให้บริการ / ทีม", "nama / vendor / tim", "pangalan / vendor / koponan"]
+  "name / vendor / team": ["이름 / 벤더 / 팀", "名前 / ベンダー / チーム", "名稱 / 廠商 / 團隊", "ชื่อ / ผู้ให้บริการ / ทีม", "nama / vendor / tim", "pangalan / vendor / koponan"],
+  // --- visualQcModal progress narration (iteration 29) ---
+  "Preparing…": ["준비 중…", "準備中…", "準備中…", "กำลังเตรียม…", "Menyiapkan…", "Naghahanda…"],
+  "Scanning…": ["검사 중…", "スキャン中…", "掃描中…", "กำลังสแกน…", "Memindai…", "Nag-i-scan…"],
+  "Merging hits…": ["검출 결과 병합 중…", "検出結果を統合中…", "合併偵測結果…", "กำลังรวมผลที่พบ…", "Menggabungkan temuan…", "Pinagsasama ang mga nahanap…"],
+  "Done. No events.": ["완료. 검출된 항목이 없습니다.", "完了。検出はありませんでした。", "完成。沒有偵測到事件。", "เสร็จแล้ว ไม่พบเหตุการณ์", "Selesai. Tidak ada temuan.", "Tapos na. Walang nahanap."],
+  "Resolving burn-in…": ["번인 문자 판독 중…", "バーンイン文字を読み取り中…", "判讀燒錄字幕…", "กำลังอ่านตัวอักษรที่ฝังอยู่…", "Membaca teks burn-in…", "Binabasa ang burn-in na teksto…"],
+  "Done.": ["완료.", "完了。", "完成。", "เสร็จแล้ว", "Selesai.", "Tapos na."],
+  "Capturing stills…": ["스틸 캡처 중…", "静止画をキャプチャ中…", "擷取靜態畫面…", "กำลังจับภาพนิ่ง…", "Mengambil gambar diam…", "Kumukuha ng mga still…"],
+  "Building report…": ["리포트 생성 중…", "レポートを作成中…", "建立報告中…", "กำลังสร้างรายงาน…", "Menyusun laporan…", "Ginagawa ang report…"],
+  "Opening print dialog…": ["인쇄 창 여는 중…", "印刷ダイアログを開いています…", "正在開啟列印對話框…", "กำลังเปิดหน้าต่างพิมพ์…", "Membuka dialog cetak…", "Binubuksan ang print dialog…"],
+  "Visual QC scan failed": ["비주얼 QC 검사 실패", "ビジュアル QC スキャンに失敗しました", "視覺 QC 掃描失敗", "สแกน Visual QC ไม่สำเร็จ", "Pemindaian Visual QC gagal", "Nabigo ang Visual QC scan"],
+  "Exporting the PDF report failed": ["PDF 리포트 내보내기 실패", "PDF レポートの書き出しに失敗しました", "匯出 PDF 報告失敗", "ส่งออกรายงาน PDF ไม่สำเร็จ", "Ekspor laporan PDF gagal", "Nabigo ang pag-export ng PDF report"]
 };
 // Gap-fill only, same contract as PARITY_DICT above: never replace a string
 // somebody already authored.

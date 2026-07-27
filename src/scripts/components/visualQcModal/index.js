@@ -14,7 +14,7 @@ import { CLOSED, printNotice, tryAutoPrint } from '../../core/printOutcome.js';
 // is no toast and no dialog behind it — so a raw exception landing there is the
 // whole message the user gets. friendlyStatus keeps the "<what failed>:" prefix
 // and rewrites the tail into a sentence with an action in it.
-import { friendlyStatus } from '../../core/friendlyError.js';
+import { friendlyStatus, translate } from '../../core/friendlyError.js';
 
 /**
  * Resolve the best playable URL for a clip used by hidden analysis video elements
@@ -1320,7 +1320,7 @@ export async function openVisualQcModal({
     let frCanvas = null;
     let canvas2 = null;
     try{
-      setProgress(0, 'Preparing…');
+      setProgress(0, translate('Preparing…'));
 
       const mode = String(modeSel.value || 'normal');
       const sampleFps = mode === 'quick' ? 0.5 : (mode === 'dense' ? 2.0 : 1.0);
@@ -1481,7 +1481,7 @@ export async function openVisualQcModal({
 
       for (let i=0;i<totalSteps;i++){
         const t = scanStart + (i * stepSec);
-        setProgress(i/totalSteps, `Scanning… ${i+1}/${totalSteps}`);
+        setProgress(i/totalSteps, `${translate('Scanning…')} ${i+1}/${totalSteps}`);
         await seekTo(t);
         g.drawImage(video, 0, 0, capW, capH);
         const img = g.getImageData(0, 0, capW, capH);
@@ -1585,7 +1585,7 @@ export async function openVisualQcModal({
         if (abort) throw new Error('Cancelled');
       }
 
-      setProgress(0.82, `Merging hits… (${hits.length})`);
+      setProgress(0.82, `${translate('Merging hits…')} (${hits.length})`);
       hits.sort((a,b)=>a.t-b.t);
       const events0 = mergeHitsToEvents(hits, mergeGap);
 
@@ -1621,7 +1621,7 @@ export async function openVisualQcModal({
         store?.updateClip?.(c.id, { visualQc: report });
         currentReport = report;
         renderReport(report);
-        setProgress(1, 'Done. No events.');
+        setProgress(1, translate('Done. No events.'));
         return;
       }
 
@@ -1669,7 +1669,7 @@ export async function openVisualQcModal({
       for (let i=0;i<events0.length;i++){
         if (abort) throw new Error('Cancelled');
         const e0 = events0[i];
-        setProgress(0.84 + (i / events0.length) * 0.14, `Resolving burn-in… ${i+1}/${events0.length}`);
+        setProgress(0.84 + (i / events0.length) * 0.14, `${translate('Resolving burn-in…')} ${i+1}/${events0.length}`);
 
         const bIn = await readBurninAt(e0.start);
         const bOut = await readBurninAt(e0.end);
@@ -1712,7 +1712,7 @@ export async function openVisualQcModal({
       store?.updateClip?.(c.id, { visualQc: report });
       currentReport = report;
       renderReport(report);
-      setProgress(1, 'Done.');
+      setProgress(1, translate('Done.'));
     }finally{
       setBusy(false);
       cancelBtn.style.display = 'none';
@@ -1724,7 +1724,7 @@ export async function openVisualQcModal({
   }
 
   btnRun.addEventListener('click', ()=> scan().catch(err=>{
-    try{ setProgress(0, friendlyStatus(`Visual QC scan failed: ${err?.message || String(err)}`)); }catch{}
+    try{ setProgress(0, friendlyStatus(`${translate('Visual QC scan failed')}: ${err?.message || String(err)}`)); }catch{}
   }));
 
   btnExportJson.addEventListener('click', async ()=>{
@@ -1763,7 +1763,7 @@ export async function openVisualQcModal({
         .sort((a,b)=> (Number(b?.evidence?.score)||0) - (Number(a?.evidence?.score)||0))
         .slice(0, maxN);
 
-      setProgress(0.02, `Capturing stills… 0/${events.length}`);
+      setProgress(0.02, `${translate('Capturing stills…')} 0/${events.length}`);
 
       // Load video for still capture
       video = document.createElement('video');
@@ -1856,10 +1856,10 @@ export async function openVisualQcModal({
             { k:'Score', v: String((Number(ev.evidence?.score)||0).toFixed(3)) },
           ]
         });
-        setProgress(0.02 + (i+1)/events.length * 0.78, `Capturing stills… ${i+1}/${events.length}`);
+        setProgress(0.02 + (i+1)/events.length * 0.78, `${translate('Capturing stills…')} ${i+1}/${events.length}`);
       }
 
-      setProgress(0.85, 'Building report…');
+      setProgress(0.85, translate('Building report…'));
 
       const metaLines = [];
       try{
@@ -1881,7 +1881,7 @@ export async function openVisualQcModal({
         items
       });
 
-      setProgress(0.95, 'Opening print dialog…');
+      setProgress(0.95, translate('Opening print dialog…'));
       const how = await openPrintReportHtml({ filenameBase: nameBase, html });
       // Every ending this button has — dialog raised, window open but not
       // printing, fell back to a file, cancelled, nothing worked — is worded in
@@ -1890,7 +1890,7 @@ export async function openVisualQcModal({
       const notice = printNotice(how);
       setProgress(notice.tone === TONE_OK ? 1 : 0, notice.text);
     }catch(err){
-      setProgress(0, friendlyStatus(`Exporting the PDF report failed: ${err?.message || String(err)}`));
+      setProgress(0, friendlyStatus(`${translate('Exporting the PDF report failed')}: ${err?.message || String(err)}`));
     }finally{
       setBusy(false);
       cancelBtn.style.display = 'none';
