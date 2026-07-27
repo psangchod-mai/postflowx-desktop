@@ -3471,3 +3471,83 @@ and the wording can be revisited rather than left conservatively vague forever.
 nothing had to be withdrawn, because each rule here is the only thing standing
 between its rejection and the catch-all — `friendlyError` recognises none of
 the MPV tokens.
+
+## Audit 29 — translating a label is not free
+
+### The finding
+
+Translating the two `friendlyStatus` labels — the correct fix for
+`untranslated-label-in-front-of-a-translated-message` — immediately produced a
+new defect in Japanese.
+
+`friendlyStatus` keeps a `"<label>: "` prefix only when the string matches
+`src/scripts/core/friendlyError.js:331`:
+
+    /^([^:]{1,40}\s[^:]{0,40}):\s+([\s\S]+)$/
+
+That regex **requires a whitespace character in the label**. When it does not
+match there is no error and no warning: the whole string falls through to
+`friendlyText(s)` and the prefix is gone. Japanese does not put spaces between
+words.
+
+Measured, not reasoned — all twelve translated cells run through the real
+`friendlyStatus`:
+
+| result | cells |
+|---|---|
+| prefix kept | 10 |
+| prefix silently dropped | **2 — both `ja`** |
+
+`"ビジュアルQCスキャンに失敗しました"` and `"PDFレポートの書き出しに失敗しました"`.
+A Japanese colourist would have read the disk-full message with nothing saying
+which operation produced it — precisely the loss the prefix exists to prevent,
+reintroduced by translating the prefix.
+
+**Fix.** Both `ja` cells now put a space either side of the Latin acronym:
+`"ビジュアル QC スキャンに失敗しました"`, `"PDF レポートの書き出しに失敗しました"`.
+This is ordinary Japanese typography for an embedded Latin run (和欧間スペース),
+so it reads correctly — but the honest reason it is there is that a regex needs
+it, and the test comment says exactly that rather than dressing it up as a
+translation improvement. **This wants a native-speaker check like every other
+machine-authored row in this run.**
+
+### The species: gate-that-only-checks-the-English-path
+
+`visualQcStatus.test.mjs` has had the assertion
+`the prefixes actually survive friendlyStatus` since an earlier iteration, with
+a comment describing this exact hazard. It could not fail. It tested English,
+and English always has spaces. The check only became *reachable* for the other
+five locales at the moment the label was translated.
+
+A gate written against English literals cannot see the localised failure mode.
+Added: `the prefixes survive friendlyStatus in every language, not just
+English`, which reads the key out of the `translate()` call in the source, finds
+its `UI_DICT_ROWS` row, and pushes **every cell of every locale** through the
+real `friendlyStatus`. The next translation that runs its words together fails
+here instead of shipping.
+
+### Also corrected
+
+That test's own comment claimed `friendlyStatus` allows "at most 40 characters
+before the colon". The regex allows 40 + the whitespace + 40 = **81**. A
+65-character label was mutated in to check — it did **not** fail
+`visualQcStatus`, correctly, and it *was* caught by `visualQcProgress`'s 60-char
+strip-width cap. A mutation that does not fail a gate is not automatically a
+hole; here it was a wrong number in a comment, which is now right.
+
+### Mutation result
+
+9/9 caught across `visualQcModal/index.js` and `i18n.js`, both restored
+byte-for-byte. Plus 2/2 on the Japanese spaces and 1/1 on the over-long label
+via the correct gate. Not counted as 12/12: the third harness run was a
+diagnosis, not a gate hole.
+
+### Still open
+
+- Every other `friendlyStatus` call site's label needs the same unspaced-label
+  sweep. This iteration only proved visualQcModal's two.
+- `friendlyStatus` could be made to accept a label with no whitespace at all
+  rather than requiring call sites to insert one. That is a change to shared
+  error-rendering behaviour used by seven modules, with its own blast radius,
+  and it is not being made at the tail of a loop run on the strength of one
+  language. Recorded here so the option is visible.

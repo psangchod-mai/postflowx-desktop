@@ -3159,3 +3159,43 @@ site is not behind the token-checking forwarder. Pre-existing, unchanged,
 disclosed in the test.
 
 Commits: `8717c1b`.
+
+## Iteration 29 — the Visual QC progress strip, in six languages
+
+**Found.** Eleven hardcoded English literals narrating the Visual QC scan. A
+Visual QC scan is the longest-running operation in the app and the line under
+the progress bar is the only evidence it has not hung — and it was the one
+surface the translation work of the last ten iterations had never reached. It
+could not: a literal inside a template is not a dictionary key, so `i18n.js`
+never saw it, and the MutationObserver could not rescue it either, because
+`setProgress` writes with `.textContent` and the observer only re-translates
+text it holds a key for.
+
+Two of the eleven were sharper. `friendlyStatus()` holds the `"<what failed>:"`
+prefix back from `friendlyText` deliberately — its own doc says running the
+whole string through would drop the prefix, the only thing on screen naming
+which operation failed. That contract makes localising the label the *call
+site's* job, which is why `friendlyError.js` exports `translate()`. Both call
+sites had skipped it, so a Thai user read a fully translated error message with
+`Visual QC scan failed:` welded to the front of it.
+
+**Done.** Eleven `UI_DICT_ROWS` keys x six locales; both labels wrapped in
+`translate()` at the call site; `translate` imported from `friendlyError.js`
+(not `i18n.js` — the shim is guarded and does not drag the whole dictionary
+into a component that needs eleven rows).
+
+**And the fix broke Japanese.** See Audit 29 — this is the finding of the
+iteration, not a footnote.
+
+**Gate.** `tests-js/visualQcProgress.test.mjs` (new, 9 tests) and three edits to
+`tests-js/visualQcStatus.test.mjs`, which went 7 -> 8. Mutation-proven 9/9
+across both source files — the first multi-file harness of this run — plus both
+Japanese spaces reverted individually and caught.
+
+**Still open.** Every *other* `friendlyStatus` call site's label wants the same
+unspaced-translation sweep; the new test only covers visualQcModal's two.
+`seekTo` still rejects with a bare `'Seek failed'` / `'Seek timeout'`
+(`visualQcModal/index.js:1470`, `:1477`), which reaches `friendlyStatus` and
+falls to the catch-all — a two-row rule pair would fix it cheaply.
+
+Commits: `fd7e241`.
