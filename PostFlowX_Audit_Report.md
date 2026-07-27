@@ -3400,3 +3400,74 @@ clean of mode changes. The 42 new ERROR_DICT rows are machine-authored and want
 a native-speaker pass. A signed/notarized `npm run build:mac` needs the user's
 Apple credentials and pushes an artifact outward; it has not been authorized and
 was not run.
+
+## Audit 28 — a guard that fires on your own new rows is the guard working
+
+`npm run build-verify` went red on `errorI18n.test.mjs`:
+
+```
+no dictionary entry is left behind after a rule is reworded
+  in ERROR_DICT but in none of the scanned sources:
+    mpv is not installed on this machine
+    the mpv player did not start
+    ... (all six iteration-28 keys)
+```
+
+Not a false positive. That check was written in an earlier iteration with a
+comment saying exactly this: *"rows added for a module nobody remembered to
+list in SCANNED look exactly like dead keys from here."* Six brand-new rows and
+six dead rows are indistinguishable from inside the dictionary, so the check
+cannot tell them apart and should not try. The fix is the one it was asking
+for: add `core/playableMedia.js` to `SCANNED` with `expected: 6`.
+
+Worth recording because the tempting move — loosening the orphan check to
+ignore recently-added keys — would have deleted the only mechanism that
+notices a module shipping English to six locales.
+
+### What was measured, not assumed
+
+The corpus for `_playbackFailReason` is not invented. Every rejection is cited:
+
+| Rejection | Thrown at | Now says |
+|---|---|---|
+| `mpv not found. Install mpv: brew install mpv` | `mpv_engine.js:109` | mpv is not installed on this machine |
+| `MPV socket not created at …/mpv-N.sock within Nms` | `mpv_engine.js:99` | the mpv player did not start |
+| `MPV open failed` | `mpvPlayer.js:52` | the mpv player did not start |
+| `MPV IPC error: …` | `mpv_engine.js:80` | the mpv player did not start |
+| `EACCES: permission denied, open '…'` | OS, via friendlyError | a permission message |
+| anything else | — | this file could not be opened for playback |
+
+The second row is the finding. Under the old ternary it produced
+`Direct ProRes playback failed (MPV socket not created at
+/var/folders/qq/T/mpv-3.sock within 4000ms). Create proxy fallback?` in a
+status strip sized for one short line.
+
+### The `_pfxNativeAttempted` reading
+
+`grep -n _pfxNativeAttempted` gives three sites: set `false` at `:177`, set
+`true` at `:240`, read at `:338`. `:240` is the first executable statement of
+`_startNativeAVPath`, before `mountNativeCanvas`, before `engine.open`. So the
+flag means *tried*, not *failed to decode*. A gate floor now slices the function
+head and asserts the assignment is still there, so if someone moves it into the
+`.catch` — where it would genuinely mean the engine failed — the suite says so
+and the wording can be revisited rather than left conservatively vague forever.
+
+### Not fixed, with reasons
+
+- `imf_ui.js:8895-8897` — the same ternary species. `src/scripts/modules/imf/imf_ui.js`
+  is ` M` with the user's in-flight work (12 added / 6 removed). Blocked.
+- Site 3's token-race: `onProxyFail` is called directly at `:443` rather than
+  through the guarded forwarder at `:477`, so a hint can land after the user
+  moved to another clip. Fixing it means changing control flow, not wording, and
+  that is a separate change with its own risk. Disclosed in the test's
+  "WHAT THIS CANNOT SEE" rather than quietly folded in.
+- `'path required'` and `'Unknown sessionId'` in `mpv_engine.js` are programmer
+  errors on paths `open()` does not reach. No rule, deliberately — a rule for an
+  unreachable rejection is a rule nobody can ever verify.
+
+### Mutation result
+
+11/11 caught, source byte-restored. All eleven are live; unlike iteration 27
+nothing had to be withdrawn, because each rule here is the only thing standing
+between its rejection and the catch-all — `friendlyError` recognises none of
+the MPV tokens.

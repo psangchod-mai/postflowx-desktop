@@ -3110,3 +3110,52 @@ this iteration replaced, but that file holds the user's in-flight work and is
 blocked. `playableMedia.js`'s own three `onProxyFail` literals (:308, :339, :443)
 are still untranslated English. Seven `setTimeout(() => ctrl.abort())` sites
 remain unnamed.
+
+## Iteration 28 — the playback failure that guessed at your mpv install
+
+**Target.** `src/scripts/core/playableMedia.js` — the other end of the surface
+iteration 27 fixed. `proResProxy.js` says why a proxy *build* failed;
+`playableMedia.js` says why *playback* failed, and both feed the same
+`onProxyFail(hint)` status strips in seven modules.
+
+**Found.** Three hints, each asserting more than the code had established.
+
+1. `:308` — the mpv catch:
+   `` `Direct ProRes playback failed (${err.message.includes('not found') ? 'mpv not installed' : err.message}). Create proxy fallback?` ``
+   An English substring decided the diagnosis and the default handed the raw
+   exception to a one-line strip. Measured against `mpv_engine.js`, the default
+   is the common case: `_waitForSocket` rejects with
+   `MPV socket not created at /var/folders/…/mpv-3.sock within 4000ms` — no
+   "not found" in it. Someone whose mpv is installed but wedged read a temp
+   socket path. And the true branch fires on any message mentioning something
+   not found, so a missing plate became an mpv install problem.
+2. `:339` — `could not decode with the native player`, printed whenever
+   `_pfxNativeAttempted` was set. That flag is assigned at `:240`, the top of
+   `_startNativeAVPath`, on entry. It proves the native path was tried and
+   nothing about decoding.
+3. `:443` — `could not create playback URL`. Jargon about our plumbing.
+
+All three were untranslated English literals, invisible to `i18n.js`.
+
+**Done.** A `_PLAYBACK_FAIL_REASONS` thunk table plus an exported
+`_playbackFailReason(err)` that reads `err.name` before `err.message`, falls
+through to `friendlyError`, and only then admits it does not know. Site 2 now
+says both players had a turn and neither produced a picture; site 3 says
+PostFlowX could not prepare the file for playback. 36 new `ERROR_DICT` rows
+(6 keys x 6 locales).
+
+**Gate.** `tests-js/playableMediaFailure.test.mjs`, 16 assertions, every corpus
+entry cited to the line that throws it, plus floors that pin the wording of
+those three throws in `mpv_engine.js`/`mpvPlayer.js` and a floor that fails if
+`_pfxNativeAttempted` moves out of the top of `_startNativeAVPath` (at which
+point the wording could honestly become specific again). Mutation-proven 11/11,
+source restored byte-for-byte.
+
+**Still open.** `imf_ui.js:8895-8897` carries the same three-branch ternary
+shape iteration 27 replaced — blocked, dirty file. Seven
+`setTimeout(() => ctrl.abort())` sites remain unnamed. Site 3 is also reached
+when the load token moved on (the user picked another clip); that direct call
+site is not behind the token-checking forwarder. Pre-existing, unchanged,
+disclosed in the test.
+
+Commits: `8717c1b`.
