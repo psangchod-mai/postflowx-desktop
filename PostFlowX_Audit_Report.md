@@ -3333,3 +3333,70 @@ Committed as `2f3601e`, five files, `git diff --cached --summary` clean of mode
 changes, dirty count unchanged at 693. A signed/notarized `npm run build:mac`
 needs the user's Apple credentials and pushes an artifact outward; it has not
 been authorized and was not run.
+
+## Audit 27 — a false diagnosis is worse than no diagnosis
+
+**Finding.** `src/scripts/modules/proResProxy.js` reported *every* unrecognised
+proxy failure as "unsupported codec". Measured against the six ways
+`getProxyStreamUrl` rejects, that was true in one case and false in five. The
+class is **misdiagnosis-as-fallback-branch**: a default arm that asserts a
+specific cause instead of admitting it does not know one. It defeats the usual
+defence against vague errors — the user *believes* it, and acts on it.
+
+**Severity, in hours.** A colourist told "unsupported codec" re-transcodes the
+plate. That is the wrong action for a companion that needed restarting
+(`host_unavailable`), a drive that unmounted (`input_missing`), a full disk
+(`ENOSPC` via `data.error`), and a 30-minute cap that PostFlowX itself imposed
+(`transcode_timeout`). Four of those are fixed in under a minute once named.
+
+**What is now measured** (all verified, exit 0):
+
+| rejection | source | now says |
+|---|---|---|
+| `host_unavailable` | proResProxy:422 | native helper not available (Browser Mode only) |
+| `upload_failed_NNN` | proResProxy:466 | the file could not be handed to the media helper |
+| `transcode_timeout` | proResProxy:477 | the conversion took too long and was stopped |
+| `progress_fetch_failed` | proResProxy:494 | the media helper stopped responding |
+| `TimeoutError` (10 s poll) | proResProxy:487 | the media helper stopped responding |
+| `ffmpeg_missing` | pfx_host:159 | ffmpeg not found on this machine |
+| `input_missing` | pfx_host:162 | the source file could not be found — it may have moved |
+| `ENOSPC` / `EACCES` | `data.error` | via friendlyError: disk full / permission |
+| `Unsupported codec in stream 0` | ffmpeg | This media couldn't be decoded. **(still says so)** |
+| anything unrecognised | — | this file could not be converted for preview |
+
+The codec claim was made narrower, not deleted. When ffmpeg itself says the
+codec is the problem, PostFlowX still says the codec is the problem.
+
+**The withdrawn mutation.** A twelfth mutation — deleting the
+`transcode_timeout` rule — did **not** fail the gate. The honest reading is that
+the gate is right: `friendlyError` independently classifies that token as
+"That took too long and timed out.", so the dedicated rule is a wording upgrade
+(it names the cap as something PostFlowX did) rather than the only thing between
+the user and a false message. Forcing a catch would have meant pinning exact
+wording, which fails on any honest rephrasing. The mutation was removed and the
+reason written into the test's own "WHAT THIS CANNOT SEE" block. A mutation
+harness that is edited until it reports 12/12 is measuring the author's
+persistence, not the gate.
+
+**Disclosed, not claimed.** `host_timeout` and `file_not_found` sit in the rule
+table but are **not** produced on this file's measured path — `host_timeout`
+comes from `imf_proxy.js:84-85`. Both share a regex alternative with a reachable
+token, so each costs zero dictionary rows; they are cheap insurance, and the
+test says so rather than counting them as coverage.
+
+**Not fixed, with reasons.** `imf_ui.js:8895-8897` has the identical ternary
+shape and is the obvious next target, but the file carries 12/6 of the user's
+in-flight work. `renderWorkerClient.js:22/:36` was examined and excluded as
+speculative — nothing in the tree consumes `window.PFX_RENDER_WORKER`, so
+rewiring its abort would be a change with no reachable user. `annotateModal:1659`
+and `imf_player.js:5367` swallow their aborts into `return null` and
+`console.warn` respectively; naming them buys nothing today.
+
+**Verified.** 18 new assertions, 11 mutations applied and 11 caught
+(`/tmp/mut27.mjs`), source byte-restored. `errorI18n` floor 62 → 69, scanning
+three files now. `npm run build-verify` exit 0, `npm run build:renderer` exit 0
+(376 files). Committed as `483e2f5`, four files, `git diff --cached --summary`
+clean of mode changes. The 42 new ERROR_DICT rows are machine-authored and want
+a native-speaker pass. A signed/notarized `npm run build:mac` needs the user's
+Apple credentials and pushes an artifact outward; it has not been authorized and
+was not run.

@@ -3045,3 +3045,68 @@ Still open: the eight `setTimeout(() => ctrl.abort())` sites could abort with
 better hint — its own iteration. The five hardcoded English progress strings in
 `visualQcModal`. The anchor tier in both save cascades still returns `SAVED`
 with no evidence.
+
+## Iteration 27 — the proxy failure that always blamed the codec
+
+**Research.** Last iteration left a note: eight `setTimeout(() => ctrl.abort())`
+sites present a hung request as a user cancelling. Chasing the first of them
+into `proResProxy.js` turned up something worse than a vague message. The catch
+that reports why a preview proxy failed was a three-branch ternary:
+
+```js
+const hint = msg.includes('ffmpeg_missing')
+  ? `${label} — ffmpeg not found on this machine`
+  : (msg.includes('host_unavailable') || msg.includes('host_timeout'))
+    ? `${label} — native helper not available (Browser Mode only)`
+    : `${label} — unsupported codec`;
+```
+
+Enumerating every way `getProxyStreamUrl` can reject — `host_unavailable` (:422),
+`upload_failed_NNN` (:466), `transcode_timeout` (:477), `progress_fetch_failed`
+(:494), `data.error` from the companion (:496), and the 10 s per-fetch abort —
+that default is wrong **five times out of six**. A new species:
+**misdiagnosis-as-fallback-branch**, a ternary whose *default* arm asserts a
+specific cause. It is worse than saying nothing. "Unsupported codec" sends a
+colourist off to re-transcode a plate that was never the problem while the
+actual fault — restart the helper, remount the drive — goes unmentioned.
+
+Reading `src/tools/pfx_host.py` for what the companion actually puts in
+`data.error` found `ffmpeg_missing` (:159), `input_missing` (:162),
+`ffmpeg_exit_{rc}` (:237), `forbidden` (:306), `file_not_found` (:327) and raw
+`str(e)` (:242). `input_missing` is the one that stung: it means the plate moved
+after the job was queued — the most actionable failure on the list, ten seconds
+to fix — and it was landing in the catch-all as a codec complaint.
+
+**Code.** A rule table of six patterns over thunks (`[re, () => translate('…')]`
+— thunks so the language is read at call time, not at module load, and so
+`errorI18n.test.mjs`'s literal-only scanner can still see the strings), falling
+through to `friendlyError` and then to a statement with no cause attached at
+all. `onProxyFail` has **7 external consumers** (`prep_mark`, `playableMedia`,
+`aceslook`, `cutdiff`, `cutdiff2`, `platelink2`, `amf_convert`), so fixing the
+one producer reached every surface without touching a single dirty file.
+
+Two fixes came out of measuring rather than planning. The per-fetch abort now
+carries `new DOMException('the media helper timed out', 'TimeoutError')` instead
+of a bare `abort()`, whose rejection text is the same one the DOM gives for a
+dismissed file picker. And `_proxyFailReason` reads `err.name`, not just
+`err.message` — a DOMException keeps the useful half of its identity in `.name`,
+so message-only matching was one reworded throw from silently breaking. That is
+its own species: **identity-lost-by-reading-only-.message**.
+
+**Audit.** New gate `tests-js/proResProxyFailure.test.mjs`, 18 assertions. Its
+corpus is not invented — it reads the thrown tokens back out of the source and
+the `_update_session(error=…)` tokens out of `pfx_host.py`, so a rejection
+nobody classified fails the build rather than reaching a user as a guess.
+**11 mutations applied (`/tmp/mut27.mjs`), 11 caught**, source byte-restored.
+A twelfth was written and then withdrawn rather than forced — see the audit.
+
+**Verified.** `npm run build-verify` exit 0 (the untracked-gate guard correctly
+failed first on the new file, then passed once tracked — the guard works),
+`npm run build:renderer` exit 0 (376 files). Committed as `483e2f5`, four files,
+no mode changes.
+
+Still open: `imf_ui.js:8895-8897` carries the **same** three-branch ternary shape
+this iteration replaced, but that file holds the user's in-flight work and is
+blocked. `playableMedia.js`'s own three `onProxyFail` literals (:308, :339, :443)
+are still untranslated English. Seven `setTimeout(() => ctrl.abort())` sites
+remain unnamed.
