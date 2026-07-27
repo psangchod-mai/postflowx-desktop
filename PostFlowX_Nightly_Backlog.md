@@ -3199,3 +3199,91 @@ unspaced-translation sweep; the new test only covers visualQcModal's two.
 falls to the catch-all — a two-row rule pair would fix it cheaply.
 
 Commits: `fd7e241`.
+
+---
+
+## Iteration 30 — the Preflight pane speaks 7 languages about your delivery and English about itself
+
+**Research.** The Preflight pane (`src/tools/preflight/`) is the most thoroughly
+translated surface in PostFlowX: roughly 148K of check titles, severities and
+"here is how to fix it" guidance across seven locales, with `locale.js` selecting
+between them. Its renderer, `ui.js`, does the right thing at nineteen sites —
+`state.config.ui.labels?.key || "English fallback"`. Its controller, `app.js`,
+did not. Of the nine `alert()` calls in `app.js`, exactly one read a label; the
+other eight were English literals, and five of those pasted an exception's own
+text onto the end. Seven progress labels and four meta lines were literals too.
+
+Exactly one call site following the pattern is the whole finding. It means
+nobody decided the controller should speak English — the convention was known,
+and it simply had not travelled the twenty lines from the renderer to the
+controller.
+
+**The user-facing shape of it.** A Thai producer reads the entire delivery spec
+in Thai, presses Run, and gets `Preflight failed: Failed to fetch`. The label is
+invisible to every dictionary in the build, and the tail is a browser string. Not
+a sentence anybody outside this codebase can act on, in any language.
+
+**Code.** New `src/tools/preflight/app/paneText.js`:
+
+- `paneLabel(config, key, fallback)` reads the active locale LIVE rather than
+  closing over `state.config.ui.labels`. `app.js` swaps locale in place when the
+  language switcher fires; a captured `L` would keep serving the previous
+  language until the next full render.
+- `failureReason(config, err)` maps a failure to exactly one translated
+  sentence — by DOMException `.name` first (6 entries) and message pattern
+  second (5 rules), because a DOMException keeps the useful half of its identity
+  in `.name` and loses it the moment the browser rewords the message. An
+  unmatched error gets a vague-but-true sentence pointing at the console; a
+  specific wrong answer ("the disk is full" to somebody with 4TB free) costs
+  more than a vague right one.
+- `failureAlert` joins the two halves with `\n\n`, because `alert()` honours
+  newlines — unlike the one-line status strips everywhere else in PostFlowX,
+  which is why those use `": "`.
+
+`app.js`: 21 sites across 17 anchors, rewritten by an occurrence-guarded script
+that counted every anchor before writing a byte (three anchors are deliberately
+non-unique — the same rescan alert appears 3x, two `Importing files…` progress
+lines 2x each).
+
+**Two keys were read by code and absent from config.** `drop_hint`
+(`ui.js:419`) was missing from all seven configs, and `views` (`app.js:411`) was
+present only in `fil`. Both fell back to English in every language, including
+English, where the fallback happened to be identical and so nothing looked
+wrong. Both fixed.
+
+**Translation.** 174 cells added — 25 keys x 7 locales, minus `fil`'s existing
+`views`. Inserted textually with brace matching rather than by JSON round-trip;
+see Audit 30 for why that distinction cost an hour and mattered.
+
+**The technical detail is not lost.** Every site already called
+`console.error(e)` on the line above the alert. Taking the exception out of the
+dialog moves it to where a support engineer looks and away from where a producer
+looks. That is the entire trade, and it is only defensible while the
+`console.error` is there — so the gate now asserts each one still is.
+
+**AbortError stays untranslated, deliberately.** Both folder pickers filter
+`e?.name === "AbortError"` before reaching an alert, because that is the user
+closing a dialog. `failureReason` does not give it a sentence; it falls to the
+unknown one. Written into the header so the next reader sees a decision rather
+than an oversight: if a guard is ever dropped, a vague sentence is a smaller lie
+than a confident one about permissions.
+
+**Gate.** `tests-js/preflightPaneVoice.test.mjs`, 17 tests. Mutation-proven
+**16/16 caught**: a reverted alert, a failure dialog going back to pasting the
+exception, a reverted progress label, a meta line losing its translation, a
+deleted `console.error`, a deleted `AbortError` guard, a locale losing a key, a
+translator pasting the English back, a dropped `{placeholder}`, the English
+config drifting from the code fallback, a renderer-read key removed again,
+`failureReason` flattened to one answer, the name/message tables swapped, the
+exception appended "just for support", a blank cell beating the fallback, and
+`paneText` ceasing to substitute. All 16 files restored byte-for-byte and
+verified.
+
+The gate's first three real catches were its own author's — see Audit 30.
+
+**Still open.** The 174 new cells are machine-authored and want a native-speaker
+pass, which brings this run's total to 829 machine-authored strings. Ten label
+keys in the configs are read by nothing at all; five of those exist only in `en`
+and `fil`. `src/tools/visionscope/*` has no i18n of any kind.
+
+Commits: `4a6d778`.

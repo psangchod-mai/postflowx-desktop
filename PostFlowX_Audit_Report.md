@@ -3551,3 +3551,107 @@ diagnosis, not a gate hole.
   error-rendering behaviour used by seven modules, with its own blast radius,
   and it is not being made at the tail of a loop run on the strength of one
   language. Recorded here so the option is visible.
+
+---
+
+## Audit 30 — the Preflight label config, and three errors of my own
+
+### New species
+
+**`untranslated-alert-in-a-translated-pane`** — 8 sites, all fixed.
+`src/tools/preflight/app/app.js` had nine `alert()` calls. Exactly one read a
+label from config; eight were English literals, and five of those appended an
+exception's own text. The pane around them ships ~148K of translated check
+content in seven locales and its renderer follows the label convention at
+nineteen sites. The single conforming call site is the evidence: this was not a
+decision to ship English, it was a convention that never crossed from the
+renderer into the controller.
+
+**`key-read-by-code-but-absent-from-config`** — 2 keys, both fixed.
+`drop_hint` is read at `ui.js:419` and existed in none of the seven configs.
+`views` is read at `app.js:411` (`L.views || "Views"`) and existed only in `fil`
+(`"Mga view"`). Both silently served the English fallback in every language.
+This species is invisible in English review, because in English the fallback and
+the correct string are the same bytes — the defect only has a visible shape in
+the other six languages.
+
+**`orphaned-config-label`** — 10 keys, recorded, not changed.
+Present in config, read by nothing: `assign_to`, `assigned_all_run_again`,
+`assigned_all_run_again_plural`, `choose_asset_first`, `confirm_done`,
+`filter_blockers`, `filter_missing`, `filter_warnings`, `only`,
+`ready_to_deliver`. Corrected figures for the Preflight label block: **28 read /
+10 orphaned / 2 read-but-absent.** An earlier pass of mine reported 27 orphaned;
+see below for why that number was wrong and must not be repeated.
+
+**`locale-asymmetric-config`** — 5 keys, recorded, not fixed.
+`assign_to`, `filter_blockers`, `filter_missing`, `filter_warnings`,
+`ready_to_deliver` exist in `en` and `fil` only. All five are also orphaned, so
+they are inert today. Deliberately not machine-translated: adding five languages
+of translation to keys no code reads would make the config look more complete
+while making it less true. Recorded so whoever wires them up knows the other
+five locales are missing.
+
+### Three errors of my own, all caught by the gate I was writing
+
+Worth recording plainly, because the gate's first useful catches were its author,
+and that is the outcome a gate is supposed to have.
+
+**`helper-strip-regex-that-misses-the-last-object-property`.** My English-literal
+detector strips helper calls before scanning for bare strings, with a trailing
+lookahead of `(?=[,)\];]|$)`. Several of these calls are the *last property of an
+object literal*, so what follows the closing paren is ` }` — not a comma. The
+strip silently failed on `app.js:943` and the helper's own English fallback was
+reported as untranslated English. Correct class: `(?=[,)\];}]|$)`.
+
+**`count-of-mentions-mistaken-for-a-count-of-invocations`.** I derived the number
+of folder pickers by counting lines matching `showDirectoryPicker`, which found
+three: a comment mentioning it, a `typeof … === "function"` feature test, and the
+actual `await`. Only the last can throw. I had excluded the `typeof` lines and not
+the comments. Correct matcher: `/await\s+window\.showDirectoryPicker\s*\(/` with
+comment lines stripped first.
+
+**`comment-asserting-behaviour-the-function-lacks`, fifth occurrence this run —
+this time in my own header.** `paneText.js` claimed "Three call sites filter
+`e?.name === "AbortError"`". There are two, at `app.js:349` and `:1107`. The gate
+caught it, and the fix was to name the two functions (`rescanFolderAndRun`,
+`onPickForReq`) rather than state a count, and to have the test derive the
+expected guard count from the picker count in source instead of hardcoding it.
+A comment that states a number ages badly; a comment that names the code does not.
+
+### And one process error, from the previous segment
+
+**`format-normalised-by-a-round-trip`.** My first script for adding 174 config
+cells parsed each JSON file, added keys, and re-serialised with
+`json.dumps(indent=2)`. The diff came back 199 insertions / 25 deletions instead
+of the expected additions-only shape. Grepping every deleted line showed why:
+five of the seven configs (`id`, `ja`, `ko`, `th`, `zh-TW`) indent part of their
+`buttons` block with a literal TAB followed by six spaces, and `fil` alone ends
+with a trailing newline. A round-trip destroys both.
+
+Reverted and redone as a textual insert: locate the `"labels": {` body by
+counting braces, read the indent from the last existing label line, splice the
+new rows in before the closing brace, then re-parse the result as JSON to prove
+the splice is valid. Final diff: **181 insertions / 7 deletions**, the seven
+deletions being the previous last-label lines re-emitted with a trailing comma.
+
+The general rule: **a JSON round-trip is not a safe way to add a key to a
+hand-maintained config file.** And the only way to see that it wasn't safe is to
+read every deleted line in the diff, not the insertion count.
+
+### Verification
+
+`tests-js/preflightPaneVoice.test.mjs`, 17 tests, mutation-proven 16/16 with all
+files restored byte-for-byte. `npm run build-verify` exit 0 (the new gate is
+picked up by the runner without configuration); `npm run build:renderer` exit 0,
+377 files.
+
+### Still open
+
+- 174 machine-authored cells here, 829 across this run, all wanting a
+  native-speaker pass. This number should be reported every time, not amortised.
+- The 10 orphaned keys: either the code should read them or the config should
+  drop them. Not a decision to take at the tail of a loop run.
+- `src/tools/visionscope/*` (app.js 227 lines, popup.js 212) has no i18n of any
+  kind. Clean files, unblocked, a good candidate for the next iteration.
+- `visualQcModal/index.js:1470`/`:1477` — `seekTo`'s bare `'Seek failed'` /
+  `'Seek timeout'`. Still the cheapest remaining fix in the codebase.
