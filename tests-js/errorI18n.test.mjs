@@ -35,6 +35,7 @@ const friendlySrc = readFileSync(SRC_DIR + 'core/friendlyError.js', 'utf8');
 const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
 const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
 const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
+const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
 const i18nSrc = readFileSync(SRC_DIR + 'modules/i18n.js', 'utf8');
 
 const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
@@ -108,6 +109,10 @@ const SCANNED = [
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },
+  // Same surface, other end: proResProxy says why a proxy BUILD failed;
+  // playableMedia says why PLAYBACK failed, and feeds the same onProxyFail
+  // status strips. Three of its hints were English literals until iteration 28.
+  { file: 'core/playableMedia.js', src: playableMediaSrc, expected: 6 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

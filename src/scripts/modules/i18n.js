@@ -3475,6 +3475,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "미디어 도우미가 응답을 멈췄습니다",
     "the file could not be handed to the media helper": "파일을 미디어 도우미에 전달하지 못했습니다",
     "this file could not be converted for preview": "이 파일을 미리보기용으로 변환하지 못했습니다",
+    "mpv is not installed on this machine": "이 컴퓨터에 mpv가 설치되어 있지 않습니다",
+    "the mpv player did not start": "mpv 플레이어가 시작되지 않았습니다",
+    "this file could not be opened for playback": "이 파일을 재생용으로 열지 못했습니다",
+    "neither the built-in player nor the system player could open this file": "내장 플레이어와 시스템 플레이어 모두 이 파일을 열지 못했습니다",
+    "PostFlowX could not prepare this file for playback": "PostFlowX가 이 파일을 재생할 수 있도록 준비하지 못했습니다",
+    "Create a preview proxy instead?": "대신 미리보기 프록시를 만들까요?",
     "the source file could not be found — it may have moved": "원본 파일을 찾을 수 없습니다 — 이동되었을 수 있습니다"
   },
   ja: {
@@ -3549,6 +3555,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "メディアヘルパーが応答しなくなりました",
     "the file could not be handed to the media helper": "ファイルをメディアヘルパーに渡せませんでした",
     "this file could not be converted for preview": "このファイルをプレビュー用に変換できませんでした",
+    "mpv is not installed on this machine": "このコンピューターに mpv がインストールされていません",
+    "the mpv player did not start": "mpv プレーヤーが起動しませんでした",
+    "this file could not be opened for playback": "このファイルを再生用に開けませんでした",
+    "neither the built-in player nor the system player could open this file": "内蔵プレーヤーとシステムプレーヤーのどちらもこのファイルを開けませんでした",
+    "PostFlowX could not prepare this file for playback": "PostFlowX はこのファイルを再生できる状態にできませんでした",
+    "Create a preview proxy instead?": "代わりにプレビュー用プロキシを作成しますか？",
     "the source file could not be found — it may have moved": "元のファイルが見つかりません — 移動された可能性があります"
   },
   "zh-TW": {
@@ -3623,6 +3635,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "媒體輔助程式停止回應",
     "the file could not be handed to the media helper": "無法將檔案交給媒體輔助程式",
     "this file could not be converted for preview": "無法將這個檔案轉換為預覽",
+    "mpv is not installed on this machine": "這台電腦未安裝 mpv",
+    "the mpv player did not start": "mpv 播放器未能啟動",
+    "this file could not be opened for playback": "無法開啟這個檔案進行播放",
+    "neither the built-in player nor the system player could open this file": "內建播放器與系統播放器都無法開啟這個檔案",
+    "PostFlowX could not prepare this file for playback": "PostFlowX 無法將這個檔案準備成可播放的狀態",
+    "Create a preview proxy instead?": "要改為建立預覽代理檔嗎？",
     "the source file could not be found — it may have moved": "找不到原始檔案 — 它可能已被移動"
   },
   th: {
@@ -3697,6 +3715,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "ตัวช่วยสื่อหยุดตอบสนอง",
     "the file could not be handed to the media helper": "ส่งไฟล์ไปยังตัวช่วยสื่อไม่ได้",
     "this file could not be converted for preview": "แปลงไฟล์นี้เพื่อดูตัวอย่างไม่ได้",
+    "mpv is not installed on this machine": "เครื่องนี้ยังไม่ได้ติดตั้ง mpv",
+    "the mpv player did not start": "ตัวเล่น mpv ไม่เริ่มทำงาน",
+    "this file could not be opened for playback": "เปิดไฟล์นี้เพื่อเล่นไม่ได้",
+    "neither the built-in player nor the system player could open this file": "ทั้งตัวเล่นในตัวและตัวเล่นของระบบเปิดไฟล์นี้ไม่ได้",
+    "PostFlowX could not prepare this file for playback": "PostFlowX เตรียมไฟล์นี้ให้พร้อมเล่นไม่ได้",
+    "Create a preview proxy instead?": "จะสร้างไฟล์พร็อกซีสำหรับดูตัวอย่างแทนไหม",
     "the source file could not be found — it may have moved": "ไม่พบไฟล์ต้นฉบับ — อาจถูกย้ายไปแล้ว"
   },
   id: {
@@ -3771,6 +3795,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "pembantu media berhenti merespons",
     "the file could not be handed to the media helper": "berkas tidak dapat diserahkan ke pembantu media",
     "this file could not be converted for preview": "berkas ini tidak dapat dikonversi untuk pratinjau",
+    "mpv is not installed on this machine": "mpv belum terpasang di komputer ini",
+    "the mpv player did not start": "pemutar mpv tidak mau berjalan",
+    "this file could not be opened for playback": "berkas ini tidak dapat dibuka untuk diputar",
+    "neither the built-in player nor the system player could open this file": "pemutar bawaan maupun pemutar sistem tidak dapat membuka berkas ini",
+    "PostFlowX could not prepare this file for playback": "PostFlowX tidak dapat menyiapkan berkas ini untuk diputar",
+    "Create a preview proxy instead?": "Buat proksi pratinjau sebagai gantinya?",
     "the source file could not be found — it may have moved": "berkas sumber tidak ditemukan — mungkin sudah dipindahkan"
   },
   fil: {
@@ -3845,6 +3875,12 @@ const ERROR_DICT = {
     "the media helper stopped responding": "huminto sa pagtugon ang media helper",
     "the file could not be handed to the media helper": "hindi maipasa ang file sa media helper",
     "this file could not be converted for preview": "hindi ma-convert ang file na ito para sa preview",
+    "mpv is not installed on this machine": "Hindi naka-install ang mpv sa computer na ito",
+    "the mpv player did not start": "Hindi nag-start ang mpv player",
+    "this file could not be opened for playback": "Hindi mabuksan ang file na ito para i-play",
+    "neither the built-in player nor the system player could open this file": "Hindi mabuksan ang file na ito ng built-in player at ng system player",
+    "PostFlowX could not prepare this file for playback": "Hindi naihanda ng PostFlowX ang file na ito para i-play",
+    "Create a preview proxy instead?": "Gumawa na lang ba ng preview proxy?",
     "the source file could not be found — it may have moved": "hindi makita ang source file — maaaring nailipat na ito"
   }
 };

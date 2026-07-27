@@ -27,6 +27,7 @@
  */
 
 import { pfxAcquireObjectUrl, pfxReleaseObjectUrl } from './mediaCache.js';
+import { friendlyError, translate } from './friendlyError.js';
 import { sharedMediaOpen } from '../modules/native_helper_client.js';
 import {
   getCachedProxyForFile,
@@ -274,6 +275,58 @@ function _startNativeAVPath(videoEl, file, nativePath, info, token, { onMode, on
   });
 }
 
+// ── Why playback failed, in words that are true ──────────────────────────────
+//
+// The MPV catch below used to read:
+//
+//     `Direct ProRes playback failed (${err.message.includes('not found')
+//       ? 'mpv not installed' : err.message}). Create proxy fallback?`
+//
+// Two faults, both of the same kind: the branch decides "mpv not installed" by
+// looking for the English substring "not found" anywhere in the message, and
+// the default hands the raw exception straight to a status strip. Measured
+// against what mpv_engine.js actually throws, the second one is the common
+// case — _waitForSocket rejects with
+// "MPV socket not created at /var/folders/…/mpv-3.sock within 4000ms", which
+// contains no "not found", so a colourist whose mpv is installed but wedged
+// reads a temp-directory socket path where a sentence should be. Meanwhile the
+// substring test would call a *file* that could not be found an mpv install
+// problem.
+//
+// Each pattern is a rejection this app's own code throws by name:
+// mpv_engine.js:109 (binary missing), mpv_engine.js:99 (window never came up),
+// mpvPlayer.js:52 (the main process said no), and the 15 s IPC timeout around
+// it. playableMediaFailure.test.mjs reads those throws back out of the source,
+// so a rejection nobody classified fails the suite instead of reaching a user.
+//
+// Thunks, not values: translate() reads the language chosen *now*, and this
+// table is built at module load, before there is one.
+const _PLAYBACK_FAIL_REASONS = [
+  [/mpv not found|MPV_NOT_FOUND/i,   () => translate('mpv is not installed on this machine')],
+  [/socket not created|MPV open failed|MPV IPC error|timed out|\bTimeoutError\b/i,
+                                     () => translate('the mpv player did not start')],
+];
+
+/**
+ * One line, never two. Every onProxyFail consumer writes this into a one-line
+ * status element whose CSS this module does not own.
+ *
+ * @param {unknown} err  Whatever the engine's open() rejected with.
+ * @returns {string} A clause that can follow "<filename> — ".
+ */
+export function _playbackFailReason(err) {
+  const name = err?.name && err.name !== 'Error' ? `${err.name}: ` : '';
+  const msg = `${name}${String(err?.message || err || '')}`;
+  for (const [re, say] of _PLAYBACK_FAIL_REASONS) {
+    if (re.test(msg)) return say();
+  }
+  // friendlyError knows the permission, disk and network cases and says them
+  // plainly; when it recognises nothing it answers with an empty title, and the
+  // only honest thing left is that the file did not open.
+  const f = friendlyError(msg);
+  return f.title ? f.message : translate('this file could not be opened for playback');
+}
+
 // ── MPVPlayerEngine path ──────────────────────────────────────────────────────
 
 function _startMPVPath(videoEl, file, nativePath, info, token, {
@@ -306,7 +359,7 @@ function _startMPVPath(videoEl, file, nativePath, info, token, {
     unmountNativeCanvas(videoEl);
     // MPV failed — offer proxy as last resort
     onProxyFail?.(
-      `Direct ProRes playback failed (${err.message.includes('not found') ? 'mpv not installed' : err.message}). Create proxy fallback?`
+      `${file?.name || 'Clip'} — ${_playbackFailReason(err)}. ${translate('Create a preview proxy instead?')}`
     );
   });
 }
@@ -335,8 +388,14 @@ function _probeThenNativeFallback(videoEl, file, nativePath, blobUrl, token, cbs
   const goNative = () => {
     if (settled || videoEl[_K.token] !== token) return;
     settled = true; cleanup();
-    if (videoEl._pfxNativeAttempted) {            // native already failed — don't loop
-      onProxyFail?.(`${file.name} — could not decode with the native player`);
+    if (videoEl._pfxNativeAttempted) {            // native already tried — don't loop
+      // Not "could not decode with the native player": _pfxNativeAttempted is
+      // set on *entry* to _startNativeAVPath, so it proves the native path was
+      // tried, not that a decoder rejected the frames. An engine that failed to
+      // open, a missing output directory and a genuine unsupported codec all
+      // arrive here identically. What is certainly true is that both players
+      // have now had a turn and neither produced a picture.
+      onProxyFail?.(`${file.name} — ${translate('neither the built-in player nor the system player could open this file')}`);
       return;
     }
     _startNativeAVPath(videoEl, file, nativePath, null, token, {
@@ -440,7 +499,9 @@ function _startChromiumPath(videoEl, file, nativePath, token, {
       onStatus?.(PLAYABLE_STATUS.direct);
       return;
     }
-    onProxyFail?.(`${file.name} — could not create playback URL`);
+    // "could not create playback URL" is a sentence about our plumbing. The
+    // person reading it wants to know whether they can play the clip.
+    onProxyFail?.(`${file.name} — ${translate('PostFlowX could not prepare this file for playback')}`);
     return;
   }
   videoEl[_K.blobUrl] = blobUrl;
