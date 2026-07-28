@@ -4443,10 +4443,12 @@ Effects' ExtendScript engine, not as JS in this module — they can't
 directly call `nominalBase()` and would instead need either a pre-rounded
 fps value interpolated into the generated script text, or an equivalent
 inline rounding helper embedded in the generated ExtendScript itself.
-Left unfixed pending a decision on that approach. A fourth, distinct
-helper — `tcToFramesLocal` (~line 1564, defaulting to `__QT_FPS`) inside a
-"QT custom controls (24fps, 1-based frames)" section — was noted but not
-yet investigated for the same bug pattern. All items carried from
-Iteration 52 remain pending and unchanged.
+Left unfixed pending a decision on that approach. A fourth helper —
+`tcToFramesLocal` (~line 1564, defaulting to `__QT_FPS`) inside a "QT
+custom controls (24fps, 1-based frames)" section — was checked and ruled
+out: `__QT_FPS` is a hardcoded `const __QT_FPS = 24` (line 1267), not a
+parser-derived fractional rate, so this helper never sees a fractional
+fps and is not an instance of this bug. All items carried from Iteration
+52 remain pending and unchanged.
 
 Commits: `aae10a9`.

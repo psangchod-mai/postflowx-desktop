@@ -6051,11 +6051,12 @@ identical fractional-fps-as-multiplier bug but run inside Adobe After
 Effects' ExtendScript engine as generated text, not as JS in this module —
 left unfixed pending a decision on whether to interpolate a pre-rounded
 fps into the generated script text or embed an inline rounding helper in
-the ExtendScript itself. A fourth, distinct helper —
+the ExtendScript itself. A fourth helper —
 `tcToFramesLocal(tc, fps=__QT_FPS)` at ~line 1564, inside a "QT custom
 controls (24fps, 1-based frames)" section — was surfaced by the same grep
-sweep but not yet investigated; given the `__QT_FPS` naming it may already
-be pinned to a safe integer default, but this has not been confirmed. All
-items carried from Iteration 52 remain pending and unchanged.
+sweep and checked: `__QT_FPS` is `const __QT_FPS = 24` (line 1267), a
+hardcoded integer, not a parser-derived fractional rate, so this helper
+never receives a fractional fps and is ruled out as an instance of this
+bug. All items carried from Iteration 52 remain pending and unchanged.
 
 Commits: `aae10a9`.
