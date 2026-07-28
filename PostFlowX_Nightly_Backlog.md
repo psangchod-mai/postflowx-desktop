@@ -4396,3 +4396,57 @@ citations, the deferred `otio.js`/`pfx_native_engine.js` items) remain
 pending and unchanged.
 
 Commits: `c94f9db`.
+
+## Iteration 53 — amf_convert.js Nuke export used raw fractional fps as a timecode frame-base
+
+**Found.** `amf_convert.js` defines `tcToFrames(tc, fps)` three separate
+times in this file — a module-scope copy used directly by
+`exportNukeNK()`'s master-mode segment/Root-range building, plus two more
+embedded inside ExtendScript/JSX template-literal text generated for
+After Effects (`__buildAEPCommonJSX()` and `exportAEJSX()`). The
+module-scope copy multiplied the timecode's `HH:MM:SS` component directly
+by `fps` — `base?.fps || DEFAULT_FPS`, the parser's raw fractional NTSC
+rate (23.976/29.97/59.94) — instead of the nominal whole-frame base
+(24/30/60) a timecode's `FF` field actually counts against. This is the
+same bug species already fixed in `filters.js` (Iteration 50) and
+`eventDuration.js`, just not yet converged into this file: a 23.976fps
+EDL's `"00:00:05:00"` (5 real seconds) converted to `119.88` frames
+instead of `120`, producing a non-integer `recInF`/`recOutF`/`durF` and a
+non-integer `Root.last_frame` in the exported `.nk` script.
+
+**Done.** Added the `nominalBase` import from `utils_time.js` and changed
+the module-scope `tcToFrames`'s return statement to multiply by
+`nominalBase(fps)` instead of raw `fps`. New test:
+`tests-js/amfConvert_fractionalFpsTcToFrames.test.mjs` — extracts just the
+module-scope definition as text (same `document`-at-module-scope
+constraint as the existing `amfConvert_dropframe_tc.test.mjs`) and
+evaluates it with `new Function`, asserting 23.976/29.97/59.94fps
+timecodes now convert to whole-frame counts on their nominal base while
+whole-number fps and drop-frame-semicolon handling are unaffected. Also
+updated the pre-existing `amfConvert_dropframe_tc.test.mjs`, which
+extracts and evaluates all three `tcToFrames` copies generically — its
+harness now supplies a `nominalBase` stub to the evaluated function scope
+so definition #1 (now referencing it) doesn't throw `ReferenceError`.
+
+**Verification.** Mutation-tested by reverting `amf_convert.js` via
+`git stash push -- <file>` and rerunning the new test: it failed exactly
+as predicted (`119.88`/`107892`/`59.94` instead of `120`/`108000`/`60`);
+restoring the fix (`git stash pop`) made it pass again.
+
+**Gate.** `npm run build:renderer` run first (377 files, git-ignored).
+Full `npm run build-verify` exit 0.
+
+**Still open.** The two ExtendScript/JSX-embedded `tcToFrames` copies
+(inside `__buildAEPCommonJSX()` and `exportAEJSX()`) share the same
+fractional-fps-as-multiplier bug but execute as text inside Adobe After
+Effects' ExtendScript engine, not as JS in this module — they can't
+directly call `nominalBase()` and would instead need either a pre-rounded
+fps value interpolated into the generated script text, or an equivalent
+inline rounding helper embedded in the generated ExtendScript itself.
+Left unfixed pending a decision on that approach. A fourth, distinct
+helper — `tcToFramesLocal` (~line 1564, defaulting to `__QT_FPS`) inside a
+"QT custom controls (24fps, 1-based frames)" section — was noted but not
+yet investigated for the same bug pattern. All items carried from
+Iteration 52 remain pending and unchanged.
+
+Commits: `aae10a9`.

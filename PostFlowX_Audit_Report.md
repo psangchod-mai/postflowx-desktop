@@ -5952,3 +5952,110 @@ logic itself) were read for context but not independently audited for
 further species of bugs; that remains a candidate for a future iteration.
 
 Commits: `c94f9db`.
+
+## Iteration 53 — Nuke export timecode used raw fractional fps as frame-base (src/scripts/modules/amf_convert.js)
+
+**New species — no, converged instance.** This is not a new species; it's
+the same fps-fractional-as-frame-base bug already fixed in `filters.js`
+(Iteration 50) and `eventDuration.js`, now converged into a third file
+that hadn't picked up the shared fix yet.
+
+**Why this file.** `amf_convert.js` was on this iteration's 84-file
+non-dirty candidate list (built via `comm -23` between a full source-file
+listing and `git status --short`'s dirty-file list). A scouting agent
+flagged `tcToFrames(tc, fps)`'s frame-count arithmetic; I independently
+re-verified the claim by reading the actual function, its caller
+(`exportNukeNK()`), and confirming `nominalBase()`'s existence and export
+signature in `utils_time.js` before touching anything.
+
+`amf_convert.js` actually defines `tcToFrames` **three times** — this
+became clear only after finding a pre-existing test,
+`tests-js/amfConvert_dropframe_tc.test.mjs`, which already extracts and
+tests all three copies for an unrelated, already-fixed bug (drop-frame
+semicolon handling). Definition #1 is module-scope, directly-executed JS
+used by `exportNukeNK()`'s master-mode segment/Root-range building — the
+one actually fixed this iteration. Definitions #2 and #3 live inside
+`__buildAEPCommonJSX()` and `exportAEJSX()`, both of which build and
+return template-literal strings of ExtendScript/JSX *source text* meant
+to be written out and executed inside Adobe After Effects' own scripting
+engine — a different execution context that cannot `import` from
+`utils_time.js`. Both embedded copies contain the identical `* fps`
+multiplication bug, but fixing them requires either interpolating a
+pre-rounded fps value into the generated script text or embedding an
+equivalent rounding helper inline in the ExtendScript itself — scoped out
+of this iteration as a "still open" item rather than attempted alongside
+the module-scope fix, consistent with prior iterations' narrow-scope
+pattern.
+
+**The fix.** Added `import { nominalBase } from "./utils_time.js";` and
+changed definition #1's return statement:
+
+```js
+// Before
+return ((hh * 3600 + mm * 60 + ss) * fps) + ff;
+
+// After
+return ((hh * 3600 + mm * 60 + ss) * nominalBase(fps)) + ff;
+```
+
+`fps` here is `base?.fps || DEFAULT_FPS` — the EDL parser's raw fractional
+NTSC rate (23.976/29.97/59.94) when the source is NTSC-family, not the
+nominal whole-frame base (24/30/60) a timecode's `FF` field is actually
+counted against. A 23.976fps EDL's `"00:00:05:00"` (5 real seconds, which
+should be exactly 120 frames at the 24-frame nominal base) was instead
+computed as `119.88` — a non-integer frame count that propagated into
+`recInF`/`recOutF`/`durF` for every shot segment and into
+`rootFirst`/`rootLast` (the exported `.nk` script's `Root.first_frame`/
+`Root.last_frame`), corrupting the generated Nuke script's frame range for
+any project shot on a fractional NTSC rate.
+
+**Test approach.** `amf_convert.js` touches `document` at module scope,
+so it can't be `import()`'d under plain Node — same constraint as the
+pre-existing `amfConvert_dropframe_tc.test.mjs`. The new test,
+`tests-js/amfConvert_fractionalFpsTcToFrames.test.mjs`, extracts just
+definition #1's body as text via the same regex pattern and evaluates it
+with `new Function`, providing a local `nominalBase` stub matching the
+real helper's rounding behavior, then asserts 23.976/29.97/59.94fps
+timecodes convert to whole-frame counts on their nominal base (120/108000/
+60 respectively) while whole-number fps and drop-frame-semicolon handling
+remain unaffected. Also had to update the pre-existing
+`amfConvert_dropframe_tc.test.mjs`: its generic harness evaluates all
+three `tcToFrames` copies with only `tc`/`fps` in scope, so once
+definition #1 started referencing `nominalBase`, that pre-existing test's
+own run against definition #1 threw `ReferenceError: nominalBase is not
+defined`. Fixed by adding the same `nominalBase` stub to that harness's
+evaluated scope — a required, minimal change to keep an existing
+regression test green, not a weakening of what it verifies (it still
+independently confirms the DF-semicolon behavior for all three
+definitions, including #1, exactly as before).
+
+**Verification.** Mutation-tested via `git stash push -- src/scripts/modules/amf_convert.js`
+/ `git stash pop` (scoped to this one file, verified via `git status`
+before/after given the repo's large body of pre-existing unrelated
+uncommitted WIP). With the fix reverted, the new test failed exactly as
+predicted: `119.88` instead of `120` at 23.976fps, `107892` instead of
+`108000` at 29.97fps, `59.94` instead of `60` at 59.94fps. With the fix
+restored, all 8 assertions in the new test passed, and the updated
+pre-existing test's all 10 assertions (3 definitions × 3 timecode cases,
+plus the definition-count check) also passed. Full `npm run
+build-verify` gate: `npm run build:renderer` run first (this file lives
+under `src/scripts/modules/`, part of `build-renderer.js`'s
+`SHARED_ITEMS`), producing a clean 377-file desktop build (git-ignored,
+not committed); full gate then exit 0 — companion pytest 259/7 unaffected,
+Node `test:node`/`test:js` all green including both amf_convert tests, all
+three security gates clean.
+
+**Still open.** The two ExtendScript/JSX-embedded `tcToFrames` copies
+(`__buildAEPCommonJSX()` ~line 4353, `exportAEJSX()` ~line 5917) share the
+identical fractional-fps-as-multiplier bug but run inside Adobe After
+Effects' ExtendScript engine as generated text, not as JS in this module —
+left unfixed pending a decision on whether to interpolate a pre-rounded
+fps into the generated script text or embed an inline rounding helper in
+the ExtendScript itself. A fourth, distinct helper —
+`tcToFramesLocal(tc, fps=__QT_FPS)` at ~line 1564, inside a "QT custom
+controls (24fps, 1-based frames)" section — was surfaced by the same grep
+sweep but not yet investigated; given the `__QT_FPS` naming it may already
+be pinned to a safe integer default, but this has not been confirmed. All
+items carried from Iteration 52 remain pending and unchanged.
+
+Commits: `aae10a9`.
