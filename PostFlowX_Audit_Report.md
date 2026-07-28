@@ -5520,3 +5520,119 @@ target. `otio.js`'s dedup-key gap and `pfx_native_engine.js`'s start/stop
 latch (Iteration 41) remain deferred/off-limits respectively.
 
 Commits: `98e0dd2`.
+
+## Iteration 49 — `xml.js` Scale X/Scale Y wrongly also set the uniform `transform.scale`
+
+**New species.** Not a timecode bug at all — this iteration's find is in
+XMEML *effect parameter* parsing. The mechanism is a substring-exclusion
+guard that only accounts for one of two forms a lookup key can take: it
+correctly excludes the unspaced `"scalex"`/`"scaley"` (from a
+`<parameterid>` tag) but not the spaced `"scale x"`/`"scale y"` (from a
+`<name>` tag fallback), because `String.includes` requires a contiguous
+substring match and the space breaks it.
+
+**Why this file, this iteration.** `src/scripts/parsers/xml.js` was
+confirmed git-clean via `git status --short`. `extractFxFromClipitem`
+(starts at line 359) parses each `<filter><effect>`'s `<parameter>` list
+for `Basic Motion` effects into a `transform` object (`scale`, `scaleX`,
+`scaleY`, `rotation`, etc.), which is spread directly into the parser's
+output event (`...(fx || {})` around line ~1220, so callers read
+`event.transform.scale`, not a nested `fx` key). Each parameter's lookup
+`key` is `getText(param, 'parameterid')` if present, else falls back to the
+lowercased `getText(param, 'name')` text (line ~476):
+
+```js
+const pid = (getText(param, 'parameterid', '') || '').trim().toLowerCase();
+const pname = (getText(param, 'name', '') || '').trim().toLowerCase();
+const key = pid || pname;
+```
+
+Before this fix, the generic/uniform-scale branch was:
+
+```js
+if (key.includes('scale') && !key.includes('scalex') && !key.includes('scaley')){
+  let scaleVal = readNum(val);
+  scaleVal = chooseMotionValueFromKeys(scaleVal, kfs, readNum, sameNum, n => Math.abs(Number(n)) > 0.001);
+  if (scaleVal != null) t.scale = scaleVal;
+  if (kfs) t.scaleKeys = kfs;
+}
+if (key === 'scalex' || key === 'scale x') {
+  const v = readNum(val); if (v != null) t.scaleX = v > 10 ? v / 100 : v;
+}
+if (key === 'scaley' || key === 'scale y') {
+  const v = readNum(val); if (v != null) t.scaleY = v > 10 ? v / 100 : v;
+}
+```
+
+The axis-specific branches immediately below already handle both the
+unspaced AND spaced forms (`key === 'scalex' || key === 'scale x'`), but
+the generic branch's exclusion only checked the unspaced substrings. A real
+XMEML file with `<parameter><name>Scale X</name><value>150</value></parameter>`
+and no `<parameterid>` produces `key = "scale x"`. `"scale x".includes('scale')`
+is `true` (fires the generic branch) and `"scale x".includes('scalex')` is
+`false` (the space breaks the substring match, so the exclusion never
+fires) — so a Scale X parameter wrongly set BOTH `transform.scaleX` (from
+the axis-specific branch, correctly) AND `transform.scale` (from the
+generic branch, incorrectly), corrupting any downstream logic that treats
+`transform.scale` as "this clip has a single uniform scale factor."
+
+**The fix.** Added an explicit equality check for the spaced axis-specific
+forms to the generic branch's guard (line 478):
+
+```js
+if (key.includes('scale') && !key.includes('scalex') && !key.includes('scaley') && key !== 'scale x' && key !== 'scale y'){
+```
+
+`key !== 'scale x'`/`'scale y'` is a safe addition here — `key` is already
+`.trim().toLowerCase()`'d, and the axis-specific branches use the exact
+same two literal strings for their own matching, so this closes the gap
+using the same vocabulary the file already relies on elsewhere, rather than
+introducing a new pattern.
+
+**Test approach.** New file `test/parsers/xml_scale_axis.test.mjs`.
+`parseXMEML` is `xml.js`'s only export (confirmed via
+`grep -n "^export\|module.exports"`), and `extractFxFromClipitem` is a
+private, unexported function, so the test builds a minimal synthetic XMEML
+XML string (one `sequence` → `clipitem` with a `Basic Motion` `<filter>`
+containing a single `<parameter>`) and asserts through the real parser's
+output (`res.events[0].transform`), following the existing
+`xml.test.mjs`'s inline-string-builder pattern rather than adding a new
+fixture file for a single-parameter scenario:
+
+```js
+test('a Scale X parameter sets transform.scaleX only, not transform.scale', () => {
+  const res = parseXMEML(buildWithMotionParam('Scale X', '150'));
+  const tf = res.events[0].transform;
+  assert.equal(tf.scaleX, 1.5, '150 > 10, so normalized to a 1.5 multiplier');
+  assert.equal(tf.scale, undefined, 'an axis-specific param must not also set the uniform scale');
+});
+```
+
+Plus the equivalent for `Scale Y` (`75` → `0.75`), plus a plain `Scale`
+control case (`150` → `tf.scale === 150`, `tf.scaleX`/`scaleY` both
+`undefined`) confirming the fix doesn't disable the intended generic-scale
+case it was never meant to touch.
+
+**Verification.** Mutation-proven: reverted the guard to its original
+unfixed condition (full-file backup at `/tmp/xml_js_backup_iter49.js`),
+reran the new test — the Scale X and Scale Y cases failed exactly as
+predicted (`tf.scale` was `150`/`75` instead of `undefined`), the plain
+`Scale` control still passed. Restored from backup, confirmed byte-identical
+via `diff`, reran — 3/3 green. Full `npm run build-verify` gate: exit 0
+(log: `/tmp/gate49.log`), new test's assertions visible in the log, all
+pre-existing Node test-runner suites and companion pytest (255 passed, 7
+skipped) unaffected, XSS/XXE/fail-open scans clean. This is a `src/`-facing
+renderer change per `CLAUDE.md`, so `npm run build:renderer` was run
+afterward (377 files regenerated into the git-ignored `dist/desktop/`, not
+committed).
+
+**Still open.** The same spaced-vs-unspaced key mismatch could plausibly
+recur for other axis-pair `Basic Motion`/`Crop`/`Center` parameters in
+`xml.js` that mix `<parameterid>` and `<name>`-only forms — not yet swept
+beyond Scale. Iteration 48's `int(fps)` grep sweep across the rest of
+`companion/src/postflowx_companion/` remains pending (its two known
+instances in `standard_media_backend.py`/`aaf_export.py` are still dirty
+files, off-limits). `otio.js`'s dedup-key gap and `pfx_native_engine.js`'s
+start/stop latch (Iteration 41) remain deferred/off-limits respectively.
+
+Commits: `739ac3a`.

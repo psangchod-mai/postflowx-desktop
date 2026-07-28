@@ -4190,3 +4190,59 @@ of the companion Python package beyond `api.py` remains largely unswept
 still off-limits (dirty file) for the latter.
 
 Commits: `98e0dd2`.
+
+## Iteration 49 — xml.js Scale X/Scale Y wrongly also set the uniform transform.scale
+
+**Found.** `src/scripts/parsers/xml.js`'s `extractFxFromClipitem` parses a
+clip's `Basic Motion` filter parameters into a `transform` object. Each
+`<parameter>`'s lookup key is `parameterid` if present, else falls back to
+the lowercased `<name>` text. The generic/uniform-scale branch guards
+against double-handling axis-specific parameters via
+`key.includes('scale') && !key.includes('scalex') && !key.includes('scaley')`
+— but the axis-specific branches immediately below it recognize BOTH the
+unspaced form (`'scalex'`/`'scaley'`, from a `<parameterid>` tag) and the
+*spaced* form (`'scale x'`/`'scale y'`, from a `<name>Scale X</name>`/
+`<name>Scale Y</name>` tag with no `<parameterid>`). `"scale x".includes('scalex')`
+is `false` — there's no contiguous `"scalex"` substring across the space —
+so the exclusion silently never fires for real-world XMEML files using the
+spaced `<name>`-only form. A Scale X/Scale Y parameter then wrongly set
+BOTH `transform.scaleX`/`scaleY` (correct, per-axis) AND `transform.scale`
+(the uniform field, which should only ever come from a true `Scale`
+parameter) — corrupting downstream consumers that read `transform.scale` as
+"this clip is uniformly scaled."
+
+**Done.** Added an explicit `key !== 'scale x' && key !== 'scale y'` clause
+to the generic-scale branch's guard, so the spaced axis-specific keys are
+excluded exactly like their unspaced counterparts already were. New test:
+`test/parsers/xml_scale_axis.test.mjs`. `parseXMEML` is `xml.js`'s only
+export, so the test builds a minimal synthetic XMEML string (one
+`clipitem` with a `Basic Motion` filter and a single parameter) and asserts
+through the real parser rather than calling the private, unexported
+`extractFxFromClipitem` directly. Three cases: a `Scale X` parameter (must
+set `scaleX` only), a `Scale Y` parameter (must set `scaleY` only), and a
+plain `Scale` parameter as a control (must still set the uniform `scale`
+field, confirming the fix didn't disable the intended generic case).
+Mutation-proven: reverted to the original unguarded condition, reran — the
+Scale X/Scale Y cases failed with `transform.scale` wrongly set (`150`/`75`
+instead of `undefined`), the plain-`Scale` control still passed; restored
+from backup (byte-identical via `diff`), 3/3 green again.
+
+**Gate.** Full `npm run build-verify` exit 0 (log: `/tmp/gate49.log`),
+including the new test's assertions and all pre-existing suites unaffected.
+This is a `src/`-facing renderer change, so `npm run build:renderer` was
+also run afterward to regenerate `dist/desktop/` (377 files, git-ignored,
+not committed).
+
+**Still open.** This same spaced-vs-unspaced substring mismatch pattern
+(`<name>`-only fallback keys containing a space where the `parameterid`
+form would not) may exist for other axis-pair parameters in `xml.js`
+(e.g. Center/Position, Rotation, Crop) — not yet swept. The rest of the
+companion Python package beyond `api.py` remains largely unswept (flagged
+in Iterations 43-48). The "nominal frame-rate base" `int(fps)` grep sweep
+flagged in Iteration 48 is still pending, and its two known instances
+(`standard_media_backend.py`, `aaf_export.py`) remain off-limits (dirty
+files). The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+start/stop latch (Iteration 41) are unchanged and still off-limits (dirty
+file) for the latter.
+
+Commits: `739ac3a`.
