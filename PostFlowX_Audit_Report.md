@@ -6561,3 +6561,110 @@ and unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") remains
 permanently excluded from scouting as confirmed dead code.
 
 Commits: `e94b10a`.
+
+## Iteration 59 — computeReformatParams: centerCrop used the contain scale instead of the cover scale (referenceMatchEngine.js)
+
+**New species.** A 10th distinct bug shape, distinct from all prior iterations:
+wrong branch-dependent formula selection. Unlike Iterations 48-50 (fps-base
+rounding), 51 (drop-frame misclassification), 52 (windowed-scan position
+tracking), 53 (fps-fractional-as-frame-base), 54 (cache identity collision),
+55 (TOCTOU race), 56 (match-key normalization gap), 57 (early-return skips
+collection), or 58 (partial propagation of a derived value across call
+sites), this bug is a case where a boolean/enum branch decision (`fit`) was
+computed correctly, but a *second, dependent* value (`scale`) that should
+have varied with that same branch was instead computed with a single
+hardcoded formula applied to both branches.
+
+**Why this file.** `src/scripts/features/vfxPull/referenceMatchEngine.js`
+exports `computeReformatParams(refWidth, refHeight, ocfWidth, ocfHeight,
+letterboxInfo)`, used by the VFX Pull "reframe match" feature to compute
+how to scale/crop an OCF camera frame onto a reference (QC/master) frame.
+Its sibling exports `estimateCDL` and `pickVisualMatch` were left untouched
+this iteration (already covered by `tests-js/cdlMatch.test.mjs` and
+`tests-js/visualMatch.test.mjs` respectively); `estimateCDL`'s dense
+median/patch-filtering SOP+power+saturation solve was flagged by the
+scouting agent as an area of residual risk but no concrete bug was found
+there.
+
+**The bug.** The function picks a `fit` mode by comparing aspect ratios:
+`fit = ocfAR >= refAR ? 'centerCrop' : 'fit'`. `'centerCrop'` means the OCF
+is proportionally wider than the reference (e.g. a 2.39:1 anamorphic plate
+matched onto a 16:9 reference) and must be scaled up to *cover* the
+reference on both axes, cropping the excess on the wider axis. `'fit'`
+means the OCF is proportionally narrower/taller and must be scaled down to
+*contain* within the reference, letterboxing the shorter axis. These are
+opposite scale formulas: cover needs `Math.max(scaleW, scaleH)` (grow until
+both axes are at least covered), contain needs `Math.min(scaleW, scaleH)`
+(shrink until neither axis overflows). The code computed `scale =
+Math.min(scaleW, scaleH)` unconditionally — correct for `'fit'`, wrong for
+`'centerCrop'`. For a 2048×858 OCF matched to a 1920×1080 reference: `fit`
+correctly resolves to `'centerCrop'` (OCF is wider), but the returned
+`scale` was `Math.min(1920/2048, 1080/858) = Math.min(0.9375, 1.2587...) =
+0.9375` — the *letterbox* factor — leaving a real gap of `1080 - 0.9375 ×
+858 ≈ 275px` uncovered on the vertical axis, exactly the defect a
+center-crop is supposed to eliminate. The correct cover factor is
+`Math.max(...) ≈ 1.2587`.
+
+Downstream, `computeReformatParams`'s return value is consumed in
+`src/scripts/features/vfxPull/vfxPullPanel.js` (~line 5292): `rp.scale`
+feeds a `scaleSane` sanity bound (`rp.scale > 0.25 && rp.scale < 8`, ~line
+5303) that affects a `confidence` score and can emit a warning (`Unusual
+scale ${rp.scale.toFixed(2)} — verify reformat manually.`, ~line 5307), and
+is stored directly into the job's reframe geometry (`scale: rp.scale`,
+~line 5316). That geometry later surfaces via `reformatScale` fields
+(~lines 2484, 4025), a `geometry.scale ?? job.reframe?.scale ?? 1` fallback
+(~line 5909), and a UI display (`job.reframe?.scale.toFixed(3)`, ~line
+7326) — ultimately feeding the FDL export. The practical effect: any
+wider-than-reference OCF (a very common conform scenario — anamorphic or
+wide-format camera plates matched to a 16:9 delivery reference) was
+reframed with a visible gap on one axis instead of a full-bleed center
+crop, while the confidence/warning logic and the "centerCrop" label both
+implied a correct, gap-free crop had been computed.
+
+**The fix.** Branch the scale formula on `fit` itself, so it always matches
+the semantics the label promises:
+```js
+const scale = fit === 'centerCrop' ? Math.max(scaleW, scaleH) : Math.min(scaleW, scaleH);
+```
+placed after `fit` is computed (reordered `scaleW`/`scaleH`/`ocfAR`/`refAR`/
+`fit` slightly so `scale` can reference `fit`). No other logic changed —
+the aspect-ratio comparison that selects `fit` was already correct.
+
+**Test approach.** New file `tests-js/computeReformatParams.test.mjs`, two
+scenarios: (1) a 2048×858 OCF vs. a 1920×1080 reference — asserts `fit ===
+'centerCrop'`, asserts `scale` equals `Math.max(scaleW, scaleH)` exactly
+(not just "some value"), and independently asserts `scale * ocfHeight >=
+refHeight` (the OCF's scaled height actually reaches/exceeds the reference
+height — a direct check of the "no letterbox gap" property, not just a
+formula-equality check that could pass for the wrong reason); (2) a
+1000×1000 OCF vs. the same reference — asserts `fit === 'fit'` and `scale
+=== Math.min(scaleW, scaleH)`, confirming the untouched branch still
+behaves correctly.
+
+**Verification.** Mutation-tested by `git stash push --
+src/scripts/features/vfxPull/referenceMatchEngine.js` (pathspec-scoped, not
+a full-tree stash) to revert only the fix, rerunning the test: 2 of 5
+assertions failed exactly as predicted — `scale` assertion reported `got
+0.9375, expected 1.2587412587412588`, and the height-coverage assertion
+failed (the `'fit'`-branch assertions were unaffected, confirming the
+mutation only broke the intended branch). `git stash pop` restored the fix;
+reran to confirm all 5 assertions passed again. `git status --short`
+confirmed no residual changes from the stash cycle. Ran the full `npm run
+build-verify` gate after staging the new test file by explicit `git add`
+(pre-empting the untracked-test-file gate failure hit in Iteration 58):
+clean pass — companion Python suite 261 passed / 7 skipped in 3.11s, `✓ XSS
+gate clean`, `✓ XXE gate clean`, `✓ Fail-open gate clean`.
+
+**Still open.** All items carried from Iterations 52–58 remain pending and
+unchanged; see prior entries. `src/scripts/parsers/fcpxm.js` (no trailing
+"l") remains permanently confirmed dead code, excluded from all future
+scouting. Two runner-up leads from this iteration's scouting pass, neither
+a confirmed bug, deferred to a future audit: `detectSpeedChange()` in
+`src/scripts/modules/conform/audioMatcher.js` (`Math.min(srcFrames -
+offsetFrames, srcFrames)` — flagged as likely unreachable with current call
+sites, needs a dedicated look at whether a negative `offsetFrames` can ever
+occur), and `estimateCDL()` in `referenceMatchEngine.js` (dense
+median/patch-filtering SOP+power+saturation solve — no concrete bug found,
+but density/complexity make it worth a dedicated audit pass).
+
+Commits: `3e3a941`.

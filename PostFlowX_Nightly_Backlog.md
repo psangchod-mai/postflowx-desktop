@@ -4769,3 +4769,60 @@ unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") remains
 permanently excluded as dead code.
 
 Commits: `e94b10a`.
+
+## Iteration 59 — computeReformatParams used the "contain" scale even for centerCrop in referenceMatchEngine.js
+
+**Found.** `src/scripts/features/vfxPull/referenceMatchEngine.js`'s
+`computeReformatParams` picks a `fit` mode (`'centerCrop'` when the OCF is
+proportionally wider than the reference — e.g. a 2.39:1 anamorphic plate
+matched to a 16:9 reference — `'fit'`/letterbox otherwise), but computed
+`scale` as `Math.min(scaleW, scaleH)` unconditionally, regardless of which
+`fit` mode was selected. `Math.min` is the correct "contain" factor (shrink
+to fit entirely inside the target, leaving gaps) — a `'centerCrop'` result
+needs the "cover" factor, `Math.max(scaleW, scaleH)` (grow until the target
+is fully covered on both axes, cropping the excess). Whenever `fit`
+resolved to `'centerCrop'`, the returned `scale` silently produced
+letterbox/contain behavior instead — an unfilled gap on one axis — while
+`fit` and the generated `notes` string both still claimed "center crop."
+
+**Done.** Changed `scale` to branch on `fit`:
+`fit === 'centerCrop' ? Math.max(scaleW, scaleH) : Math.min(scaleW, scaleH)`.
+No other logic in the function needed to change — `fit`'s own
+aspect-ratio-comparison selection logic was already correct, only the
+scale computation was disconnected from it.
+
+**Tests.** `tests-js/computeReformatParams.test.mjs` — two scenarios: (1)
+a 2048×858 OCF matched to a 1920×1080 reference (OCF proportionally
+wider) asserts `fit === 'centerCrop'`, that `scale` equals
+`Math.max(scaleW, scaleH)` exactly, and that the scaled OCF height
+actually reaches or exceeds the reference height (no letterbox gap); (2)
+a 1000×1000 OCF matched to the same reference (OCF narrower) asserts
+`fit === 'fit'` and `scale === Math.min(scaleW, scaleH)`.
+
+**Verification.** Mutation-tested via `git stash push --
+src/scripts/features/vfxPull/referenceMatchEngine.js` (pathspec-scoped):
+with the fix reverted, the `centerCrop` scenario's two scale-related
+assertions failed exactly as predicted (`scale 0.9375` instead of
+`1.2587...`, height coverage assertion failed), while the `fit` scenario
+was unaffected (`Math.min`/`Math.max` coincide with only two candidate
+factors compared the same way in that branch... no — confirmed the `fit`
+scenario passed because it never took the reverted `centerCrop` path).
+`git stash pop` restored the fix; all 5 assertions passed.
+
+**Gate.** New test file was staged (`git add`, by explicit name) before
+running `npm run build-verify`, avoiding the untracked-test-file gate
+failure hit in Iteration 58. Full gate (`test:node && test:js && test:py
+&& scan-innerhtml --gate && scan-rawxml --gate && scan-failopen --gate`)
+passed clean on the first run: companion Python suite 261 passed / 7
+skipped, all three security scan gates clean.
+
+**Still open.** All items carried from Iterations 52–58 remain pending
+and unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") remains
+permanently excluded as dead code. Flagged but not yet investigated:
+`detectSpeedChange()` in `src/scripts/modules/conform/audioMatcher.js`
+(behavior with a negative `offsetFrames`, not currently reachable from
+known call sites) and `estimateCDL()` in `referenceMatchEngine.js` (dense
+median/patch-filtering SOP+power+saturation solve, worth a dedicated
+audit pass).
+
+Commits: `3e3a941`.
