@@ -35,7 +35,10 @@ function safeFps(evFps, fallback = 24) {
 // `_pullLenFrames`, which is the length of a VFX pull.
 export function tcToFrames(tc, fps) {
   if (!tc) return 0;
-  const parts = String(tc).split(':').map(n => parseInt(n, 10) || 0);
+  // Drop-frame EDLs use "HH:MM:SS;FF" — normalise the semicolon to a colon so
+  // DF timecodes split into 4 fields instead of silently failing the length
+  // check below and collapsing every DF in/out point to 0.
+  const parts = String(tc).replace(/;/g, ':').split(':').map(n => parseInt(n, 10) || 0);
   if (parts.length !== 4) return 0;
   const [hh, mm, ss, ff] = parts;
   return ((hh * 60 + mm) * 60 + ss) * nominalBase(fps) + ff;
