@@ -4679,3 +4679,109 @@ diff the same way Iteration 40 excluded unrelated WIP content.
   heartbeat-interval lease race (Audit 36), the i18n gaps and
   `src/tools/visionscope/*` (Audit 30), and `render_queue.js`'s
   `_parseError` (Audit 1) all remain unchanged.
+
+## Iteration 42 — media_engine.js's seek() used the exact NTSC fps instead of the nominal rate for timecode-to-frame conversion
+
+### New species
+
+The same "two-rate contract" bug class as Iteration 41 (`otio.js`), but
+in a different layer: Electron main-process native-bridge glue rather
+than a parser. It's also the first iteration to hit the CommonJS/ESM
+boundary directly — the canonical fix (`nominalBase()` in
+`src/scripts/modules/utils_time.js`) is unreachable from
+`electron/native/media_engine.js` because the former is pure ESM and the
+latter is pure CommonJS (`require('electron')`, `require('child_process')`
+at module load), so the fix had to inline the same rounding rule locally
+rather than import it — matching the existing precedent in
+`electron/ipc.js` (`const r = Math.round(fps);`).
+
+### Why this file, this iteration
+
+`seek()` (`electron/native/media_engine.js`) is the function a player
+session calls whenever a user (or another feature, like marker
+navigation) jumps to a specific timecode. It converts `HH:MM:SS:FF` to a
+frame count with `(h*3600 + m*60 + sec) * s.info.fps + f`, where
+`s.info.fps` comes straight from the native `avf_bridge` probe — the
+clip's *exact* frame rate (`23.976023976023978` for 24000/1001 NTSC
+footage), not the nominal rounded rate (`24`) that HH:MM:SS:FF counting
+is actually defined against. Every whole second of timecode undercounts
+frames by a small fraction at NTSC rates; at one hour of timecode
+(`01:00:00:00`) that fraction compounds to 86 frames — enough to land a
+"seek to reel start" on the wrong frame. This is exactly the class of
+bug Iteration 41 fixed in `otio.js`'s timecode arithmetic, just
+resurfacing in a second, independent call site that never imported
+`otio.js`'s fix.
+
+### The fix
+
+```js
+if (timecode && s.info?.fps) {
+  const [h, m, sec, f] = String(timecode).split(/[:;]/).map(Number);
+  const nominalFps = Math.round(s.info.fps) || 24;
+  s.state.frame = Math.round(((h * 3600 + m * 60 + sec) * nominalFps) + (f || 0));
+}
+```
+
+`Math.round(s.info.fps) || 24` mirrors `utils_time.js`'s `nominalBase()`
+(round to nearest integer, default 24 for invalid/zero input) without
+requiring an ESM import into this CommonJS file — the same inline-round
+pattern `electron/ipc.js` already uses elsewhere for the same reason.
+
+### Test approach
+
+New test `tests-js/mediaEngineSeekNominalFps.test.mjs`. `media_engine.js`
+does `require('electron')` and `require('child_process')` at load time,
+so outside Electron both need faking: `electron` resolves to a stub
+object (`{ protocol: { registerSchemesAsPrivileged, handle } }`, enough
+to satisfy the module's top-level calls), and `child_process.spawn` is
+replaced with a factory returning an `EventEmitter`-based fake child
+process whose `stdout` emits a canned `avf_bridge` JSON response
+(`{ ok: true, fps: 23.976023976023978, codec: 'h264' }`) before closing —
+both injected into `require.cache` before the first `require()` of the
+module under test, the same pattern
+`tests-js/downloadConflictAction.test.mjs` established for mocking
+`electron`. The test then drives the module's own public API end to
+end: `open()` to build a real session (asserting the session stores the
+exact probed fps, as a sanity check that the fake plumbing worked), then
+`seek({ timecode: '01:00:00:00' })`, asserting frame `86400` (nominal
+24fps × 3600s), not `86314` (what the exact NTSC rate would floor to).
+
+### Verification
+
+Mutation-proven: with the fix in place, `node --test
+tests-js/mediaEngineSeekNominalFps.test.mjs` — 1/1 green. Reverted
+`seek()` to multiply by `s.info.fps` directly, reran — failed with
+`AssertionError [ERR_ASSERTION]: 86314 !== 86400 seek must use nominal
+fps (24) for HH:MM:SS:FF counting`, the exact bug reproduction; restored
+the fix, green again. Full `npm run build-verify` exit 0 (log:
+`/tmp/gate42.log`), including `tests-js/selfContained.test.mjs`'s
+self-consistency gate (11/11) once the new test file was staged.
+`electron/native/media_engine.js` is Electron main-process code, not
+`src/`-facing renderer source per CLAUDE.md's one-source-two-targets
+model, so `npm run build:renderer` was not required for this iteration
+(consistent with Iterations 38-40's treatment of other Electron-only
+native-process changes).
+
+### Still open
+
+- `electron/native/media_engine.js`'s working tree carries substantial
+  pre-existing uncommitted WIP unrelated to this fix: `getOcfProxy()`/
+  `getOcfProxyStatus()`, a "Problem 2" full-range OCF proxy render
+  feature delegating to `resolve.renderOcfProxy`/
+  `resolve.renderOcfProxyStatus` via the companion, already wired into
+  the `HANDLED` set, `route()` dispatcher, and `module.exports` — plus a
+  stray 100644→100755 mode-bit flip. Confirmed via `git show
+  HEAD:electron/native/media_engine.js | grep getOcfProxy` (no match)
+  that this predates and is independent of the `seek()` fix. Excluded
+  from this commit via the same git-surgery blob-reconstruction
+  technique (`git hash-object -w` + `git update-index --cacheinfo`
+  against a clean HEAD-plus-fix blob) used in Iterations 39/40, and
+  remains untouched, uncommitted, and out of scope.
+- Only the `HH:MM:SS:FF` seek path was fixed; `stepFrame()` and other
+  frame-count-based paths in the same file were not audited for the
+  same bug class this iteration and should be checked in a future pass.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Meechum/Edward OAuth, PFX session sync, `_activeWindow` guard, OCF
+  proxy — Audit 40) remains untouched, unstaged, and out of scope.

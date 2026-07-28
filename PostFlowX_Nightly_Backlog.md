@@ -3821,3 +3821,51 @@ was also flagged but confirmed unreachable in the current call graph —
 deferred as a real-but-dormant issue.
 
 Commits: `f1709b3`.
+
+## Iteration 42 — media_engine.js's seek() used the exact NTSC fps instead of the nominal rate for timecode-to-frame conversion
+
+**Found.** `electron/native/media_engine.js`'s `seek()` converts an
+`HH:MM:SS:FF` timecode to a frame count with
+`(h*3600 + m*60 + sec) * s.info.fps + f`, using `s.info.fps` — the exact
+probed frame rate (e.g. `23.976023976...` for NTSC footage) — directly.
+HH:MM:SS:FF counting must use the *nominal* (rounded) rate for the
+`H:M:S` portion, per the same "two-rate contract" documented in
+`src/scripts/modules/utils_time.js`'s `nominalBase()` and fixed for
+`otio.js` in Iteration 41. Seeking to `01:00:00:00` on 23.976fps footage
+landed on frame 86314 instead of 86400 — an 86-frame-early seek.
+
+**Done.** Rounded the fps at the call site:
+`const nominalFps = Math.round(s.info.fps) || 24;`, then multiplied by
+`nominalFps` instead of `s.info.fps`. `media_engine.js` is plain
+CommonJS (Electron main process) and can't `require()` the ESM
+`nominalBase()` from `utils_time.js`, so this inlines the same rounding
+rule, matching the existing precedent in `electron/ipc.js`
+(`const r = Math.round(fps);`).
+
+**Gate.** New test `tests-js/mediaEngineSeekNominalFps.test.mjs`: injects
+fake `electron` and `child_process` modules into Node's require cache
+(same trick as `tests-js/downloadConflictAction.test.mjs`) so
+`media_engine.js` loads outside Electron, with `child_process.spawn`
+mocked to return a fake `avf_bridge` process reporting a canned
+23.976023976023978fps. Opens a real session via the module's own
+`open()`, then asserts `seek({ timecode: '01:00:00:00' })` returns frame
+86400 (nominal 24fps), not 86314 (exact-rate bug). Mutation-proven:
+reverted to `s.info.fps`, reran — failed with
+`86314 !== 86400 seek must use nominal fps (24)...`, the exact bug
+reproduction; restored, green again. Full `npm run build-verify` exit 0
+(log: `/tmp/gate42.log`). Because `media_engine.js` is Electron
+main-process code, not `src/`-facing renderer source, `build:renderer`
+was not needed for this iteration.
+
+**Still open.** `electron/native/media_engine.js`'s working tree contains
+substantial pre-existing uncommitted WIP (`getOcfProxy()`/
+`getOcfProxyStatus()` — a "Problem 2" full-range OCF proxy render
+feature delegating to the companion, wired into `HANDLED`/`route()`/
+`module.exports`) that predates this iteration and is unrelated to the
+`seek()` fix; it was excluded from this commit via the same
+git-surgery blob-reconstruction technique used in Iterations 39/40, and
+remains untouched, uncommitted, and out of scope. The deferred `otio.js`
+dedup-key gap and `pfx_native_engine.js` start/stop latch (Iteration 41)
+are also unchanged.
+
+Commits: `b60fd20`.
