@@ -2253,17 +2253,14 @@ class CompanionApi:
                     pass
 
             # ── TC out ─────────────────────────────────────────────────────────
+            # Delegate to the module-level _tc_to_frames/_frames_to_tc (also used
+            # by _resolve_clip_metadata) rather than a local reimplementation —
+            # both already round fps to its nominal whole-frame base internally,
+            # so a 23.976fps clip correctly uses 24 rather than truncating to 23.
             tc_out = ""
             if tc_known and nb_frames:
                 try:
-                    def _tc2f(tc, f):
-                        p = tc.replace(";", ":").split(":")
-                        return sum(int(x)*m for x,m in zip(p,[f*3600,f*60,f,1]))
-                    def _f2tc(n, f):
-                        f = max(1, int(f))
-                        return "{:02d}:{:02d}:{:02d}:{:02d}".format(
-                            n//(f*3600), (n%(f*3600))//(f*60), (n//f)%60, n%f)
-                    tc_out = _f2tc(_tc2f(tc_in, int(fps)) + nb_frames, int(fps))
+                    tc_out = _frames_to_tc(_tc_to_frames(tc_in, fps) + nb_frames, fps)
                 except Exception:
                     pass
 
