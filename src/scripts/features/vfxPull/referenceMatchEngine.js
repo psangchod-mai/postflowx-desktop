@@ -435,11 +435,14 @@ export function computeReformatParams(refWidth, refHeight, ocfWidth, ocfHeight, 
 
   const scaleW = refWidth  / activeOcfWidth;
   const scaleH = refHeight / activeOcfHeight;
-  const scale  = Math.min(scaleW, scaleH);
 
   const ocfAR = ocfWidth / ocfHeight;
   const refAR = refWidth / refHeight;
   const fit   = ocfAR >= refAR ? 'centerCrop' : 'fit';
+
+  // centerCrop must cover the reference on both axes (the larger scale factor,
+  // cropping the excess); fit must contain the OCF within it (the smaller factor).
+  const scale = fit === 'centerCrop' ? Math.max(scaleW, scaleH) : Math.min(scaleW, scaleH);
 
   const scaleStr = scale.toFixed(3);
   const notes =
