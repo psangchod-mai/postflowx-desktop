@@ -4785,3 +4785,119 @@ native-process changes).
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Meechum/Edward OAuth, PFX session sync, `_activeWindow` guard, OCF
   proxy — Audit 40) remains untouched, unstaged, and out of scope.
+
+## Iteration 43 — companion `_ocf_write_files` path-traversal guard was a naive string prefix check
+
+### New species
+
+The first security-class finding in this campaign rather than a timecode/
+arithmetic bug, and the first iteration to leave the JS renderer codebase
+entirely: this is in the Python companion server
+(`companion/src/postflowx_companion/api.py`). Three consecutive scouting
+rounds over `src/`'s renderer JS (see Still open below for the full list)
+found nothing further, so this iteration pivoted to a previously-unswept
+7191-line file in a different runtime/language entirely.
+
+### Why this file, this iteration
+
+`_ocf_write_files` is the handler behind the `ocfWriteFiles` companion API
+call (dispatched at `api.py:375`), used to write FDL/AMF/QC text files —
+filenames the renderer derives from shot/EDL/AAF-sourced names — under a
+caller-specified `outputDir`. Its traversal guard was:
+
+```python
+abs_path = os.path.normpath(os.path.join(output_dir, rel_path))
+if not abs_path.startswith(os.path.normpath(output_dir)):
+    errors.append(f"Rejected path outside outputDir: {rel_path!r}")
+    continue
+```
+
+`str.startswith` is a character-prefix test, not a directory-boundary
+test. For `outputDir = "/Users/vfx/Delivery/ShowA"`, the sibling path
+`/Users/vfx/Delivery/ShowA-VFX` also satisfies
+`.startswith("/Users/vfx/Delivery/ShowA")` — no separator boundary is
+checked. A `files[].path` of `"../ShowA-VFX/evil.txt"` normalizes to
+exactly that sibling path, sails past the guard, and gets written with
+attacker-controlled content (including binary, via the function's
+`bytes`/`bytearray` branch) outside the intended delivery folder. The
+sibling function `_ocf_copy_exr_delivery`, handling the identical
+untrusted-shotName threat model two functions down in the same file,
+already gets this right via `_safe_name_component` +
+`_confined_join` (`api.py:6885-6907`) — `_ocf_write_files` was the one
+write path in this file's delivery family that didn't reuse it.
+
+### The fix
+
+```python
+try:
+    # _confined_join does a real commonpath containment check, unlike a
+    # naive startswith(outputDir) — which "/out".startswith would also
+    # pass for the sibling "/out-evil", letting ../out-evil/x escape.
+    abs_path = _confined_join(output_dir, rel_path)
+except ValueError:
+    errors.append(f"Rejected path outside outputDir: {rel_path!r}")
+    continue
+```
+
+`_confined_join(base, *parts)` (already defined at module scope,
+`api.py:6898`) resolves both `base` and the joined target via
+`os.path.realpath` and checks `os.path.commonpath([base_r, target]) ==
+base_r` — a real containment check immune to the prefix-collision that
+broke the old guard, and immune to symlink escapes since it resolves
+real paths first.
+
+### Test approach
+
+New `companion/tests/test_ocf_write_files.py`. `CompanionApi.__init__`
+starts an HTTP server and background threads, which a unit test for one
+pure file-write method shouldn't need to pay for, so the test constructs
+the instance via `CompanionApi.__new__(CompanionApi)` and sets only
+`self.config = CompanionConfig()` — the one attribute `_ocf_write_files`
+touches indirectly through `_ok()`/`_error()`. Two cases: a traversal
+attempt (`outputDir=<tmp>/ShowA`, `path="../ShowA-evil/evil.txt"`) must
+report an error, write nothing to `written`, and leave no file on disk at
+the sibling path; a legitimate nested relative path
+(`"QC/report.txt"`) must still write correctly and appear in `written`,
+guarding against the fix over-tightening into false rejections.
+
+### Verification
+
+Mutation-proven: with the fix in place, both tests pass. Reverted
+`_ocf_write_files` to the original `startswith` check, reran — the
+traversal test failed not on an assertion mismatch but by *actually
+finding the exploit file written to disk* at
+`.../ShowA-evil/evil.txt`, outside the test's tmp `outputDir` — the exact
+vulnerability reproduced end to end; restored the fix, both tests green
+again. Full `npm run build-verify` exit 0 (log: `/tmp/gate43.log`),
+including all 259 companion pytest cases (252 passed, 7 skipped,
+`test_ocf_write_files.py`'s 2 new cases among them) and the XSS/XXE/
+fail-open static scan gates, all reported clean. `api.py` is Python
+companion-server code, not `src/`-facing renderer source per CLAUDE.md's
+one-source-two-targets model, so `npm run build:renderer` was not
+required.
+
+### Still open
+
+- Three scouting rounds preceded this fix and swept, without finding a
+  qualifying bug: `src/scripts/core/*` (14+ files), `utils_time.js`,
+  `imf_j2k.js`, `projectFile.js` (near-full read — its
+  `renameUnifiedProjectByName`/`cloneUnifiedProjectByName` were
+  confirmed dead code, unreachable from the desktop UI, which itself
+  calls `window.pfxPlatform.renameProject` via a separate
+  `electron/ipc.js` implementation), `amf_convert.js`, `imf_player.js`,
+  `i18n.js`, `crossTabQueueLease.js`, `playbackRouter.js`,
+  `timelineModel.js`, `watchFolder/*`, `reviews/{autoCut,player,
+  timeline}.js`, `eventDuration.js`, `nuke_import_script.js`,
+  `smart_engine_settings.js`, `aaf_worker.js`, and `imf/j2kCodestream.js`.
+  That surface is now considered heavily picked-over for this campaign's
+  bug class and effort level.
+- `companion/src/postflowx_companion/api.py` is 7191 lines; this
+  iteration's scouting agent read it in full, but the rest of the
+  companion package beyond this one file (`color/aces2_luts.py` and
+  other modules under `companion/src/postflowx_companion/`) has not yet
+  been swept and is a candidate area for a future iteration's scouting.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
+  WIP (Audit 42) remain untouched, unstaged, and out of scope.

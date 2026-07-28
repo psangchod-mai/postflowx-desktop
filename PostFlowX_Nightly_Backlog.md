@@ -3869,3 +3869,57 @@ dedup-key gap and `pfx_native_engine.js` start/stop latch (Iteration 41)
 are also unchanged.
 
 Commits: `b60fd20`.
+
+## Iteration 43 — companion `_ocf_write_files` path-traversal guard was a naive string prefix check
+
+**Found.** `companion/src/postflowx_companion/api.py`'s `_ocf_write_files`
+(the `ocfWriteFiles` handler that writes renderer-supplied FDL/AMF/QC text
+files under an `outputDir`) rejected escaping paths with
+`abs_path.startswith(os.path.normpath(output_dir))`. That's a character
+prefix test, not a directory-boundary test: for `outputDir = "/out"`, the
+sibling path `"/out-evil"` also satisfies `.startswith("/out")`. A
+renderer-supplied `files[].path` of `"../out-evil/evil.txt"` — the same
+untrusted editorial-derived-filename input class `_ocf_copy_exr_delivery`
+already treats as untrusted — normalizes to exactly that sibling path and
+sailed past the guard, writing arbitrary content outside the intended
+delivery folder.
+
+**Done.** Replaced the `startswith` check with `_confined_join` (already
+defined in this file at module scope and already used by
+`_ocf_copy_exr_delivery` for the identical threat model), which does a
+real `os.path.commonpath` containment check on `os.path.realpath` results
+instead of a raw string comparison.
+
+**Gate.** New `companion/tests/test_ocf_write_files.py`: instantiates
+`CompanionApi` via `__new__` (skips `__init__`'s HTTP server/thread
+startup — the method under test only touches `self.config`) and calls
+`_ocf_write_files` directly. One test asserts a `../ShowA-evil/evil.txt`
+path is rejected and nothing is written to the sibling directory; a
+second asserts a legitimate nested relative path (`QC/report.txt`) still
+writes correctly. Mutation-proven: reverted to the `startswith` check,
+reran — the traversal test failed by actually finding the file written at
+`.../ShowA-evil/evil.txt` outside the tmp `outputDir`, the exact exploit
+reproduced on disk; restored, both tests green again. Full
+`npm run build-verify` exit 0 (log: `/tmp/gate43.log`), including all 259
+companion pytest cases (252 passed, 7 skipped) and the XSS/XXE/fail-open
+scan gates. `api.py` is Python companion-server code, not `src/`-facing
+renderer source, so `build:renderer` was not needed for this iteration.
+
+**Still open.** Three prior scouting rounds over `src/`'s JS renderer
+code (`src/scripts/core/*`, `utils_time.js`, `imf_j2k.js`,
+`projectFile.js`, `amf_convert.js`, `imf_player.js`, `i18n.js`,
+`crossTabQueueLease.js`, `playbackRouter.js`, `timelineModel.js`,
+`watchFolder/*`, `reviews/*`, `eventDuration.js`, `nuke_import_script.js`,
+`smart_engine_settings.js`, `aaf_worker.js`, `j2kCodestream.js`) found
+nothing further — that surface is now considered heavily picked-over.
+This iteration pivoted to the previously-unexplored Python companion
+package; `_ocf_write_files` was the one write path in `api.py`'s delivery
+family using the broken check — the other OCF write/copy paths already
+use `_confined_join`/`_safe_name_component` correctly. `api.py` is 7191
+lines and was read in full by the scouting agent, but the rest of the
+companion package (`companion/src/postflowx_companion/` beyond `api.py`,
+`color/aces2_luts.py`) has not yet been swept. The deferred `otio.js`
+dedup-key gap and `pfx_native_engine.js` start/stop latch (Iteration 41)
+are also unchanged.
+
+Commits: `9cc68e9`.
