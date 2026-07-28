@@ -4573,3 +4573,109 @@ present to pass.
   heartbeat-interval lease race (Audit 36), the i18n gaps and
   `src/tools/visionscope/*` (Audit 30), and `render_queue.js`'s
   `_parseError` (Audit 1) all remain unchanged.
+
+## Iteration 41 — otio.js's getTimeWarpInfo() latched `reversed`, mis-signing stacked double-negative retimes
+
+### New species
+
+The first bug in this loop found in the parser layer rather than
+Electron main-process or renderer glue code — a sign/state-accumulation
+bug in a loop that folds multiple effects into one summary flag, where
+the accumulator ("has any negative scalar been seen") was conflated with
+the value actually needed ("is the net effect, after all scalars, still
+negative"). It's also the first iteration sourced from a background
+scouting agent surveying `electron/main.js`, `electron/companion.js`,
+the OTIO/EDL/FCPXML parsers, and native bridges specifically to steer
+clear of the areas iterations 1-40 already covered or that are currently
+off-limits (`src/tools/visionscope/*`, and `electron/preload.js`/
+`electron/ipc.js` while their in-progress Meechum/Edward OAuth WIP
+remains uncommitted).
+
+### Why this file, this iteration
+
+`getTimeWarpInfo()` (`src/scripts/parsers/otio.js:341`) exists to
+collapse an OTIO clip's list of `LinearTimeWarp`/`FreezeFrame` effects
+into one `{ scalar, speedPct, reversed, freeze }` summary, which
+`buildClipEvent` and the stack-level equivalent both use to compute the
+exported `speedFactor` on each event. The loop multiplies `Math.abs(ts)`
+into `scalar` for every `LinearTimeWarp`, correctly accumulating
+magnitude across multiple stacked effects — but for direction, it did
+`if (ts < 0) reversed = true`, which only ever turns `reversed` on and
+never back off. Two negative scalars in the same effects list (a
+double-reverse — net forward motion, since reversing a reversed clip
+plays it forward again) still leaves `reversed` stuck `true`. The
+existing `resolve_retime.otio` fixture/test only exercised a *single*
+`LinearTimeWarp` per clip (one 2x, one reverse), so this never showed up
+until a clip with two stacked negative effects was constructed.
+
+### The fix
+
+```js
+if (sch.startsWith("LinearTimeWarp")) {
+  const ts = Number(e?.time_scalar);
+  if (Number.isFinite(ts) && ts !== 0) {
+    if (ts < 0) reversed = !reversed;
+    scalar *= Math.abs(ts);
+  }
+}
+```
+
+Changing `reversed = true` to `reversed = !reversed` makes the flag an
+XOR accumulator, matching how direction actually composes across
+multiple retime effects: each negative scalar flips the net direction,
+so an even count of negatives cancels back to forward and an odd count
+stays reversed — mirroring the magnitude accumulation (`scalar *=
+Math.abs(ts)`) that was already correct.
+
+### Test approach
+
+New fixture `test/fixtures/resolve_double_reverse.otio`, modeled on the
+existing `resolve_retime.otio` fixture's structure: one clip with two
+`LinearTimeWarp` effects, `time_scalar` -1.0 then -2.0 (net: forward at
+2x). New test in `test/parsers/otio.test.mjs` (a pure-logic parser test,
+no Electron/native mocking needed) asserts the single resulting event's
+`speedFactor` is `200`, not `-200`.
+
+### Verification
+
+`node --test test/parsers/otio.test.mjs`: 4/4 green. Mutation-proven:
+reverted to `reversed = true`, reran — failed with
+`AssertionError: -200 !== 200`, the literal bug reproduction; restored,
+green again. Full `npm run build-verify` exit 0 (log: `/tmp/gate41.log`;
+Python suite 250 passed, 7 skipped; XSS/XXE/fail-open gates clean).
+Because `otio.js` is `src/`-facing renderer source (per CLAUDE.md, the
+single source of truth copied by `build-renderer.js`), also ran
+`npm run build:renderer` — exit 0, 377 files rebuilt into `dist/desktop/`
+(git-ignored, confirmed via `git status` that no `dist/` changes leaked
+into the diff). Before committing, normalized the file mode of
+`test/parsers/otio.test.mjs` back to 644: editing it had picked up an
+executable-bit flip from the pre-existing repo-wide mode anomaly (Audit
+32), which is unrelated to this fix and was excluded from the commit's
+diff the same way Iteration 40 excluded unrelated WIP content.
+
+### Still open
+
+- Only a two-negative stack was tested; longer chains (three-plus
+  effects, or mixes of positive and negative scalars) aren't
+  specifically covered, though the XOR fix is correct by construction
+  for any count.
+- A dedup-key gap surfaced during this iteration's scouting — the
+  parser's final dedup step (`otio.js` ~line 846) keys on `[srcFile,
+  recIn, recOut, clipName, trackIndex, disabled]`, omitting `srcIn`/
+  `srcOut` — was not pursued, since an adjacent code comment states the
+  conservative dedup is intentional; revisiting it needs a design
+  decision, not a drive-by fix.
+- A latch bug in `electron/native/pfx_native_engine.js`'s
+  `NativeEngineManager.start()` (`_startAttempted` set permanently true,
+  never reset by `stop()`, so a `stop()` → `start()` cycle can never
+  respawn the binary) was flagged but confirmed unreachable in the
+  current call graph — `electron/main.js` only calls `stop()` from
+  `app.on('will-quit')` today, right before the process exits — so it's
+  deferred as real-but-dormant rather than fixed.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Meechum/Edward OAuth, PFX session sync, `_activeWindow` guard, OCF
+  proxy — Audit 40) remains untouched, unstaged, and out of scope.
+- `CompanionBridge`'s other untested lifecycle paths (Audit 35), the
+  heartbeat-interval lease race (Audit 36), the i18n gaps and
+  `src/tools/visionscope/*` (Audit 30), and `render_queue.js`'s
+  `_parseError` (Audit 1) all remain unchanged.

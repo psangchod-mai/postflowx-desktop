@@ -3772,3 +3772,52 @@ remains untouched, uncommitted, and out of scope — it's real, in-progress
 work already relied upon by at least one existing test, not dead code.
 
 Commits: `65e6e9a`.
+
+## Iteration 41 — otio.js's getTimeWarpInfo() latched `reversed`, mis-signing stacked double-negative retimes
+
+**Found.** `src/scripts/parsers/otio.js`'s `getTimeWarpInfo()` loops over
+an OTIO clip's effects list accumulating `scalar *= Math.abs(ts)` for
+each `LinearTimeWarp`, but set `reversed = true` unconditionally on any
+negative `time_scalar` rather than toggling it. A clip with two stacked
+`LinearTimeWarp` effects that are both negative (e.g. `-1.0` then `-2.0`
+— a net-forward 2x retime, since two reversals cancel out) was reported
+as reversed at 2x (`speedFactor: -200`) instead of forward at 2x
+(`speedFactor: 200`), inverting the reported playback direction and sign
+of the speed. Resolve and Avid can emit chained/stacked `LinearTimeWarp`
+effects on nested or compound retimes, so this is reachable from real
+NLE-exported OTIO, not a synthetic edge case.
+
+**Done.** Changed `if (ts < 0) reversed = true;` to
+`if (ts < 0) reversed = !reversed;` so each negative scalar flips the
+sign rather than latching it permanently on.
+
+**Gate.** New fixture `test/fixtures/resolve_double_reverse.otio`: one
+clip with two `LinearTimeWarp` effects, `time_scalar` -1.0 then -2.0.
+New case in `test/parsers/otio.test.mjs` asserting the single resulting
+event has `speedFactor: 200` (forward 2x), not `-200`. Mutation-proven:
+reverted to the unconditional-`true` version, reran — failed with
+`-200 !== 200`, the exact bug reproduction; restored, green again (4/4
+in `test/parsers/otio.test.mjs`). Full `npm run build-verify` exit 0
+(log: `/tmp/gate41.log`; Python suite 250 passed, 7 skipped). Since this
+touches `src/` renderer source, also ran `npm run build:renderer`
+(exit 0, 377 files rebuilt into `dist/desktop/`) per CLAUDE.md.
+Normalized `test/parsers/otio.test.mjs`'s file mode back to 644 before
+committing — it had picked up an executable bit from the pre-existing
+repo-wide ~576-file mode anomaly (Audit 32), unrelated to this fix, so
+that bit was excluded from this commit's diff.
+
+**Still open.** The `resolve_double_reverse.otio` case only covers two
+stacked negatives; three or more stacked `LinearTimeWarp` effects (or a
+mix of positive and negative scalars in longer chains) weren't
+specifically tested, though the XOR fix generalizes correctly by
+construction. The dedup-key gap flagged during this iteration's scouting
+(`otio.js`'s final dedup step omitting `srcIn`/`srcOut` from its key,
+around line 846) was not pursued — the surrounding comment states the
+conservative dedup is intentional, so it needs a design decision rather
+than a drive-by fix. A latch bug in `electron/native/pfx_native_engine.js`'s
+`NativeEngineManager.start()`/`stop()` (`_startAttempted` never resets)
+was also flagged but confirmed unreachable in the current call graph —
+`stop()` is only invoked from `app.on('will-quit')` today — so it's
+deferred as a real-but-dormant issue.
+
+Commits: `f1709b3`.
