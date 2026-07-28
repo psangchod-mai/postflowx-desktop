@@ -34,7 +34,10 @@ function _flush() {
   }
 }
 
-/** Get one or more keys. keys may be a string, array, or null (get all). */
+/**
+ * Get one or more keys. keys may be a string, an array, a defaults object
+ * ({ key: defaultValue, ... }), or null/undefined (get all).
+ */
 function get(keys) {
   _init();
   if (keys == null) return { ..._cache };
@@ -44,9 +47,18 @@ function get(keys) {
   if (typeof keys === 'string') {
     return (keys in _cache) ? { [keys]: _cache[keys] } : {};
   }
+  if (Array.isArray(keys)) {
+    const result = {};
+    for (const k of keys) {
+      if (k in _cache) result[k] = _cache[k];
+    }
+    return result;
+  }
+  // Defaults-object form: chrome.storage.local.get({ key: defaultValue })
+  // returns the stored value if present, else the caller-supplied default.
   const result = {};
-  for (const k of keys) {
-    if (k in _cache) result[k] = _cache[k];
+  for (const k of Object.keys(keys)) {
+    result[k] = (k in _cache) ? _cache[k] : keys[k];
   }
   return result;
 }

@@ -54,3 +54,11 @@ test('get(null) still returns the whole cache unaffected', () => {
 
   assert.deepEqual(storage.get(null), { foo: 'bar', baz: 'qux' });
 });
+
+test('get() with a defaults object returns defaults for missing keys and stored values for present ones', () => {
+  storage.clear();
+  storage.set({ foo: 'bar' });
+
+  const result = storage.get({ foo: 'fallback', missing: 'default' });
+  assert.deepEqual(result, { foo: 'bar', missing: 'default' });
+});
