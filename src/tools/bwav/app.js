@@ -946,10 +946,19 @@ async function runAudioScanQuick(file, extracted, cfgs, onMsg){
     const u8 = new Uint8Array(buf);
     scannedBytes += u8.byteLength;
 
+    // windows are physically disjoint slices of the data chunk (a "start" and,
+    // for large files, a separate "end" window skipping the middle) -- the
+    // cumulative scannedFrames counter below tracks total frames sampled
+    // (correct for the scannedSeconds stat) but is NOT the file position, so
+    // any reported frame/timeSec must be computed from this window's own
+    // offset instead.
+    const windowFrameOffset = Math.round((w.off - startOff) / frameSize);
+
     const frames = Math.floor(u8.length / frameSize);
     for (let f = 0; f < frames; f++) {
       const base = f * frameSize;
       scannedFrames += 1;
+      const fileFrame = windowFrameOffset + f + 1;
       for (let c = 0; c < ch; c++) {
         const si = base + c * bps;
         const s = decodeSample(u8, si);
@@ -963,7 +972,7 @@ async function runAudioScanQuick(file, extracted, cfgs, onMsg){
         // clipping samples + segments
         if (a >= clipThr) {
           clipSamples[c] += 1;
-          if (clipRuns[c] === 0) clipRunStart[c] = scannedFrames;
+          if (clipRuns[c] === 0) clipRunStart[c] = fileFrame;
           clipRuns[c] += 1;
         } else if (clipRuns[c] > 0) {
           if (clipSegments[c].length < maxSeg) {
@@ -975,17 +984,22 @@ async function runAudioScanQuick(file, extracted, cfgs, onMsg){
         // digital hits heuristic
         const d = Math.abs(s - prev[c]);
         if (hits.length < maxHits && d > 0.8 && a > 0.6 && Math.abs(prev[c]) < 0.2) {
-          hits.push({ channel: c+1, frame: scannedFrames, timeSec: scannedFrames / sr, delta: d });
+          hits.push({ channel: c+1, frame: fileFrame, timeSec: fileFrame / sr, delta: d });
         }
         prev[c] = s;
       }
     }
-  }
 
-  // flush clip runs
-  for (let c = 0; c < ch; c++) {
-    if (clipRuns[c] > 0 && clipSegments[c].length < maxSeg) {
-      clipSegments[c].push({ startFrame: clipRunStart[c], frames: clipRuns[c] });
+    // a clip run still open at the tail of this window cannot continue into
+    // the next window -- they are non-contiguous in the file -- so flush and
+    // reset here instead of letting it spuriously merge across the gap.
+    for (let c = 0; c < ch; c++) {
+      if (clipRuns[c] > 0) {
+        if (clipSegments[c].length < maxSeg) {
+          clipSegments[c].push({ startFrame: clipRunStart[c], frames: clipRuns[c] });
+        }
+        clipRuns[c] = 0;
+      }
     }
   }
 
