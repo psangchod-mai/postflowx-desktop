@@ -4066,3 +4066,66 @@ as flagged in Iterations 43–45. The deferred `otio.js` dedup-key gap and
 `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
 
 Commits: `0854119`.
+
+## Iteration 47 — timelineAutoInject.js's timecode regexes dropped drop-frame timecodes from the auto-injected timeline strip
+
+**Found.** `src/scripts/features/edl/timelineAutoInject.js` auto-injects a
+Timeline Strip UI above the EDL Converter Event Table. Its `TC_EXACT_RE`,
+`TC_FIND_RE`, and `extractFirstTc()` all matched only `"HH:MM:SS:FF"`, and
+a separate inline regex in `extractClips()`'s LOC-column fallback had the
+same gap. `edl.js`'s own timecode regex
+(`/\b\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2}\b/g`) accepts `;` in every field and
+hands `recIn`/`recOut` through verbatim, so a drop-frame EDL's Event Table
+cells read `"HH:MM:SS;FF"`. `extractFirstTc()` then found no match,
+`tcToFrames()` returned `NaN`, and both `extractClips()` (which uses
+`tcToFrames` on the Rec In/Out columns as its highest-priority timing
+source, ~line 246-248) and `guessTimecodesFromRow()` (heuristic row
+matching, lines 161-179) silently dropped or mis-positioned every DF row
+from the injected timeline strip. This is the FOURTH consecutive
+iteration to find the same drop-frame-separator bug class in a different,
+independently-written timecode parser (`cutdiff.js` Iteration 44,
+`filters.js` Iteration 45, `amf_convert.js`'s three copies Iteration 46,
+now `timelineAutoInject.js`'s four spots this iteration).
+
+**Done.** Widened all four regexes to accept `:` or `;` via `[:;]`
+character classes (rather than a `.replace(/;/g, ':')` normalization
+step, since these regexes serve dual purposes — both "does this look
+like a timecode" detection and value extraction — making in-place
+widening cleaner here than at `cutdiff.js`/`filters.js`/`amf_convert.js`'s
+several call sites). New dedicated test file
+`tests-js/timelineAutoInject_dropframe_tc.test.mjs`: the module imports
+cleanly under Node (its `document`/`window` access is wrapped in
+`try { boot(); } catch (e) {}`) but exposes zero exports, so
+`tcToFrames`/`extractFirstTc`/`collectTcs` are extracted together as one
+contiguous text block (they're mutually dependent) and evaluated via
+`new Function`, mirroring the `amf_convert.js` test pattern. 5 assertions
+covering NDF parity, DF conversion, malformed-input safety,
+`extractFirstTc` on embedded text, and `collectTcs` finding all DF hits
+in a row. Mutation-proven: reverted all four regexes to the original
+`:`-only form (byte-identical revert confirmed via `git diff --stat`),
+reran — exactly 3 of 5 failed (the DF-specific ones), the NDF-parity and
+malformed-input assertions correctly unaffected; restored from backup,
+5/5 green again.
+
+**Gate.** Full `npm run build-verify` exit 0 (log: `/tmp/gate47.log`),
+including all 259 companion pytest cases (unaffected; 252 passed, 7
+skipped) and the XSS/XXE/fail-open scan gates. Since this touches
+`src/`-facing renderer code, `npm run build:renderer` was also run and
+succeeded (log: `/tmp/buildrenderer47.log`, 377 files rebuilt into
+`dist/desktop/`).
+
+**Still open.** Four consecutive iterations finding the same bug class
+in four different, independently-written parsers is a strong enough
+signal that a dedicated, exhaustive sweep (rather than continued
+opportunistic discovery) of every remaining timecode-parsing regex
+across `src/scripts/` and `postflowx-adobe/` is likely the highest-value
+next iteration, specifically grepping for `:`-only timecode-splitting
+patterns not yet cross-checked against `utils_time.js`'s canonical
+normalize-then-split approach. Modules already confirmed correct:
+`utils_time.js`, `edl.js`, `xml.js`, `ale.js`, `cutdiff.js`, `filters.js`,
+`amf_convert.js`, and now `timelineAutoInject.js`. The rest of the
+companion Python package beyond `api.py` remains unswept, as flagged in
+Iterations 43–46. The deferred `otio.js` dedup-key gap and
+`pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
+
+Commits: `8d1aefa`.

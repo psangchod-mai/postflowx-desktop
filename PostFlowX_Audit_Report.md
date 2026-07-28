@@ -5230,3 +5230,161 @@ into `dist/desktop/`).
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
   WIP (Audit 42) remain untouched, unstaged, and out of scope.
+
+## Iteration 47 — timelineAutoInject.js's timecode regexes dropped drop-frame timecodes from the auto-injected timeline strip
+
+### New species / Why this file, this iteration
+
+`src/scripts/features/edl/timelineAutoInject.js` auto-injects a Timeline
+Strip UI above the EDL Converter Event Table, so editors can see clip
+positions at a glance without opening a separate timeline view. It's a
+pure side-effect module — no exports, `try { boot(); } catch (e) {}` at
+the bottom — that reads timecodes straight out of the Event Table's DOM
+cells. This is the fourth consecutive iteration to find the exact same
+drop-frame-separator bug class in a different, independently-written
+timecode parser: `cutdiff.js`'s `tcToFrames` (Iteration 44), `filters.js`'s
+`tcToFrames` (Iteration 45), `amf_convert.js`'s three separate
+`tcToFrames` copies (Iteration 46), and now `timelineAutoInject.js`'s
+regex trio plus a separate LOC-column fallback regex.
+
+### The bug
+
+```javascript
+const TC_EXACT_RE = /^(\d{1,2}):(\d{2}):(\d{2}):(\d{2})$/;
+const TC_FIND_RE = /(\d{1,2}:\d{2}:\d{2}:\d{2})/g;
+
+function extractFirstTc(s){
+  const m = (s || '').toString().match(/(\d{1,2}:\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : '';
+}
+```
+
+and, separately, inside `extractClips()`'s LOC-column fallback:
+
+```javascript
+const m = locText.match(/(\d{2}:\d{2}:\d{2}:\d{2})/);
+```
+
+`edl.js`'s own timecode regex
+(`/\b\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2}\b/g`) accepts `;` in every field
+position and hands `recIn`/`recOut` through to the rendered Event Table
+verbatim, so a drop-frame EDL's cells read `"HH:MM:SS;FF"`. Against the
+`:`-only regexes above, `extractFirstTc()` found no match and returned
+`''`, so `tcToFrames()` (which delegates to `extractFirstTc` before
+matching `TC_EXACT_RE`) returned `NaN` for every real DF timecode.
+
+Two call sites make this a real, reachable break rather than a
+theoretical one:
+
+- `extractClips()` (~line 201+) uses `tcToFrames` on the Rec In/Out
+  column cell text as its highest-priority timing source (~line
+  246-248: `s = tcToFrames((cells[colRecIn].textContent || '').trim(), fps)`),
+  falling back to the LOC column (also broken) and then Src In/Out only
+  if Rec timing is unavailable.
+- `guessTimecodesFromRow()` (lines 161-179) joins a row's cell text and
+  calls `collectTcs()`/`tcToFrames()` to derive start/end frames for
+  heuristic row matching when column positions are ambiguous.
+
+With all of these returning `NaN` for DF rows, the injected timeline
+strip silently dropped or mis-positioned every drop-frame clip — with no
+error surfaced to the editor.
+
+### The fix
+
+Widened all four regexes to accept `:` or `;` in every separator
+position via `[:;]` character classes, matching `edl.js`'s own `tcRe`
+pattern:
+
+```javascript
+// Drop-frame timecodes use "HH:MM:SS;FF" (semicolon before the frame field) —
+// accept ':' or ';' in every field position, matching edl.js's own tcRe.
+const TC_EXACT_RE = /^(\d{1,2})[:;](\d{2})[:;](\d{2})[:;](\d{2})$/;
+const TC_FIND_RE = /(\d{1,2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/g;
+
+function extractFirstTc(s){
+  const m = (s || '').toString().match(/(\d{1,2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/);
+  return m ? m[1] : '';
+}
+```
+
+and the LOC-column fallback:
+
+```javascript
+const m = locText.match(/(\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/);
+```
+
+`tcToFrames()` itself needed no direct edit — it delegates entirely to
+`extractFirstTc()` and `TC_EXACT_RE`, both fixed above.
+
+This is a different normalization strategy than Iterations 44-46 (which
+used `.replace(/;/g, ':')` before a `:`-only match): `timelineAutoInject.js`'s
+regexes are used for both "does this look like a timecode" detection
+(`TC_FIND_RE`, `looksLikeTc`) and value extraction, so widening the
+character class in place was cleaner than adding a separate
+normalization step at each of several call sites.
+
+### Test approach
+
+`timelineAutoInject.js` imports cleanly under plain Node — confirmed via
+a direct `node -e` import test that printed "imported ok" with only a
+caught-and-logged `ReferenceError` from the `try { boot(); } catch {}`
+guard — but exposes zero `export` statements, so none of its internal
+helpers are reachable from outside. New file
+`tests-js/timelineAutoInject_dropframe_tc.test.mjs` extracts
+`TC_EXACT_RE`, `TC_FIND_RE`, `extractFirstTc`, `collectTcs`, and
+`tcToFrames` together as one contiguous text block (`tcToFrames` depends
+on the others, so extracting them individually and re-wiring by hand
+would be more fragile) via `src.indexOf(startMarker)...indexOf(endMarker)`,
+then evaluates that block with `new Function`, mirroring the pattern
+used for `amf_convert.js` in Iteration 46:
+
+```javascript
+const block = extractBlock('const TC_EXACT_RE', 'function parseIntLoose');
+const harness = new Function(`${block}\nreturn { tcToFrames, extractFirstTc, collectTcs };`)();
+```
+
+5 assertions: NDF timecode still converts correctly, DF timecode
+converts instead of returning `NaN`, malformed input safely returns
+`NaN` (not a crash), `extractFirstTc` finds a DF timecode embedded in
+surrounding text, and `collectTcs` finds all 4 DF timecodes in a
+multi-timecode row rather than silently skipping them.
+
+### Verification
+
+Mutation-proven: reverted all four regexes to the original `:`-only
+form, confirmed byte-identical revert via `git diff --stat` (zero diff),
+reran the test — exactly 3 of 5 assertions failed (the DF-specific
+conversion, embedded-extraction, and multi-hit-collection assertions),
+while the NDF-parity and malformed-input assertions correctly stayed
+green, confirming the test isolates the actual bug and not something
+else. Restored the fix from a `/tmp` backup, reran — 5/5 green.
+
+Full `npm run build-verify` gate passed on the first run (log:
+`/tmp/gate47.log`), including all 259 companion pytest cases (252
+passed, 7 skipped, unaffected — this fix doesn't touch companion code)
+and the XSS/XXE/fail-open scan gates. Since this touches `src/`-facing
+renderer code, `npm run build:renderer` was also run and succeeded (log:
+`/tmp/buildrenderer47.log`, 377 files rebuilt into `dist/desktop/`).
+
+### Still open
+
+- Four consecutive iterations have now each found an independently-
+  written timecode parser with the exact same `;`-separator gap
+  (`cutdiff.js` Iteration 44, `filters.js` Iteration 45, `amf_convert.js`'s
+  three copies Iteration 46, `timelineAutoInject.js`'s four spots here).
+  That's a strong enough signal to warrant a dedicated, exhaustive sweep
+  — rather than continued opportunistic discovery — of every remaining
+  timecode-parsing regex across `src/scripts/` and `postflowx-adobe/` in
+  a near-future iteration, specifically grepping for `:`-only
+  timecode-splitting patterns not yet cross-checked against
+  `utils_time.js`'s canonical normalize-then-split approach. Modules
+  already confirmed correct: `utils_time.js`, `edl.js`, `xml.js`,
+  `ale.js`, `cutdiff.js`, `filters.js`, `amf_convert.js`, and now
+  `timelineAutoInject.js`.
+- The rest of the companion Python package beyond `api.py` remains
+  unswept, as flagged in Iterations 43–46.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
+  WIP (Audit 42) remain untouched, unstaged, and out of scope.
