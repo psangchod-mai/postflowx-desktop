@@ -5636,3 +5636,135 @@ files, off-limits). `otio.js`'s dedup-key gap and `pfx_native_engine.js`'s
 start/stop latch (Iteration 41) remain deferred/off-limits respectively.
 
 Commits: `739ac3a`.
+
+## Iteration 50 — `filters.js` used a raw fractional fps as a frame-counting divisor
+
+**New species.** Back to the timecode-arithmetic family (Iterations 44-47),
+but a new file: the "nominal frame-rate base" bug — using a raw fractional
+fps (e.g. AAF's `24000/1001 = 23.976023976023976...`) directly as a
+frame-counting divisor instead of rounding it to its nominal whole-frame
+base first — had already been fixed in `cutdiff.js`, `eventDuration.js`,
+`edl_export.js`, and codified as the shared `nominalBase()` helper in
+`utils_time.js`. `src/scripts/modules/filters.js` was the one sibling
+timecode module in the pipeline that still used the raw fps directly.
+
+**Why this file, this iteration.** `src/scripts/modules/filters.js` was
+confirmed git-clean via `git status --short`. Its two private helpers
+`tcToFrames`/`framesToTC` convert between `"HH:MM:SS:FF"` strings and frame
+counts for every stage of the pipeline (`mergeOverlap`, `dedupeBySrcRange`,
+`addExtraHandlesForFastClips`, `onlyVfxMarker`'s marker-offset math). Before
+the fix:
+
+```js
+function tcToFrames(tc, fps = 24) {
+  if (!tc || typeof tc !== "string") return 0;
+  const m = tc.replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  if (!m) return 0;
+  const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
+  return ((hh * 3600) + (mm * 60) + ss) * fps + ff;
+}
+
+function framesToTC(fr, fps = 24) {
+  fr = Math.round(fr || 0);
+  const totalSec = Math.floor(fr / fps);
+  const ff = fr % fps;
+  ...
+}
+```
+
+AAF imports attach each event's raw `EditRate` as its `fps` (confirmed via
+`aaf_worker.js`/`aaf_wasm.js`), so an NTSC-rate AAF reaches `filters.js`
+with `fps = 23.976023976023976...`, not `24`. At that fps,
+`framesToTC(30, fps)` computes `30 % 23.976023976023976... =
+6.023976023976024`, producing the malformed timecode
+`"00:00:01:6.023976023976024"` instead of `"00:00:01:06"`. Any downstream
+`tcToFrames()` call on that malformed string can't match its frame group
+(`\d+` doesn't match a decimal) and silently falls back to `0`, so a
+`mergeOverlap` boundary computed via `framesToTC` at a fractional fps fails
+to line up with a well-formed literal timecode for the same nominal frame,
+and clips that should merge don't.
+
+**The fix.** Imported the existing `nominalBase()` helper from
+`utils_time.js` and used it in place of the raw `fps` in both helpers'
+divisor/multiplier positions:
+
+```js
+import { nominalBase } from './utils_time.js';
+
+function tcToFrames(tc, fps = 24) {
+  ...
+  return ((hh * 3600) + (mm * 60) + ss) * nominalBase(fps) + ff;
+}
+
+function framesToTC(fr, fps = 24) {
+  const base = nominalBase(fps);
+  fr = Math.round(fr || 0);
+  const totalSec = Math.floor(fr / base);
+  const ff = fr % base;
+  ...
+}
+```
+
+This is the same fix shape already applied to `cutdiff.js`/`eventDuration.js`/
+`edl_export.js` — reusing the shared helper rather than reimplementing
+rounding logic locally.
+
+**Test approach.** New file `tests-js/filters_fractional_fps.test.mjs`.
+`tcToFrames`/`framesToTC` are private, unexported functions, so the test
+exercises them indirectly through `onlyVfxMarker` (which computes a
+marker's `recIn` via `framesToTC` from its `inFrames` offset) and
+`mergeOverlap` (which compares a computed `recOut` against the next
+clip's `recIn` via `tcToFrames`).
+
+The first attempt at this test compared two identical literal timecode
+strings on both sides of the `mergeOverlap` boundary, which is a dead
+mutation test: both sides run through the exact same deterministic
+`tcToFrames` formula on the exact same literal input, so they're equal
+whether or not `nominalBase()` is applied — the test would pass against
+both the buggy and the fixed code. The rewritten version instead obtains
+one side of the comparison as the module's actual `framesToTC`-computed
+output (via `onlyVfxMarker`'s marker path) and compares it against an
+independently-authored literal string for the same nominal frame, so the
+two sides only agree when the computed value is well-formed:
+
+```js
+test('onlyVfxMarker: a fractional AAF fps still produces a well-formed 2-digit frame field', () => {
+  const evs = [{ ..., fps: AAF_NTSC_FPS, _markers: [{ name: 'VFX', color: 'Red', inFrames: 30 }] }];
+  const out = onlyVfxMarker(evs, { color: 'All', fps: AAF_NTSC_FPS });
+  assert.equal(out[0].recIn, '00:00:01:06');
+});
+
+test('mergeOverlap: a framesToTC-computed boundary still matches the literal recIn at a fractional fps', () => {
+  const computedTC = onlyVfxMarker([{ ... }], { color: 'All', fps: AAF_NTSC_FPS })[0].recIn;
+  const evs = [
+    { ..., recOut: computedTC, srcOut: computedTC },
+    { ..., recIn: '00:00:01:06', srcIn: '00:00:01:06', ... },
+  ];
+  const merged = mergeOverlap(evs);
+  assert.equal(merged.length, 1);
+});
+```
+
+**Verification.** Mutation-proven: reverted both helpers to their original
+raw-`fps` form (confirmed against `git show HEAD:src/scripts/modules/filters.js`
+byte-for-byte via `diff`), reran `node --test
+tests-js/filters_fractional_fps.test.mjs` — both tests failed as predicted
+(`pass 0, fail 2`): the `onlyVfxMarker` case produced the exact malformed
+`"00:00:01:6.023976023976024"` string, and the `mergeOverlap` case merged
+0 events instead of 1 because the malformed computed TC's frame group
+failed to parse and fell back to 0 frames. Restored the fix, reran —
+`pass 2, fail 0`. Full `npm run build-verify` gate green (Node test-runner
+suites, companion pytest 255 passed/7 skipped, all three security gates
+clean) plus `npm run build:renderer` (377 files regenerated, required
+since this is a `src/`-facing change).
+
+**Still open.** `aaf_worker.js:559,785`/`aaf_wasm.js:39,48,62` are cited
+above as the source of the raw fractional `EditRate` reaching `filters.js`
+based on a prior scouting pass, not independently re-confirmed this
+iteration. Iteration 48's `int(fps)` sweep across
+`companion/src/postflowx_companion/` and Iteration 49's spaced-vs-unspaced
+axis-key sweep beyond `Scale` both remain pending. `otio.js`'s dedup-key
+gap and `pfx_native_engine.js`'s start/stop latch (Iteration 41) remain
+deferred/off-limits respectively.
+
+Commits: `f0bf7d7`.

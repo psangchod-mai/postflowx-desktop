@@ -4246,3 +4246,63 @@ start/stop latch (Iteration 41) are unchanged and still off-limits (dirty
 file) for the latter.
 
 Commits: `739ac3a`.
+
+## Iteration 50 — filters.js frame math used raw fps instead of nominal base
+
+**Found.** `src/scripts/modules/filters.js`'s internal `tcToFrames`/
+`framesToTC` helpers (used throughout the file's exported pipeline —
+`decomposeEvents`, `mergeOverlap`, `onlyVfxMarker`, `filterValidTimecode`,
+etc.) divided by the raw event `fps` directly as the frame-counting base.
+Every sibling timecode module already normalizes fractional camera frame
+rates (23.976, 29.97, 59.94) to their nominal whole-frame base first via
+`nominalBase()` (`utils_time.js`) — confirmed in `eventDuration.js`,
+`edl_export.js`, `cutdiff.js`, and `utils_time.js` itself — but
+`filters.js` was the one clean-file outlier still using raw `fps`. AAF
+imports attach a raw fractional EditRate to each event (e.g.
+`24000/1001 = 23.976023976023976...`), so `framesToTC(30,
+23.976023976023976...)` computed `30 % 23.976023976023976... =
+6.023976023976024`, producing the malformed timecode
+`"00:00:01:6.023976024"` instead of `"00:00:01:06"`. Downstream,
+`mergeOverlap` comparing a computed boundary against the next clip's
+literal `recIn` failed to match, because `tcToFrames` can't parse the
+malformed fractional frame field (its `\d+` group requires an integer) and
+silently falls back to `0`.
+
+**Done.** Added `import { nominalBase } from './utils_time.js';` and
+applied `nominalBase(fps)` as the divisor/modulus base in both
+`tcToFrames` and `framesToTC`, matching the sibling-module convention.
+New test: `tests-js/filters_fractional_fps.test.mjs`. Two cases: (1)
+`onlyVfxMarker` with a marker's `inFrames` offset (the AAF/FCPXML marker
+timecode path, since `framesToTC` isn't exported directly) asserts the
+resulting `recIn` is a well-formed 2-digit frame field at
+`fps = 24000/1001`; (2) `mergeOverlap` takes the real `framesToTC`-computed
+boundary from case (1)'s marker output and checks it still merges with a
+literal, independently-written timecode for the same frame — this is
+deliberately NOT two identical literal strings (an earlier draft that
+compared `cur.recOut === next.recIn` as the same literal string passed
+even on the buggy code, since both sides ran through the exact same
+formula and landed on the same fractional value; only forcing one side
+through the actual `framesToTC` computation exposes the malformed-string
+mismatch).
+
+**Gate.** Full `npm run build-verify` exit 0, including the new tests and
+all pre-existing `test:node`/`test:js`/`test:py`/XSS/XXE/fail-open suites
+unaffected. This is a `src/`-facing renderer change, so
+`npm run build:renderer` was also run afterward to regenerate
+`dist/desktop/` (377 files, git-ignored, not committed).
+
+**Still open.** The scout report that surfaced this bug cited
+`src/scripts/modules/workers/aaf_worker.js:559,785` and
+`src/scripts/parsers/aaf_wasm.js:39,48,62` as computing/propagating the raw
+fractional `fps`/`evFps` value (`er.n / er.d`) without rounding — this was
+not independently re-verified this iteration (only `filters.js` itself
+was) and should be confirmed before treating those line references as
+authoritative. The "nominal frame-rate base" `int(fps)` grep sweep flagged
+in Iteration 48 is still pending, with its two known Python instances
+(`standard_media_backend.py`, `aaf_export.py`) remaining off-limits (dirty
+files). Iteration 49's spaced-axis-key sweep (Center/Position, Rotation,
+Crop in `xml.js`) is still unswept. The deferred `otio.js` dedup-key gap
+and `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged
+and still off-limits (dirty file) for the latter.
+
+Commits: `f0bf7d7`.
