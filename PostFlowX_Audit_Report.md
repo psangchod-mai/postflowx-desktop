@@ -4332,3 +4332,108 @@ Electron main-process code, not `src/`-facing renderer code.
   `src/tools/visionscope/*` (Audit 30), the ~60-file uncommitted-work scope
   (Audit 32), and `render_queue.js`'s `_parseError` (Audit 1) all remain
   unchanged.
+
+## Iteration 39 — storage.js's get() threw on the chrome.storage defaults-object call form
+
+### New species
+
+A follow-on to Iteration 38's API-parity species, but a sharper variant:
+not a wrong-shape result, an outright thrown exception on a call form the
+real API supports — and one masked into a silent data-loss bug by an
+unrelated `.catch` upstream, making it harder to notice than a crash
+would normally be.
+
+### Why this file, this iteration
+
+Having just fixed one chrome.storage.local parity gap in `get()` in
+Iteration 38, a background Explore agent was sent back to the same file
+to check whether other parts of the real API's contract were still
+unhandled, rather than assuming the fix was complete. It found that
+`get()` only ever handled two of chrome.storage.local's three documented
+call forms — string/array of keys, and `null`/omitted for get-all — and
+never handled the third: a plain defaults object,
+`chrome.storage.local.get({ key: defaultValue, ... })`, where Chrome
+returns the stored value if the key exists, or the caller's own default
+if it doesn't. `storage.js`'s `for (const k of keys)` loop throws
+`TypeError: keys is not iterable` the moment `keys` is a plain object
+rather than an array, since plain objects aren't iterable.
+
+This is directly reachable, not theoretical: `src/tools/bwav/
+background.js:76,84` calls `chrome.storage.local.get({ pendingLogs: [] })`,
+`src/tools/bwav/options.js:18` calls it with a multi-key defaults object,
+and `src/tools/bwav/app.js:793` calls
+`chrome.storage.local.get({ groupLabelsOverride: null })` — all three
+files ship into the desktop app via `build-renderer.js`'s copy step. The
+practical severity is worse than a visible crash: `electron/preload.js`'s
+`chrome.storage.local.get` shim wraps the `ipcRenderer.invoke()` call in
+`.catch(() => ({}))`, so the `TypeError` thrown inside the
+`pfx:storage:get` IPC main-process handler never surfaces to the caller —
+it's swallowed into an empty object. Callers relying on their own
+defaults (e.g. `options.js`'s settings load, `app.js`'s override lookup)
+silently get `undefined` for every field instead of the configured
+default, with no error anywhere in the chain to point at the cause.
+
+### The fix
+
+Added a third branch to `get()`, checked after the string and array
+cases, for the plain-object defaults form:
+
+```js
+if (Array.isArray(keys)) {
+  const result = {};
+  for (const k of keys) {
+    if (k in _cache) result[k] = _cache[k];
+  }
+  return result;
+}
+// Defaults-object form: chrome.storage.local.get({ key: defaultValue })
+// returns the stored value if present, else the caller-supplied default.
+const result = {};
+for (const k of Object.keys(keys)) {
+  result[k] = (k in _cache) ? _cache[k] : keys[k];
+}
+return result;
+```
+
+The array branch was pulled out from the tail of the function into its
+own explicit `Array.isArray(keys)` check so the final fallthrough branch
+is unambiguously the defaults-object case, rather than relying on
+"whatever's left after string and null" to also mean array.
+
+### Test approach
+
+Extended the existing `tests-js/storageGetOmitsMissingKeys.test.mjs` from
+Iteration 38 — same file, same require-cache-patched `electron` module,
+no new scaffolding needed. New case: seed the cache with `{ foo: 'bar' }`,
+call `get({ foo: 'fallback', missing: 'default' })`, assert the result is
+`{ foo: 'bar', missing: 'default' }` — the present key keeps its stored
+value, the absent key falls back to the caller's default.
+
+### Verification
+
+`node --test tests-js/storageGetOmitsMissingKeys.test.mjs`: 5/5 green.
+Mutation-proven: reverted `get()` to the two-branch (string/array-only)
+version, reran — the new test failed with the literal `TypeError: keys is
+not iterable` reproduction, confirming the test genuinely exercises the
+bug; restored, green again. Full `npm run build-verify` exit 0 on the
+first pass this time (log: `/tmp/gate39.log`; Python suite 250 passed, 7
+skipped) — no new test file was created (only the existing one extended),
+so the `selfContained.test.mjs` untracked-file gate that caused a
+first-pass failure in Iterations 36 and 38 didn't apply here.
+`npm run build:renderer` was not run — `electron/storage.js` is Electron
+main-process code, not `src/`-facing renderer code.
+
+### Still open
+
+- The Iteration 38 deferred item questioning `remove()`/`set()`'s
+  non-existent-key handling was re-checked this iteration and found to
+  already match chrome.storage.local's contract correctly — closing that
+  item as verified-fine rather than carrying it forward as an open gap.
+- The `folder_picker.py` AppleScript-injection surface remains unverified
+  and out of scope: every current call site still passes a hardcoded
+  dialog title.
+- `CompanionBridge`'s other untested lifecycle paths (Audit 35), the
+  heartbeat-interval lease race (Audit 36), the i18n gaps and
+  `src/tools/visionscope/*` (Audit 30), the ~60-file uncommitted-work scope
+  (Audit 32), and `render_queue.js`'s `_parseError` (Audit 1) all remain
+  unchanged.

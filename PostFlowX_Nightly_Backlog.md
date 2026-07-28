@@ -3667,3 +3667,49 @@ every current call site passes a hardcoded dialog title, so it isn't
 known to be exploitable yet.
 
 Commits: `dfd299b`.
+
+## Iteration 39 — storage.js's get() threw on the chrome.storage defaults-object call form
+
+**Found.** `electron/storage.js`'s `get()` handled only two of the three
+call forms `chrome.storage.local.get()` supports: a single string key, an
+array of keys, or `null`/omitted (get all). The third form — a plain
+defaults object, `get({ key: defaultValue, ... })`, where Chrome returns
+the stored value if present or the given default otherwise — was not
+handled at all. `for (const k of keys)` on a plain object throws
+`TypeError: keys is not iterable`. This isn't hypothetical: this exact
+call form is used live in `src/tools/bwav/background.js`,
+`src/tools/bwav/options.js`, and `src/tools/bwav/app.js`, all shipped into
+the desktop app via `build-renderer.js`. Worse, the failure is silent in
+practice — `electron/preload.js`'s storage shim wraps the IPC call in
+`.catch(() => ({}))`, so the thrown error never surfaces; callers just
+silently get `{}` instead of their configured defaults.
+
+**Done.** Added a third branch to `get()`: when `keys` is a plain object
+(not `null`, not a string, not an array), iterate `Object.keys(keys)` and
+return the stored value for each key if present in `_cache`, else the
+caller-supplied default from `keys[k]`.
+
+**Gate.** Extended `tests-js/storageGetOmitsMissingKeys.test.mjs` (the
+same file/harness from Iteration 38) with a new case: `get({ foo:
+'fallback', missing: 'default' })` against a cache containing only `foo`
+returns `{ foo: 'bar', missing: 'default' }`. Mutation-proven: reverted
+`get()` back to the two-branch version, reran — the new test failed with
+the exact `TypeError: keys is not iterable` reproduction; restored, green
+again (5/5). Full `npm run build-verify` exit 0 on the first pass (log:
+`/tmp/gate39.log`; Python suite 250 passed, 7 skipped) — no new test file
+this time, so the selfContained.test.mjs staging gate that tripped up
+Iterations 36 and 38 didn't apply. `npm run build:renderer` was not run —
+`electron/storage.js` is Electron main-process code, not `src/`-facing
+renderer code.
+
+**Still open.** While auditing this file, `set()` and `remove()` were
+re-checked against the real chrome.storage.local contract for
+non-existent-key handling (a candidate deferred from Iteration 38) and
+found to already match correctly — `remove()` on a missing key is a
+harmless no-op via `delete`, and `set()` does a plain per-key merge. That
+deferred item is now closed as verified-fine rather than a real gap. The
+`folder_picker.py` AppleScript-injection surface remains unverified and
+out of scope — every current call site still passes a hardcoded dialog
+title.
+
+Commits: `989f9c9`.
