@@ -5768,3 +5768,81 @@ gap and `pfx_native_engine.js`'s start/stop latch (Iteration 41) remain
 deferred/off-limits respectively.
 
 Commits: `f0bf7d7`.
+
+## Iteration 51 — drop-frame timecode misclassification at 23.976fps (companion/api.py)
+
+**New species.** Every prior iteration in this loop fixed a frame-rate
+*base* bug (raw fractional fps used where a rounded nominal base was
+required). This is a different species: a drop-frame *classification*
+bug — deciding whether to format timecode with a semicolon (drop-frame)
+or colon (non-drop) separator based on an incorrect frame-rate
+membership test.
+
+**Why this file.** `git status --short` for `companion/src/postflowx_companion/api.py`
+was empty (clean) before editing, confirming it was safe to modify per
+the standing off-limits-for-dirty-files rule. `api.py` is the companion
+server's HTTP handler layer; the two affected call sites are on the OCF
+preview/seek timeline-TC path and the batch-pick resolve path, both of
+which hand timecode strings to DaVinci Resolve's Set/GetCurrentTimecode
+API.
+
+**The fix.** Before, at both call sites:
+```python
+drop_frame = fps in (29.97, 59.94, 23.976)   # api.py:3104
+...
+_drop = fps in (29.97, 59.94, 23.976)         # api.py:4057
+```
+23.976 has no drop-frame variant — SMPTE drop-frame only exists for the
+30-based NTSC rates (29.97/59.94), where whole-frame counting drifts from
+wall-clock time fast enough to require periodic frame-number skipping.
+This project's own `src/scripts/modules/utils_time.js` already codifies
+this (`{ fps: 23.976, dfCapable: false }` vs. `{ fps: 29.97, dfCapable: true }`/
+`{ fps: 59.94, dfCapable: true }`), but the Python companion side had this
+separate, incorrect inline check.
+
+After — new shared helper in `proxy_service.py`, modeled on the existing
+tolerance-based pattern in `aaf_export.py:132-134`
+(`abs(fps - 29.97) < 0.02`, `abs(fps - 59.94) < 0.02`), which avoids
+fragile exact-float-equality checks against literals like `29.97` when
+`fps` may arrive via slightly different rounding paths:
+```python
+def _is_drop_frame_rate(fps: float) -> bool:
+    """True only for the 30-based NTSC rates (29.97/59.94) that have a drop-frame
+    variant. 23.976 has no drop-frame form -- it always uses non-drop timecode."""
+    return abs(fps - 29.97) < 0.02 or abs(fps - 59.94) < 0.02
+```
+Both `api.py` call sites now read `_is_drop_frame_rate(fps)`, and the
+function was added to `api.py`'s existing import line from
+`.proxy_service`.
+
+**Test approach.** Existing candidate test files (`test_ocf_seek_tc.py`,
+`test_tc_helpers.py`) were pre-existing dirty/`??` WIP and off-limits, so
+a new file was created: `companion/tests/test_drop_frame_rate.py`, with
+four cases — `_is_drop_frame_rate` returns `False` for 23.976, `True` for
+29.97/59.94, `False` for whole-number rates (24/25/30), and
+`_seconds_to_timecode(3604.4166, 23.976, _is_drop_frame_rate(23.976))`
+produces a colon-only (no semicolon) 4-field timecode.
+
+**Verification.** Mutation-proven: temporarily reverted
+`_is_drop_frame_rate`'s body to the buggy
+`return fps in (29.97, 59.94, 23.976)` form (isolated to the `return`
+line only, verified via `s.count(old) == 1` before replacing, to avoid
+corrupting the docstring), reran the new test file —
+`2 failed, 2 passed`, exactly as predicted: `test_23976_is_not_drop_frame`
+failed (`assert True is False`), and
+`test_seconds_to_timecode_uses_colon_separator_at_23976` failed with the
+actual malformed output `'01:00:00;19'`. Restored the fix, reran —
+`4 passed, 0 failed`. Full `npm run build-verify` gate green: companion
+pytest 259 passed/7 skipped (up from 255/7 pre-fix), Node `test:node`/
+`test:js` unaffected, XSS/XXE/fail-open gates clean. Companion-only
+(Python) change, so `npm run build:renderer` was not required.
+
+**Still open.** `_drop` in the batch-pick function (`api.py` ~line 4057)
+appears write-only — no further reference found in the enclosing function
+via grep — a pre-existing oddity left untouched as out of scope. All
+"still open" items carried from Iteration 50 (the `aaf_worker.js`/
+`aaf_wasm.js` raw-EditRate citations, Iteration 48's `int(fps)` sweep,
+Iteration 49's spaced-axis-key sweep, the deferred `otio.js`/
+`pfx_native_engine.js` items) remain unchanged.
+
+Commits: `fc04c95`.

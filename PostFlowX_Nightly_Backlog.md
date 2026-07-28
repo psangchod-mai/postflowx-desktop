@@ -4306,3 +4306,46 @@ and `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged
 and still off-limits (dirty file) for the latter.
 
 Commits: `f0bf7d7`.
+
+## Iteration 51 — 23.976fps OCF clips got semicolon drop-frame timecode instead of colon non-drop
+
+**Found.** `companion/src/postflowx_companion/api.py` had two call sites
+that decided drop-frame timecode formatting via
+`fps in (29.97, 59.94, 23.976)`. Drop-frame is a SMPTE convention that
+only applies to the 30-based NTSC rates (29.97/59.94), where whole-frame
+counting drifts from wall-clock time fast enough to require periodic
+frame-number skipping — 23.976 has no drop-frame variant at all and
+always uses non-drop (colon-delimited) timecode, per this project's own
+`src/scripts/modules/utils_time.js` (`{ fps: 23.976, dfCapable: false }`
+vs. `{ fps: 29.97, dfCapable: true }`). One site built the OCF preview/seek
+timeline TC (`target_tl_tc = _seconds_to_timecode(tl_start_sec + rel_sec,
+fps, drop_frame)`); the other set `_drop` in the batch-pick resolve path.
+At 23.976fps both produced a malformed semicolon TC (e.g. `"01:00:00;19"`)
+instead of the correct `"01:00:00:19"`, which DaVinci Resolve's
+Set/GetCurrentTimecode on a non-drop timeline will not round-trip.
+
+**Done.** Added a shared `_is_drop_frame_rate(fps)` helper to
+`proxy_service.py`, using the same tolerance-based comparison
+(`abs(fps - 29.97) < 0.02`, `abs(fps - 59.94) < 0.02`) already established
+in `aaf_export.py` for exactly this reason (avoiding fragile exact-float
+equality against literals like `29.97`). Updated both `api.py` call sites
+(`drop_frame = ...`, `_drop = ...`) to use it instead of the inline
+exact-set-membership check. New test: `companion/tests/test_drop_frame_rate.py`
+— existing candidate test files (`test_ocf_seek_tc.py`, `test_tc_helpers.py`)
+were pre-existing dirty/off-limits WIP, so a new file was created instead.
+
+**Gate.** Full `npm run build-verify` exit 0: companion pytest 259
+passed/7 skipped (up from 255/7, the 4 new tests), Node `test:node`/
+`test:js` suites unaffected, all three security gates (XSS/XXE/fail-open)
+clean. This is a companion-only (Python) change with no `src/` edits, so
+`npm run build:renderer` was not required.
+
+**Still open.** `_drop` in the batch-pick function (`api.py` around line
+4057) appears to be assigned but never read afterward in that code path
+(confirmed via grep — no further reference in the enclosing function);
+this pre-existing oddity was left untouched as out of scope for this fix.
+Iteration 48's `int(fps)` sweep, Iteration 49's spaced-axis-key sweep, the
+`aaf_worker.js`/`aaf_wasm.js` raw-EditRate citations from Iteration 50, and
+the deferred `otio.js`/`pfx_native_engine.js` items all remain pending.
+
+Commits: `fc04c95`.
