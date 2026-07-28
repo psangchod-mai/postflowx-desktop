@@ -63,6 +63,13 @@ class CompanionBridge extends EventEmitter {
 
     this._proc.stdout.on('data', (chunk) => this._onData(chunk));
     this._proc.stderr.on('data', (d) => console.log('[Companion stderr]', d.toString().trimEnd()));
+    // Writing to stdin after the subprocess has died surfaces as an async EPIPE
+    // 'error' event on the stream, not a throw from write() — _sendRaw()'s
+    // try/catch can't catch it. Without a listener here Node's default behavior
+    // is to throw uncaught, crashing the whole Electron main process.
+    this._proc.stdin.on('error', (err) => {
+      console.warn('[Companion] stdin write error:', err.message);
+    });
     this._proc.on('error', (err) => {
       console.error('[Companion] process error:', err.message);
       this.emit('unavailable', err.message);

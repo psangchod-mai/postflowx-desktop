@@ -16,7 +16,8 @@ function makeFakeProc() {
   const proc = new EventEmitter();
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
-  proc.stdin = { write: () => {} };
+  proc.stdin = new EventEmitter();
+  proc.stdin.write = () => true;
   proc.killed = false;
   proc.kill = function (signal) { this.killed = true; this.killSignal = signal; };
   return proc;
