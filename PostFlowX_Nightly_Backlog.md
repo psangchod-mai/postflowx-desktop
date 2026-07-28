@@ -3408,4 +3408,4 @@ naming the file, restored, green again. Full `npm run build-verify` exit 0
 wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
 exactly as reported in Iteration 30 — none touched this iteration.
 
-Commits: pending.
+Commits: `b92507e`.
