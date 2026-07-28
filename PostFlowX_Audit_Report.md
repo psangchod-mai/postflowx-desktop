@@ -5110,3 +5110,123 @@ run per CLAUDE.md's rule; it succeeded (log: `/tmp/buildrenderer45.log`,
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
   WIP (Audit 42) remain untouched, unstaged, and out of scope.
+
+## Iteration 46 — amf_convert.js's three separate tcToFrames copies all dropped drop-frame timecodes to 0
+
+### New species
+
+Same bug class as Iterations 44–45 (drop-frame `;` separator not
+normalized before parsing), but this is now its THIRD independent
+occurrence in three consecutive iterations, and the first time it shows
+up more than once in the *same* file — `amf_convert.js` doesn't share one
+`tcToFrames` helper across its own call sites, it has three separately
+written copies of the identical buggy regex.
+
+### Why this file, this iteration
+
+`src/scripts/modules/amf_convert.js` handles VFX/AE export conversion.
+It defines `tcToFrames` three times, independently:
+
+1. At module scope, feeding the master-mode Nuke segment builder
+   (`exportNukeNK`, ~line 6851):
+   ```javascript
+   const a = tcToFrames(h.recIn, fps);
+   const b = tcToFrames(h.recOut, fps);
+   const dur = Math.max(1, b - a);
+   ```
+2. Inside `__buildAEPCommonJSX`'s returned text, feeding
+   `addTimingMarkers` (~line 4604) and a per-shot AE segment builder
+   (~line 4810).
+3. Inside `exportAEJSX`'s generated `.jsx` text, feeding the same timing
+   logic once it's running inside After Effects/ExtendScript — this copy
+   is doubly-escaped, since its regex source lives inside a template
+   literal that itself gets written to disk as `.jsx` text:
+   `/^(\\d+):(\\d+):(\\d+):(\\d+)$/`.
+
+All three matched only `:`-separated fields. `edl.js`'s timecode regex —
+read directly this iteration to confirm the claim — is
+`const tcRe = /\b\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2}\b/g;` (line 67), and
+`recIn`/`recOut` are assigned verbatim from the last four matches
+(`const [srcIn, srcOut, recIn, recOut] = last4;`, line 128) with no
+normalization. So a drop-frame EDL's hits carry `"HH:MM:SS;FF"` straight
+into `amf_convert.js`, and all three `tcToFrames` copies returned `0` for
+every one of them — collapsing VFX comp segments in master-mode Nuke
+export to zero-length, and AE timing markers/segments to zero-position
+and zero-length, with nothing surfaced to the user.
+
+### The fix
+
+Same normalization pattern in all three copies:
+
+```javascript
+// module scope and __buildAEPCommonJSX copies
+const m = String(tc || "").replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
+```
+```javascript
+// exportAEJSX's doubly-escaped .jsx-text copy
+var m = (tc||"").replace(/;/g, ':').match(/^(\\d+):(\\d+):(\\d+):(\\d+)$/);
+```
+
+The third fix has to be applied to the *pre-unescape* source form — the
+enclosing template literal itself collapses `\\d` to `\d` at runtime
+before the text is ever written to disk, so inserting `.replace(/;/g,
+':')` ahead of the existing (still double-escaped) regex reproduces the
+same behavior once the generated `.jsx` file is actually parsed by
+ExtendScript.
+
+### Test approach
+
+`amf_convert.js` calls `document.addEventListener` at module scope, so it
+cannot be `import()`'d under plain Node. Following the existing pattern
+in `saveOutcome.test.mjs`/`toastContract.test.mjs`, the new
+`tests-js/amfConvert_dropframe_tc.test.mjs` reads the file as text,
+extracts each of the three `tcToFrames` function bodies with a regex, and
+executes each in isolation via `new Function('tc', 'fps', body + 'return
+tcToFrames(tc, fps);')`. For the `exportAEJSX` copy, the extracted body's
+literal `\\d` is normalized to `\d` first (`rawBody.replace(/\\\\d/g,
+'\\d')`), reproducing the one level of escape-processing the real
+template literal performs at runtime — without this step the regex
+matches a literal backslash instead of a digit and the test would report
+a false failure even against already-fixed code. Ten assertions total:
+all three definitions × (NDF still converts correctly, DF now converts
+instead of silently returning 0, malformed input still safely returns 0
+rather than crashing).
+
+### Verification
+
+Mutation-proven: with the fix in place, all 10 assertions pass. Reverted
+all three `.replace(/;/g, ':')` insertions back to the original `:`-only
+regexes (confirmed byte-identical to the pre-fix file via `git diff
+--stat` showing zero diff), reran — exactly 3 of 10 failed, one
+DF-specific assertion per definition, with the other 7 (NDF parity ×3,
+malformed-input rejection ×3, plus the "exactly 3 definitions found"
+count check) correctly unaffected. Restored the fix from a `/tmp` backup,
+all 10 green again. Full `npm run build-verify` exit 0 on the first run
+(log: `/tmp/gate46.log`) — the new test file was staged before running
+the gate — including all 259 companion pytest cases (unaffected) and the
+XSS/XXE/fail-open scan gates, all clean. Since this changes `src/`-facing
+renderer source, `npm run build:renderer` was also run per CLAUDE.md's
+rule; it succeeded (log: `/tmp/buildrenderer46.log`, 377 files rebuilt
+into `dist/desktop/`).
+
+### Still open
+
+- Three consecutive iterations have now each found an independently-
+  written `tcToFrames`/timecode parser with the exact same `;`-separator
+  gap (`cutdiff.js` in Iteration 44, `filters.js` in Iteration 45, and
+  three separate copies inside `amf_convert.js` here). That's a strong
+  enough signal to warrant a dedicated, exhaustive sweep — rather than
+  continued opportunistic discovery — of every remaining timecode-parsing
+  regex across `src/scripts/` and `postflowx-adobe/` in a near-future
+  iteration, specifically grepping for `:`-only timecode-splitting
+  patterns not yet cross-checked against `utils_time.js`'s canonical
+  normalize-then-split approach. Modules already confirmed correct:
+  `utils_time.js`, `edl.js`, `xml.js`, `ale.js`, plus now-fixed
+  `cutdiff.js`, `filters.js`, and `amf_convert.js`.
+- The rest of the companion Python package beyond `api.py` remains
+  unswept, as flagged in Iterations 43–45.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
+  WIP (Audit 42) remain untouched, unstaged, and out of scope.

@@ -4009,3 +4009,60 @@ its own uncoordinated timecode parser. The deferred `otio.js` dedup-key gap
 and `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
 
 Commits: `b5db764`.
+
+## Iteration 46 — amf_convert.js's three separate tcToFrames copies all dropped drop-frame timecodes to 0
+
+**Found.** `src/scripts/modules/amf_convert.js` doesn't have one local
+`tcToFrames` — it has three, independently written: one at module scope
+(feeds the master-mode Nuke segment builder), one embedded in the returned
+text of `__buildAEPCommonJSX` (feeds `addTimingMarkers` and a per-shot AE
+segment builder), and one embedded in the generated `.jsx` text inside
+`exportAEJSX` (feeds the same timing logic once it's actually running
+inside After Effects/ExtendScript). All three used the same `:`-only regex
+as the bugs fixed in Iterations 44–45. `edl.js`'s timecode regex
+(`/\b\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2}\b/g`, confirmed by direct read this
+iteration) accepts `;` in every field and hands `recIn`/`recOut` through
+verbatim with no normalization, so a drop-frame EDL's hits carry
+`"HH:MM:SS;FF"` straight into `amf_convert.js`. Every one of these three
+`tcToFrames` copies then returned `0` for real DF timecodes, collapsing
+VFX comp segments (master-mode Nuke export, ~line 6851) and After Effects
+timing markers/segments (~line 4604 and ~line 4810) to zero-length or
+zero-position — silently, with no error surfaced.
+
+**Done.** Normalized `;` to `:` before the regex match in all three
+`tcToFrames` definitions, including the one embedded in `exportAEJSX`'s
+doubly-escaped (`\\d`) template-literal text, where the fix has to be
+applied to the pre-unescape source form to survive being written out
+as ExtendScript. New dedicated test file
+`tests-js/amfConvert_dropframe_tc.test.mjs` (the module can't be
+`import()`'d under Node — it calls `document.addEventListener` at module
+scope — so each `tcToFrames` body is extracted as text and executed via
+`new Function`, mirroring the existing pattern in `saveOutcome.test.mjs`):
+10 assertions covering all three definitions × (NDF still works, DF now
+converts instead of silently returning 0, malformed input still safely
+returns 0). Mutation-proven: reverted all three normalizations, reran —
+exactly 3 of 10 failed (one DF-specific assertion per definition, byte-
+identical revert confirmed via `git diff --stat`), the other 7 correctly
+unaffected; restored from backup, all 10 green again.
+
+**Gate.** Full `npm run build-verify` exit 0 on the first run (log:
+`/tmp/gate46.log`), including all 259 companion pytest cases (unaffected)
+and the XSS/XXE/fail-open scan gates. Since this touches `src/`-facing
+renderer code, `npm run build:renderer` was also run and succeeded (log:
+`/tmp/buildrenderer46.log`, 377 files rebuilt into `dist/desktop/`).
+
+**Still open.** This is now the THIRD consecutive iteration to find the
+same drop-frame-separator bug class in a different, independently-written
+`tcToFrames`/timecode parser (`cutdiff.js` in Iteration 44, `filters.js`
+in Iteration 45, and three separate copies inside `amf_convert.js` this
+iteration). That pattern is strong enough now to warrant a dedicated
+sweep — rather than opportunistic discovery — of every remaining
+timecode-parsing regex across `src/scripts/` and `postflowx-adobe/` in a
+near-future iteration, specifically grepping for `\d+\):(\\+\d+):` or
+similar `:`-only timecode-splitting patterns that haven't yet been cross-
+checked against `utils_time.js`'s canonical normalize-then-split approach.
+The rest of the companion Python package beyond `api.py` remains unswept,
+as flagged in Iterations 43–45. The deferred `otio.js` dedup-key gap and
+`pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
+
+Commits: `0854119`.
