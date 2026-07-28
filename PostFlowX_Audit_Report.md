@@ -3775,3 +3775,91 @@ scan gates all clean. `npm run build:renderer` exit 0, 377 files.
   instead of delegating to `friendlyText` (open since Audit 1) — confirmed
   still true this iteration, and confirmed still blocked by the same
   unrelated pending edit in that file the original note described.
+
+## Audit 33 — the coverage test's own blind spot, not a new call-site conversion
+
+### New species
+
+Yes, a first: every prior friendlyError/friendlyAlert iteration (28 through
+32) fixed a *call site* that skipped translation. This one instead fixes the
+*enforcement mechanism* — `tests-js/errorI18n.test.mjs` — which had a
+structural blind spot for exactly the shape Iterations 29, 31, and 32
+introduced. `translate()` is called directly on a literal in the four
+`SCANNED` modules, so a regex over each file's own text finds it. But
+`friendlyAlert(err, 'label')` calls `translate(label)` one level removed:
+inside `friendlyAlert.js`, on an argument supplied by whichever file called
+it. A regex scoped to `friendlyAlert.js`/`friendlyError.js` text alone can
+never see a string that only exists in five other files' call sites. Four
+iterations had already introduced 9 such labels — including this file's own
+Iteration 32 conversion two entries above — with no test able to notice any
+of them were English-only in six locales.
+
+### Why this file, this iteration
+
+Surveyed every remaining `alert()` call site in the codebase looking for a
+fifth conversion candidate matching Iterations 29/31/32's pattern: none
+remained in non-dirty files (checked `bwav/popup.js`, `bwav/app.js`,
+`preflight/app/*.js` — already uses its own `failureAlert` helper — the two
+ExtendScript files, which run in Adobe After Effects' own JS runtime and
+cannot import a browser/Electron module, and `ocfViewer.js`'s debug JSON
+dump). With that bug class exhausted, the next question was whether the
+enforcement test itself had a gap, since `errorI18n.test.mjs`'s own header
+explicitly names "any module that reaches for translate()" as the risk
+surface — and `friendlyAlert.js` reaches for `translate()` too, just once
+removed. Grepping every `friendlyAlert(` call site's second argument against
+`ERROR_DICT` confirmed all 9 unique labels were missing from all six locales.
+
+### A judgment call: reading dirty files without editing them
+
+Two of the five caller files (`vfxPullPanel.js`, `reviews/index.js`) are among
+the ~60 files already confirmed to carry genuine uncommitted changes (Audit
+32). The new test needs their text only to extract string literals via
+regex — the same thing `errorI18n.test.mjs` already does to `saveNotice.js`,
+`printOutcome.js`, `proResProxy.js`, and `playableMedia.js`, none of which are
+imported, only read as text. Reading a file's current on-disk content for a
+regex scan is not an edit and does not touch, stage, or depend on whatever
+uncommitted work is in progress there; only `i18n.js` and
+`errorI18n.test.mjs` — both clean before this iteration — were modified.
+
+### Gate detail
+
+One count needed a second look: `reviews/index.js` has 5 `friendlyAlert(`
+calls, but one — `friendlyAlert(notice.text, label)` — passes a variable,
+not a literal, so the label-extraction regex (which requires a quoted
+string as the second argument) correctly does not match it. That call
+re-displays a status-strip notice through whatever label it was already
+raised with, so it has nothing new to translate — `ERROR_DICT` already
+covers whatever produced that label elsewhere. The other 4 calls are 3
+distinct literals ("Reviews JSON/CSV/PDF export failed", with PDF appearing
+twice), so the file's expected count is 3, not 4 — the first draft assumed
+one entry per call site, corrected after the test named the mismatch.
+
+### Verification
+
+`node --test tests-js/errorI18n.test.mjs`: 29/29 green, including 5 new
+`SCANNED_LABELS` tests. Mutation-proven 2/2: deleting the ko row for "EXR
+export failed" failed `ko: every failure message is translated` (and its
+`key parity` knock-on), restored, green again; bumping
+`smart_engine_settings.js`'s expected label count from 1 to 2 failed with
+`1 !== 2` naming the exact file, restored, green again. Full
+`npm run build-verify` exit 0 (Node tests, `test:js`, `test:py` — 250 passed /
+7 skipped, innerHTML/XML/fail-open scan gates all clean). `npm run
+build:renderer` exit 0, 377 files.
+
+### Still open
+
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all remain
+  exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work first
+  surfaced in Audit 32 is unchanged this iteration; still worth surfacing to
+  whoever owns it.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
+- Worth a forward note: any *future* file that reaches for `translate()`
+  through a still-different shape (not a direct literal call, not a
+  friendlyAlert label) would reproduce this same blind spot a third way.
+  `errorI18n.test.mjs`'s two scanners (`SCANNED`, `SCANNED_LABELS`) are each
+  narrow by design — that is what makes their assertions meaningful — but it
+  means each new indirection pattern needs its own scanner, not a widening of
+  an existing regex.

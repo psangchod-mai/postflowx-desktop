@@ -3359,3 +3359,53 @@ wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
 exactly as reported in Iteration 30 — none touched this iteration.
 
 Commits: `8907cf0`.
+
+## Iteration 33 — Nine friendlyAlert operation labels were shipping English-only to six locales, invisible to the test that exists to catch exactly this
+
+**Found.** Iteration 32 (and the three before it) converted raw
+`window.alert(err.message)` call sites to `friendlyAlert(err, 'label')` across
+five files. `friendlyAlert.js`'s `composeAlert()` calls `translate(label)` on
+that second argument, but `tests-js/errorI18n.test.mjs` — the file whose own
+header comment says "any module that reaches for translate() has to be added
+to SCANNED below, or it ships English to six locales and every test in this
+file still passes" — only scans `translate('...')` literal calls inside
+specific listed files. It had no mechanism for the friendlyAlert-label shape,
+where the string to translate lives in the *caller* as a second argument, not
+inside `friendlyError.js`/`friendlyAlert.js` themselves. Grepping confirmed
+none of the 9 unique labels ("EXR export failed", "Reviews JSON/CSV/PDF
+export failed", "Test proxy generation failed", "IMF diagnostics failed",
+"Deleting/Renaming/Duplicating project failed") existed anywhere in
+`ERROR_DICT` — a real English-only gap in ko/ja/zh-TW/th/id/fil, of the exact
+class this test file's comments warn about, that had gone undetected across
+four prior iterations that each added another labelled call site.
+
+**Done.** Added all 9 labels to `ERROR_DICT` in `src/scripts/modules/i18n.js`
+across all six locale blocks (ko, ja, zh-TW, th, id, fil) — 54 new key/value
+rows total. Extended `tests-js/errorI18n.test.mjs` with a `friendlyAlertLabels()`
+scanner (regex: `friendlyAlert(<arg>, '<literal>')`) and a `SCANNED_LABELS`
+table listing the 5 caller files with their expected literal-label counts
+(`vfxPullPanel.js`: 1, `reviews/index.js`: 3, `smart_engine_settings.js`: 1,
+`imf_package_ui.js`: 1, `projectManager.js`: 3), folded into the existing
+`STRINGS` coverage set so the file's per-locale coverage/no-copy/parity/no-orphan
+tests automatically extend to the new strings. `reviews/index.js` has 5
+`friendlyAlert(` calls total but one (`friendlyAlert(notice.text, label)`)
+passes a variable, not a literal, and re-shows a status-strip notice through
+the label it was already raised with — correctly excluded from the scan and
+noted in a comment, since ERROR_DICT already covers whatever produced that
+label.
+
+**Gate.** `node --test tests-js/errorI18n.test.mjs`: 29 tests, all green (5 new
+`SCANNED_LABELS` tests plus the existing per-locale tests now covering 9 more
+strings). Mutation-proven 2/2: (1) deleted the ko row for "EXR export failed"
+— failed `ko: every failure message is translated` and (as a knock-on)
+`the six locales cover exactly the same keys`, restored, green again; (2) bumped
+`smart_engine_settings.js`'s expected count from 1 to 2 — failed with `1 !== 2`
+naming the file, restored, green again. Full `npm run build-verify` exit 0
+(Node, JS, Python suites plus innerHTML/XML/fail-open scan gates).
+`npm run build:renderer` exit 0, 377 files.
+
+**Still open.** The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
+exactly as reported in Iteration 30 — none touched this iteration.
+
+Commits: pending.
