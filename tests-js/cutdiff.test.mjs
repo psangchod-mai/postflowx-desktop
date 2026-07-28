@@ -142,5 +142,33 @@ ok(computeCutDiff([], []).length === 0, 'empty inputs → empty diff');
   }
 }
 
+// ── Angle/take-suffix identity matching ─────────────────────────────────────
+// identityKey's own comment says a trailing angle/counter suffix like "_A"
+// vs "_AB" must still cluster to the same identity so a re-labeled angle
+// doesn't read as a brand-new shot. This must hold across EXTENDED/TRIMMED/
+// CHANGED/UNCHANGED classification, not just for the NEW/no-match check.
+{
+  const d = computeCutDiff([ev('101-08-06/01_A', 'R1', '01:00:00:00', '01:00:04:00')],
+                           [ev('101-08-06/01_AB', 'R1', '01:00:00:00', '01:00:06:00')]);
+  ok(typeOf(d, '101-08-06/01_AB') === DIFF_TYPES.EXTENDED,
+     'angle suffix change (_A → _AB), same reel, longer NEW → EXTENDED (matched, not NEW)');
+}
+{
+  const old = [ev('SHOT_010_A', 'R1', '01:00:00:00', '01:00:04:00')];
+  const neu = [ev('SHOT_010_A', 'R1', '01:00:00:00', '01:00:04:00')];
+  const d = computeCutDiff(old, neu, { includeUnchanged: true });
+  ok(typeOf(d, 'SHOT_010_A') === DIFF_TYPES.UNCHANGED,
+     'identical angle-suffixed clip name → UNCHANGED, not misclassified as NEW');
+}
+// Purely numeric trailing suffixes ("_010") are take/counter numbers, not
+// angle letters — they must NOT be stripped, or genuinely distinct clips
+// with different numeric suffixes would wrongly collapse to one identity.
+{
+  const d = computeCutDiff([ev('SHOT_010', 'R1', '01:00:00:00', '01:00:04:00')],
+                           [ev('SHOT_020', 'R1', '01:00:00:00', '01:00:04:00')]);
+  ok(typeOf(d, 'SHOT_020') === DIFF_TYPES.NEW,
+     'distinct numeric-suffixed clip names must stay distinct identities → NEW');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

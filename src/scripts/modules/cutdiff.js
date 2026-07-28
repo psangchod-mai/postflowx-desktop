@@ -62,11 +62,17 @@ function framesToTc(fr, fps) {
   return `${p(hh)}:${p(mm)}:${p(ss)}:${p(ff)}`;
 }
 
+// A trailing "_A" / "_AB" / "_A2" angle-or-take suffix — stripped only for
+// matching, never for display. Requires at least one letter after the
+// underscore so purely numeric suffixes ("_010", take counters) are left
+// alone and still distinguish otherwise-identical clip names.
+const ANGLE_SUFFIX_RE = /_[A-Za-z]+\d*$/;
+
 // Normalise a clip identity key — strip trailing counters / angle suffixes
 // so that `101-08-06/01_A` and `101-08-06/01_AB` still cluster together,
 // but keep enough specificity to avoid false matches.
 function identityKey(clipName, reel) {
-  const name = (clipName || '').trim();
+  const name = (clipName || '').trim().replace(ANGLE_SUFFIX_RE, '');
   const r    = (reel    || '').trim();
   return r ? `${r}||${name}` : name;
 }
