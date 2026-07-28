@@ -475,7 +475,7 @@ function extractFxFromClipitem(clipitem){
         const val = (getText(param, 'value', '') || '').trim();
         const kfs = parseKeyframes(param);
 
-        if (key.includes('scale') && !key.includes('scalex') && !key.includes('scaley')){
+        if (key.includes('scale') && !key.includes('scalex') && !key.includes('scaley') && key !== 'scale x' && key !== 'scale y'){
           let scaleVal = readNum(val);
           scaleVal = chooseMotionValueFromKeys(scaleVal, kfs, readNum, sameNum, n => Math.abs(Number(n)) > 0.001);
           if (scaleVal != null) t.scale = scaleVal;
