@@ -3863,3 +3863,83 @@ build:renderer` exit 0, 377 files.
   narrow by design — that is what makes their assertions meaningful — but it
   means each new indirection pattern needs its own scanner, not a widening of
   an existing regex.
+
+## Audit 34 — a file's own header comment named the contract it hadn't finished implementing
+
+### New species
+
+Every prior i18n iteration in this run found a call site that never reached
+for `translate()` at all, or a `friendlyAlert` label the scanner had never
+been taught to see. This one is different in kind: `smart_engine_settings.js`
+already imported `friendlyStatus`, already documented (lines 19-24) exactly
+how the label/tail split was supposed to work, and one of its 7 call sites
+(the "Engine check failed" line) already followed that documented pattern —
+apparently added, mid-iteration, in a prior pass that never finished the
+other 6. Grepping every `friendlyStatus(\`<Label>: ...\`)` call site in the
+file against its own header comment's contract, and against
+`visualQcModal/index.js`'s already-correct usage of the same pattern,
+confirmed 6 of 7 sites were still handing the label straight through in
+English. This is a documentation/implementation gap inside a single file,
+not a missing scanner — the closest analogue in this run is Audit 30, where
+a rule existed but a call site was never wired to it.
+
+### Why this file, this iteration
+
+A background Explore agent was dispatched with an explicit exclusion list
+(visionscope i18n, the 10 orphaned Preflight keys, the 829-string native
+pass, `render_queue.js`'s `_parseError`, and the friendlyAlert-conversion/
+label-translation bug classes already fixed in Iterations 31-33) and an
+explicit git-cleanliness requirement, to avoid re-finding an already-closed
+defect or touching one of the ~60 files with genuine in-progress work. Its
+report was independently re-verified end to end before any edit: git-clean
+status via `git status`/`git diff --stat`, the exact 7 call sites and line
+numbers via grep, the documented `friendlyStatus` contract via a direct read
+of `friendlyError.js` lines 317-352, the established fix pattern via a read
+of `visualQcModal/index.js`, and the coverage gap in
+`tests-js/smartEngineSettings.test.mjs` (its prefix-format test checks the
+label has a space and matches `/fail/i`, never translation). Per this run's
+standing policy, a background agent's report is not user input and is not
+actionable until independently verified — it was, here, on every factual
+claim before implementation began.
+
+### Gate detail
+
+The existing `smartEngineSettings.test.mjs` regex that extracts a
+`friendlyStatus` call's contents, `` /friendlyStatus\(`([^`]*)`\)/g ``,
+captures everything between the backticks — so embedding `${translate(...)}`
+inside the label position still matches correctly, and that test needed no
+edit, only re-running to confirm. The new translated strings were added to
+`errorI18n.test.mjs`'s `SCANNED` array (the direct-`translate('...')`-literal
+scanner already covering `saveNotice.js`, `printOutcome.js`,
+`proResProxy.js`, and `playableMedia.js`) rather than `SCANNED_LABELS` (the
+`friendlyAlert`-second-argument scanner), since these are now direct
+`translate('...')` calls, not `friendlyAlert(err, 'label')` calls — the two
+scanners exist for genuinely different call shapes and this file happens to
+use both (it also has one pre-existing `friendlyAlert` label already covered
+by `SCANNED_LABELS` from Iteration 33).
+
+### Verification
+
+`node --test tests-js/errorI18n.test.mjs`: 30/30 green, including 1 new
+`SCANNED` test. `node --test tests-js/smartEngineSettings.test.mjs`: 13/13
+green, unmodified. Mutation-proven 2/2: deleting the ko row for "Engine check
+failed" failed `ko: every failure message is translated` (and its key-parity
+knock-on), restored, green again; bumping `smart_engine_settings.js`'s
+`SCANNED` expected count from 5 to 4 failed with `4 !== 5` naming the exact
+file, restored, green again. Full `npm run build-verify` exit 0 (Node tests,
+`test:js`, `test:py` — 250 passed / 7 skipped, innerHTML/XML/fail-open scan
+gates all clean). `npm run build:renderer` exit 0, 377 files.
+
+### Still open
+
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all remain
+  exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work first
+  surfaced in Audit 32 is unchanged this iteration.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
+- The forward note from Audit 33 stands: any future file reaching for
+  `translate()` through a still-different call shape will reproduce this same
+  blind spot a third way, and will need its own scanner rather than a widened
+  regex on `SCANNED` or `SCANNED_LABELS`.

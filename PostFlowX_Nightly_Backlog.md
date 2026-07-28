@@ -3409,3 +3409,55 @@ wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
 exactly as reported in Iteration 30 — none touched this iteration.
 
 Commits: `b92507e`.
+
+## Iteration 34 — smart_engine_settings.js's own header comment documented a contract it only half-implemented
+
+**Found.** `src/scripts/modules/smart_engine_settings.js`'s header comment
+states the panel's failure-text contract: every status line goes through
+`friendlyStatus()`, each call passes `'<what was being done> failed: <raw>'`,
+and `friendlyStatus` deliberately holds the label back from translation
+(confirmed by reading `friendlyError.js` lines 317-352) because it only
+rewrites the tail — the caller is responsible for translating the label
+itself via `` friendlyStatus(`${translate('label')}: ${err.message}`) ``, the
+pattern already established correctly in `visualQcModal/index.js`. Grepping
+the file's 7 `friendlyStatus(` call sites showed only the fix already applied
+mid-flight last iteration (line 104, "Engine check failed") followed that
+pattern; the other 6 (lines 165, 171, 224, 230, 278, 333, covering "Decode
+test failed" ×2, "IMF decode test failed" ×2, "Test proxy failed", and
+"Loading the engine logs failed") were still handing `friendlyStatus` a bare
+English label — a real English-only gap in ko/ja/zh-TW/th/id/fil, invisible
+to `tests-js/smartEngineSettings.test.mjs`'s existing prefix-format test,
+which checks the label has a space and matches `/fail/i` but never checks
+translation.
+
+**Done.** Wrapped all 7 `friendlyStatus` call sites' labels in `translate(...)`
+and added `translate` to the file's import from `friendlyError.js`. Added the
+5 unique underlying strings ("Engine check failed", "Decode test failed",
+"IMF decode test failed", "Test proxy failed", "Loading the engine logs
+failed") to `ERROR_DICT` in `src/scripts/modules/i18n.js` across all six
+locale blocks — 30 new key/value rows total. Added
+`modules/smart_engine_settings.js` to `tests-js/errorI18n.test.mjs`'s
+existing `SCANNED` array (the `translate('...')`-literal scanner, not the
+`friendlyAlert`-label scanner already covering this same file's one
+`friendlyAlert` label) with `expected: 5`, folded into the shared `STRINGS`
+coverage set.
+
+**Gate.** `node --test tests-js/errorI18n.test.mjs`: 30 tests, all green (1
+new `SCANNED` test plus the existing per-locale tests now covering 5 more
+strings). `node --test tests-js/smartEngineSettings.test.mjs`: 13 tests, all
+green unmodified — the existing `` /friendlyStatus\(`([^`]*)`\)/g `` prefix
+regex still matches with `${translate('...')}` embedded inside the backticks,
+so no test edit was needed there. Mutation-proven 2/2: (1) deleted the ko row
+for "Engine check failed" — failed `ko: every failure message is translated`
+and (as a knock-on) `the six locales cover exactly the same keys`, restored,
+green again; (2) bumped `smart_engine_settings.js`'s `SCANNED` expected count
+from 5 to 4 — failed with `4 !== 5` naming the file, restored, green again.
+Full `npm run build-verify` exit 0 (Node, JS, Python suites plus
+innerHTML/XML/fail-open scan gates). `npm run build:renderer` exit 0, 377
+files.
+
+**Still open.** The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
+exactly as reported in Iteration 30 — none touched this iteration.
+
+Commits: `1be92f6`.
