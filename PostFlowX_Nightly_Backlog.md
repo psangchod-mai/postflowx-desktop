@@ -4349,3 +4349,50 @@ Iteration 48's `int(fps)` sweep, Iteration 49's spaced-axis-key sweep, the
 the deferred `otio.js`/`pfx_native_engine.js` items all remain pending.
 
 Commits: `fc04c95`.
+
+## Iteration 52 — bwav audio-scan reported clip/hit positions from the wrong window
+
+**Found.** `runAudioScanQuick()` in `src/tools/bwav/app.js` bounds scan
+time on large PCM WAV/BWF files by sampling only a bounded "start" window
+and, for large files, a second physically disjoint "end" window near the
+tail — skipping the middle entirely (`MAX_BYTES = 40 * 1024 * 1024`,
+`half = Math.floor(MAX_BYTES / 2)`). A single `scannedFrames` counter,
+incremented contiguously across both windows, was reused both as "total
+frames sampled" (correct, feeds `scannedSeconds`) and as "absolute file
+position" (wrong) for reported `clipRunStart`/`clipSegments`/
+`hits.frame`/`hits.timeSec` — so a clip or digital hit found in the "end"
+window was reported at a frame right after the "start" window instead of
+its real position near the tail. `clipRuns[c]`/`clipRunStart[c]` also
+survived the window boundary uninitialized, letting a run open at one
+window's tail splice onto the next window's head into one bogus segment,
+despite the windows being non-contiguous in the file.
+
+**Done.** Computed each window's own frame offset
+(`windowFrameOffset = Math.round((w.off - startOff) / frameSize)`) for
+reporting `fileFrame`, leaving `scannedFrames`/`scannedSeconds` untouched.
+Moved the clip-run flush-and-reset logic inside the per-window loop (run
+once at the end of every window) instead of only after the whole scan, so
+a run open at a window's tail is closed out there rather than merging
+across the gap into the next window. New test:
+`tests-js/bwavAudioScanQuick_windowOffset.test.mjs` — `app.js` is a plain
+browser script with no ES module exports and DOM-dependent top-level
+code, so the two pure functions under test (`runAudioScanQuick`,
+`dbfsFromAmp`, plus its `channelLayoutGroups` dependency) are extracted
+by name via brace-counting and evaluated with `new Function`, avoiding a
+full DOM shim since none of this code touches the DOM.
+
+**Gate.** Full `npm run build-verify` exit 0 after staging both changed
+files (the new test file must be tracked in git or `selfContained.test.mjs`'s
+own "no new test file is left out of git" gate fails — confirmed this
+gate firing correctly before the `git add`). `npm run build:renderer` run
+first (this fix lives under `src/tools/`, which `build-renderer.js`'s
+`SHARED_ITEMS` list copies into `dist/desktop/`), producing 377 files
+(git-ignored, not committed).
+
+**Still open.** All items carried from Iteration 51 (`_drop` write-only
+oddity in `api.py`, Iteration 48's `int(fps)` sweep, Iteration 49's
+spaced-axis-key sweep, the `aaf_worker.js`/`aaf_wasm.js` raw-EditRate
+citations, the deferred `otio.js`/`pfx_native_engine.js` items) remain
+pending and unchanged.
+
+Commits: `c94f9db`.

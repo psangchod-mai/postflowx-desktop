@@ -5846,3 +5846,109 @@ Iteration 49's spaced-axis-key sweep, the deferred `otio.js`/
 `pfx_native_engine.js` items) remain unchanged.
 
 Commits: `fc04c95`.
+
+## Iteration 52 — audio-QC windowed-scan position tracking (src/tools/bwav/app.js)
+
+**New species.** Iterations 48-51 all fixed frame-rate/timecode-domain
+bugs (raw-fractional-fps-as-base, drop-frame classification, etc). This
+is a different species entirely: an audio-QC windowing/position-tracking
+bug in the bwav tool's quick-scan path, with no fps or timecode involved.
+
+**Why this file.** `git status --short -- src/tools/bwav/app.js` was
+empty (clean) before editing, confirming it was safe to modify per the
+standing off-limits-for-dirty-files rule. `runAudioScanQuick()` is the
+quick-scan entry point the bwav tool's UI calls to report clipping
+segments and digital hits on large PCM WAV/BWF files without reading the
+entire file — it bounds work to a `MAX_BYTES` window (or, for large
+files, a "start" window plus a separate "end" window near the tail,
+skipping the middle) for performance.
+
+**The fix.** Before, inside the per-window scan loop, a single
+`scannedFrames` counter was incremented once per frame across both
+windows and reused directly as the reported file-frame position:
+```js
+scannedFrames += 1;
+...
+if (clipRuns[c] === 0) clipRunStart[c] = scannedFrames;
+...
+hits.push({ channel: c+1, frame: scannedFrames, timeSec: scannedFrames / sr, delta: d });
+```
+Since the "start" and "end" windows are physically disjoint slices of the
+file, `scannedFrames` — a simple running count of frames sampled so far —
+does not correspond to the frame's real position once the "end" window is
+reached; a hit near the true tail of a large file was reported as if it
+sat immediately after the "start" window ended. Additionally, `clipRuns[c]`/
+`clipRunStart[c]` were only ever flushed once, after the entire scan
+completed, so a clip run still open at the tail of the "start" window
+carried straight into the "end" window's first samples, producing one
+merged (and mislabeled) segment out of what should have been two
+unrelated bursts.
+
+After: each window computes its own frame offset from its own byte
+offset (`windowFrameOffset = Math.round((w.off - startOff) / frameSize)`),
+and every reported `fileFrame` is `windowFrameOffset + f + 1` (window-local
+frame index, converted to this window's real file position) rather than
+the shared cumulative counter. `scannedFrames`/`scannedSeconds` (which
+legitimately need the cumulative total-frames-sampled count, a different
+concept from file position) were left untouched. The clip-run
+flush-and-reset block was moved from after the whole scan loop to the end
+of every per-window iteration, so a run open at a window's tail is closed
+out immediately rather than being able to splice onto the next window's
+head across a physically disjoint gap.
+
+**Test approach.** `app.js` is a plain browser script — no ES module
+exports, and DOM-dependent code executes at top-level load — so it can't
+be imported directly into a Node test the way an ES module could.
+`runAudioScanQuick` and its dependencies (`dbfsFromAmp`,
+`channelLayoutGroups`) are pure, though — no DOM access — so
+`tests-js/bwavAudioScanQuick_windowOffset.test.mjs` extracts just those
+three function bodies by name via regex + brace-counting (not fixed line
+numbers, since the fix changes line counts and the extraction needs to
+survive `git stash` mutation-testing), concatenates them, and evaluates
+via `new Function(...)` to get a callable reference. This sidesteps the
+DOM-shim approach `toastContract.test.mjs` uses (`new Function('window',
+'document', ..., MODULE_SRC)` with linkedom) since none of the code under
+test touches the DOM. Two tests: (1) a fake file built with `HALF * 2 +
+1000` bytes of PCM data (forcing two disjoint windows per the same
+`MAX_BYTES`/`half` math the scanner itself uses) with a 3-frame clipping
+burst planted at a known offset inside the "end" window — asserts the
+reported hit frame/timeSec and clip-segment `startFrame` match the
+burst's real file position, not a start-window-adjacent one, while
+`scannedSeconds` still reflects total frames sampled; (2) a fake file
+with two independent 3-frame clip bursts, one at the tail of the "start"
+window and one at the head of the "end" window — asserts these surface as
+two separate 3-frame segments, not one merged 6-frame segment.
+
+**Verification.** Mutation-proven via two scoped `git stash push -- src/tools/bwav/app.js`
+/ `git stash pop` cycles (chosen over hand-editing to guarantee the
+"before" state was exactly the pre-fix code, and scoped to this one file
+given the repo's large body of pre-existing unrelated uncommitted WIP,
+verified undisturbed via `git stash list` before/after). With the fix
+reverted: `hits.frame` reported `5243881` (the wrong,
+start-window-adjacent position) instead of the expected `5244131` (the
+correct real file position), and the two genuinely-separate clip bursts
+merged into `1` segment instead of the expected `2` — both exactly the
+predicted failure modes. With the fix restored, both tests passed. Full
+`npm run build-verify` gate: initially failed with exit 1 —
+`selfContained.test.mjs`'s "no new test file is left out of git" gate
+correctly caught the new test file before it was staged; after
+`git add`ing both `src/tools/bwav/app.js` and the new test file, a
+full rerun passed with exit 0 (companion pytest 259/7 unaffected, Node
+`test:node`/`test:js` all green including the two new bwav tests, all
+three security gates clean). Since this fix lives under `src/tools/`,
+which `build-renderer.js`'s `SHARED_ITEMS` list copies into
+`dist/<target>/`, `npm run build:renderer` was run (unlike Iteration 51's
+companion-only Python change) and produced a clean 377-file desktop
+build.
+
+**Still open.** All items carried from Iteration 51 (`_drop` write-only
+oddity in `api.py`, Iteration 48's `int(fps)` sweep, Iteration 49's
+spaced-axis-key sweep, the `aaf_worker.js`/`aaf_wasm.js` raw-EditRate
+citations, the deferred `otio.js`/`pfx_native_engine.js` items) remain
+unchanged. This iteration's own scope was narrow (quick-scan window
+position tracking only) — the bwav tool's other scan paths and heuristics
+(silence detection, dBFS calculations, the digital-hit delta/threshold
+logic itself) were read for context but not independently audited for
+further species of bugs; that remains a candidate for a future iteration.
+
+Commits: `c94f9db`.
