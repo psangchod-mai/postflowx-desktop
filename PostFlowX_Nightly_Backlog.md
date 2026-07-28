@@ -4592,3 +4592,55 @@ packaging.
 unchanged.
 
 Commits: `8362fd5`, `7e122bf`.
+
+## Iteration 56 — cutdiff.js identity key never stripped angle/take suffixes
+
+**Found.** `src/scripts/modules/cutdiff.js`'s `identityKey()` function has a
+comment claiming it "strip[s] trailing counters / angle suffixes so that
+`101-08-06/01_A` and `101-08-06/01_AB` still cluster together" — but the
+function body never did any stripping, it just trimmed and concatenated
+`reel`/`clipName` verbatim. Any clip whose angle/take suffix changed between
+an OLD and NEW cut (a common re-label in editorial: `_A` → `_AB`, or vice
+versa) produced a different `identityKey()` value on each side, so
+`computeCutDiff()` found zero candidates in `oldIndex` for the NEW event and
+classified it as `NEW` instead of matching it to its prior-cut counterpart
+and correctly classifying it as UNCHANGED/EXTENDED/TRIMMED/CHANGED.
+
+**Done.** Added `ANGLE_SUFFIX_RE = /_[A-Za-z]+\d*$/` (a trailing underscore
+followed by at least one letter, optionally followed by digits) and applied
+`.replace(ANGLE_SUFFIX_RE, '')` to the trimmed `clipName` before building the
+key. The regex requires a letter immediately after the underscore, so
+purely numeric trailing suffixes (`_010`, `_020` — shot/take counters) are
+left untouched and continue to distinguish otherwise-identical clip names,
+matching the existing `SHOT_010`-style test fixtures.
+
+**Tests.** `tests-js/cutdiff.test.mjs` — three new assertions: (1) an angle
+suffix change (`101-08-06/01_A` → `101-08-06/01_AB`), same reel, NEW longer
+→ must classify EXTENDED (matched, not NEW); (2) an identical
+angle-suffixed clip name (`SHOT_010_A`) on both sides → must classify
+UNCHANGED, not NEW; (3) a negative-case guard — distinct numeric-suffixed
+clip names (`SHOT_010` vs `SHOT_020`) must stay distinct identities → NEW,
+confirming the fix doesn't over-strip and collapse genuinely different
+clips. All 53 assertions (50 pre-existing + 3 new) pass against the fixed
+code.
+
+**Verification.** Mutation-tested by reverting only the fix via
+`git stash push -- src/scripts/modules/cutdiff.js` and rerunning: the new
+angle-suffix test failed exactly as predicted (`101-08-06/01_AB` classified
+NEW instead of EXTENDED — 52 passed, 1 failed), while all other tests,
+including the negative-case numeric-suffix guard, were unaffected. Restoring
+the fix (`git stash pop`) made all 53 pass again.
+
+**Gate.** Full `npm run build-verify` (`test:node && test:js && test:py &&
+scan-innerhtml --gate && scan-rawxml --gate && scan-failopen --gate`): exit
+0. Node/JS tests green, companion Python 261 passed / 7 skipped (268
+collected, untouched by this change), all three security scan gates clean.
+Renderer-only change (`src/scripts/modules/cutdiff.js` was confirmed clean
+via `git status --short` before editing) — a desktop/extension
+`npm run build:renderer` / `build:extension` would pick this up on next
+packaging.
+
+**Still open.** All items carried from Iterations 52–55 remain pending and
+unchanged.
+
+Commits: `05c6f0f`.

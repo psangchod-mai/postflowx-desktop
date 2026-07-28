@@ -6266,3 +6266,93 @@ this fix without needing separate changes — confirmed by reading both call
 sites, not just assumed.
 
 Commits: `8362fd5`, `7e122bf`.
+
+## Iteration 56 — cutdiff.js's identity-key normalization was documented but never implemented (src/scripts/modules/cutdiff.js) — new species
+
+**New species.** The first six iterations of this audit series found
+numeric/rounding bugs (48–50), a timecode-classification bug (51), a
+position-tracking bug (52), a fps-fractional-as-frame-base bug (53), a cache
+identity collision (54), and a concurrency TOCTOU race (55). This iteration
+is a distinct "match-key normalization gap" species: a function whose own
+inline comment describes a normalization step it is supposed to perform,
+but the implementation silently omits that step entirely. The bug is not a
+miscalculation — it's a documented intent that was never wired up, and
+nothing in the type system or test suite (until now) caught the gap between
+comment and code.
+
+**Why this file.** `src/scripts/modules/cutdiff.js` was on the
+Iteration-56 clean-candidate whitelist (`git status --short` empty before
+editing) and was flagged by a scouting pass as having a self-contradicting
+comment: `identityKey()`'s doc comment explicitly names an example
+(`101-08-06/01_A` and `101-08-06/01_AB` should cluster together) that the
+function, as written, does not produce. Independently re-read the full file
+and re-ran `git status --short` before touching anything, per the standing
+"trust but verify" practice for scouting-agent findings.
+
+**The bug.** `computeCutDiff()` indexes every OLD event into a `Map` keyed
+by `identityKey(ev.clipName, ev.reel)`, then looks up NEW-event candidates
+by the same key — if the key for a NEW event has zero entries in that map,
+the event is unconditionally classified `NEW` (`src/scripts/modules/cutdiff.js`,
+the `if (!best)` branch off `oldIndex.get(key)`). Editorial re-cuts commonly
+relabel a shot's angle/take suffix between passes (an editor swaps from a
+single angle `_A` to a combined/alternate angle `_AB`, or similar) without
+the clip otherwise changing identity. Because `identityKey()` did no
+suffix-stripping, `101-08-06/01_A` (OLD) and `101-08-06/01_AB` (NEW)
+produced different map keys, so the NEW event found no OLD candidates and
+was misreported as a brand-new shot — even though the surrounding
+duration/srcIn-based scoring logic (`_matchScore`, `durTol`/`srcTol`) was
+fully capable of correctly classifying it as EXTENDED/TRIMMED/CHANGED/
+UNCHANGED once a candidate was found. The multi-candidate-per-key design
+(`oldIndex.get(key)` returns an array, each entry independently `used`-
+tracked) already exists specifically to support multiple takes/angles
+sharing one identity — the stripping was the only missing piece to make
+angle-relabeled shots participate in that matching at all.
+
+**The fix.** Added `ANGLE_SUFFIX_RE = /_[A-Za-z]+\d*$/` and applied it to
+the trimmed `clipName` inside `identityKey()` before the key is built. The
+regex requires a letter immediately following the underscore (`_A`, `_AB`,
+`_A2` all match; optional trailing digits after the letter are allowed),
+which deliberately excludes purely numeric trailing suffixes like `_010` or
+`_020` — those are shot/take counters, not angle labels, and must remain
+distinct identities. Display fields are unaffected: `_makeResult()` spreads
+the original `ev` object for all output (`clipName`, etc.), so the stripped
+key is used only for matching, never shown to the user.
+
+**Test approach.** `tests-js/cutdiff.test.mjs` — three new assertions
+appended after the existing fractional-fps block: (1) the core bug
+scenario — an angle-suffix change (`_A` → `_AB`), same reel, NEW duration
+longer than OLD, must classify EXTENDED (proving the event was matched, not
+treated as NEW); (2) a same-suffix identity check — an unchanged
+angle-suffixed clip name must classify UNCHANGED, not NEW, confirming the
+stripped key still round-trips correctly through the full
+duration/srcIn-tolerance classification logic, not just the presence/
+absence of a match; (3) a negative-case guard — two clips differing only by
+a purely numeric suffix (`SHOT_010` vs `SHOT_020`) must remain distinct
+identities and classify NEW, verifying the regex's letter-required
+constraint doesn't over-strip and silently collapse genuinely different
+shots into one identity. All three were checked structurally against the
+pre-existing test fixtures (`'A'`, `'B'`, `'C'`, `'SHOT_010'`) before
+writing, to confirm no regression risk.
+
+**Verification.** Mutation-tested per the established methodology: reverted
+only the fix via `git stash push -- src/scripts/modules/cutdiff.js`
+(pathspec-scoped, not a full-tree stash) and reran
+`node tests-js/cutdiff.test.mjs` — the new angle-suffix test failed exactly
+as predicted (`101-08-06/01_AB` classified NEW instead of EXTENDED; 52
+passed, 1 failed), while the identical-suffix and numeric-suffix-guard
+assertions were unaffected by the revert (they exercise paths the pre-fix
+code already handled correctly, by coincidence for (2) and by design for
+(3)). Restored the fix (`git stash pop`) and confirmed `git status --short`
+showed exactly the two intended files modified, then reran the full suite:
+all 53 assertions passed. Ran the complete `npm run build-verify` gate
+after restoring the fix: exit 0 — Node/JS tests green, companion Python
+suite untouched and green (261 passed / 7 skipped, 268 collected), all
+three security scan gates (XSS/XXE/fail-open) clean.
+
+**Still open.** All items carried from Iterations 52–55 remain pending and
+unchanged. Not pursued this iteration: whether other identity-forming call
+sites elsewhere in the codebase (outside `cutdiff.js`) have similar
+documented-but-unimplemented normalization gaps — this was scoped to the
+one flagged, verified instance.
+
+Commits: `05c6f0f`.
