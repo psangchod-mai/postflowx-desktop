@@ -4437,3 +4437,139 @@ main-process code, not `src/`-facing renderer code.
   `src/tools/visionscope/*` (Audit 30), the ~60-file uncommitted-work scope
   (Audit 32), and `render_queue.js`'s `_parseError` (Audit 1) all remain
   unchanged.
+
+## Iteration 40 — pfx:download silently dropped conflictAction, always overwriting on silent writes
+
+### New species
+
+Every prior iteration in this file has been a self-contained logic bug
+in one file. This one is the first to surface a **cross-file argument-
+threading gap**: the bug isn't in either file's own logic in isolation,
+but in the fact that a parameter accepted by the shim (`preload.js`) was
+never passed across the IPC boundary to the handler (`ipc.js`) that
+needed it — and even if it had been, the handler's own logic didn't
+honor it either. It's also the first iteration where the investigation
+itself — not the code fix — consumed most of the effort, because of an
+unrelated discovery described below.
+
+### Why this file, this iteration
+
+`electron/preload.js`'s `chrome.downloads.download` shim exists to give
+`src/`-shared renderer code a drop-in replacement for the real Chrome
+extension API. `render_queue.js` and `visualQcModal/index.js` call it
+with no explicit `conflictAction` (relying on Chrome's documented
+`'uniquify'` default), while `projectFile.js` calls it with
+`conflictAction: 'overwrite'` for explicit save-over-existing semantics.
+Tracing the shim's `invoke('pfx:download', { url, filename, saveAs })`
+call showed `conflictAction` was never included in the payload — dropped
+at the shim, not even reaching `ipc.js`. Tracing further into `ipc.js`'s
+`pfx:download` handler showed that even a forwarded `conflictAction`
+would have been ignored: the silent-write (`saveAs === false`,
+`dataUrl`-based) branch called `fs.writeFileSync(defaultPath, ...)`
+unconditionally. The practical effect: a caller requesting the (default)
+uniquify behavior to avoid clobbering a previous export instead silently
+overwrote it, with no error, no warning, and no way to detect that data
+was lost.
+
+### The fix
+
+`electron/preload.js` — forward the new parameter through the shim:
+
+```js
+const downloads = {
+  download({ url, filename, saveAs, conflictAction }, callback) {
+    invoke('pfx:download', { url, filename, saveAs, conflictAction })
+```
+
+`electron/ipc.js` — add a uniquify helper and use it unless the caller
+explicitly opts into overwrite:
+
+```js
+function _uniquifyPath(filePath) {
+  if (!fs.existsSync(filePath)) return filePath;
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  for (let i = 1; ; i++) {
+    const candidate = path.join(dir, `${base} (${i})${ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+}
+// ...
+if (dataUrl) {
+  const finalPath = conflictAction === 'overwrite' ? defaultPath : _uniquifyPath(defaultPath);
+  const [, b64] = dataUrl.split(',');
+  fs.writeFileSync(finalPath, Buffer.from(b64, 'base64'));
+  return { ok: true, filePath: finalPath };
+}
+```
+
+Scoped deliberately to the `dataUrl` silent-write branch only — the
+`webContents.downloadURL(url)` branch (used when the caller streams a
+remote/blob URL instead of a data URL) has no equivalent pre-write
+collision hook available without wiring up
+`session.on('will-download')`, which nothing in the codebase does today;
+left unchanged as genuinely out of scope rather than papered over.
+
+### Test approach
+
+New `tests-js/downloadConflictAction.test.mjs`, reusing the established
+fake-`electron`-in-require-cache pattern from
+`storageGetOmitsMissingKeys.test.mjs` / `companionStartupRetry`, since
+`electron/ipc.js` does `require('electron')` at module load time.
+Two cases against a real temp `Downloads` directory: writing `note.txt`
+twice with default `conflictAction` yields `note.txt` then
+`note (1).txt`, with both files' distinct contents surviving untouched;
+writing `report.txt` twice with `conflictAction: 'overwrite'` reuses the
+same path, and the second write's content wins.
+
+### Verification
+
+`node --test tests-js/downloadConflictAction.test.mjs`: both cases green.
+Full `npm run build-verify` exit 0 against the true, full current
+working-tree state (log: `/tmp/gate40c.log`; Python suite 250 passed, 7
+skipped; XSS/XXE/fail-open gates all clean). `npm run build:renderer` was
+not run — both changed files are Electron main-process code, not
+`src/`-facing renderer code.
+
+The bulk of this iteration's effort was not the fix but isolating it:
+mid-iteration, inspecting the staged diff (`git diff --cached --stat`)
+revealed implausibly large change sizes for both files
+(`electron/ipc.js` ~560 lines, `electron/preload.js` ~30 lines) versus
+the actual few-line fix. Investigation showed both files already carried
+substantial, real, in-progress work predating this iteration entirely: a
+Meechum/Edward enterprise OAuth + Netflix Team Workspaces authentication
+flow (`_runMeechumSystemBrowserOAuth`, a loopback-HTTP-server PKCE flow
+on ports 8477-8479), a `safeStorage`-encrypted PFX session-persistence
+IPC API, an `_activeWindow`/`_ipcRegistered` window-reactivation guard
+refactor (renaming `mainWindow` references), and new OCF proxy media
+calls. This WIP is not inert — a `git stash push --keep-index` isolation
+test showed an *existing* test already asserts `/pfx:meechum-oauth/` is
+registered, meaning the WIP is integrated and depended upon elsewhere,
+not dead code to discard. Rather than commit that WIP alongside this
+iteration's unrelated fix (or destructively touch it in any way), the
+scoped fix was reconstructed off disk as "HEAD content + only the
+`conflictAction` edit" via Python string-replace with uniqueness
+assertions, then staged directly into the git index with
+`git hash-object -w <file>` + `git update-index --cacheinfo` — bypassing
+`git add`'s all-or-nothing whole-file staging. The working tree itself
+was never altered; it retains the full WIP + fix exactly as before. The
+final `build-verify` gate run was against that true combined state
+(not an artificially isolated one), since the WIP's own tests require it
+present to pass.
+
+### Still open
+
+- The `webContents.downloadURL(url)` collision path remains unable to
+  honor `conflictAction` at all, pending a future `will-download`
+  session-hook wiring — genuinely out of scope, not deferred laziness.
+- The large in-progress WIP surfaced this iteration in
+  `electron/preload.js`/`electron/ipc.js` (Meechum/Edward OAuth flow, PFX
+  session sync, `_activeWindow` guard, OCF proxy) is confirmed real and
+  test-dependent; it remains untouched, unstaged, and out of scope for
+  this audit loop, same as the broader ~576-file mode-bit/~60-file
+  content-change anomaly from Audit 32.
+- `CompanionBridge`'s other untested lifecycle paths (Audit 35), the
+  heartbeat-interval lease race (Audit 36), the i18n gaps and
+  `src/tools/visionscope/*` (Audit 30), and `render_queue.js`'s
+  `_parseError` (Audit 1) all remain unchanged.

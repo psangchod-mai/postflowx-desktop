@@ -3713,3 +3713,62 @@ out of scope — every current call site still passes a hardcoded dialog
 title.
 
 Commits: `989f9c9`.
+
+## Iteration 40 — pfx:download silently dropped conflictAction, always overwriting on silent writes
+
+**Found.** `electron/preload.js`'s `chrome.downloads.download` shim
+accepted a `conflictAction` argument but never forwarded it through
+`invoke('pfx:download', ...)` — it was silently dropped at the shim
+boundary. Even if it had been forwarded, `electron/ipc.js`'s
+`pfx:download` handler's silent-write branch (`saveAs === false`, used
+for `dataUrl`-based writes) called `fs.writeFileSync(defaultPath, ...)`
+unconditionally, clobbering any existing file at that path regardless of
+caller intent. This contradicts the real `chrome.downloads.download()`
+API, which defaults `conflictAction` to `'uniquify'` (renaming to
+`"name (1).ext"` on a collision) rather than overwriting. Callers in
+`render_queue.js` and `visualQcModal/index.js` rely on the default
+uniquify behavior to avoid clobbering prior exports; `projectFile.js`
+explicitly requests `'overwrite'` for save-over-existing semantics — with
+the old code both cases behaved identically (silent overwrite), so a
+uniquify request was silently downgraded to overwrite with no error and
+no way to detect data loss.
+
+**Done.** Forwarded `conflictAction` through the `preload.js` shim.
+Added a `_uniquifyPath()` helper in `ipc.js` that walks
+`"name (1).ext"`, `"name (2).ext"`, ... until it finds a path that
+doesn't exist, and used it for the silent-write `dataUrl` branch unless
+`conflictAction === 'overwrite'` is explicitly passed.
+
+**Gate.** New `tests-js/downloadConflictAction.test.mjs`, following the
+same fake-`electron`-module require-cache-injection pattern as
+`storageGetOmitsMissingKeys.test.mjs` and `companionStartupRetry`.
+Two cases: (1) writing the same filename twice with default
+`conflictAction` produces `note.txt` then `note (1).txt`, and both files'
+original contents survive untouched; (2) writing the same filename twice
+with `conflictAction: 'overwrite'` reuses the same path and the second
+write's content wins. Mutation-proven: this segment discovered
+`electron/preload.js` and `electron/ipc.js` also carry substantial
+unrelated in-progress work (a Meechum/Edward enterprise OAuth flow, PFX
+session-storage sync IPC, a window-reactivation guard refactor, OCF proxy
+media calls) that predates this iteration and must not be attributed to
+this commit — most of this iteration's time went into surgically
+isolating the scoped fix from that WIP using `git hash-object -w` +
+`git update-index --cacheinfo` (reconstructing "HEAD + only my edit" off
+disk) rather than `git add`, which would have swept the whole
+working-tree file into the commit. Full `npm run build-verify` exit 0
+against the true full working-tree state (WIP + fix combined; log:
+`/tmp/gate40c.log`; Python suite 250 passed, 7 skipped). `npm run
+build:renderer` was not run — both files are Electron main-process code,
+not `src/`-facing renderer code.
+
+**Still open.** The `webContents.downloadURL(url)` path (used when no
+`dataUrl` is supplied) still can't honor `conflictAction` at all — Electron's
+native download manager doesn't expose a pre-write collision hook without
+wiring up `session.on('will-download')`, which nothing in the codebase
+currently does; this is unchanged and out of scope. The large in-progress
+WIP discovered in `electron/preload.js`/`electron/ipc.js` this iteration
+(Meechum/Edward OAuth, PFX session sync, `_activeWindow` guard, OCF proxy)
+remains untouched, uncommitted, and out of scope — it's real, in-progress
+work already relied upon by at least one existing test, not dead code.
+
+Commits: `65e6e9a`.
