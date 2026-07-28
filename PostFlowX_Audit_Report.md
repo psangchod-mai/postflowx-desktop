@@ -4901,3 +4901,110 @@ required.
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
   WIP (Audit 42) remain untouched, unstaged, and out of scope.
+
+## Iteration 44 — cutdiff.js `tcToFrames` dropped every drop-frame timecode to 0
+
+### New species
+
+Back to the renderer, but a variant on the "two-rate contract" class from
+Iterations 41–42: not nominal-vs-exact frame rate, but a second, distinct
+timecode-parsing hazard — the drop-frame `;` vs. non-drop `:` field
+separator — that every other timecode parser in this codebase already
+handles, except this one.
+
+### Why this file, this iteration
+
+`src/scripts/modules/cutdiff.js` implements PostFlowX's Cut Diff engine:
+given OLD and NEW event lists, it matches clips by identity and
+classifies each as `NEW`/`EXTENDED`/`TRIMMED`/`CHANGED`/`UNCHANGED` by
+comparing frame counts derived from `srcIn`/`srcOut`/`recIn`/`recOut`
+timecode strings. Its own `tcToFrames`:
+
+```javascript
+export function tcToFrames(tc, fps) {
+  if (!tc) return 0;
+  const parts = String(tc).split(':').map(n => parseInt(n, 10) || 0);
+  if (parts.length !== 4) return 0;
+  const [hh, mm, ss, ff] = parts;
+  return ((hh * 60 + mm) * 60 + ss) * nominalBase(fps) + ff;
+}
+```
+
+splits only on `:`. `utils_time.js`'s canonical `tcToFrames` — which this
+same file already imports `nominalBase` from — instead does
+`String(tc).replace(/;/g, ':').split(':')`, with the comment `"HH:MM:SS:FF"
+or "HH;MM;SS;FF" (DF treated as NDF)`. `edl.js`, `xml.js`, and `ale.js`
+all perform the same normalization for the same reason: a drop-frame EDL
+represents its frame field with a semicolon, e.g. `"01:00:00;15"`.
+`cutdiff.js` reimplements `tcToFrames` rather than delegating to the
+shared one, and the reimplementation omits this normalization. A DF
+timecode therefore splits into 3 parts, not 4, trips the
+`parts.length !== 4` guard, and silently returns `0` — for every DF
+in/out point on every clip, with no error surfaced anywhere. Since
+`evFrames()` feeds all four of `srcInF`/`srcOutF`/`recInF`/`recOutF` from
+this function, a DF-timecoded EDL run through Cut Diff can produce wrong
+duration deltas and wrong match scores, silently misclassifying real
+edits (e.g. an `EXTENDED` clip reading as `UNCHANGED` because both OLD
+and NEW zeroed out to the same value).
+
+### The fix
+
+```javascript
+export function tcToFrames(tc, fps) {
+  if (!tc) return 0;
+  // Drop-frame EDLs use "HH:MM:SS;FF" — normalise the semicolon to a colon so
+  // DF timecodes split into 4 fields instead of silently failing the length
+  // check below and collapsing every DF in/out point to 0.
+  const parts = String(tc).replace(/;/g, ':').split(':').map(n => parseInt(n, 10) || 0);
+  if (parts.length !== 4) return 0;
+  const [hh, mm, ss, ff] = parts;
+  return ((hh * 60 + mm) * 60 + ss) * nominalBase(fps) + ff;
+}
+```
+
+Mirrors the exact normalization already present in `utils_time.js`'s
+implementation of the same function name.
+
+### Test approach
+
+The existing `tests-js/cutdiff.test.mjs` is part of the large pre-existing
+uncommitted WIP surface (688+ dirty files) and is off-limits per this
+campaign's standing rule, so the regression test lives in a new file,
+`tests-js/cutdiff_dropframe_tc.test.mjs`. Five assertions: a `;`-separated
+DF timecode on the hour field parses to the same frame count as its
+`:`-separated NDF equivalent; the same holds for a DF separator on a
+non-hour field; empty and malformed timecodes still safely return `0`
+(guarding against the fix over-broadening); and an end-to-end
+`computeCutDiff` case where a DF-timecoded clip grows from 120 to 180
+frames must classify as `EXTENDED`, not silently fall through to
+`UNCHANGED`.
+
+### Verification
+
+Mutation-proven: with the fix in place, all 5 assertions pass. Reverted
+`tcToFrames` to the original `:`-only split, reran — 3 of 5 assertions
+failed (both DF-parsing-equivalence checks, plus the end-to-end
+`EXTENDED`-not-`UNCHANGED` classification), concretely reproducing the
+bug; restored the fix, all 5 green again. Full `npm run build-verify`
+exit 0 (log: `/tmp/gate44.log`), including all 259 companion pytest cases
+(unaffected — this fix is JS-only) and the XSS/XXE/fail-open scan gates,
+all clean. Since this iteration changes `src/`-facing renderer source,
+`npm run build:renderer` was also run per CLAUDE.md's rule for UI-facing
+changes; it succeeded (log: `/tmp/buildrenderer44.log`, 377 files rebuilt
+into `dist/desktop/`).
+
+### Still open
+
+- The rest of the companion Python package beyond `api.py`
+  (`companion/src/postflowx_companion/` submodules, `color/aces2_luts.py`)
+  remains unswept, as flagged in Iteration 43.
+- `cutdiff.js`'s `framesToTc` (the inverse, frames-to-timecode
+  conversion) was read as part of this investigation but does not share
+  this bug class — its only callers pass it numeric frame counts derived
+  from `tcToFrames`'s own output, never a raw timecode string, so there is
+  no separator to normalize.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
+  WIP (Audit 42) remain untouched, unstaged, and out of scope.

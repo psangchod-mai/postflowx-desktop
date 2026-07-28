@@ -3923,3 +3923,46 @@ dedup-key gap and `pfx_native_engine.js` start/stop latch (Iteration 41)
 are also unchanged.
 
 Commits: `9cc68e9`.
+
+## Iteration 44 — cutdiff.js `tcToFrames` dropped every drop-frame timecode to 0
+
+**Found.** `src/scripts/modules/cutdiff.js`'s own `tcToFrames` (the Cut
+Diff engine's timecode-to-frames helper, used on `srcIn`/`srcOut`/
+`recIn`/`recOut` inside `evFrames`) split the timecode string only on
+`':'`. Every other timecode parser in this codebase (`utils_time.js`'s
+canonical `tcToFrames`, `edl.js`, `xml.js`, `ale.js`) normalizes
+drop-frame `';'` separators to `':'` first, since a drop-frame EDL leaves
+fields like `"01:00:00;15"` in place. Splitting that string on `':'`
+alone yields 3 parts instead of 4, tripping the `parts.length !== 4`
+guard and silently returning 0 — for every in/out point on a DF clip.
+
+**Done.** Added the same `.replace(/;/g, ':')` normalization already used
+by `utils_time.js`'s implementation, before the `.split(':')` call.
+
+**Gate.** New `tests-js/cutdiff_dropframe_tc.test.mjs` (the existing
+`tests-js/cutdiff.test.mjs` is part of the large pre-existing uncommitted
+WIP surface and is off-limits, so this iteration's regression test lives
+in its own new file): asserts a `;`-separated DF timecode parses
+identically to its `:`-separated NDF equivalent, on both the hour field
+and a non-hour field; asserts empty/malformed timecodes still safely
+return 0; and an end-to-end `computeCutDiff` case asserts a DF-timecoded
+clip that grew in duration still classifies as `EXTENDED`, not
+`UNCHANGED`. Mutation-proven: reverted the normalization, reran — 3 of 5
+assertions failed (the DF-parsing pair and the end-to-end classification),
+confirming the test actually exercises the bug; restored, all 5 green.
+Full `npm run build-verify` exit 0 (log: `/tmp/gate44.log`), including all
+259 companion pytest cases (unaffected, unchanged) and the XSS/XXE/
+fail-open scan gates. This iteration touches `src/`-facing renderer code,
+so `npm run build:renderer` was also run and succeeded (log:
+`/tmp/buildrenderer44.log`, 377 files rebuilt into `dist/desktop/`).
+
+**Still open.** The rest of the companion Python package beyond `api.py`
+(`companion/src/postflowx_companion/` submodules, `color/aces2_luts.py`)
+remains unswept, as flagged in Iteration 43. `cutdiff.js`'s sibling
+`framesToTc` (the inverse conversion) was read but not found to have an
+equivalent bug — it's fed exclusively by `tcToFrames`'s own numeric
+output, not raw timecode strings, so the DF-separator class doesn't apply
+to it. The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+start/stop latch (Iteration 41) are also unchanged.
+
+Commits: `768c174`.
