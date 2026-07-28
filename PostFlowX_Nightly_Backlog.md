@@ -3286,4 +3286,39 @@ pass, which brings this run's total to 829 machine-authored strings. Ten label
 keys in the configs are read by nothing at all; five of those exist only in `en`
 and `fil`. `src/tools/visionscope/*` has no i18n of any kind.
 
+## Iteration 31 — `seekTo`'s bare `'Seek failed'` gets a rule and six translations
+
+**Found.** Flagged as the cheapest remaining fix at the tail of Iteration 29
+and again in Audit 30: `visualQcModal`'s three `seek()` implementations (scan,
+thumbnail queue, PDF stills export) reject with a bare `'Seek failed'`,
+`'Seek failed during thumbnail capture'`, or `'Seek failed during still
+capture'` when the `<video>` element's `seeked`/`error` events never fire in
+time. `'Seek timeout'` — the sibling string from the same call sites — already
+had a rule in `friendlyError.js`'s generic timeout matcher; `'Seek failed'`
+fell through it and reached the user as raw text.
+
+**Done.** One new rule, `/\bseek (failed|error)\b/i`, placed below the timeout
+rule so it only catches the non-timeout case rather than widening it — pinned
+with an ordering test so a future reorder can't let the timeout rule's more
+specific advice get swallowed. Three new `ERROR_DICT` cells (title, message,
+hint) x six locales (ko, ja, zh-TW, th, id, fil), inserted textually ahead of
+each locale's `"Unexpected response"` entry to keep dictionary order roughly
+parallel to the RULES table, per this file's established i18n-editing
+convention (see Audit 30 on why textual inserts, not JSON round-trips).
+
+**Gate.** `tests-js/friendlyErrorRules.test.mjs`: 3 new `NEWLY_CLASSIFIED`
+entries plus the seek-timeout-vs-seek-failed ordering pin, 27 tests total.
+`tests-js/errorI18n.test.mjs` (the translation-coverage enforcer) needed no
+changes — it already fails on any RULES string without matching `ERROR_DICT`
+entries in all six locales, which is exactly what caught this rule's first cut
+being English-only. Mutation-proven 3/3: reverting the rule's regex to a
+non-matching pattern failed exactly the three new classification tests and
+none of the timeout tests, confirming rule-ordering independence.
+
+`npm run build-verify` exit 0. `npm run build:renderer` exit 0.
+
+**Still open.** The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
+exactly as reported in Iteration 30.
+
 Commits: `4a6d778`.

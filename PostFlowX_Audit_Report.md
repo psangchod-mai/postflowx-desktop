@@ -3655,3 +3655,46 @@ picked up by the runner without configuration); `npm run build:renderer` exit 0,
   kind. Clean files, unblocked, a good candidate for the next iteration.
 - `visualQcModal/index.js:1470`/`:1477` — `seekTo`'s bare `'Seek failed'` /
   `'Seek timeout'`. Still the cheapest remaining fix in the codebase.
+
+## Audit 31 — the cheapest remaining fix, and the trap it's named after
+
+### New species
+
+None. This iteration closed the one item Audit 30 flagged as still open, and
+did it by the numbers the last two iterations established: a rule in
+`friendlyError.js`, six locales of `ERROR_DICT` cells, a mutation-proven test.
+
+### One near-miss, avoided by the gate that exists for exactly this
+
+`tests-js/errorI18n.test.mjs`'s own header warns that a rule can be added to
+`friendlyError.js`, watch its own dedicated test file go green, and still have
+shipped an English-only error to six locales — because `friendlyErrorRules.test.mjs`
+only checks classification, not translation coverage. That is precisely what
+happened here on the first pass: the new "Seek failed" rule and its three
+strings went in, `friendlyErrorRules.test.mjs` passed 27/27, and only
+`npm run build-verify`'s full run surfaced `errorI18n.test.mjs` failing six
+locale-coverage tests plus the product-name-preserved test — buried early in a
+3600+ line `test:js` log because it sorts alphabetically ahead of most other
+suites in `tests-js/`. A first grep pass over the log missed it by only
+searching the tail; the fix was a broader grep for `AssertionError` across the
+whole log, not a narrower one.
+
+No code defect here — the gate did exactly its job. Recorded because it is the
+second time in this run a real failure hid in the middle of a long
+alphabetically-sorted log rather than at the end, which says the failure-finding
+habit (grep the tail) needs to change, not the gate.
+
+### Verification
+
+`tests-js/friendlyErrorRules.test.mjs`: 27/27. `tests-js/errorI18n.test.mjs`:
+24/24. Mutation-proven 3/3 on the new rule (reverting its regex failed exactly
+the three new classification tests, none of the timeout tests). `npm run
+build-verify` exit 0. `npm run build:renderer` exit 0, 377 files.
+
+### Still open
+
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all remain
+  exactly as reported in Audit 30 — none touched this iteration.
+- The log-reading habit above: worth a standing note rather than a one-off fix,
+  since `test:js` runs 117 files in one log and will keep doing so.
