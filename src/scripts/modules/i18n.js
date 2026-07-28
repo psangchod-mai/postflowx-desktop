@@ -3484,7 +3484,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "내장 플레이어와 시스템 플레이어 모두 이 파일을 열지 못했습니다",
     "PostFlowX could not prepare this file for playback": "PostFlowX가 이 파일을 재생할 수 있도록 준비하지 못했습니다",
     "Create a preview proxy instead?": "대신 미리보기 프록시를 만들까요?",
-    "the source file could not be found — it may have moved": "원본 파일을 찾을 수 없습니다 — 이동되었을 수 있습니다"
+    "the source file could not be found — it may have moved": "원본 파일을 찾을 수 없습니다 — 이동되었을 수 있습니다",
+    "EXR export failed": "EXR 내보내기 실패",
+    "Reviews JSON export failed": "리뷰 JSON 내보내기 실패",
+    "Reviews CSV export failed": "리뷰 CSV 내보내기 실패",
+    "Reviews PDF export failed": "리뷰 PDF 내보내기 실패",
+    "Test proxy generation failed": "테스트 프록시 생성 실패",
+    "IMF diagnostics failed": "IMF 진단 실패",
+    "Deleting project failed": "프로젝트 삭제 실패",
+    "Renaming project failed": "프로젝트 이름 변경 실패",
+    "Duplicating project failed": "프로젝트 복제 실패"
   },
   ja: {
     "Helper not responding": "ヘルパーが応答していません",
@@ -3567,7 +3576,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "内蔵プレーヤーとシステムプレーヤーのどちらもこのファイルを開けませんでした",
     "PostFlowX could not prepare this file for playback": "PostFlowX はこのファイルを再生できる状態にできませんでした",
     "Create a preview proxy instead?": "代わりにプレビュー用プロキシを作成しますか？",
-    "the source file could not be found — it may have moved": "元のファイルが見つかりません — 移動された可能性があります"
+    "the source file could not be found — it may have moved": "元のファイルが見つかりません — 移動された可能性があります",
+    "EXR export failed": "EXR の書き出しに失敗しました",
+    "Reviews JSON export failed": "レビューの JSON 書き出しに失敗しました",
+    "Reviews CSV export failed": "レビューの CSV 書き出しに失敗しました",
+    "Reviews PDF export failed": "レビューの PDF 書き出しに失敗しました",
+    "Test proxy generation failed": "テストプロキシの生成に失敗しました",
+    "IMF diagnostics failed": "IMF 診断に失敗しました",
+    "Deleting project failed": "プロジェクトの削除に失敗しました",
+    "Renaming project failed": "プロジェクトの名前変更に失敗しました",
+    "Duplicating project failed": "プロジェクトの複製に失敗しました"
   },
   "zh-TW": {
     "Helper not responding": "協助程式沒有回應",
@@ -3650,7 +3668,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "內建播放器與系統播放器都無法開啟這個檔案",
     "PostFlowX could not prepare this file for playback": "PostFlowX 無法將這個檔案準備成可播放的狀態",
     "Create a preview proxy instead?": "要改為建立預覽代理檔嗎？",
-    "the source file could not be found — it may have moved": "找不到原始檔案 — 它可能已被移動"
+    "the source file could not be found — it may have moved": "找不到原始檔案 — 它可能已被移動",
+    "EXR export failed": "EXR 匯出失敗",
+    "Reviews JSON export failed": "審閱 JSON 匯出失敗",
+    "Reviews CSV export failed": "審閱 CSV 匯出失敗",
+    "Reviews PDF export failed": "審閱 PDF 匯出失敗",
+    "Test proxy generation failed": "測試代理檔產生失敗",
+    "IMF diagnostics failed": "IMF 診斷失敗",
+    "Deleting project failed": "刪除專案失敗",
+    "Renaming project failed": "重新命名專案失敗",
+    "Duplicating project failed": "複製專案失敗"
   },
   th: {
     "Helper not responding": "ตัวช่วยไม่ตอบสนอง",
@@ -3733,7 +3760,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "ทั้งตัวเล่นในตัวและตัวเล่นของระบบเปิดไฟล์นี้ไม่ได้",
     "PostFlowX could not prepare this file for playback": "PostFlowX เตรียมไฟล์นี้ให้พร้อมเล่นไม่ได้",
     "Create a preview proxy instead?": "จะสร้างไฟล์พร็อกซีสำหรับดูตัวอย่างแทนไหม",
-    "the source file could not be found — it may have moved": "ไม่พบไฟล์ต้นฉบับ — อาจถูกย้ายไปแล้ว"
+    "the source file could not be found — it may have moved": "ไม่พบไฟล์ต้นฉบับ — อาจถูกย้ายไปแล้ว",
+    "EXR export failed": "การส่งออก EXR ล้มเหลว",
+    "Reviews JSON export failed": "การส่งออก JSON ของรีวิวล้มเหลว",
+    "Reviews CSV export failed": "การส่งออก CSV ของรีวิวล้มเหลว",
+    "Reviews PDF export failed": "การส่งออก PDF ของรีวิวล้มเหลว",
+    "Test proxy generation failed": "การสร้างพร็อกซีทดสอบล้มเหลว",
+    "IMF diagnostics failed": "การวินิจฉัย IMF ล้มเหลว",
+    "Deleting project failed": "การลบโปรเจกต์ล้มเหลว",
+    "Renaming project failed": "การเปลี่ยนชื่อโปรเจกต์ล้มเหลว",
+    "Duplicating project failed": "การทำสำเนาโปรเจกต์ล้มเหลว"
   },
   id: {
     "Helper not responding": "Layanan pembantu tidak merespons",
@@ -3816,7 +3852,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "pemutar bawaan maupun pemutar sistem tidak dapat membuka berkas ini",
     "PostFlowX could not prepare this file for playback": "PostFlowX tidak dapat menyiapkan berkas ini untuk diputar",
     "Create a preview proxy instead?": "Buat proksi pratinjau sebagai gantinya?",
-    "the source file could not be found — it may have moved": "berkas sumber tidak ditemukan — mungkin sudah dipindahkan"
+    "the source file could not be found — it may have moved": "berkas sumber tidak ditemukan — mungkin sudah dipindahkan",
+    "EXR export failed": "Ekspor EXR gagal",
+    "Reviews JSON export failed": "Ekspor JSON ulasan gagal",
+    "Reviews CSV export failed": "Ekspor CSV ulasan gagal",
+    "Reviews PDF export failed": "Ekspor PDF ulasan gagal",
+    "Test proxy generation failed": "Pembuatan proksi uji gagal",
+    "IMF diagnostics failed": "Diagnostik IMF gagal",
+    "Deleting project failed": "Penghapusan proyek gagal",
+    "Renaming project failed": "Penggantian nama proyek gagal",
+    "Duplicating project failed": "Penggandaan proyek gagal"
   },
   fil: {
     "Helper not responding": "Hindi tumutugon ang helper",
@@ -3899,7 +3944,16 @@ const ERROR_DICT = {
     "neither the built-in player nor the system player could open this file": "Hindi mabuksan ang file na ito ng built-in player at ng system player",
     "PostFlowX could not prepare this file for playback": "Hindi naihanda ng PostFlowX ang file na ito para i-play",
     "Create a preview proxy instead?": "Gumawa na lang ba ng preview proxy?",
-    "the source file could not be found — it may have moved": "hindi makita ang source file — maaaring nailipat na ito"
+    "the source file could not be found — it may have moved": "hindi makita ang source file — maaaring nailipat na ito",
+    "EXR export failed": "Nabigo ang pag-export ng EXR",
+    "Reviews JSON export failed": "Nabigo ang pag-export ng JSON ng mga review",
+    "Reviews CSV export failed": "Nabigo ang pag-export ng CSV ng mga review",
+    "Reviews PDF export failed": "Nabigo ang pag-export ng PDF ng mga review",
+    "Test proxy generation failed": "Nabigo ang paggawa ng test proxy",
+    "IMF diagnostics failed": "Nabigo ang IMF diagnostics",
+    "Deleting project failed": "Nabigo ang pagtanggal ng project",
+    "Renaming project failed": "Nabigo ang pagpalit ng pangalan ng project",
+    "Duplicating project failed": "Nabigo ang pag-duplicate ng project"
   }
 };
 for (const [lang, map] of Object.entries(ERROR_DICT)){

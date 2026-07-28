@@ -36,6 +36,11 @@ const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
 const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
 const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
+const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
+const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
+const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
+const imfPackageUiSrc = readFileSync(SRC_DIR + 'modules/imf/imf_package_ui.js', 'utf8');
+const projectManagerSrc = readFileSync(SRC_DIR + 'features/projectManager/projectManager.js', 'utf8');
 const i18nSrc = readFileSync(SRC_DIR + 'modules/i18n.js', 'utf8');
 
 const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
@@ -116,9 +121,34 @@ const SCANNED = [
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 
+// friendlyAlert(err, 'label') is a fourth shape translate() never sees directly:
+// friendlyAlert.js calls translate() on whatever label its *caller* passes, so
+// the string to scan for lives in the caller, not in friendlyAlert.js itself —
+// and it is a literal only when the call site hands a literal, not a variable
+// (reviews/index.js's `friendlyAlert(notice.text, label)` re-shows a status-strip
+// notice through the same label it was raised with, so there is nothing new to
+// translate there; ERROR_DICT already covers whatever produced that label).
+function friendlyAlertLabels(src) {
+  const found = new Set();
+  for (const m of src.matchAll(new RegExp(`\\bfriendlyAlert\\(\\s*[^,)]+,\\s*${STRING_LIT}`, 'g'))) {
+    found.add(unquote(m[1]));
+  }
+  return [...found];
+}
+
+const SCANNED_LABELS = [
+  { file: 'features/vfxPull/vfxPullPanel.js', src: vfxPullPanelSrc, expected: 1 },
+  { file: 'features/reviews/index.js', src: reviewsIndexSrc, expected: 3 },
+  { file: 'modules/smart_engine_settings.js', src: smartEngineSettingsSrc, expected: 1 },
+  { file: 'modules/imf/imf_package_ui.js', src: imfPackageUiSrc, expected: 1 },
+  { file: 'features/projectManager/projectManager.js', src: projectManagerSrc, expected: 3 },
+];
+for (const m of SCANNED_LABELS) m.strings = friendlyAlertLabels(m.src);
+
 const STRINGS = [...new Set([
   ...userFacingStrings(friendlySrc),
   ...SCANNED.flatMap((m) => m.strings),
+  ...SCANNED_LABELS.flatMap((m) => m.strings),
 ])];
 const DICT = errorDict(i18nSrc);
 
@@ -143,6 +173,20 @@ for (const m of SCANNED) {
     assert.equal(
       m.strings.length, m.expected,
       `expected ${m.expected} translated sentences in ${m.file}, found ${m.strings.length}:\n  ${m.strings.join('\n  ')}`,
+    );
+    for (const s of m.strings) {
+      assert.ok(STRINGS.includes(s), `${s} was scanned but not carried into the coverage check`);
+    }
+  });
+}
+
+for (const m of SCANNED_LABELS) {
+  test(`${m.file}: every friendlyAlert label was scanned`, () => {
+    // Deleting a call site, or widening its label to a variable, is a test
+    // failure here instead of a quiet English leak the next time it fires.
+    assert.equal(
+      m.strings.length, m.expected,
+      `expected ${m.expected} literal friendlyAlert label(s) in ${m.file}, found ${m.strings.length}:\n  ${m.strings.join('\n  ')}`,
     );
     for (const s of m.strings) {
       assert.ok(STRINGS.includes(s), `${s} was scanned but not carried into the coverage check`);
