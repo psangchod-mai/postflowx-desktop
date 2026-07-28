@@ -4452,3 +4452,72 @@ fps and is not an instance of this bug. All items carried from Iteration
 52 remain pending and unchanged.
 
 Commits: `aae10a9`.
+
+## Iteration 54 — proxy_service.py silently reused another project's proxy cache when its sidecar was missing (new species: proxy-cache identity collision)
+
+**Found.** `_proxy_cache_path(folder, cpl_path, ...)` computes a shared
+"clean" cache filename (`<stem>.mp4`) from `_proxy_target_stem()`, which is
+derived purely from the CPL's display title/filename (`_proxy_display_name`)
+— not from any content-identity hash. Two entirely unrelated projects
+(different watch folder, different CPL) can therefore land on the exact
+same `clean_target` path if they happen to share a display title. The
+reuse-vs-key-suffix decision was:
+`if not clean_target.exists() or _sidecar_matches_target(...) or not clean_sidecar: return clean_target`.
+That trailing `or not clean_sidecar` treated a missing/unreadable sidecar
+JSON as *safe to reuse*, when it actually means the existing file's
+identity is unknown. A sidecar can go missing from a completely normal
+failure mode: `_write_proxy_sidecar` swallows every exception on its
+`write_text` call, and it only runs *after* a proxy encode finishes — so a
+crash, kill, or disk-full error mid-encode leaves a full-sized `.mp4` at
+`clean_target` with no matching `.json`. The next unrelated project that
+happens to share the same display-name stem would then be hard-coded onto
+that same ambiguous path. Depending on `PFX_IMF_PROXY_QUALITY`
+(`proxy_service.py`'s `_current_proxy_quality()`, default `'turbo'`), two
+outcomes are both reachable: under the default quality, `_transcode_worker`
+re-encodes onto that path and clobbers the other project's proxy file
+outright; under a quality setting that makes `_proxy_cache_is_valid`'s
+empty-`cached_quality` fallback pass, the code skips encoding and silently
+serves the *other* project's video, then rewrites its sidecar to claim the
+current folder/CPL identity and re-registers it in the content-addressable
+fingerprint registry — propagating the mislabeling further. Notably, the
+adjacent `_adopt_named_proxy_cache()`/`migrate_named_proxy_cache()` legacy
+proxy-adoption code already checks sidecar `folderPath`/`cplPath` identity
+before reusing a sidecar-less file — this same safeguard was simply absent
+from `_proxy_cache_path`.
+
+**Done.** Removed `or not clean_sidecar` from `_proxy_cache_path`'s
+condition (`companion/src/postflowx_companion/proxy_service.py`). A missing
+or non-matching sidecar now always falls through to the folder+CPL-keyed
+path (`<stem>__<key>.mp4`, `key` a sha1 of folder+CPL path+size+mtime from
+`_stable_proxy_cache_key`), which is unique per project regardless of
+shared display names. New test:
+`companion/tests/test_proxy_cache_path_identity.py` —
+`test_missing_sidecar_does_not_reuse_foreign_clean_target` reproduces the
+exact collision (two different folder/CPL pairs sharing a `contentTitle`,
+first one's `.mp4` written with no sidecar) and asserts the second project
+gets a distinct keyed path; `test_matching_sidecar_still_reuses_clean_target`
+confirms the legitimate same-project reuse case (sidecar written and
+matching) still returns the same clean path, unchanged.
+
+**Verification.** Mutation-tested by reverting `proxy_service.py` via
+`git stash push -- <file>` and rerunning the new test file: the collision
+test failed exactly as predicted (`path_b == path_a`, both resolving to the
+shared `Reel1_proxy.mp4`); the reuse test still passed unaffected;
+restoring the fix (`git stash pop`) made both pass again.
+
+**Gate.** Companion-only Python change — no `npm run build:renderer`
+needed (consistent with Iteration 51's precedent for companion-only fixes).
+Full `npm run build-verify` exit 0 (268 collected, 261 passed, 7 skipped).
+
+**Still open.** All items carried from Iterations 52–53 remain pending and
+unchanged. A related, lower-confidence item not pursued this iteration:
+`_proxy_cache_is_valid()` itself never checks folder/CPL identity at all
+(only legacy-name pattern, file size, IAB-audio-validation version, and
+quality-string match) — it relies entirely on callers already having
+resolved the correct path via `_proxy_cache_path`/`_adopt_named_proxy_cache`
+first. With this iteration's fix that invariant now holds, so no separate
+change was made there, but it's worth noting as the reason a narrower,
+identity-check-only fix inside `_proxy_cache_is_valid` was not chosen
+instead.
+
+Commits: `2474017`.

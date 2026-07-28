@@ -6060,3 +6060,114 @@ never receives a fractional fps and is ruled out as an instance of this
 bug. All items carried from Iteration 52 remain pending and unchanged.
 
 Commits: `aae10a9`.
+
+## Iteration 54 — Proxy cache collided across projects when a sidecar was missing (companion/src/postflowx_companion/proxy_service.py) — new species
+
+**New species.** All prior iterations (48–53) were fps-base/timecode
+arithmetic bugs in the renderer's EDL/AAF/AMF domain. This one is a
+companion-server proxy-cache **identity** bug: a project-isolation failure,
+not a numeric one.
+
+**Why this file.** `proxy_service.py` was on this iteration's 84-file
+non-dirty candidate list. A scouting agent flagged `_proxy_cache_path()`
+(lines 148–156) as a candidate; I independently re-verified by reading the
+function itself, `_sidecar_matches_target()`, `_proxy_target_stem()`/
+`_proxy_display_name()` (confirming the stem is display-title-derived, not
+identity-derived), `_write_proxy_sidecar()` (confirming it swallows
+exceptions and only runs after an encode completes), and by dispatching a
+read-only sub-investigation into the two real callers —
+`start_proxy_playback()` (~line 3101) and the `_adopt_named_proxy_cache()`/
+`_proxy_cache_is_valid()` chain it calls into — to confirm the collision is
+actually reachable end-to-end, not just theoretically possible in the one
+function.
+
+**The bug.** `_proxy_cache_path()`'s reuse condition was:
+
+```python
+if not clean_target.exists() or _sidecar_matches_target(clean_sidecar, folder, cpl_path) or not clean_sidecar:
+    return clean_target
+return root / f"{stem}__{key}.mp4"
+```
+
+`stem` comes from `_proxy_target_stem()` → `_proxy_display_name()`, which
+uses the CPL's `contentTitle`/`annotation` (or the QuickTime filename stem)
+— there is no content-identity hash in it. Two different projects (distinct
+watch folder + distinct CPL) can therefore produce the exact same
+`clean_target` path if they share a display title (a generic reel name, a
+recurring show title, etc.). The trailing `or not clean_sidecar` meant that
+whenever the existing file at that shared path had no sidecar — which
+happens whenever `_write_proxy_sidecar()`'s `write_text` call raised (it's
+wrapped in a bare `try/except: pass`, line ~437) or the process was
+killed/crashed between finishing an encode and writing the sidecar, or the
+file is a legacy pre-sidecar proxy — the code treated "identity unknown" as
+"identity confirmed, safe to reuse" and handed back the same shared path
+for the unrelated new project.
+
+Read together with the caller chain (confirmed via sub-agent
+investigation): `start_proxy_playback()` gets this path back as
+`cache_path` and immediately calls `_adopt_named_proxy_cache()`, which
+either (a) if `_proxy_cache_is_valid(desired)` is already true, adopts the
+foreign file **unconditionally** — no identity check at all — rewrites its
+sidecar to claim the *current* folder/CPL, and serves it straight to the
+player (a silent wrong-video-served bug with zero content verification),
+or (b) otherwise falls through unchanged and lets `_transcode_worker`
+encode a fresh proxy onto that same path, overwriting/destroying whatever
+the foreign project had there. `_proxy_cache_is_valid()` (lines 350–371)
+never checks folder/CPL identity itself — only legacy-name pattern, file
+size, IAB-audio-validation version, and a `proxyQuality` string match
+against `_current_proxy_quality()` (default `'turbo'`) — so under the
+default quality setting the missing-sidecar case reliably routes to the
+overwrite outcome; under a quality configuration where the empty
+`cached_quality` fallback happens to pass, it routes to the silent-serve
+outcome and additionally re-registers the mislabeled file in the
+content-addressable fingerprint registry (`_registry_register`), spreading
+the wrong identity further. Notably, `_adopt_named_proxy_cache()`'s own
+legacy-sidecar-scanning loop (lines ~192–212) *does* check
+`folderPath`/`cplPath` before reusing/renaming a sidecar-less file —
+proving the codebase already recognized this exact hazard and guarded
+against it in that adjacent path, just not in `_proxy_cache_path()` itself.
+
+**The fix.** Removed `or not clean_sidecar` from the condition in
+`_proxy_cache_path()`. A missing or non-matching sidecar now always falls
+through to the folder+CPL-keyed path
+(`root / f"{stem}__{key}.mp4"`, `key = _stable_proxy_cache_key(folder,
+cpl_path)` — a sha1 of the resolved folder path, resolved CPL path, and the
+CPL file's size/mtime), which is unique per project regardless of any
+shared display-name collision, instead of the ambiguous shared path.
+
+**Test approach.** New file `companion/tests/test_proxy_cache_path_identity.py`,
+following this repo's existing pytest conventions
+(`companion/tests/test_proxy_service_watch.py`'s `tmp_path`-based,
+direct-import style). `test_missing_sidecar_does_not_reuse_foreign_clean_target`
+builds two distinct `(folder, cpl_path)` pairs sharing one `contentTitle`,
+has the first "claim" the clean path by writing a file with no sidecar
+(simulating the crash/failed-write scenario), then asserts the second
+project's call returns a different, keyed path rather than the same one.
+`test_matching_sidecar_still_reuses_clean_target` is the companion
+non-regression check: same project, sidecar written and matching, still
+gets the same clean path back — confirming the fix doesn't force
+unnecessary key-suffixed proxies for the legitimate single-project case.
+
+**Verification.** Mutation-tested via
+`git stash push -- companion/src/postflowx_companion/proxy_service.py` /
+`git stash pop` (scoped to this one file). With the fix reverted, the
+collision test failed exactly as predicted — both projects' calls resolved
+to the identical `Reel1_proxy.mp4` path; the reuse test was unaffected.
+With the fix restored, both new tests passed. Full `npm run build-verify`
+gate: companion-only Python change, so `npm run build:renderer` was not
+required (consistent with Iteration 51's precedent); full gate exit 0 —
+companion pytest 261 passed / 7 skipped (268 collected, up from 259/7 —
+the two new tests), Node `test:node`/`test:js` unaffected, all three
+security gates clean.
+
+**Still open.** All items carried from Iterations 52–53 remain pending and
+unchanged. `_proxy_cache_is_valid()` still performs no folder/CPL identity
+check of its own — it relies entirely on callers (now correctly, after
+this fix) already having resolved an unambiguous path via
+`_proxy_cache_path()`/`_adopt_named_proxy_cache()` first. Adding a
+belt-and-suspenders identity check inside `_proxy_cache_is_valid()` itself
+was considered but not pursued this iteration, since the actual reachable
+bug was fully closed by the narrower, more targeted fix in
+`_proxy_cache_path()`.
+
+Commits: `2474017`.
