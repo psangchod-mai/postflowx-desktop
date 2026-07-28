@@ -4129,3 +4129,64 @@ Iterations 43–46. The deferred `otio.js` dedup-key gap and
 `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
 
 Commits: `8d1aefa`.
+
+## Iteration 48 — _probe_ocf_file truncated fractional camera fps, drifting tc_out by real seconds
+
+**Found.** `companion/src/postflowx_companion/api.py`'s `_probe_ocf_file`
+(an ffprobe-based OCF metadata extractor used by the VFX Pull manual-relink
+flow) computed its `tc_out` field with local `_tc2f`/`_f2tc` helper functions
+that used `int(fps)` as the frame-counting divisor. For the most common
+professional cinema camera rates — 23.976, 29.97, 59.94fps — `int()`
+truncates to 23/29/59 instead of rounding to the nominal whole-frame base
+(24/30/60), the long-established convention in this codebase. This is a
+*different but related* bug class from Iterations 44-47's drop-frame
+separator bugs: it's about the frame-rate divisor's rounding direction, not
+timecode string parsing. `utils_time.js`'s `nominalBase()` documents a prior
+real incident of this exact class: `tcToFrames('01:00:00:00', 23.976)`
+returned `86313` instead of `86400` — a one-hour timecode coming back 87
+frames (3.6 seconds) short of itself. Concrete drift verified for
+`_probe_ocf_file`: `tc_in="01:00:00:00"`, `nb_frames=1000`, `fps=23.976` →
+buggy `tc_out="01:00:43:11"` vs correct `"01:00:41:16"` (~2 seconds off) —
+this app's primary use case is OCF (Original Camera Files), so this is not
+an edge case.
+
+**Done.** `api.py` already has correct, independently-tested module-level
+`_tc_to_frames`/`_frames_to_tc` functions (used by `_resolve_clip_metadata`,
+proven correct at `fps=23.976` by an existing passing test in
+`test_resolve_probe_clips.py`) that round fps internally via
+`int(round(fps))`. Rather than patch the local `_tc2f`/`_f2tc` reimplementation
+in place, deleted it entirely and delegated to the existing correct
+functions — fixing the bug at its root instead of leaving a second,
+independently-maintained copy of the same logic in the file. New test:
+`companion/tests/test_probe_ocf_tc_out.py`. `_probe_ocf_file` accepts an
+explicit `ffprobe_path` override, so the test mocks `subprocess.run` to
+return a synthetic ffprobe JSON payload (fractional `r_frame_rate`, a
+`timecode` tag, `nb_frames`) and calls `_probe_ocf_file` directly via
+`CompanionApi.__new__(CompanionApi)` (the method doesn't touch `self`, so
+this avoids spinning up the real constructor's HTTP server/threads). Three
+cases: 23.976fps and 29.97fps (must hit the fix) plus a plain 24fps control
+(identical either way, confirms the fix is a no-op for integer rates).
+Mutation-proven: reverted to the local `int(fps)` helpers, reran — both
+fractional-fps cases failed with the exact drifted values shown above
+(`01:00:43:11` / `01:00:34:14`), the integer-fps control still passed;
+restored from backup (byte-identical via `diff`), 3/3 green again.
+
+**Gate.** Full `npm run build-verify` exit 0 (log: `/tmp/gate48.log`),
+including all 262 companion pytest cases (255 passed, 7 skipped) and the
+XSS/XXE/fail-open scan gates. Python-only change — no `src/`-facing renderer
+code touched — so `npm run build:renderer` was not run.
+
+**Still open.** This is the first instance of the "nominal frame-rate base"
+bug class found; unlike the drop-frame-separator class (Iterations 44-47,
+now exhausted among git-clean files), it's unclear how many other spots in
+the companion Python package or `src/scripts/` might independently
+reimplement timecode-frame conversion with a truncating `int(fps)` instead
+of a rounding one — worth a dedicated grep sweep next, specifically for
+`int(fps)` / `int(some_fps_var)` patterns feeding frame-count arithmetic,
+analogous to the sweep already done for `:`-only timecode regexes. The rest
+of the companion Python package beyond `api.py` remains largely unswept
+(flagged in Iterations 43-48). The deferred `otio.js` dedup-key gap and
+`pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged and
+still off-limits (dirty file) for the latter.
+
+Commits: `98e0dd2`.

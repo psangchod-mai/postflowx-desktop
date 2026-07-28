@@ -5388,3 +5388,135 @@ renderer code, `npm run build:renderer` was also run and succeeded (log:
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
   WIP (Audit 42) remain untouched, unstaged, and out of scope.
+
+## Iteration 48 — `_probe_ocf_file` truncated fractional camera fps, drifting `tc_out` by real seconds
+
+**New species.** Iterations 44-47 all found variants of the same bug class:
+a drop-frame timecode's `HH:MM:SS;FF` separator not being accepted by a
+`:`-only regex/split. This iteration's bug is superficially similar (it's
+also timecode arithmetic on camera footage) but is a genuinely different
+mechanism: it's not about parsing the `;` separator at all — the string
+splitting was already fine — it's about *how the fps value itself* is
+turned into a frame-counting divisor. Fractional professional camera rates
+(23.976, 29.97, 59.94fps — NDF timecode, no semicolons involved) must be
+rounded to their nearest whole-number "nominal" base (24, 30, 60) before use
+in frame arithmetic. Truncating instead of rounding is the bug.
+
+**Why this file, this iteration.** `companion/src/postflowx_companion/api.py`
+was confirmed git-clean via `git status --short`. `_probe_ocf_file` (lines
+~2151-2280) is the ffprobe-based metadata extractor behind the VFX Pull
+manual-relink flow — it runs `ffprobe` against a camera original file (ARRI,
+RED, Sony, Blackmagic, etc.), parses the fps from `r_frame_rate`, and
+computes a `tc_out` field from the embedded start timecode plus frame count.
+Before this fix:
+
+```python
+fps = round(int(rfr[0]) / max(1, int(rfr[1])), 3) if len(rfr) == 2 else 24
+...
+tc_out = ""
+if tc_known and nb_frames:
+    try:
+        def _tc2f(tc, f):
+            p = tc.replace(";", ":").split(":")
+            return sum(int(x)*m for x,m in zip(p,[f*3600,f*60,f,1]))
+        def _f2tc(n, f):
+            f = max(1, int(f))
+            return "{:02d}:{:02d}:{:02d}:{:02d}".format(
+                n//(f*3600), (n%(f*3600))//(f*60), (n//f)%60, n%f)
+        tc_out = _f2tc(_tc2f(tc_in, int(fps)) + nb_frames, int(fps))
+    except Exception:
+        pass
+```
+
+`int(fps)` for `fps=23.976` gives `23`, not the nominal `24` — every
+downstream frame calculation runs one frame count short per second of
+footage. For `tc_in="01:00:00:00"`, `nb_frames=1000`, `fps=23.976`: buggy
+`tc_out="01:00:43:11"`, correct `tc_out="01:00:41:16"` — a ~2 second drift on
+exactly the camera rates this OCF-focused app is built to handle most.
+
+This is the same class of defect `utils_time.js`'s `nominalBase()` was
+written to prevent, with an explicit historical incident documented in its
+comment: `tcToFrames('01:00:00:00', 23.976)` returning `86313` instead of
+`86400` (a one-hour timecode landing 87 frames / 3.6 seconds short of
+itself). The Python companion package already has its own correct instance
+of this same convention, just not wired into `_probe_ocf_file`: the
+module-level `_tc_to_frames`/`_frames_to_tc` functions (lines ~6927-6948)
+both compute `int(round(fps))` internally, and are proven correct at
+`fps=23.976` via `_resolve_clip_metadata`'s existing test
+(`test_resolve_probe_clips.py::test_clip_metadata_computes_tc_range_and_identity`,
+asserting `tcOut == "09:47:44:20"`).
+
+**The fix.** Rather than changing the local `int(fps)` calls to
+`int(round(fps))` (which would have been sufficient but leaves a second,
+independently-maintained reimplementation of frame-timecode conversion in
+the file), the local `_tc2f`/`_f2tc` helper functions were deleted entirely
+and `_probe_ocf_file` now delegates to the existing correct, tested
+module-level functions:
+
+```python
+# ── TC out ─────────────────────────────────────────────────────────
+# Delegate to the module-level _tc_to_frames/_frames_to_tc (also used
+# by _resolve_clip_metadata) rather than a local reimplementation —
+# both already round fps to its nominal whole-frame base internally,
+# so a 23.976fps clip correctly uses 24 rather than truncating to 23.
+tc_out = ""
+if tc_known and nb_frames:
+    try:
+        tc_out = _frames_to_tc(_tc_to_frames(tc_in, fps) + nb_frames, fps)
+    except Exception:
+        pass
+```
+
+This both fixes the bug and removes 8 lines of duplicate logic in favor of
+functions the codebase already trusts and tests elsewhere.
+
+**Test approach.** New file `companion/tests/test_probe_ocf_tc_out.py`.
+`_probe_ocf_file(self, path, name, ext, ffprobe_path=None)` accepts an
+explicit `ffprobe_path` override, so the test bypasses ffprobe discovery
+entirely by passing a fake path and monkeypatching `subprocess.run` to
+return a synthetic ffprobe JSON payload (`r_frame_rate`, a `timecode` tag,
+`nb_frames`). Since `_probe_ocf_file` doesn't touch `self` anywhere in its
+body, the test constructs the API object via `CompanionApi.__new__(CompanionApi)`
+rather than the real `__init__` (which spins up an HTTP server and
+background threads — unnecessary and slow for this unit test). Three cases:
+
+```python
+def test_tc_out_uses_nominal_base_at_23_976_fps(monkeypatch):
+    info = _probe_with_fake_ffprobe(monkeypatch, 24000, 1001, nb_frames=1000, timecode="01:00:00:00")
+    assert info["tcOut"] == "01:00:41:16"
+
+def test_tc_out_uses_nominal_base_at_29_97_fps(monkeypatch):
+    info = _probe_with_fake_ffprobe(monkeypatch, 30000, 1001, nb_frames=1000, timecode="01:00:00:00")
+    assert info["tcOut"] == "01:00:33:10"
+
+def test_tc_out_unaffected_at_integer_fps(monkeypatch):
+    info = _probe_with_fake_ffprobe(monkeypatch, 24, 1, nb_frames=1000, timecode="01:00:00:00")
+    assert info["tcOut"] == "01:00:41:16"
+```
+
+Expected values were independently computed via a standalone Python
+round/truncate simulation (not by running the fixed code and copying its
+output) before the test was run, to avoid a test that just echoes back
+whatever the implementation happens to produce.
+
+**Verification.** Mutation-proven: reverted `_probe_ocf_file` to the
+original local `_tc2f`/`_f2tc`/`int(fps)` code, reran the new test file —
+both fractional-fps cases failed with exactly the predicted drifted values
+(`01:00:43:11` and `01:00:34:14` respectively), the integer-fps control
+passed unaffected (24fps has no truncation to lose). Restored from a `/tmp`
+backup, confirmed byte-identical to the fixed version via `diff`, reran —
+3/3 green. Full `npm run build-verify` gate: exit 0, 262 companion pytest
+cases (255 passed, 7 skipped), XSS/XXE/fail-open scans all clean. No
+`src/`-facing renderer code touched, so `npm run build:renderer` was
+correctly skipped.
+
+**Still open.** First confirmed instance of the "truncate instead of round
+fractional fps" bug class — unlike the now-exhausted drop-frame-separator
+class, its extent elsewhere in the codebase is unknown. A dedicated grep
+sweep for `int(fps)` / `int(<fps-like-variable>)` feeding frame-count
+arithmetic (as opposed to the already-correct `int(round(fps))` pattern)
+across the rest of `companion/src/postflowx_companion/` is the natural next
+target. `otio.js`'s dedup-key gap and `pfx_native_engine.js`'s start/stop
+latch (Iteration 41) remain deferred/off-limits respectively.
+
+Commits: `98e0dd2`.
