@@ -3620,3 +3620,50 @@ heartbeat-interval lease race from Iteration 36 and all i18n items from
 Iteration 30 are unchanged.
 
 Commits: `6b1dc0e`.
+
+## Iteration 38 — storage.js's get() included missing keys as undefined instead of omitting them
+
+**Found.** `electron/storage.js` is a file-based key-value store explicitly
+documented as "replacing chrome.storage.local," with `get`/`set`/`remove`/
+`clear` meant to mirror the real extension API. Real
+`chrome.storage.local.get()` omits from its result any key that was never
+set — it doesn't return `{ key: undefined }`. `storage.js`'s `get()` did
+the opposite in both branches: `get('missing')` returned `{ missing:
+undefined }` instead of `{}`, and `get(['foo', 'missing'])` returned
+`{ foo: 'bar', missing: undefined }` instead of `{ foo: 'bar' }`. Any
+caller using `'key' in result` or `Object.keys(result).length` for a
+presence check — the idiomatic way to check chrome.storage results — gets
+a wrong answer against this shim. `electron/ipc.js` wires `get()` straight
+through to the `pfx:storage:get` IPC handler with no adaptation, so the
+renderer's storage calls inherit this divergence transparently.
+
+**Done.** Changed both branches of `get()` to only assign into the result
+object when the key is actually present in `_cache` (`k in _cache`),
+rather than assigning `_cache[k]` unconditionally. `get(null)` (get-all)
+was already correct via `{ ..._cache }` and is unaffected.
+
+**Gate.** Added `tests-js/storageGetOmitsMissingKeys.test.mjs`, covering:
+a missing single key returns `{}`; a missing key inside a multi-key array
+request is dropped while the present key survives; a present single key
+still round-trips; `get(null)` still returns the full cache. The test
+patches Node's own require cache for the `electron` module id (same
+require-cache-patching trick as the companion tests use for
+`child_process`) so `storage.js`'s `require('electron')` resolves to a
+fake `{ app: { getPath: () => tmpDir } }` instead of the real Electron
+binary path string that plain Node returns outside an Electron process.
+Mutation-proven: reverted both branches back to unconditional assignment,
+reran — two assertions failed showing the literal `undefined`-valued keys
+in the actual output; restored, green again. Full `npm run build-verify`
+exit 0 (log: `/tmp/gate38b.log`; Python suite 250 passed, 7 skipped).
+`npm run build:renderer` was not run — `electron/storage.js` is Electron
+main-process code, not `src/`-facing renderer code.
+
+**Still open.** No other methods on `storage.js` were audited for
+chrome.storage-parity gaps this iteration (e.g. `remove()`'s and `set()`'s
+behavior on non-existent keys were not compared against the real API in
+depth). The `folder_picker.py` AppleScript-injection surface flagged
+during this iteration's scouting remains unverified and out of scope —
+every current call site passes a hardcoded dialog title, so it isn't
+known to be exploitable yet.
+
+Commits: `dfd299b`.

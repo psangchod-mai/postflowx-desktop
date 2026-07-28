@@ -4237,3 +4237,98 @@ main-process code, not `src/`-facing renderer code.
   surfaced in Audit 32 is unchanged this iteration.
 - `render_queue.js`'s private `_parseError` still returns `null` on a miss
   instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
+
+## Iteration 38 — storage.js's get() failed to mirror chrome.storage.local's missing-key semantics
+
+### New species
+
+A data-shape/API-parity bug — the first of that flavor this cycle. Distinct
+from the async-error and race-condition species of Iterations 35-37:
+nothing here is timing-dependent or subprocess-related, it's a shim that
+silently disagrees with the real API it claims to replace.
+
+### Why this file, this iteration
+
+A background Explore agent scouted `electron/`, `src/scripts/`, and
+`companion/` for a fresh, well-scoped, unfixed bug outside everything
+already closed or deferred in Iterations 30 and 35-37. It flagged
+`electron/storage.js`: its own header comment says "File-based key-value
+store replacing chrome.storage.local... API mirrors chrome.storage.local,"
+but `get()` diverges from the documented real-API contract. Real
+`chrome.storage.local.get()` omits any key that was never set from its
+result object. `storage.js`'s single-string-key branch,
+`return { [keys]: _cache[keys] }`, and its array branch,
+`for (const k of keys) result[k] = _cache[k]`, both unconditionally
+assign into the result regardless of whether the key exists in `_cache`,
+producing `{ key: undefined }` entries for absent keys instead of omitting
+them. Verified by reading `get()` directly and confirming `electron/
+ipc.js`'s `pfx:storage:get` handler forwards to it with zero
+transformation, so the renderer-facing IPC surface inherits the same
+divergence. `'key' in result` and `Object.keys(result).length` are the
+idiomatic chrome.storage.local presence checks; both give a wrong answer
+against this shim's original behavior.
+
+### The fix
+
+Both branches now only assign into the result object when the key is
+actually present in `_cache`, checked via `k in _cache`:
+
+```js
+if (typeof keys === 'string') {
+  return (keys in _cache) ? { [keys]: _cache[keys] } : {};
+}
+const result = {};
+for (const k of keys) {
+  if (k in _cache) result[k] = _cache[k];
+}
+return result;
+```
+
+`get(null)` (get-all via `{ ..._cache }`) was already correct and untouched.
+
+### Test approach
+
+New `tests-js/storageGetOmitsMissingKeys.test.mjs`. `storage.js` does
+`const { app } = require('electron');` and calls `app.getPath('userData')`
+on first use; outside a real Electron process, `require('electron')`
+resolves to a plain path string (the Electron binary path), not an object,
+so destructuring `app` from it would be `undefined`. The test injects a
+fake module into Node's own require cache at the resolved `electron`
+module id — `require.cache[require.resolve('electron')] = { ...,
+exports: { app: { getPath: () => tmpDir } } }` — before requiring
+`storage.js`, the same require-cache-patching technique the companion
+tests use for `child_process.spawn`, just applied to a different module
+id. Four cases: a missing single key returns `{}`; a missing key inside a
+multi-key array request is dropped while a present key in the same
+request survives; a present single key still returns correctly; `get(null)`
+is unaffected.
+
+### Verification
+
+`node --test tests-js/storageGetOmitsMissingKeys.test.mjs`: 4/4 green.
+Mutation-proven: reverted both branches to their original unconditional
+assignment, reran — two assertions failed with the literal `{ missing:
+undefined }` / `{ foo: 'bar', missing: undefined }` shapes in the actual
+output, confirming the test genuinely detects the regression; restored,
+green again. Full `npm run build-verify` — first pass failed at
+`tests-js/selfContained.test.mjs`'s "no new test file is left out of git"
+gate because the new test file hadn't been `git add`ed yet; staged it and
+reran clean, exit 0 (log: `/tmp/gate38b.log`; Python suite 250 passed, 7
+skipped). `npm run build:renderer` was not run — `electron/storage.js` is
+Electron main-process code, not `src/`-facing renderer code.
+
+### Still open
+
+- `remove()` and `set()`'s behavior against non-existent keys were not
+  compared to the real chrome.storage.local contract in this pass — only
+  `get()` was audited for parity gaps.
+- The `folder_picker.py` AppleScript-injection surface surfaced during this
+  iteration's scouting is unverified and out of scope: every current call
+  site passes a hardcoded dialog title, so no exploitable path is
+  currently known — flagged as a possible future target, not a confirmed
+  bug.
+- `CompanionBridge`'s other untested lifecycle paths (Audit 35), the
+  heartbeat-interval lease race (Audit 36), the i18n gaps and
+  `src/tools/visionscope/*` (Audit 30), the ~60-file uncommitted-work scope
+  (Audit 32), and `render_queue.js`'s `_parseError` (Audit 1) all remain
+  unchanged.
