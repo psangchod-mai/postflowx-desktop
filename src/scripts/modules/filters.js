@@ -10,7 +10,10 @@
 
 function tcToFrames(tc, fps = 24) {
   if (!tc || typeof tc !== "string") return 0;
-  const m = tc.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  // Drop-frame EDLs use "HH:MM:SS;FF" — normalise the semicolon to a colon so
+  // DF timecodes still match this regex instead of returning 0 and getting
+  // every event in the pipeline treated as zero-length by filterValidTimecode.
+  const m = tc.replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
   if (!m) return 0;
   const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
   return ((hh * 3600) + (mm * 60) + ss) * fps + ff;
