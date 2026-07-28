@@ -3493,7 +3493,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "IMF 진단 실패",
     "Deleting project failed": "프로젝트 삭제 실패",
     "Renaming project failed": "프로젝트 이름 변경 실패",
-    "Duplicating project failed": "프로젝트 복제 실패"
+    "Duplicating project failed": "프로젝트 복제 실패",
+    "Engine check failed": "엔진 점검 실패",
+    "Decode test failed": "디코딩 테스트 실패",
+    "IMF decode test failed": "IMF 디코딩 테스트 실패",
+    "Test proxy failed": "테스트 프록시 실패",
+    "Loading the engine logs failed": "엔진 로그 불러오기 실패"
   },
   ja: {
     "Helper not responding": "ヘルパーが応答していません",
@@ -3585,7 +3590,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "IMF 診断に失敗しました",
     "Deleting project failed": "プロジェクトの削除に失敗しました",
     "Renaming project failed": "プロジェクトの名前変更に失敗しました",
-    "Duplicating project failed": "プロジェクトの複製に失敗しました"
+    "Duplicating project failed": "プロジェクトの複製に失敗しました",
+    "Engine check failed": "エンジンチェックに失敗しました",
+    "Decode test failed": "デコードテストに失敗しました",
+    "IMF decode test failed": "IMF デコードテストに失敗しました",
+    "Test proxy failed": "テストプロキシに失敗しました",
+    "Loading the engine logs failed": "エンジンログの読み込みに失敗しました"
   },
   "zh-TW": {
     "Helper not responding": "協助程式沒有回應",
@@ -3677,7 +3687,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "IMF 診斷失敗",
     "Deleting project failed": "刪除專案失敗",
     "Renaming project failed": "重新命名專案失敗",
-    "Duplicating project failed": "複製專案失敗"
+    "Duplicating project failed": "複製專案失敗",
+    "Engine check failed": "引擎檢查失敗",
+    "Decode test failed": "解碼測試失敗",
+    "IMF decode test failed": "IMF 解碼測試失敗",
+    "Test proxy failed": "測試代理失敗",
+    "Loading the engine logs failed": "載入引擎日誌失敗"
   },
   th: {
     "Helper not responding": "ตัวช่วยไม่ตอบสนอง",
@@ -3769,7 +3784,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "การวินิจฉัย IMF ล้มเหลว",
     "Deleting project failed": "การลบโปรเจกต์ล้มเหลว",
     "Renaming project failed": "การเปลี่ยนชื่อโปรเจกต์ล้มเหลว",
-    "Duplicating project failed": "การทำสำเนาโปรเจกต์ล้มเหลว"
+    "Duplicating project failed": "การทำสำเนาโปรเจกต์ล้มเหลว",
+    "Engine check failed": "การตรวจสอบเอนจินล้มเหลว",
+    "Decode test failed": "การทดสอบถอดรหัสล้มเหลว",
+    "IMF decode test failed": "การทดสอบถอดรหัส IMF ล้มเหลว",
+    "Test proxy failed": "พร็อกซีทดสอบล้มเหลว",
+    "Loading the engine logs failed": "การโหลดบันทึกเอนจินล้มเหลว"
   },
   id: {
     "Helper not responding": "Layanan pembantu tidak merespons",
@@ -3861,7 +3881,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "Diagnostik IMF gagal",
     "Deleting project failed": "Penghapusan proyek gagal",
     "Renaming project failed": "Penggantian nama proyek gagal",
-    "Duplicating project failed": "Penggandaan proyek gagal"
+    "Duplicating project failed": "Penggandaan proyek gagal",
+    "Engine check failed": "Pemeriksaan engine gagal",
+    "Decode test failed": "Uji decode gagal",
+    "IMF decode test failed": "Uji decode IMF gagal",
+    "Test proxy failed": "Proksi uji gagal",
+    "Loading the engine logs failed": "Pemuatan log engine gagal"
   },
   fil: {
     "Helper not responding": "Hindi tumutugon ang helper",
@@ -3953,7 +3978,12 @@ const ERROR_DICT = {
     "IMF diagnostics failed": "Nabigo ang IMF diagnostics",
     "Deleting project failed": "Nabigo ang pagtanggal ng project",
     "Renaming project failed": "Nabigo ang pagpalit ng pangalan ng project",
-    "Duplicating project failed": "Nabigo ang pag-duplicate ng project"
+    "Duplicating project failed": "Nabigo ang pag-duplicate ng project",
+    "Engine check failed": "Nabigo ang pagsusuri sa engine",
+    "Decode test failed": "Nabigo ang pagsubok sa pag-decode",
+    "IMF decode test failed": "Nabigo ang pagsubok sa pag-decode ng IMF",
+    "Test proxy failed": "Nabigo ang test proxy",
+    "Loading the engine logs failed": "Nabigo ang pag-load ng mga log ng engine"
   }
 };
 for (const [lang, map] of Object.entries(ERROR_DICT)){

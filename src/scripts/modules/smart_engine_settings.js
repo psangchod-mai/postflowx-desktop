@@ -26,7 +26,7 @@
 
 import { buildBadge, engineColor } from './smart_playback_engine.js';
 import { friendlyAlert } from '../core/friendlyAlert.js';
-import { friendlyStatus } from '../core/friendlyError.js';
+import { friendlyStatus, translate } from '../core/friendlyError.js';
 
 const STATUS_COLOR = {
   ready:   '#2ecc71',
@@ -101,7 +101,7 @@ async function checkEngines() {
     }
     _renderEngineRows(engines);
   } catch (err) {
-    const line = friendlyStatus(`Engine check failed: ${err.message}`);
+    const line = friendlyStatus(`${translate('Engine check failed')}: ${err.message}`);
     list.innerHTML = `<div style="font-size:9px;color:#e74c3c;white-space:pre-wrap;">${_esc(line)}</div>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Check Engines'; }
@@ -162,13 +162,13 @@ async function decodeTestFrame() {
       resultEl.style.display = '';
     } else {
       const msg = r?.error || r?.stderr?.slice(0, 200) || 'no reason was reported';
-      _setStatusText(labelEl, friendlyStatus(`Decode test failed: ${msg}`));
+      _setStatusText(labelEl, friendlyStatus(`${translate('Decode test failed')}: ${msg}`));
       imgEl.src = '';
       resultEl.style.display = '';
     }
   } catch (err) {
     const labelEl = _q('smartEngineDecodeLabel');
-    _setStatusText(labelEl, friendlyStatus(`Decode test failed: ${err.message}`));
+    _setStatusText(labelEl, friendlyStatus(`${translate('Decode test failed')}: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
     if (resultEl) resultEl.style.display = '';
   } finally {
@@ -221,13 +221,13 @@ async function imfDecodeTest() {
       resultEl.style.display = '';
     } else {
       const msg = (decodeResult?.errors || []).join('; ') || decodeResult?.error || 'no reason was reported';
-      _setStatusText(labelEl, friendlyStatus(`IMF decode test failed: ${msg}`));
+      _setStatusText(labelEl, friendlyStatus(`${translate('IMF decode test failed')}: ${msg}`));
       imgEl.src = '';
       resultEl.style.display = '';
     }
   } catch (err) {
     const labelEl = _q('smartEngineDecodeLabel');
-    _setStatusText(labelEl, friendlyStatus(`IMF decode test failed: ${err.message}`));
+    _setStatusText(labelEl, friendlyStatus(`${translate('IMF decode test failed')}: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
     if (resultEl) resultEl.style.display = '';
   } finally {
@@ -275,7 +275,7 @@ async function generateTestProxy() {
         ? `Proxy queued (session: ${sessionId}). Check proxy folder: ${outputDir}/proxies/`
         // 'unknown' was the previous fallback, and it read as if the app knew
         // something it would not say. It does not know; say that instead.
-        : friendlyStatus(`Test proxy failed: ${r?.error || 'no reason was reported'}`);
+        : friendlyStatus(`${translate('Test proxy failed')}: ${r?.error || 'no reason was reported'}`);
     }
     if (resultEl) {
       resultEl.style.display = '';
@@ -330,7 +330,7 @@ async function showLogs() {
     panel.style.display = '';
     if (btn) btn.textContent = 'Hide Logs';
   } catch (err) {
-    _setStatusText(content, friendlyStatus(`Loading the engine logs failed: ${err.message}`));
+    _setStatusText(content, friendlyStatus(`${translate('Loading the engine logs failed')}: ${err.message}`));
     panel.style.display = '';
     if (btn) btn.textContent = 'Hide Logs';
   } finally {

@@ -118,6 +118,11 @@ const SCANNED = [
   // playableMedia says why PLAYBACK failed, and feeds the same onProxyFail
   // status strips. Three of its hints were English literals until iteration 28.
   { file: 'core/playableMedia.js', src: playableMediaSrc, expected: 6 },
+  // smart_engine_settings.js's own header comment documents that every
+  // friendlyStatus() label is supposed to be translated by the caller — that
+  // contract went half-implemented until iteration 34, when six of its seven
+  // call sites were still handing friendlyStatus a bare English label.
+  { file: 'modules/smart_engine_settings.js', src: smartEngineSettingsSrc, expected: 5 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 
