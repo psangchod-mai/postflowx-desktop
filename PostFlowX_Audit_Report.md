@@ -6356,3 +6356,106 @@ documented-but-unimplemented normalization gaps — this was scoped to the
 one flagged, verified instance.
 
 Commits: `05c6f0f`.
+
+## Iteration 57 — ref-clip early-return skipped marker collection (new species)
+
+**New species.** The first control-flow early-exit bug in this series: a
+clip-type branch resolves its target and recurses to produce output, then
+returns before reaching the parser's shared post-processing step, so
+per-node data attached only to that branch's own node (not to anything
+inside what it recurses into) is silently dropped. Distinct from
+Iterations 48–50 (fps-base rounding), 51 (drop-frame misclassification), 52
+(windowed-scan position tracking), 53 (fractional-rate-as-frame-base), 54
+(cache identity collision), 55 (cross-tab TOCTOU race), and 56
+(match-key normalization gap) — none of those involve a code path bypassing
+shared logic for one branch of a type dispatch.
+
+**Why this file.** `src/scripts/parsers/fcpxml.js` is the FCPXML parser,
+confirmed imported by `src/scripts/ui.js`, `src/scripts/prep_mark.js`, and
+`src/scripts/features/reviews/index.js` — it is on the live import graph
+for both the desktop and extension targets. This finding was originally
+scouted against `src/scripts/parsers/fcpxm.js` (missing the trailing "l").
+Independent verification searched the codebase for importers of that exact
+filename and found none — it is dead code, unreachable from any entry
+point — so the finding was not reported as-is. Instead, the equivalent
+`<ref-clip>` marker-handling logic was located in the correctly-named,
+live `fcpxml.js` and re-verified there before being written up. This is
+recorded here as a "trust but verify" example: a scouting pass can
+correctly identify a real bug pattern while pointing at the wrong (dead)
+file, and independent verification is what catches that before a
+non-genuine finding gets reported.
+
+**The bug.** The `<ref-clip>` branch (used for compound-clip and multicam
+instances dropped on a timeline) resolves the referenced `<media>`'s
+`<sequence>` and recurses into it to produce this ref-clip's output rows,
+then `return`s. The parser's own marker-collection logic — which reads
+`<marker>` children directly under the current clip node and attaches them
+to that clip's output row — lives further down in the same function, in
+the shared per-clip-node code path all other clip types (`asset-clip`,
+`clip`, `gap`, etc.) fall through to. Because the ref-clip branch returns
+early, `<marker>` elements that are direct children of the `<ref-clip>`
+node itself (as opposed to markers inside the referenced sequence, which
+the recursion already handles correctly) were never read at all — they
+were not misattributed or duplicated, just entirely absent from the
+output. This mirrors an editorial reality: markers are commonly added to
+the outer compound-clip instance on the main timeline (e.g. a reviewer
+flagging "check this multicam angle at frame X" on the timeline instance)
+rather than by opening the compound clip and marking its internal
+sequence.
+
+**The fix.** Extracted the parser's existing per-clip marker-collection
+logic into a new top-level `collectClipMarkers(node, recInF, srcF, durF,
+fps)` helper, so the same logic can be invoked from more than one call
+site without duplicating it. In the `<ref-clip>` branch, added a
+`startLen = out.length` snapshot immediately before the recursive call,
+then — after recursion returns — called `collectClipMarkers` on the
+ref-clip node itself and attached any results to `out[startLen]` (the
+first row the recursion produced), before the branch's own `return`. The
+original marker-collection call site in the main per-clip block was
+switched to call the same extracted helper, so the two paths cannot drift
+out of sync again.
+
+**Test approach.** Added
+`'a marker on a <ref-clip> node itself is not dropped'` to
+`test/parsers/fcpxml.test.mjs`: an inline FCPXML with a `<media>` compound
+clip wrapping a `<sequence>`/`<asset-clip>`, referenced by a top-level
+`<ref-clip>` that itself carries a direct `<marker start="2s"
+value="REVIEW"/>`. Asserts exactly one output row (the ref-clip itself
+produces no row; only its resolved content does) and that the marker is
+present on that row. Writing this test surfaced a pre-existing gap in
+`test/_setup.mjs`: it shims `DOMParser` and `chrome.runtime.getURL` for
+Node test runs but was missing the browser `CSS` global that this parser's
+ref-clip resolution needs (`` media[id="${CSS.escape(ref)}"]` ``) — so any
+`ref-clip` node hitting the Node test suite before this fix threw
+`ReferenceError: CSS is not defined` internally, meaning ref-clip parsing
+had never actually been exercised by an automated test. Added a minimal,
+test-only `CSS.escape` polyfill to `test/_setup.mjs`, consistent with that
+file's documented policy of shimming only what the parsers touch, never
+shipping the shim.
+
+**Verification.** Mutation-tested per the established methodology:
+reverted only the fix via `git stash push --
+src/scripts/parsers/fcpxml.js` (pathspec-scoped, not a full-tree stash)
+and reran `test/parsers/fcpxml.test.mjs` — the new ref-clip-marker test
+failed exactly as predicted (marker absent from the output row), while all
+6 other tests in the file continued to pass. Restored the fix (`git stash
+pop`) and confirmed via `git status --short` that only the three intended
+files (`src/scripts/parsers/fcpxml.js`, `test/_setup.mjs`,
+`test/parsers/fcpxml.test.mjs`) were modified before re-running: all 7
+tests passed. Ran the complete `npm run build-verify` gate: exit 0 —
+Node/JS tests green, companion Python suite untouched and green (261
+passed / 7 skipped), all three security scan gates (XSS/XXE/fail-open)
+clean. Separately, after `git stash pop` surfaced a large, alarming
+`git status` diff across hundreds of unrelated repo files, this was
+investigated via `git diff --summary` on a sample file and confirmed to be
+pre-existing, content-free file-permission (mode-bit) noise (`100644 =>
+100755`) unrelated to this change — left untouched, not staged, not
+committed.
+
+**Still open.** All items carried from Iterations 52–56 remain pending and
+unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") is confirmed
+dead code — unimported anywhere in the app — and is permanently excluded
+from future scouting passes to avoid re-reporting a non-genuine finding
+against it.
+
+Commits: `514bd19`.

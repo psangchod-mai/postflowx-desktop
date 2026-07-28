@@ -4644,3 +4644,60 @@ packaging.
 unchanged.
 
 Commits: `05c6f0f`.
+
+## Iteration 57 — ref-clip early-return skipped marker collection in fcpxml.js
+
+**Found.** `src/scripts/parsers/fcpxml.js`'s `<ref-clip>` branch (a
+compound-clip/multicam instance dropped on a timeline) resolves its
+`<media>`/`<sequence>` target and recurses into it to produce output rows,
+then returns before ever reaching this parser's own marker-collection
+step. A `<marker>` placed directly on the `ref-clip` node itself (as
+opposed to inside the referenced sequence) was silently dropped — it never
+appeared on any output row. This was originally scouted against
+`src/scripts/parsers/fcpxm.js` (missing the trailing "l"); verification
+confirmed that file is dead code, never imported anywhere in the app, so
+the finding was redirected to the live equivalent in `fcpxml.js` (confirmed
+imported by `src/scripts/ui.js`, `src/scripts/prep_mark.js`, and
+`src/scripts/features/reviews/index.js`) before being reported.
+
+**Done.** The ref-clip branch now snapshots `out.length` before recursing
+into the resolved sequence, then — after the recursion — collects and
+attaches the ref-clip node's own direct markers to the first row the
+recursion produced (`out[startLen]`), via a new shared
+`collectClipMarkers(node, recInF, srcF, durF, fps)` helper extracted from
+the parser's main per-clip marker-collection logic. The same helper is now
+called from both the ref-clip branch and the original clip-scope marker
+block, so the two paths can't drift apart again.
+
+**Tests.** `test/parsers/fcpxml.test.mjs` — one new test,
+`'a marker on a <ref-clip> node itself is not dropped'`: builds an inline
+FCPXML with a `<media>`/`<sequence>` compound clip and a top-level
+`<ref-clip>` timeline node carrying a direct `<marker>` child, and asserts
+the marker surfaces on the first output row produced by the ref-clip's
+resolved sequence. Getting this test running under Node surfaced a
+pre-existing gap in `test/_setup.mjs`: it shimmed `DOMParser` and
+`chrome.runtime.getURL` but not the browser `CSS` global, which the
+ref-clip resolution branch needs (`` media[id="${CSS.escape(ref)}"]` ``) —
+meaning ref-clip parsing had never actually been exercised by the Node
+test suite before. Added a minimal test-only `CSS.escape` polyfill to
+`test/_setup.mjs`, consistent with that file's stated "shim only what
+parsers touch, never ship it" policy. All 7 tests in the file pass.
+
+**Verification.** Mutation-tested via `git stash push --
+src/scripts/parsers/fcpxml.js` (pathspec-scoped) and rerunning the test
+file: the new test failed specifically (marker missing from the row),
+while the other 6 tests were unaffected. `git stash pop` restored all 7 to
+passing.
+
+**Gate.** Full `npm run build-verify` (`test:node && test:js && test:py &&
+scan-innerhtml --gate && scan-rawxml --gate && scan-failopen --gate`): exit
+0. Node/JS tests green, companion Python 261 passed / 7 skipped, all three
+security scan gates clean. Renderer-only change — a desktop/extension
+`npm run build:renderer` / `build:extension` would pick this up on next
+packaging.
+
+**Still open.** All items carried from Iterations 52–56 remain pending and
+unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") is confirmed
+dead code (unimported) and is permanently excluded from future scouting.
+
+Commits: `514bd19`.
