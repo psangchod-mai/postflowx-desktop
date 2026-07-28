@@ -158,3 +158,148 @@ test('acquireLease() is atomic across two tabs racing on startup — only one wi
     'the two tabs must not both believe they are leader',
   );
 });
+
+// A fake IndexedDB that gives the test explicit, deterministic control over
+// when each transaction actually runs (instead of racing on microtask
+// timing like createFakeIndexedDB() above). Transactions are captured into a
+// `pending` queue while paused; the test drives execution one at a time via
+// runPendingAt(i), so it can interleave a stale heartbeat's read-then-write
+// with a second tab's takeover write in a specific, reproducible order.
+function createGatedFakeIndexedDB() {
+  const map = new Map();
+  let paused = false;
+  const pending = [];
+
+  function run(tx, ops) {
+    while (ops.length) ops.shift()();
+    queueMicrotask(() => { tx.oncomplete && tx.oncomplete(); });
+  }
+
+  function makeTransaction(storeName, mode) {
+    const tx = {};
+    const ops = [];
+    const objectStore = {
+      get(key) {
+        const req = {};
+        ops.push(() => {
+          req.result = map.get(key);
+          req.onsuccess && req.onsuccess();
+        });
+        return req;
+      },
+      put(value, key) {
+        const req = {};
+        ops.push(() => {
+          map.set(key, value);
+          req.result = key;
+          req.onsuccess && req.onsuccess();
+        });
+        return req;
+      },
+    };
+    tx.objectStore = () => objectStore;
+
+    queueMicrotask(() => {
+      if (paused) {
+        pending.push(() => run(tx, ops));
+      } else {
+        run(tx, ops);
+      }
+    });
+
+    return tx;
+  }
+
+  return {
+    open() {
+      const req = {};
+      queueMicrotask(() => {
+        req.result = { transaction: makeTransaction };
+        req.onsuccess && req.onsuccess();
+      });
+      return req;
+    },
+    pause() { paused = true; },
+    runPendingAt(i) {
+      const fn = pending[i];
+      if (!fn) return false;
+      pending.splice(i, 1);
+      fn();
+      return true;
+    },
+    getRaw() { return map.values().next().value; },
+    patchRaw(patch) {
+      const key = map.keys().next().value;
+      map.set(key, { ...map.get(key), ...patch });
+    },
+  };
+}
+
+function flush() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function makeGatedTabContext(fakeIDB, onHeartbeat) {
+  const ctx = {
+    console,
+    Date,
+    Math,
+    Promise,
+    setTimeout: () => {},
+    clearTimeout: () => {},
+    setInterval: (cb) => { onHeartbeat(cb); return 1; },
+    clearInterval: () => {},
+    sessionStorage: makeSessionStorage(),
+    indexedDB: fakeIDB,
+    BroadcastChannel: FakeBroadcastChannel,
+    addEventListener: () => {},
+  };
+  ctx.window = ctx;
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx);
+  return ctx;
+}
+
+test('a stale heartbeat renewal must not clobber a takeover by another tab', async () => {
+  const idb = createGatedFakeIndexedDB();
+  let heartbeatCb = null;
+  const tabA = makeGatedTabContext(idb, (cb) => { heartbeatCb = cb; });
+  const tabB = makeTabContext(idb);
+
+  // tabA becomes initial leader and starts its heartbeat (runs unpaused).
+  const wonInitial = await tabA.PFX_QUEUE_LEASE.acquireLease();
+  assert.equal(wonInitial, true);
+  assert.ok(heartbeatCb, 'heartbeat callback must have been captured');
+
+  // Simulate the lease having gone stale (e.g. A's tab was throttled/backgrounded)
+  // so tabB's acquireLease() below is a legitimate takeover attempt, not a no-op.
+  idb.patchRaw({ leaseUntil: 0 });
+
+  // Now gate the store: A's stale heartbeat and B's takeover race concurrently.
+  idb.pause();
+  const heartbeatDone = heartbeatCb();
+  const acquireBPromise = tabB.PFX_QUEUE_LEASE.acquireLease();
+  await flush();
+
+  // Drive the queued transactions in FIFO order, one step at a time. On the
+  // old two-transaction heartbeat shape this reproduces: A's stale read,
+  // B's atomic takeover write, then A's stale write clobbering B. On the
+  // fixed single-transaction shape the 3rd step is a harmless no-op.
+  await idb.runPendingAt(0); await flush();
+  await idb.runPendingAt(0); await flush();
+  idb.runPendingAt(0); await flush();
+
+  const wonB = await acquireBPromise;
+  await heartbeatDone;
+
+  const finalLease = idb.getRaw();
+  const currentOwnerIsB = finalLease?.queueLeaderTabId === tabB.PFX_QUEUE_LEASE.getTabId();
+  const bBelievesItWon = wonB === true;
+
+  assert.equal(
+    bBelievesItWon,
+    currentOwnerIsB,
+    `split-brain: tabB believes it won=${bBelievesItWon} but store owner is B=${currentOwnerIsB}`,
+  );
+});

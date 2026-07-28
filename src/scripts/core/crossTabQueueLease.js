@@ -141,14 +141,33 @@
       try {
         const tabId = _myTabId();
         const now   = Date.now();
-        const lease = await _getLease();
-        if (lease?.queueLeaderTabId !== tabId) {
+        // Read-then-write inside a single IDB transaction, same as
+        // acquireLease/releaseLease above -- using _getLease()+_setLease()
+        // here (two separate transactions with an await between them) would
+        // reopen the exact race those functions were rewritten to close: a
+        // throttled/delayed heartbeat could read a since-superseded lease and
+        // overwrite another tab's fresh lease after it already took over.
+        const db = await _openDB();
+        const stillLeader = await new Promise((resolve, reject) => {
+          const tx = db.transaction(DB_STORE, 'readwrite');
+          const store = tx.objectStore(DB_STORE);
+          const req = store.get(LEASE_KEY);
+          let result = false;
+          req.onsuccess = () => {
+            const existing = req.result || null;
+            if (existing?.queueLeaderTabId === tabId) {
+              store.put({ queueLeaderTabId: tabId, leaseUntil: now + LEASE_TTL, heartbeat: now }, LEASE_KEY);
+              result = true;
+            }
+          };
+          tx.oncomplete = () => resolve(result);
+          tx.onerror    = () => reject(tx.error);
+        });
+        if (!stillLeader) {
           // Lost leadership
           _isLeader = false;
           _stopHeartbeat();
-          return;
         }
-        await _setLease({ ...lease, leaseUntil: now + LEASE_TTL, heartbeat: now });
       } catch { }
     }, HEARTBEAT);
   }
