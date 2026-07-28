@@ -348,7 +348,7 @@ export function parseOTIO(jsonInput) {
         if (sch.startsWith("LinearTimeWarp")) {
           const ts = Number(e?.time_scalar);
           if (Number.isFinite(ts) && ts !== 0) {
-            if (ts < 0) reversed = true;
+            if (ts < 0) reversed = !reversed;
             scalar *= Math.abs(ts);
           }
         }

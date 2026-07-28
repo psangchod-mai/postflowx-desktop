@@ -36,6 +36,16 @@ test('resolve_retime.otio — LinearTimeWarp 2x + reverse', () => {
   assert.equal(evs[1].speedFactor, -100, 'reverse → negative speedFactor');
 });
 
+test('resolve_double_reverse.otio — two negative LinearTimeWarps cancel out, net-forward', () => {
+  const res = parseOTIO(readFixture('resolve_double_reverse.otio'));
+  const evs = assertParseResult(res, { sourceType: 'otio' });
+
+  assert.equal(evs.length, 1);
+  // -1.0 then -2.0: two reversals cancel out → net-forward playback at 2x,
+  // not a reversed clip at 2x (which would report speedFactor: -200).
+  assert.equal(evs[0].speedFactor, 200, 'double reverse cancels out to a positive (forward) speed factor');
+});
+
 test('resolve_compound.otio — nested Stack handled as one event', () => {
   const res = parseOTIO(readFixture('resolve_compound.otio'));
   const evs = assertParseResult(res, { sourceType: 'otio' });
