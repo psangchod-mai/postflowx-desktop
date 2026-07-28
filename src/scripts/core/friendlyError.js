@@ -215,6 +215,18 @@ const RULES = [
     hint: 'The format may be unsupported, or the media helper needs installing (Settings › Resolve Engine).',
   },
   {
+    // visualQcModal's three seek() implementations (scan, thumbnail queue, PDF
+    // stills export) all reject with this bare wording when the <video>
+    // element's seeked/error events never fire in time. "Seek timeout" is a
+    // separate string that already matches the timeout rule above — this rule
+    // only needs to catch the non-timeout failure case, so it must stay below
+    // that rule rather than widening it.
+    test: /\bseek (failed|error)\b/i,
+    title: 'Seek failed',
+    message: 'PostFlowX could not move the video to that point in time.',
+    hint: 'Try again, or open the clip in a different player if this keeps happening.',
+  },
+  {
     test: /unexpected token|unexpected end of (json|input)|json\.parse|is not valid json|parse error/i,
     title: 'Unexpected response',
     message: 'PostFlowX got an unexpected response.',

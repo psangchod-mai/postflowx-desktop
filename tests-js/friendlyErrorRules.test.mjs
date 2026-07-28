@@ -25,6 +25,9 @@ const NEWLY_CLASSIFIED = [
   ['memory access out of bounds',                       'Ran out of memory'],
   ['fetch failed',                                      'Network problem'],
   ['getaddrinfo ENOTFOUND api.example.com',             'Network problem'],
+  ['Seek failed',                                       'Seek failed'],
+  ['Seek failed during thumbnail capture',              'Seek failed'],
+  ['Seek failed during still capture',                  'Seek failed'],
 ];
 
 for (const [raw, title] of NEWLY_CLASSIFIED) {
@@ -61,6 +64,14 @@ test('a bare ffmpeg exit stays a decode problem rather than being guessed at', (
 
 test('an explicit write failure is not reported as unreadable media', () => {
   assert.equal(friendlyError('failed to write output file').title, 'Export could not be written');
+});
+
+test('a seek timeout is reported as a timeout, not swallowed by the seek-failed rule', () => {
+  // Both strings come out of the same seekTo() implementations in
+  // visualQcModal — the "timed out" advice is more specific, so it must keep
+  // winning when the seek rule is placed near it.
+  assert.equal(friendlyError('Seek timeout').title, 'Timed out');
+  assert.equal(friendlyError('Thumb seek timeout').title, 'Timed out');
 });
 
 // ── Pass-through must survive: the app writes good messages already ──────────
