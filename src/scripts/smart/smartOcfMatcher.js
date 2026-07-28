@@ -434,7 +434,10 @@ export function matchOcfToEvent(ocfFile, event, opts = {}) {
   }
 
   // ── Pass 7: TC-Out match ────────────────────────────────────────────────────
-  const tcOutDelta = _frameDelta(ocfFile.tcOut, event.srcOut, fps);
+  // Use the retime-compensated out point (see Pass -1's effectiveSrcOut above) —
+  // for a retimed event, the raw event.srcOut is the timeline-duration-derived
+  // out point, not the true native-source out point the OCF file's tcOut covers.
+  const tcOutDelta = _frameDelta(ocfFile.tcOut, effectiveSrcOut || event.srcOut, fps);
   if (Number.isFinite(tcOutDelta) && tcOutDelta <= 2) {
     score += 8; reasons.push('TC-Out matches');
   }
@@ -608,7 +611,11 @@ export function matchAllEvents(events, ocfFiles, opts = {}) {
       return Number.isFinite(h) ? ((h % 24) + 24) % 24 : 0;
     };
     for (const ocf of resolvedOcfFiles) {
-      if (!ocf.tcKnown) continue;
+      // Index files whose TC will be treated as known during scoring (mirror the
+      // predicate in matchOcfToEvent: known unless explicitly false + real tcIn).
+      // Using `!ocf.tcKnown` here wrongly dropped files with a valid tcIn but an
+      // undefined tcKnown flag, so their correct OCF was never scored.
+      if (ocf.tcKnown === false || !ocf.tcIn || ocf.tcIn === '00:00:00:00') continue;
       const hIn  = _hourOf(ocf.tcIn);
       const hOut = _hourOf(ocf.tcOut || ocf.tcIn);
       // Walk hIn → hOut inclusive, wrapping past midnight (≤24 steps).
@@ -667,10 +674,13 @@ export function matchAllEvents(events, ocfFiles, opts = {}) {
     // TC-hour filter (large folders): intersect preferred with same-hour OCF files
     if (hourIndex) {
       const evHour = parseInt(String(event.srcIn || '0').split(':')[0], 10) || 0;
+      // Index keys are wrapped mod 24, so wrap the ±1h adjacency lookups too —
+      // otherwise the tolerance was lost at the midnight boundary (hour 0 → -1,
+      // hour 23 → 24 both missed).
       const hourCands = new Set([
-        ...(hourIndex.get(evHour)   || []),
-        ...(hourIndex.get(evHour-1) || []),
-        ...(hourIndex.get(evHour+1) || []),
+        ...(hourIndex.get(((evHour % 24) + 24) % 24)       || []),
+        ...(hourIndex.get(((evHour - 1) % 24 + 24) % 24)   || []),
+        ...(hourIndex.get(((evHour + 1) % 24) % 24)        || []),
       ]);
       if (hourCands.size > 0 && prefSet.size > 0) {
         // Keep files that are in BOTH preferred AND correct hour
