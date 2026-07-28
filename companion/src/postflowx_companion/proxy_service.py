@@ -151,7 +151,12 @@ def _proxy_cache_path(folder: Path, cpl_path: Path, out_dir: str | None = None, 
     clean_target = root / f"{stem}.mp4"
     key = _stable_proxy_cache_key(folder, cpl_path)
     clean_sidecar = _read_proxy_sidecar(clean_target)
-    if not clean_target.exists() or _sidecar_matches_target(clean_sidecar, folder, cpl_path) or not clean_sidecar:
+    # A missing/unreadable sidecar means the existing clean_target's identity is
+    # unknown, not confirmed-safe -- two unrelated projects can share the same
+    # display-name stem (see _proxy_target_stem), so treating "no sidecar" as a
+    # match let one project's encode silently overwrite (or get served) another
+    # project's proxy. Fall through to the folder+cpl-keyed path instead.
+    if not clean_target.exists() or _sidecar_matches_target(clean_sidecar, folder, cpl_path):
         return clean_target
     return root / f"{stem}__{key}.mp4"
 
