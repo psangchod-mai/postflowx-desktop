@@ -5008,3 +5008,105 @@ into `dist/desktop/`).
 - The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
   (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
   WIP (Audit 42) remain untouched, unstaged, and out of scope.
+
+## Iteration 45 — filters.js tcToFrames dropped every drop-frame-timecoded event from the pipeline
+
+### New species
+
+Same bug class as Iteration 44 (drop-frame `;` separator not normalized),
+but a different, independently-implemented parser catching it — evidence
+this class isn't isolated to one file.
+
+### Why this file, this iteration
+
+`src/scripts/modules/filters.js` implements the event pipeline
+(Decompose → Flatten → Merge → Conform → Dedupe → VFX Marker → Extra
+Handles → `filterValidTimecode`), run unconditionally by `runPipeline()`
+on every set of parsed events. It has its own local `tcToFrames`,
+independent of both `cutdiff.js`'s (fixed last iteration) and the
+canonical `utils_time.js` one:
+
+```javascript
+function tcToFrames(tc, fps = 24) {
+  if (!tc || typeof tc !== "string") return 0;
+  const m = tc.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  if (!m) return 0;
+  const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
+  return ((hh * 3600) + (mm * 60) + ss) * fps + ff;
+}
+```
+
+The regex only matches `:`-separated fields. `edl.js` correctly preserves
+a drop-frame source's `"HH:MM:SS;FF"` fields (e.g. `srcIn: "01:00:00;00"`),
+so for a DF EDL this regex never matches, and `tcToFrames` silently
+returns `0` for every in/out point. Every function in this file shares
+this one helper — `dedupeBySrcRange`, `onlyVfxMarker`, `mergeOverlap`,
+`addExtraHandlesForFastClips`, and `filterValidTimecode` all call it.
+`filterValidTimecode`'s zero-length guard, `if (soF <= siF || roF <= riF)
+return false;`, then sees `0 <= 0` for every DF event and discards it.
+Net effect: importing any drop-frame source EDL causes `runPipeline()` to
+silently drop every single event from its output — not misclassify them,
+as in Iteration 44, but delete them outright — with no error or warning
+anywhere in the chain.
+
+### The fix
+
+```javascript
+function tcToFrames(tc, fps = 24) {
+  if (!tc || typeof tc !== "string") return 0;
+  // Drop-frame EDLs use "HH:MM:SS;FF" — normalise the semicolon to a colon so
+  // DF timecodes still match this regex instead of returning 0 and getting
+  // every event in the pipeline treated as zero-length by filterValidTimecode.
+  const m = tc.replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  if (!m) return 0;
+  const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
+  return ((hh * 3600) + (mm * 60) + ss) * fps + ff;
+}
+```
+
+A single fix to the one shared helper corrects every call site in the
+file at once.
+
+### Test approach
+
+The two existing test files for this module (`tests-js/filters.test.mjs`,
+`tests-js/filtersVfxRename.test.mjs`) are both part of the pre-existing
+uncommitted WIP surface and off-limits, so the regression test lives in a
+new file, `tests-js/filters_dropframe_tc.test.mjs`. Four assertions: a
+valid, non-zero-length DF-timecoded event survives `filterValidTimecode`;
+the NDF equivalent also survives (parity check); a genuinely zero-length
+DF event is still correctly dropped (guarding against the fix
+over-broadening the accept condition); and a malformed timecode is still
+safely dropped rather than crashing.
+
+### Verification
+
+Mutation-proven: with the fix in place, all 4 assertions pass. Reverted
+`tcToFrames` to the original `:`-only regex, reran — exactly 1 of 4
+failed (the DF-survival assertion), with the other 3 (NDF parity,
+zero-length-DF rejection, malformed-input rejection) correctly
+unaffected, confirming the test targets precisely the introduced bug.
+Restored the fix, all 4 green again. Full `npm run build-verify` exit 0
+on the first run (log: `/tmp/gate45.log`) — the new test file was staged
+before running the gate this time, avoiding the self-containment-gate
+hiccup from Iteration 44 — including all 259 companion pytest cases
+(unaffected) and the XSS/XXE/fail-open scan gates, all clean. Since this
+changes `src/`-facing renderer source, `npm run build:renderer` was also
+run per CLAUDE.md's rule; it succeeded (log: `/tmp/buildrenderer45.log`,
+377 files rebuilt into `dist/desktop/`).
+
+### Still open
+
+- The rest of the companion Python package beyond `api.py` remains
+  unswept, as flagged in Iterations 43–44.
+- Two independently-implemented `tcToFrames` functions have now been
+  found with this exact bug class across two consecutive iterations
+  (`cutdiff.js` in Iteration 44, `filters.js` here). Worth a dedicated
+  future pass across `src/scripts/` to confirm no other module has its
+  own uncoordinated timecode parser with the same gap — the four already
+  confirmed correct are `utils_time.js`, `edl.js`, `xml.js`, `ale.js`.
+- The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
+  start/stop `_startAttempted` latch (Iteration 41) remain unchanged.
+- The large in-progress WIP in `electron/preload.js`/`electron/ipc.js`
+  (Audit 40) and `media_engine.js`'s `getOcfProxy`/`getOcfProxyStatus`
+  WIP (Audit 42) remain untouched, unstaged, and out of scope.

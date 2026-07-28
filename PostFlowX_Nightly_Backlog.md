@@ -3966,3 +3966,46 @@ to it. The deferred `otio.js` dedup-key gap and `pfx_native_engine.js`
 start/stop latch (Iteration 41) are also unchanged.
 
 Commits: `768c174`.
+
+## Iteration 45 — filters.js tcToFrames dropped every drop-frame-timecoded event from the pipeline
+
+**Found.** `src/scripts/modules/filters.js` has its own local `tcToFrames`,
+written independently of `cutdiff.js`'s (just fixed in Iteration 44) and
+the canonical one in `utils_time.js`. It parsed timecodes with a regex
+matching only `:` separators, so a drop-frame EDL's `"HH:MM:SS;FF"` fields
+(as `edl.js` correctly preserves them) never matched and silently returned
+`0`. Every function in this file shares that one helper — `dedupeBySrcRange`,
+`onlyVfxMarker`, `mergeOverlap`, `addExtraHandlesForFastClips`, and
+`filterValidTimecode` — and `filterValidTimecode`'s zero-length check
+(`soF <= siF || roF <= riF`) then treats the resulting `0/0` pair as an
+invalid, zero-length event and drops it. Net effect: importing any
+drop-frame source EDL silently discarded every one of its events from
+`runPipeline()`'s output, with no error surfaced.
+
+**Done.** Normalized `;` to `:` before the regex match in `tcToFrames`,
+mirroring the pattern from `utils_time.js` and the Iteration 44 fix. New
+dedicated test file `tests-js/filters_dropframe_tc.test.mjs` (the existing
+`tests-js/filters.test.mjs` and `filtersVfxRename.test.mjs` are both
+dirty/off-limits): 4 assertions — a valid DF-timecoded event survives
+`filterValidTimecode`, the NDF equivalent still survives, a genuinely
+zero-length DF event is still correctly dropped, and a malformed timecode
+is still safely dropped rather than crashing. Mutation-proven: reverted the
+normalization, reran — exactly 1 of 4 failed (the DF-survival case), the
+other 3 correctly unaffected; restored, all 4 green.
+
+**Gate.** Full `npm run build-verify` exit 0 on the first run (log:
+`/tmp/gate45.log`), including all 259 companion pytest cases (unaffected)
+and the XSS/XXE/fail-open scan gates. Since this touches `src/`-facing
+renderer code, `npm run build:renderer` was also run and succeeded (log:
+`/tmp/buildrenderer45.log`, 377 files rebuilt into `dist/desktop/`).
+
+**Still open.** The rest of the companion Python package beyond `api.py`
+remains unswept, as flagged in Iterations 43–44. This is now the second
+independently-implemented `tcToFrames` found with this exact bug class in
+two iterations — worth a future pass to check whether any other module in
+`src/scripts/` (beyond the four already confirmed correct: `utils_time.js`,
+`edl.js`, `xml.js`, `ale.js`, and now `cutdiff.js`/`filters.js` fixed) has
+its own uncoordinated timecode parser. The deferred `otio.js` dedup-key gap
+and `pfx_native_engine.js` start/stop latch (Iteration 41) are unchanged.
+
+Commits: `b5db764`.
