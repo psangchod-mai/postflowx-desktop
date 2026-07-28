@@ -2525,7 +2525,9 @@ function clampNum(x, a, b) {
   return Math.max(a, Math.min(b, v));
 }
 function tcToFrames(tc, fps) {
-  const m = String(tc || "").match(/^(\d+):(\d+):(\d+):(\d+)$/);
+  // Drop-frame EDLs use "HH:MM:SS;FF" — normalise the semicolon to a colon
+  // so DF timecodes still match instead of returning 0.
+  const m = String(tc || "").replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
   if (!m) return 0;
   const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
   return ((hh * 3600 + mm * 60 + ss) * fps) + ff;
@@ -4345,7 +4347,7 @@ function __buildAEPCommonJSX(defaultJobName, defaultAepName){
     return d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
   }
   function tcToFrames(tc, fps){
-    var m = String(tc || '').match(/^(\d+):(\d+):(\d+):(\d+)$/);
+    var m = String(tc || '').replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
     if (!m) return 0;
     return ((+m[1] * 3600 + +m[2] * 60 + +m[3]) * fps) + (+m[4]);
   }
@@ -5909,7 +5911,7 @@ export function exportAEJSX(result) {
 // Usage: File > Scripts > Run Script File… (select this .jsx)
 (function(){
   function tcToFrames(tc,fps){
-    var m = (tc||"").match(/^(\\d+):(\\d+):(\\d+):(\\d+)$/);
+    var m = (tc||"").replace(/;/g, ':').match(/^(\\d+):(\\d+):(\\d+):(\\d+)$/);
     if(!m) return 0;
     return ((+m[1]*3600 + +m[2]*60 + +m[3]) * fps) + (+m[4]);
   }
