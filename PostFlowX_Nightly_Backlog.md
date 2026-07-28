@@ -4701,3 +4701,71 @@ unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") is confirmed
 dead code (unimported) and is permanently excluded from future scouting.
 
 Commits: `514bd19`.
+
+## Iteration 58 — Pass 7 TC-Out matching in smartOcfMatcher.js compared against the raw, retime-uncompensated srcOut
+
+**Found.** `src/scripts/smart/smartOcfMatcher.js`'s `matchOcfToEvent` scoring
+cascade computes `effectiveSrcOut` in Pass -1 for constant-speed retimed
+events (the true native-source out point the OCF file's timecode covers,
+distinct from `event.srcOut`, which is derived from the timeline-duration
+and is only correct at 100% speed). That corrected value is already
+threaded into Pass -1's own `inRangeHdl` check, but Pass 7 (the TC-Out
+match bonus, `+8` when `_frameDelta(ocfFile.tcOut, ..., fps) <= 2`) still
+compared directly against `event.srcOut`. For a retimed shot (e.g. 50%
+slow-mo, where the OCF file's native duration is double the timeline
+duration), this meant Pass 7's TC-Out delta was computed against the wrong
+reference point and could fail to award its bonus even for an exact,
+correct match — silently under-scoring genuinely correct retimed-shot
+matches from SAFE down to REVIEW_NEEDED.
+
+**Done.** Changed Pass 7's delta calculation from
+`_frameDelta(ocfFile.tcOut, event.srcOut, fps)` to
+`_frameDelta(ocfFile.tcOut, effectiveSrcOut || event.srcOut, fps)` —
+reusing the same corrected value Pass -1 already computes, falling back to
+the raw `event.srcOut` for non-retimed events where `effectiveSrcOut` is
+undefined. This is the 9th distinct bug species found across this audit
+series: partial propagation of a derived/corrected value across multiple
+use sites within the same function — the fix for retime compensation was
+only half-applied when it was originally written.
+
+**Tests.** `tests-js/smartOcfMatcher_retimeTcOut.test.mjs` — one new
+scenario: a 50%-speed retimed event (`speed: 50`, timeline-duration
+`srcOut` of `01:00:02:00`) matched against an OCF file whose real TC-Out
+(`01:00:04:00`) is double that, as the retime implies. Asserts the match
+lands at `MATCH_STATUS.SAFE` with `confidence === 83` (exact, not just
+"good enough") — pinning both the pass/fail threshold and the specific
+score contribution of Pass 7's bonus. The scenario was deliberately
+designed to avoid the `camNameHit && (tcExact || inRange) -> score =
+max(score, 85)` floor override a few lines after Pass 7 (using a bare
+`'A001'` reel that doesn't match the camera-name regex, omitting
+`ocfFile.path` to skip the subfolder-match pass, and omitting
+`ocfFile.fps` to skip the FPS-match pass) — that override would otherwise
+force the score to ≥85 regardless of whether Pass 7's fix was present,
+completely masking the very thing under test. An initial draft of this
+test used a camera-style reel (`'A001C002'`) for both sides and passed
+*even with the fix reverted* — caught only via mutation testing before any
+commit — and had to be redesigned around the isolation constraints above.
+
+**Verification.** Mutation-tested via `git stash push --
+src/scripts/smart/smartOcfMatcher.js` (pathspec-scoped): with the fix
+reverted, the test correctly failed (`confidence 75`, `REVIEW_NEEDED`);
+`git stash pop` restored the fix and both assertions passed
+(`confidence 83`, `SAFE`).
+
+**Gate.** New test file was git-untracked when `npm run build-verify` was
+first run, which fails
+`tests-js/selfContained.test.mjs`'s `'no new test file is left out of
+git'` integrity check — a reminder that any new `tests-js/*.test.mjs` file
+must be `git add`-ed by explicit name before running the full gate, not
+just written to disk. Staged both intended files
+(`src/scripts/smart/smartOcfMatcher.js`,
+`tests-js/smartOcfMatcher_retimeTcOut.test.mjs`) and reran: full `npm run
+build-verify` (`test:node && test:js && test:py && scan-innerhtml --gate
+&& scan-rawxml --gate && scan-failopen --gate`) exit 0. Companion Python
+suite 261 passed / 7 skipped, all three security scan gates clean.
+
+**Still open.** All items carried from Iterations 52–57 remain pending and
+unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") remains
+permanently excluded as dead code.
+
+Commits: `e94b10a`.

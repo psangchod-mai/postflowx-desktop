@@ -6459,3 +6459,105 @@ from future scouting passes to avoid re-reporting a non-genuine finding
 against it.
 
 Commits: `514bd19`.
+
+## Iteration 58 — Pass 7 TC-Out matching compared against the raw, retime-uncompensated srcOut (new species)
+
+**New species.** All eight prior species (Iterations 48–57) involved a
+single wrong value, a missing check, or a race condition. This one is
+different in shape: the *correct* value already existed and was already
+computed in the same function, but a fix for retime compensation had only
+been threaded into one of two places that needed it — a partial
+propagation of a derived/corrected value across multiple use sites.
+
+**Why this file.** `src/scripts/smart/smartOcfMatcher.js` implements the
+OCF-to-timeline-event matching cascade used to auto-link source camera
+files to editorial events, scoring candidates through roughly a dozen
+sequential passes (filename/UMID exact match, camera-name pattern,
+reel/timecode exact match, TC-In proximity, TC range overlap, roll prefix,
+subfolder path, TC-Out proximity, FPS match, fuzzy name similarity) into a
+single 0–100 confidence score bucketed into SAFE / REVIEW_NEEDED /
+NOT_RECOMMENDED / MISSING. It contains a deliberate embedded null byte
+(Map-key delimiter) that makes plain `grep -n`/`file` silently misreport
+it as binary — `grep -na` (force text) is required to read it, a
+workaround already established in this audit series.
+
+**The bug.** Pass -1 (near the top of `matchOcfToEvent`) computes
+`effectiveSrcOut` for constant-speed retimed events: for a shot with
+`speed !== 100`, the event's own `srcOut` field is derived from the
+*timeline* duration, not the *native source* duration the OCF file's
+timecode actually spans — e.g. a 50%-speed slow-mo shot has an OCF file
+whose real duration is double the timeline duration. `effectiveSrcOut`
+corrects for this and is already used by Pass -1's own `inRangeHdl`
+check a few lines later. Pass 7, several dozen lines further down,
+independently recomputes a TC-Out proximity delta
+(`_frameDelta(ocfFile.tcOut, event.srcOut, fps)`) for its own `+8`
+confidence bonus — but it reads the raw `event.srcOut` instead of
+`effectiveSrcOut`. For a retimed shot, this means Pass 7 compares the
+OCF file's real TC-Out against a timecode that the retime math says
+shouldn't apply, and can miss its bonus on a match that is, in fact,
+exactly correct. The practical effect: a correctly-matched retimed OCF
+file can score REVIEW_NEEDED instead of SAFE, adding unnecessary manual
+review burden specifically on slow-mo/overcrank shots — exactly the kind
+of shot where correct OCF linking matters most for VFX pulls.
+
+**The fix.** Changed Pass 7's delta computation to
+`_frameDelta(ocfFile.tcOut, effectiveSrcOut || event.srcOut, fps)`,
+reusing the exact value Pass -1 already computes rather than
+recalculating or re-deriving anything — the `|| event.srcOut` fallback
+preserves existing behavior for non-retimed events, where
+`effectiveSrcOut` is `undefined`.
+
+**Test approach.** Added
+`tests-js/smartOcfMatcher_retimeTcOut.test.mjs`: constructs a 50%-speed
+retimed event (timeline-duration `srcOut` of `01:00:02:00`) matched
+against an OCF file whose real TC-Out (`01:00:04:00`) is exactly double,
+consistent with the retime. Asserts both the bucket (`MATCH_STATUS.SAFE`)
+and the exact numeric `confidence` (83), pinning Pass 7's specific `+8`
+contribution rather than just the pass/fail boundary. Getting to this
+scenario required first hand-mapping the entire scoring cascade (roughly
+a dozen passes, lines ~235–528) via direct source reading plus an ad-hoc
+debug script printing the full result object including `_debug` and
+`reasons`, which surfaced two non-obvious interactions: (1) a floor
+override just after Pass 7,
+`if (camNameHit && (tcExact || inRange)) score = Math.max(score, 85)`,
+that would force the score to ≥85 regardless of Pass 7's outcome if the
+reel/filename matched the camera-name regex — an initial test draft used
+a camera-style reel (`'A001C002'`) and passed at `confidence: 100`
+*whether or not the fix was present*, a flaw caught only via mutation
+testing before any commit, not by the test passing; and (2) Pass 1's
+`'Reel exact + TC-In exact'` bonus (`+60`) and Pass 3's `else if`
+TC-In-proximity sub-branch (`+15`) both apply simultaneously for an
+exact-TC reel-exact match, because Pass 3's dup-guard only gates its own
+first `if` branch and the `+15` sub-branch is an independent `else if`
+sibling — meaning the pre-fix baseline for the chosen scenario is 75
+(Pass 1 + Pass 3's sub-branch), not the lower number an initial
+hand-calculation assumed. The final scenario was redesigned around both
+discoveries: a bare `'A001'` reel (fails the camera-name regex, so
+`camNameHit` stays falsy and the floor override never fires), no
+`ocfFile.path` (skips the subfolder-match pass), and no `ocfFile.fps`
+(skips the FPS-match pass) — isolating Pass 7 as the only variable
+between the reverted-fix and fixed states.
+
+**Verification.** Mutation-tested per the established methodology:
+`git stash push -- src/scripts/smart/smartOcfMatcher.js` (pathspec-scoped)
+reverted only the fix; rerunning the test then failed both assertions
+exactly as predicted (`confidence 75`, `REVIEW_NEEDED`). `git stash pop`
+restored the fix; both assertions passed (`confidence 83`, `SAFE`). The
+new test file was initially git-untracked, which failed
+`tests-js/selfContained.test.mjs`'s `'no new test file is left out of
+git'` integrity gate inside `npm run build-verify` — not a functional
+failure, but a reminder that new `tests-js/*.test.mjs` files must be
+staged by explicit name (`git add <file>`, never `git add -A`) before
+running the full gate. After staging both intended files, the complete
+gate (`test:node && test:js && test:py && scan-innerhtml --gate &&
+scan-rawxml --gate && scan-failopen --gate`) passed cleanly: companion
+Python suite 261 passed / 7 skipped, all three security scan gates
+(XSS/XXE/fail-open) clean. `git diff --cached --stat` confirmed the
+commit scope was exactly the two intended files
+(2 files changed, 41 insertions(+), 5 deletions(-)).
+
+**Still open.** All items carried from Iterations 52–57 remain pending
+and unchanged. `src/scripts/parsers/fcpxm.js` (no trailing "l") remains
+permanently excluded from scouting as confirmed dead code.
+
+Commits: `e94b10a`.
