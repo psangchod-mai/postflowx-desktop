@@ -4150,3 +4150,90 @@ having a newer mtime than the `src/` original) since this changes
   instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
 - `CompanionBridge`'s untested lifecycle paths from Audit 35 (first-attempt
   success, `stop()`, `_onData`'s frame-desync recovery) remain untouched.
+
+## Iteration 37 — unhandled async EPIPE on companion stdin crashed the whole app
+
+### New species
+
+The first bug this run in the "unhandled async stream/event error" class —
+distinct from Iteration 35's synchronous-path lifecycle bug and Iteration
+36's IndexedDB transaction race, though all three live in
+`CompanionBridge`'s neighborhood of subprocess-management code.
+
+### Why this file, this iteration
+
+A background Explore agent was asked to find a genuine, unfixed,
+well-scoped bug in `electron/`, `src/scripts/`, or `companion/`, explicitly
+excluding every already-fixed or already-deferred item from Iterations
+30, 35, and 36. It surfaced this as its top candidate: `start()` attaches
+listeners for `stdout`'s `'data'`, `stderr`'s `'data'`, and the
+subprocess's own `'error'`/`'exit'` events, but nothing for
+`this._proc.stdin`. `_sendRaw()`'s `try/catch` around its two
+`stdin.write()` calls only catches synchronous throws. Node surfaces a
+post-death pipe write failure (EPIPE) as an *asynchronous* `'error'`
+event on the stream instead, and an `EventEmitter` with no `'error'`
+listener throws by default when one fires — uncaught here, which crashes
+the entire Electron main process (every window, not just the one failed
+call) over what amounts to a routine "the companion died mid-flight"
+condition. Verified independently before acting: read `start()` and
+`_sendRaw()` directly to confirm no `stdin` listener exists anywhere in
+the file, and confirmed `tests-js/companionStartupRetry.test.mjs`'s fake
+process gives `stdin` as `{ write: () => {} }` — a plain object that
+structurally cannot have exercised this path, since it has no event
+machinery at all.
+
+### The fix
+
+Added `this._proc.stdin.on('error', (err) => console.warn(...))`
+immediately after the other post-spawn listeners in `start()`. This
+downgrades a would-be process crash to a logged warning — exactly the
+outcome the existing `_sendRaw()` try/catch was presumably intended to
+achieve for the synchronous case, now extended to the async one Node
+actually uses for this failure mode.
+
+### Test approach
+
+`tests-js/companionStdinError.test.mjs` follows the same require-cache
+patching pattern as `companionStartupRetry.test.mjs` (swap
+`child_process.spawn` before requiring the `companion.js` singleton), but
+gives the fake process a real `EventEmitter` for `stdin` instead of a
+plain object. After a successful mocked `start()`, the test calls
+`spawnedProcs[0].stdin.emit('error', new Error('EPIPE...'))` directly —
+this is the same code path Node itself would take internally when a real
+pipe write fails post-death, so exercising it needs no real subprocess,
+no actual broken pipe, and no IPC framework: a bare `EventEmitter`
+faithfully reproduces the exact hazard (emit-with-no-listener throws) that
+makes this bug dangerous. This also meant fixing
+`companionStartupRetry.test.mjs`'s fake `stdin` — a plain
+`{ write: () => {} }` object broke as soon as `companion.js` called
+`.on()` on it — by giving it a real `EventEmitter` with a `write` method,
+which is a strictly more accurate fake of Node's actual stream shape and
+costs nothing else in that test.
+
+### Verification
+
+`node --test tests-js/companionStdinError.test.mjs
+tests-js/companionStartupRetry.test.mjs`: 2/2 green. Mutation-proven:
+removed the new `stdin.on('error', ...)` listener, reran — the emitted
+`EPIPE` error itself propagated out of the test as an uncaught exception,
+failing it exactly as expected; restored, green again. Full `npm run
+build-verify` exit 0 (log: `/tmp/gate37.log`) — this run also caught the
+`companionStartupRetry.test.mjs` fake-stdin breakage described above on
+the first pass (`TypeError: this._proc.stdin.on is not a function`),
+which was fixed before the gate was considered clean. `npm run
+build:renderer` was not run: `electron/companion.js` is Electron
+main-process code, not `src/`-facing renderer code.
+
+### Still open
+
+- `CompanionBridge`'s other untested lifecycle paths from Audit 35
+  (first-attempt startup success, `stop()`, `_onData`'s
+  `MAX_COMPANION_MSG_BYTES` frame-desync recovery) remain untouched.
+- The heartbeat-interval lease race identified in Audit 36 is unchanged.
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all
+  remain exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work first
+  surfaced in Audit 32 is unchanged this iteration.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — unchanged.

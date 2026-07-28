@@ -3571,3 +3571,52 @@ wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all
 remain exactly as reported in Iteration 30 — none touched this iteration.
 
 Commits: `8362fd5`.
+
+## Iteration 37 — a dead companion subprocess's stdin write could crash the whole Electron app
+
+**Found.** `electron/companion.js`'s `CompanionBridge.start()` spawns the
+Python companion subprocess with `stdio: ['pipe', 'pipe', 'pipe']` and
+attaches listeners for `stdout`'s `'data'`, `stderr`'s `'data'`, and the
+subprocess's own `'error'`/`'exit'` events — but never an `'error'`
+listener on `this._proc.stdin`. `_sendRaw()` (used by every `call()`)
+wraps its two `stdin.write()` calls in a `try/catch`, which only catches a
+*synchronous* throw. If the subprocess has already died — crashed
+externally, or killed in the narrow window before the async `'exit'`
+handler fires and nulls `this._proc` — a write to its stdin pipe fails
+with EPIPE, and Node surfaces that asynchronously as an `'error'` event on
+the stream, not a throw from `write()`. An `EventEmitter` that emits
+`'error'` with no listener attached throws by default, which is uncaught
+here — crashing the entire Electron main process (every window) over what
+should have been one failed companion call. `tests-js/
+companionStartupRetry.test.mjs`'s fake process gave `stdin` as a plain
+`{ write: () => {} }` object, not an `EventEmitter`, so it couldn't have
+exercised this path even incidentally.
+
+**Done.** Added `this._proc.stdin.on('error', (err) => console.warn(...))`
+right after spawn, alongside the existing `stdout`/`stderr`/`process`
+listeners. Also updated `companionStartupRetry.test.mjs`'s fake `stdin` to
+a real `EventEmitter` with a `write` method, matching Node's actual stream
+shape — the plain-object fake broke once the new `.on()` call was added,
+since it has no `.on()` method.
+
+**Gate.** Added `tests-js/companionStdinError.test.mjs`: mocks `spawn` to
+return a fake process with an `EventEmitter`-based `stdin`, starts the
+companion successfully, then does `spawnedProcs[0].stdin.emit('error', new
+Error('EPIPE...'))` directly — mirroring Node's real
+unhandled-stream-error-throws behavior with a plain `EventEmitter`, so if
+`companion.js` fails to attach a listener the test itself throws and
+fails, no real subprocess or IPC framework required. Mutation-proven:
+removed the new listener, reran — failed with the `EPIPE` error itself
+propagating out of the test (uncaught), confirming the test genuinely
+detects a missing listener; restored, green again. Full `npm run
+build-verify` exit 0 (log: `/tmp/gate37.log`). `npm run build:renderer`
+was not run — `electron/companion.js` is Electron main-process code, not
+`src/`-facing renderer code.
+
+**Still open.** `CompanionBridge`'s other untested lifecycle paths flagged
+in Iteration 35 (first-attempt startup success, `stop()`, `_onData`'s
+`MAX_COMPANION_MSG_BYTES` frame-desync recovery) remain untouched. The
+heartbeat-interval lease race from Iteration 36 and all i18n items from
+Iteration 30 are unchanged.
+
+Commits: `6b1dc0e`.
