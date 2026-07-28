@@ -11,3 +11,8 @@ if (!globalThis.DOMParser) globalThis.DOMParser = DOMParser;
 if (!globalThis.chrome) {
   globalThis.chrome = { runtime: { getURL: (p) => new URL(p, import.meta.url).href } };
 }
+if (!globalThis.CSS) {
+  // Used by fcpxml.js to build an attribute selector from a resource id
+  // (`media[id="${CSS.escape(ref)}"]`) when resolving ref-clip/mc-clip targets.
+  globalThis.CSS = { escape: (s) => String(s).replace(/([^\w-])/g, '\\$1') };
+}

@@ -125,3 +125,35 @@ test('a bare-seconds time value is read as real seconds, not as timecode', () =>
   assert.equal(res.events[0]?.recIn, '00:59:56:10');
   assert.equal(res.events[0]?.recOut, '01:00:00:10', 'and the 4.004s duration is still exactly 96 frames');
 });
+
+// ── ref-clip markers ─────────────────────────────────────────────────────────
+// A <ref-clip> (a compound-clip/multicam instance dropped on the timeline)
+// resolves its <media>/<sequence> and recurses into it, then returns before
+// ever reaching this parser's own marker-collection step — so a marker placed
+// directly on the ref-clip node itself (as opposed to inside the referenced
+// sequence) used to be silently dropped. It should now surface on the first
+// row the ref-clip's recursion produces.
+test('a marker on a <ref-clip> node itself is not dropped', () => {
+  const res = parseFCPXML(`<?xml version="1.0"?><fcpxml version="1.9"><resources>
+    <format id="r1" frameDuration="1/24s"/>
+    <asset id="a1" name="A001" format="r1" start="0s" duration="10s">
+      <media-rep src="file:///a.mov"/></asset>
+    <media id="m1" name="Compound">
+      <sequence format="r1" tcStart="0s" duration="4s"><spine>
+        <asset-clip name="inner" ref="a1" offset="0s" start="0s" duration="4s"/>
+      </spine></sequence>
+    </media>
+    </resources>
+    <library><event><project name="P">
+    <sequence format="r1" tcStart="3600s" duration="4s"><spine>
+      <ref-clip name="Compound Clip" ref="m1" offset="3600s" duration="4s">
+        <marker start="2s" value="REVIEW"/>
+      </ref-clip>
+    </spine></sequence></project></event></library></fcpxml>`);
+  const evs = assertParseResult(res, { sourceType: 'fcpxml' });
+
+  assert.equal(evs.length, 1, 'the ref-clip itself produces no row — only the resolved sequence content does');
+  assert.equal(evs[0].clipName, 'inner');
+  assert.ok(evs[0].markers?.some(m => m.name === 'REVIEW'),
+    'marker dropped directly on the ref-clip node is attached to the first row from its resolved sequence');
+});

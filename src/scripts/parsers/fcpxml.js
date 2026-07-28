@@ -678,6 +678,18 @@ function collect(node, baseRecF, originF, fps, assets, medias, effects, doc, out
     const refRecInF = baseRecF + (localOff - (originF || 0));
     const media = ref ? doc.querySelector(`media[id="${CSS.escape(ref)}"]`) : null;
     const seq = media ? firstChild(media, "sequence") : null;
+
+    // A marker can be dropped directly on the ref-clip node itself (e.g. on a
+    // multicam/compound-clip instance in the timeline), as opposed to inside the
+    // referenced media's own sequence. This branch returns before the shared
+    // marker-collection block below ever runs, so those markers must be
+    // collected here and attached to the first row the recursion produces —
+    // the ref-clip itself never becomes an output row.
+    const refDurF = ratToFrames(node.getAttribute("duration"), fps);
+    const refSrcF = ratToFrames(node.getAttribute("start"), fps);
+    const refMarkers = collectClipMarkers(node, refRecInF, refSrcF, refDurF, fps);
+
+    const startLen = out.length;
     if (seq) {
       const seqStartF2 = readSequenceStartFrames(seq, fps);
       const seqOriginF2 = detectSequenceOrigin(seq, fps, seqStartF2);
@@ -689,6 +701,11 @@ function collect(node, baseRecF, originF, fps, assets, medias, effects, doc, out
       } else {
         for (const ch of seq.children) collect(ch, refRecInF, seqOriginF2, fps, assets, medias, effects, doc, out, disabled);
       }
+    }
+    if (refMarkers.length && out.length > startLen) {
+      const firstRow = out[startLen];
+      firstRow.markers = [...(firstRow.markers || []), ...refMarkers];
+      firstRow._markers = firstRow.markers;
     }
     return;
   }
@@ -800,24 +817,7 @@ function collect(node, baseRecF, originF, fps, assets, medias, effects, doc, out
   const srcFile = srcForComment;
 
   // ---- Markers (clip scope)
-  const markers = [];
-  // Collect markers inside this clip (direct or nested), but they are still clip-scope.
-  const _markerEls = new Set();
-  node.querySelectorAll(':scope > marker, :scope marker, :scope > chapter-marker, :scope chapter-marker, :scope > to-do, :scope to-do, :scope > keyword-marker, :scope keyword-marker')
-    .forEach(mk => _markerEls.add(mk));
-
-  _markerEls.forEach(mk => {
-    const mName  = mk.getAttribute("value") || mk.getAttribute("name") || mk.getAttribute("note") || mk.textContent || "";
-    const mStart = ratToFrames(mk.getAttribute("start") || mk.getAttribute("offset"), fps);
-    let rel = mStart;
-    if (Number.isFinite(mStart) && mStart > (Math.max(0, durF) + fps * 2)) {
-      // Some FCPXML exports markers with absolute "start" in the same domain as clip "start".
-      rel = mStart - srcF;
-    }
-    const mTC = framesToTC(recInF + rel, fps);
-    const color  = (mk.getAttribute("color") || mk.getAttribute("lane") || "GREEN");
-    markers.push({ name: mName, color, tc: mTC, scope: "clip" });
-  });
+  const markers = collectClipMarkers(node, recInF, srcF, durF, fps);
 
   // ---- Push leaf media rows
   const isLeafMedia =
@@ -1028,6 +1028,29 @@ function maxChildExtent(node, fps) {
   }
   return maxF;
 }
+// Collect markers (direct or nested) placed on a clip node — always clip-scope,
+// even for markers found on a container node with no leaf output row of its own.
+function collectClipMarkers(node, recInF, srcF, durF, fps) {
+  const markers = [];
+  const markerEls = new Set();
+  node.querySelectorAll(':scope > marker, :scope marker, :scope > chapter-marker, :scope chapter-marker, :scope > to-do, :scope to-do, :scope > keyword-marker, :scope keyword-marker')
+    .forEach(mk => markerEls.add(mk));
+
+  markerEls.forEach(mk => {
+    const mName  = mk.getAttribute("value") || mk.getAttribute("name") || mk.getAttribute("note") || mk.textContent || "";
+    const mStart = ratToFrames(mk.getAttribute("start") || mk.getAttribute("offset"), fps);
+    let rel = mStart;
+    if (Number.isFinite(mStart) && mStart > (Math.max(0, durF) + fps * 2)) {
+      // Some FCPXML exports markers with absolute "start" in the same domain as clip "start".
+      rel = mStart - srcF;
+    }
+    const mTC = framesToTC(recInF + rel, fps);
+    const color  = (mk.getAttribute("color") || mk.getAttribute("lane") || "GREEN");
+    markers.push({ name: mName, color, tc: mTC, scope: "clip" });
+  });
+  return markers;
+}
+
 function isMediaOrRef(el) {
   if (!el) return false;
   const t = el.tagName;
