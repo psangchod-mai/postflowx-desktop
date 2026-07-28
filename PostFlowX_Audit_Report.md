@@ -3698,3 +3698,80 @@ build-verify` exit 0. `npm run build:renderer` exit 0, 377 files.
   exactly as reported in Audit 30 — none touched this iteration.
 - The log-reading habit above: worth a standing note rather than a one-off fix,
   since `test:js` runs 117 files in one log and will keep doing so.
+
+## Audit 32 — a fourth call site for a module three others already used
+
+### New species
+
+None. This is the same defect `core/friendlyAlert.js` documents in its own
+header comment ("Twelve places in the app answer a failure with a bare
+alert() carrying raw exception text") — `projectManager.js` was simply never
+converted when the other four files were.
+
+### Why this file, this iteration
+
+The standing instruction was to pick something smaller than `visionscope`'s
+i18n gap, sized like Iteration 29 or 31. Before landing on this: confirmed the
+`seekTo` bare-`'Seek failed'` item from Iteration 29/Audit 30's "still open"
+list was already closed by Iteration 31 (stale carry-forward, not a live
+gap); confirmed the 10 orphaned Preflight label keys are explicitly flagged in
+Audit 30 as "not a decision to take at the tail of a loop run"; ran the full
+`npm run test:js` looking for an already-red test as a shortcut to a live bug
+— 0 failures, nothing surfaced that way. A grep for `alert(` across `src/`
+narrowed to `window.alert(\`...: ${r?.error...}\`)` in `projectManager.js`,
+which matches the bug shape `friendlyAlert.js`'s own header describes almost
+verbatim, and the file itself had no uncommitted local changes.
+
+### A repo-wide finding that reshaped what was touchable
+
+Before editing anything, `git diff --stat` was checked file-by-file across
+every path `git status` showed as modified, because a repo-wide
+`100644→100755` mode-only diff (~699 files, unrelated to any of this work)
+was already known to co-exist with a handful of genuinely dirty files. The
+check found roughly **60 files with real, uncommitted content changes**
+spanning nearly every major subsystem — auth, IMF, `trlconf`, `trailerConform`,
+`prep_mark`, `render_queue.js`, the Electron IPC layer, the Python companion
+engine, both stylesheets — not just the one or two files previously known to
+be in flight. None of those files were read for editing purposes, staged, or
+otherwise touched. `projectManager.js` was confirmed clean via the same
+`git diff --stat` check before any edit began, and was the only file besides
+this pair of docs and the one test file modified this iteration.
+
+### Gate detail
+
+The label-format assumption cost one retry: the first draft passed the
+project name as an interpolated template-literal label —
+`` friendlyAlert(err, `Deleting "${proj.name}" failed`) `` — which reads fine
+but doesn't match `friendlyAlert.test.mjs`'s own label-shape regex, which only
+recognises a plain single/double-quoted string as the second argument (a
+template literal's backtick isn't in its character class). That test failure
+is what surfaced the file's actual convention: every existing converted site
+uses a *static* phrase as the label and lets `friendlyError()` see the
+per-instance detail via the first (error) argument instead. Second pass moved
+`proj.name` into the error argument (`` `${proj.name}: ${r?.error || 'unknown
+error'}` ``) and used static labels ("Deleting project failed", etc.),
+matching the other four files' pattern.
+
+### Verification
+
+`tests-js/friendlyAlert.test.mjs`: 9/9, `CONVERTED` table extended to 4 files /
+10 labelled call sites. Mutation-proven 1/1: reverted the delete call site to
+its original raw `window.alert` form, confirmed the call-count assertion
+failed (9 seen where 10 were expected), restored the file, confirmed 9/9 green
+again. `npm run build-verify` exit 0 — Node tests, `tests-js/*` (117 files, 0
+failures), Python pytest (250 passed / 7 skipped), innerHTML/XML/fail-open
+scan gates all clean. `npm run build:renderer` exit 0, 377 files.
+
+### Still open
+
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all remain
+  exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work discovered
+  this iteration is not itself a defect, but it substantially narrows where a
+  future iteration can safely work without disturbing it — worth surfacing to
+  whoever owns that work rather than assuming it will resolve itself.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — confirmed
+  still true this iteration, and confirmed still blocked by the same
+  unrelated pending edit in that file the original note described.

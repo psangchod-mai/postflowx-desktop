@@ -3322,3 +3322,40 @@ wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
 exactly as reported in Iteration 30.
 
 Commits: `4a6d778`.
+
+## Iteration 32 — Project Manager's delete/rename/duplicate stop showing raw backend error strings
+
+**Found.** `src/scripts/features/projectManager/projectManager.js`'s three
+mutating actions — delete, rename, duplicate — each end on failure with
+`window.alert(\`Could not <verb> "${proj.name}": ${r?.error || 'unknown
+error'}\`)`. `r.error` is whatever the main-process IPC handler put in its
+`{ ok:false, error }` reply, unfiltered — an `EACCES`, an `ENOENT` with a
+`/Volumes/…` path, or similar. This is exactly the defect
+`core/friendlyAlert.js` was written to remove (see that file's header), but
+this call site predates the module and was never converted; `visionscope`
+i18n and the 10-orphaned-label decision both stayed off the table per the
+prior instruction to pick something smaller.
+
+**Done.** Imported `friendlyAlert` from `../../core/friendlyAlert.js` and
+replaced all three `window.alert(...)` calls. Following the existing
+convention (`smart_engine_settings.js`, `imf_package_ui.js`,
+`reviews/index.js`, `vfxPullPanel.js`): the label is a static operation phrase
+("Deleting project failed", "Renaming project failed", "Duplicating project
+failed") passed as a literal string, not an interpolated template — the
+project name travels in the first (error) argument instead, as
+`` `${proj.name}: ${r?.error || 'unknown error'}` ``, so `friendlyError()` still
+gets first crack at recognising a filesystem path or errno inside it.
+
+**Gate.** `tests-js/friendlyAlert.test.mjs`'s call-site table (`CONVERTED`)
+gained a fourth entry, `projectManager.js` → 3 calls, and the labelled-call-site
+count moved from 7 to 10. Mutation-proven: reverted the delete call site back
+to the raw `window.alert` one-liner, confirmed the call-count assertion failed
+(9 seen, 10 expected), restored, confirmed 9/9 tests green again. Full
+`npm run build-verify` exit 0 (Node, JS, Python suites plus the innerHTML/XML/
+fail-open scan gates). `npm run build:renderer` exit 0, 377 files.
+
+**Still open.** The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
+exactly as reported in Iteration 30 — none touched this iteration.
+
+Commits: `8907cf0`.
