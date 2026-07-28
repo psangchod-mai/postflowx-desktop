@@ -685,7 +685,22 @@ function register(mainWindow, appRoot) {
 
   // ── Downloads (chrome.downloads.download shim) ───────────────────────────
 
-  ipcMain.handle('pfx:download', async (_e, { url, filename, dataUrl, saveAs } = {}) => {
+  // Real chrome.downloads.download() defaults conflictAction to 'uniquify'
+  // (rename to "name (1).ext" etc.) rather than overwriting an existing file.
+  // Mirror that here for the silent-write path, which is the only one that
+  // writes bytes directly ourselves via fs.writeFileSync.
+  function _uniquifyPath(filePath) {
+    if (!fs.existsSync(filePath)) return filePath;
+    const dir = path.dirname(filePath);
+    const ext = path.extname(filePath);
+    const base = path.basename(filePath, ext);
+    for (let i = 1; ; i++) {
+      const candidate = path.join(dir, `${base} (${i})${ext}`);
+      if (!fs.existsSync(candidate)) return candidate;
+    }
+  }
+
+  ipcMain.handle('pfx:download', async (_e, { url, filename, dataUrl, saveAs, conflictAction } = {}) => {
     const defaultPath = path.join(app.getPath('downloads'), filename || 'download');
 
     // saveAs === false means caller wants a silent write — no dialog
@@ -693,11 +708,12 @@ function register(mainWindow, appRoot) {
       try {
         fs.mkdirSync(path.dirname(defaultPath), { recursive: true });
         if (dataUrl) {
+          const finalPath = conflictAction === 'overwrite' ? defaultPath : _uniquifyPath(defaultPath);
           const [, b64] = dataUrl.split(',');
-          fs.writeFileSync(defaultPath, Buffer.from(b64, 'base64'));
-        } else {
-          mainWindow.webContents.downloadURL(url);
+          fs.writeFileSync(finalPath, Buffer.from(b64, 'base64'));
+          return { ok: true, filePath: finalPath };
         }
+        mainWindow.webContents.downloadURL(url);
         return { ok: true, filePath: defaultPath };
       } catch (e) {
         return { ok: false, error: e.message };

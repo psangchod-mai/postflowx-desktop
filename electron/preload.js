@@ -153,8 +153,8 @@ let _lastError = null;
 // ── chrome.downloads shim ────────────────────────────────────────────────────
 
 const downloads = {
-  download({ url, filename, saveAs }, callback) {
-    invoke('pfx:download', { url, filename, saveAs })
+  download({ url, filename, saveAs, conflictAction }, callback) {
+    invoke('pfx:download', { url, filename, saveAs, conflictAction })
       .then((r) => {
         if (r?.ok) {
           if (callback) callback(1);
