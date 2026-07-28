@@ -4043,3 +4043,110 @@ no renderer rebuild.
   coverage — the first-attempt success path, `stop()`, and `_onData`'s
   frame-desync recovery (the `MAX_COMPANION_MSG_BYTES` resync branch) among
   them — any of which could be a future iteration's target.
+
+## Iteration 36 — TOCTOU race in the cross-tab queue lease
+
+### New species
+
+Every fix so far this run has been either an i18n gap or an
+Electron-main-process lifecycle bug. This is the first concurrency bug:
+a check-then-act race split across two IndexedDB transactions with an
+`await` boundary in between, in code whose entire purpose is to prevent
+exactly the kind of "two actors both think they're in charge"
+inconsistency it was itself vulnerable to.
+
+### Why this file, this iteration
+
+`src/scripts/core/crossTabQueueLease.js` elects a single leader tab (via
+IndexedDB + BroadcastChannel + heartbeat) so that only one open tab of the
+app ever calls `renderWorkerClient.buildProxy()` and submits jobs. Reading
+`acquireLease()`/`releaseLease()` showed both delegated to `_getLease()`
+(a `readonly` transaction) then, after an `await`, `_setLease()` (a
+separate `readwrite` transaction) — or in-lined the equivalent
+get-then-`await`-then-put shape directly. IndexedDB's serialization
+guarantee only applies to transactions, not to the JavaScript sandwiched
+between two of them, so two tabs whose `setTimeout(() => acquireLease(),
+100)` on-load timers fire close together (the ordinary case, not an edge
+case) could both complete their `get` before either commits a `put`, both
+see no existing/valid lease, and both write themselves in as leader.
+There is no existing test coverage for this file at all prior to this
+iteration.
+
+### The fix
+
+Rewrote `acquireLease()` and `releaseLease()` to perform their get and
+put inside a single `readwrite` transaction each, rather than going
+through the two-transaction `_getLease()`/`_setLease()` helpers. Real
+IndexedDB serializes `readwrite` transactions against the same object
+store, so once this transaction's `get` runs, no other transaction can
+run its own `get` or `put` against the same key until this transaction's
+`put` (if any) has committed — the decision and the write are now
+atomic with respect to other tabs. `_getLease()`/`_setLease()` themselves
+are untouched and remain in use by `checkLeadership()` (read-only, so no
+race exists there) and by the heartbeat interval (still two transactions,
+deliberately left as-is — see Still open).
+
+### Test approach
+
+This is the first test in the suite to sandbox-execute a plain
+global-scope IIFE (not a CommonJS or ES module) via `node:vm`.
+`tests-js/crossTabQueueLeaseRace.test.mjs` reads
+`crossTabQueueLease.js`'s source as text, builds a `vm.createContext()`
+per simulated tab with `ctx.window = ctx; ctx.globalThis = ctx;` (mirroring
+the browser's `window === globalThis` self-reference the source code
+relies on for `window.PFX_QUEUE_LEASE = {...}`), and runs the source into
+each context so the two tabs get independent module state
+(`_isLeader`, `_heartbeatTimer`, etc.) while sharing one fake IndexedDB
+instance — the actual point of contention. The fake IndexedDB is
+hand-rolled (no `fake-indexeddb` dependency in this project) with just
+enough of `open()`/`transaction()`/`objectStore().get()/.put()` to run
+the lease code, and — critically — serializes `readwrite` transactions
+on the same store via a promise-chained write lock, which is what allows
+it to faithfully reproduce IndexedDB's real ordering guarantee closely
+enough to both expose the pre-fix race and confirm the post-fix
+atomicity. One non-obvious bug surfaced while building the fake: its
+op-queue was originally drained with `ops.forEach(op => op())`, but
+`acquireLease()`'s `get()` handler synchronously calls `put()` (queuing a
+new op) from inside the `get()`'s own `onsuccess` callback — and
+`Array.prototype.forEach` captures the array's `length` once at call time,
+so it silently skipped that late-appended `put`. Replaced with a drain
+loop (`while (ops.length) ops.shift()();`) that keeps consuming ops
+appended during its own iteration.
+
+### Verification
+
+`node --test tests-js/crossTabQueueLeaseRace.test.mjs`: 1/1 green.
+Mutation-proven: reverted `acquireLease()`/`releaseLease()` back to the
+two-transaction `_getLease()`+`_setLease()` shape, reran — failed with
+both racing tabs reporting `isLeader() === true` (violating "exactly one
+racing tab must win leadership"), confirming the test genuinely detects
+the race rather than passing vacuously; restored, green again. Full
+`npm run build-verify` exit 0 (log: `/tmp/gate36.log`) — Node test-runner
+suite, `tests-js/*.test.mjs`, Python companion pytest (250 passed, 7
+skipped), and the innerHTML/rawXML/fail-open scan gates all clean,
+including `tests-js/selfContained.test.mjs`'s "no new test file is left
+out of git" check once the new file was `git add`ed. `npm run
+build:renderer` was run (confirmed via `dist/desktop/scripts/core/
+crossTabQueueLease.js` containing the fixed `acquireLease` body and
+having a newer mtime than the `src/` original) since this changes
+`src/`-facing renderer code shipped into both `dist/desktop/` and
+`dist/extension/`.
+
+### Still open
+
+- The heartbeat interval (`_startHeartbeat()`'s callback) still reads via
+  `_getLease()` and writes via `_setLease()` as two separate
+  transactions — the same race shape, but far lower severity: a lost
+  race there just means one tab's heartbeat refresh is superseded by
+  another tab's takeover attempt, not two tabs simultaneously believing
+  they're leader. Left for a future iteration if it proves to matter in
+  practice.
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all
+  remain exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work first
+  surfaced in Audit 32 is unchanged this iteration.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
+- `CompanionBridge`'s untested lifecycle paths from Audit 35 (first-attempt
+  success, `stop()`, `_onData`'s frame-desync recovery) remain untouched.

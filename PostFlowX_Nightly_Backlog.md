@@ -3515,3 +3515,59 @@ dedicated coverage in a future iteration, but were out of scope for this
 specific fix.
 
 Commits: `3f5157c`.
+
+## Iteration 36 — acquireLease()/releaseLease() had a TOCTOU race across tabs
+
+**Found.** `src/scripts/core/crossTabQueueLease.js` elects one leader tab
+(among possibly several open tabs of the app) to own job submission, using
+an IndexedDB-backed lease record plus a BroadcastChannel for
+notifications. Before this fix, `acquireLease()` and `releaseLease()` both
+read the current lease via `_getLease()` and, after an `await`, wrote the
+new lease via `_setLease()` — two separate IDB transactions with an async
+gap between them. Because IndexedDB only serializes transactions against
+each other, not the JS that decides what to write, two tabs racing on
+startup (the common case: `setTimeout(() => acquireLease(), 100)` fires in
+every tab shortly after script load) could both read the same
+stale/absent lease during their respective read transactions, both
+independently decide "no one owns this, I should win," and then both
+write themselves in as leader — each ending up with `_isLeader = true` and
+each starting its own heartbeat and calling
+`renderWorkerClient.buildProxy()`, defeating the whole point of the lease.
+
+**Done.** Rewrote `acquireLease()` and `releaseLease()` to do their
+get-then-put entirely inside one `readwrite` IDB transaction (bypassing
+the `_getLease()`/`_setLease()` helpers, which remain in place and
+unchanged for the read-only `checkLeadership()` path and the heartbeat
+interval, where the same class of race exists but is far lower severity
+since the heartbeat only refreshes a lease that path already holds).
+Because real IndexedDB serializes `readwrite` transactions against the
+same object store, no other transaction's `get` can interleave between
+this transaction's `get` and its `put`, closing the race entirely.
+
+**Gate.** Added `tests-js/crossTabQueueLeaseRace.test.mjs`, which runs
+`crossTabQueueLease.js` (a plain global-scope IIFE, not a module) inside
+two separate `node:vm` contexts sharing one hand-rolled fake IndexedDB —
+the fake serializes `readwrite` transactions on the same store via a
+promise-chained write lock, mirroring the real spec's guarantee closely
+enough to expose the pre-fix race and confirm the fix closes it. Fires
+`acquireLease()` from both simulated tabs concurrently and asserts exactly
+one wins and the two tabs disagree on `isLeader()`. Mutation-proven:
+reverted to the old two-transaction `_getLease()`+`_setLease()` shape,
+reran — failed with both tabs reporting `isLeader() === true` (or both
+`wonA`/`wonB` true), confirming the test genuinely detects the race;
+restored, green again. Full `npm run build-verify` exit 0 (Node/JS/Python
+suites, innerHTML/rawXML/fail-open scan gates, and the self-containment
+gate requiring the new test file be `git add`ed). `npm run build:renderer`
+was run and succeeded, since this changes `src/`-facing renderer code that
+ships into both `dist/desktop/` and `dist/extension/`.
+
+**Still open.** The heartbeat interval's refresh (`_startHeartbeat()`'s
+callback, still using the two-transaction `_getLease()`+`_setLease()`
+pattern) has an analogous but self-correcting race — a lost race there
+just means a slightly-early heartbeat write is superseded by another
+tab's takeover, not a dual-leader state — left out of scope this
+iteration. The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all
+remain exactly as reported in Iteration 30 — none touched this iteration.
+
+Commits: `8362fd5`.
