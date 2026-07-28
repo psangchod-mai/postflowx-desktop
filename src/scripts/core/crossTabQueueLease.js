@@ -64,32 +64,56 @@
   }
 
   // ── Leader election ───────────────────────────────────────────────────────
+  // acquireLease/releaseLease read-then-write the lease inside a *single* IDB
+  // transaction (not via _getLease()+_setLease(), which are two separate
+  // transactions with an await between them). IndexedDB serializes readwrite
+  // transactions on the same store, so this closes the race where two tabs
+  // both read a stale/absent lease before either write lands and both believe
+  // they're leader.
   async function acquireLease() {
     const tabId = _myTabId();
     const now   = Date.now();
-    const existing = await _getLease();
-
-    // Take lease if none exists, or it's expired, or we already own it
-    if (!existing || existing.leaseUntil < now || existing.queueLeaderTabId === tabId) {
-      await _setLease({
-        queueLeaderTabId: tabId,
-        leaseUntil:       now + LEASE_TTL,
-        heartbeat:        now,
-      });
+    const db = await _openDB();
+    const took = await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      const store = tx.objectStore(DB_STORE);
+      const req = store.get(LEASE_KEY);
+      let result = false;
+      req.onsuccess = () => {
+        const existing = req.result || null;
+        // Take lease if none exists, or it's expired, or we already own it
+        if (!existing || existing.leaseUntil < now || existing.queueLeaderTabId === tabId) {
+          store.put({ queueLeaderTabId: tabId, leaseUntil: now + LEASE_TTL, heartbeat: now }, LEASE_KEY);
+          result = true;
+        }
+      };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror    = () => reject(tx.error);
+    });
+    if (took) {
       _isLeader = true;
       _startHeartbeat();
       _broadcast({ type: 'leader_elected', tabId });
-      return true;
     }
-    return false;
+    return took;
   }
 
   async function releaseLease() {
     const tabId = _myTabId();
-    const existing = await _getLease();
-    if (existing?.queueLeaderTabId === tabId) {
-      await _setLease({ queueLeaderTabId: '', leaseUntil: 0, heartbeat: 0 });
-    }
+    const db = await _openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      const store = tx.objectStore(DB_STORE);
+      const req = store.get(LEASE_KEY);
+      req.onsuccess = () => {
+        const existing = req.result || null;
+        if (existing?.queueLeaderTabId === tabId) {
+          store.put({ queueLeaderTabId: '', leaseUntil: 0, heartbeat: 0 }, LEASE_KEY);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => reject(tx.error);
+    });
     _isLeader = false;
     _stopHeartbeat();
     _broadcast({ type: 'leader_released', tabId });
