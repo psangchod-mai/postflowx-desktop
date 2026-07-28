@@ -4521,3 +4521,74 @@ identity-check-only fix inside `_proxy_cache_is_valid` was not chosen
 instead.
 
 Commits: `2474017`.
+
+## Iteration 55 — crossTabQueueLease.js leader election had a TOCTOU race in acquire/release *and* heartbeat renewal (new species: cross-tab concurrency race)
+
+**Found.** `src/scripts/core/crossTabQueueLease.js` elects a single leader
+tab (across browser tabs of the same app) to submit proxy-build jobs, using
+an IndexedDB-backed lease (`{queueLeaderTabId, leaseUntil, heartbeat}`) plus
+a `BroadcastChannel` for cross-tab notification. `acquireLease()`,
+`releaseLease()`, and the periodic `_startHeartbeat()` renewal all used to
+read the lease via `_getLease()` and write it back via `_setLease()` as two
+*separate* IndexedDB transactions, with an `await` boundary between the
+read and the write. IndexedDB only serializes transactions against each
+other — it does nothing to stop two tabs from each reading a stale/absent
+lease before either write lands, so both could believe they'd won
+leadership, or a throttled/delayed heartbeat's stale read-then-write could
+silently clobber another tab's legitimate takeover that happened in the
+gap. This is a classic time-of-check-to-time-of-use race, not the fps/timecode/audio-position
+species from Iterations 48–53 or the identity-collision species from
+Iteration 54.
+
+**Done.** In two passes: (1) `acquireLease()`/`releaseLease()` rewritten to
+read-then-conditionally-write the lease inside a single `readwrite`
+IndexedDB transaction (commit `8362fd5`), closing the race for initial
+election and clean release. (2) `_startHeartbeat()`'s periodic renewal had
+the identical bug — a throttled/backgrounded tab's heartbeat could read a
+since-superseded lease and overwrite a peer's fresh takeover — fixed the
+same way, merging its read+write into one atomic transaction (this
+iteration's commit). Both fixes rely on the real guarantee that IndexedDB
+serializes `readwrite` transactions against the same object store, so a
+`get()` + conditional `put()` inside one transaction can't be interleaved
+by another tab's transaction.
+
+**Tests.** `tests-js/crossTabQueueLeaseRace.test.mjs` — a hand-rolled fake
+IndexedDB (no `fake-indexeddb` package installed) running the module's
+actual IIFE source inside a `node:vm` sandbox. The pre-existing test
+(`'acquireLease() is atomic across two tabs racing on startup'`, added with
+the acquire/release fix) stubs `setInterval` as a no-op, so it structurally
+never exercises the heartbeat path. Added a second test for the heartbeat
+specifically, using a new *gated* fake IndexedDB that queues transactions
+instead of auto-running them (`pause()` / `runPendingAt(i)` / `getRaw()` /
+`patchRaw()`) so the test can deterministically interleave a stale
+heartbeat's read-then-write with a second tab's takeover write in a
+specific, reproducible order, rather than relying on fragile microtask-count
+racing. The scenario: tab A holds the lease and its heartbeat fires just as
+the lease is patched to already-expired; concurrently tab B calls
+`acquireLease()` (a legitimate takeover since the lease is expired). The
+final assertion is invariant-based rather than winner-based — a tab's own
+belief about winning must always match the actually-persisted store owner
+(`bBelievesItWon === currentOwnerIsB`) — since forced transaction ordering
+can legitimately let either side end up owning the lease; what must never
+happen is a tab believing it won while the store says otherwise.
+
+**Verification.** Mutation-tested by reverting only the heartbeat fix via
+`git stash push -- src/scripts/core/crossTabQueueLease.js` and rerunning:
+the new heartbeat test failed exactly as predicted (`tabB believes it
+won=true but store owner is B=false` — A's stale heartbeat write clobbered
+B's takeover), while the pre-existing acquire/release test still passed
+unaffected (that fix wasn't reverted). Restoring the fix (`git stash pop`)
+made both pass again. Full `npm run build-verify` exit 0 (Node/JS tests
+green, 268 collected / 261 passed / 7 skipped in Python, security scan
+gates clean).
+
+**Gate.** Renderer-only change (`src/scripts/core/crossTabQueueLease.js` is
+on the Iteration-55 clean-candidate whitelist, confirmed via `git status
+--short` before editing) — no companion rebuild needed; a desktop/extension
+`npm run build:renderer` / `build:extension` would pick this up on next
+packaging.
+
+**Still open.** All items carried from Iterations 52–54 remain pending and
+unchanged.
+
+Commits: `8362fd5`, `7e122bf`.

@@ -6171,3 +6171,98 @@ bug was fully closed by the narrower, more targeted fix in
 `_proxy_cache_path()`.
 
 Commits: `2474017`.
+
+## Iteration 55 — Cross-tab leader election had a TOCTOU race in acquire/release and heartbeat renewal (src/scripts/core/crossTabQueueLease.js) — new species
+
+**New species.** Iterations 48–53 were renderer fps/timecode arithmetic
+bugs; Iteration 54 was a companion-server cache-identity bug. This one is a
+**concurrency race** — a time-of-check-to-time-of-use (TOCTOU) gap in a
+cross-browser-tab leader-election protocol, the first concurrency-class
+finding in this audit series.
+
+**Why this file.** `crossTabQueueLease.js` was on this iteration's 84-file
+non-dirty candidate list (`/tmp/clean_src2.txt`), independently re-verified
+clean via `git status --short -- src/scripts/core/crossTabQueueLease.js`
+before editing. It implements single-leader-tab election for proxy-build
+job submission: an IndexedDB store (`pfx_queue_lease_v1`/`leases`, key
+`queue_leader`) holds `{queueLeaderTabId, leaseUntil, heartbeat}`, with a
+`BroadcastChannel('pfx_queue_lease')` for immediate cross-tab notification
+and a 15s TTL / 5s heartbeat as the fallback path.
+
+**The bug.** `acquireLease()`, `releaseLease()`, and `_startHeartbeat()`'s
+periodic renewal all read the lease via `_getLease()` (a `readonly`
+transaction) and wrote it back via `_setLease()` (a separate `readwrite`
+transaction), with an `await` boundary between the two. IndexedDB
+guarantees transactions against the same object store are serialized
+relative to *each other*, but that guarantee does nothing across two
+separate transactions issued by the same logical operation with a gap in
+between — a second tab's transaction can land in that gap. Concretely: two
+tabs racing on startup could both read "no lease exists" before either's
+write landed, and both believe they'd won leadership; and a throttled or
+backgrounded tab's heartbeat could read a since-superseded lease (one a
+peer tab had already taken over) and then unconditionally overwrite that
+peer's fresh takeover with its own stale renewal, silently reverting
+leadership without either tab's in-memory `_isLeader` state reflecting
+reality.
+
+**The fix.** Rewrote all three operations to perform their read-then-write
+inside a single `readwrite` IndexedDB transaction — the `get()` request's
+`onsuccess` handler conditionally calls `store.put()` synchronously within
+the same transaction, and the transaction's `oncomplete` (not the
+individual request) resolves the outer promise. Because IndexedDB
+serializes `readwrite` transactions against the same store end-to-end, no
+other transaction can observe or act on state between this read and this
+write. `acquireLease()`/`releaseLease()` were fixed first (commit
+`8362fd5`); tracing `_startHeartbeat()` afterward showed it had the
+identical two-transaction shape (`_getLease()` then `_setLease()`) and the
+identical exposure, fixed the same way as a follow-up (this iteration's
+second commit, `7e122bf`).
+
+**Test approach.** `tests-js/crossTabQueueLeaseRace.test.mjs` runs the
+module's actual IIFE source unmodified inside a `node:vm` sandbox against a
+hand-rolled fake IndexedDB (no `fake-indexeddb` package is installed in
+this repo). The pre-existing test added with the acquire/release fix races
+two tabs' `acquireLease()` calls against a writeLock-chained fake IDB and
+asserts exactly one wins — but its `setInterval` stub is a total no-op, so
+it structurally cannot exercise `_startHeartbeat()`. For the heartbeat fix,
+rather than trying to reproduce the race via precise microtask-count timing
+(fragile, and this repo's existing fake IDB isn't built for step-control),
+I added a second, purpose-built **gated** fake IndexedDB that captures
+transactions into a `pending` queue instead of auto-running them, exposing
+`pause()`, `runPendingAt(i)` (splice-and-run by FIFO index), `getRaw()`, and
+`patchRaw()` (to force the stored lease into an already-expired state so a
+second tab's plain `acquireLease()` call is a legitimate takeover attempt,
+not a no-op against a still-valid lease). The test: tab A acquires the
+lease and starts its heartbeat (captured via a `setInterval` stub that
+records the callback instead of no-op'ing it); the lease is patched to
+expired; the store is paused; A's heartbeat callback and B's `acquireLease()`
+are invoked concurrently; the queued transactions are then driven one at a
+time via `runPendingAt(0)` to force a specific interleaving. The final
+assertion is invariant-based, not winner-based —
+`bBelievesItWon === currentOwnerIsB` — because under forced FIFO ordering
+the *fixed* code can legitimately let either tab end up as owner depending
+on which atomic transaction runs first; what must never happen, on any
+code shape, is a tab locally believing it won while the persisted store
+disagrees (a split-brain state that would let a non-leader tab submit jobs
+it thinks it's authorized to submit).
+
+**Verification.** Mutation-tested by reverting only the heartbeat fix
+(`git stash push -- src/scripts/core/crossTabQueueLease.js`) and rerunning:
+the new test failed exactly as predicted — `tabB believes it won=true but
+store owner is B=false`, i.e. A's stale two-transaction heartbeat renewal
+clobbered B's legitimate takeover after B's atomic transaction had already
+landed. The pre-existing acquire/release test was unaffected (that part of
+the file wasn't reverted). Restoring the fix (`git stash pop`) made both
+tests pass again. Full `npm run build-verify` gate: exit 0, all Node/JS
+tests green, companion pytest untouched (261 passed / 7 skipped, 268
+collected), all three security scan gates clean.
+
+**Still open.** All items carried from Iterations 52–54 remain pending and
+unchanged. Not pursued this iteration: the `BroadcastChannel`
+`leader_released`-triggered `acquireLease()` retry path (line ~193) and the
+`beforeunload` handler's `releaseLease()` call both go through the
+now-fixed `acquireLease`/`releaseLease` functions directly, so they inherit
+this fix without needing separate changes — confirmed by reading both call
+sites, not just assumed.
+
+Commits: `8362fd5`, `7e122bf`.
