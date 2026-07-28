@@ -7,6 +7,8 @@
 //   { action:'open', name } | { action:'new' } | { action:'browse' } | null
 'use strict';
 
+import { friendlyAlert } from '../../core/friendlyAlert.js';
+
 const _esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -442,7 +444,7 @@ export async function openProjectManager() {
         projects = projects.filter(p => p.name !== name);
         if (selected === name) selected = null;
       } else {
-        try { window.alert(`Could not delete "${proj.name}": ${r?.error || 'unknown error'}`); } catch {}
+        friendlyAlert(`${proj.name}: ${r?.error || 'unknown error'}`, 'Deleting project failed');
       }
       render();
     }
@@ -470,7 +472,7 @@ export async function openProjectManager() {
         proj.name = r.name || clean;
         proj.path = r.path || proj.path;
         _renderFilterChips(); render();
-      } else { try { window.alert(`Could not rename "${proj.name}": ${r?.error || 'unknown error'}`); } catch {} }
+      } else { friendlyAlert(`${proj.name}: ${r?.error || 'unknown error'}`, 'Renaming project failed'); }
     }
     // Duplicate the project folder under a new name.
     async function doDuplicate(name) {
@@ -489,7 +491,7 @@ export async function openProjectManager() {
         projects.push({ ...proj, name: r.name || clean, path: r.path || proj.path, mtime: now, created: now });
         selected = r.name || clean;
         _renderFilterChips(); render();
-      } else { try { window.alert(`Could not duplicate "${proj.name}": ${r?.error || 'unknown error'}`); } catch {} }
+      } else { friendlyAlert(`${proj.name}: ${r?.error || 'unknown error'}`, 'Duplicating project failed'); }
     }
 
     // ── Right-click context menu (Open · Reveal · Rename · Duplicate · Delete) ──

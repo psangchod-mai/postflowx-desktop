@@ -124,6 +124,10 @@ const CONVERTED = [
   ['src/scripts/features/reviews/index.js', 5],
   ['src/scripts/modules/smart_engine_settings.js', 1],
   ['src/scripts/modules/imf/imf_package_ui.js', 1],
+  // Delete/rename/duplicate all glued r?.error — a raw backend string — onto
+  // a labelled window.alert with no translation, same defect this module
+  // exists to remove.
+  ['src/scripts/features/projectManager/projectManager.js', 3],
 ];
 
 // What a raw-exception alert looks like, on the line it is written on. All
@@ -184,7 +188,7 @@ test('every label passed at a call site names an operation, not an error class',
       assert.match(label, /fail/i, `${file}: label ${JSON.stringify(label)} should say what failed`);
     }
   }
-  assert.equal(checked, 7, `expected 7 labelled call sites across the converted files, saw ${checked}`);
+  assert.equal(checked, 10, `expected 10 labelled call sites across the converted files, saw ${checked}`);
 });
 
 test('friendlyError still exports the translate shim friendlyAlert depends on', () => {
