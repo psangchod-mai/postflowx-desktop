@@ -38,11 +38,16 @@ function _flush() {
 function get(keys) {
   _init();
   if (keys == null) return { ..._cache };
+  // chrome.storage.local.get() omits keys that were never set rather than
+  // including them with an undefined value — callers rely on `'foo' in
+  // result` / Object.keys(result).length for presence checks.
   if (typeof keys === 'string') {
-    return { [keys]: _cache[keys] };
+    return (keys in _cache) ? { [keys]: _cache[keys] } : {};
   }
   const result = {};
-  for (const k of keys) result[k] = _cache[k];
+  for (const k of keys) {
+    if (k in _cache) result[k] = _cache[k];
+  }
   return result;
 }
 
