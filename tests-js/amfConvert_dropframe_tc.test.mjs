@@ -27,6 +27,16 @@ function ok(c, l) { if (c) { passed++; console.log('PASS -', l); } else { failed
 
 ok(defs.length === 3, `found exactly 3 tcToFrames definitions in amf_convert.js (got ${defs.length})`);
 
+// The module-scope definition (#1) calls the real nominalBase() import from
+// utils_time.js to round a fractional NTSC fps to its nominal whole-frame
+// base; provide the same rounding here since this harness evaluates each
+// definition's text in isolation, outside amf_convert.js's own imports.
+function nominalBase(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return 24;
+  return Math.round(n);
+}
+
 defs.forEach((rawBody, i) => {
   // The third definition lives inside a template literal that gets written
   // out as .jsx text; its "\\d" is the *source* form that the template
@@ -35,7 +45,7 @@ defs.forEach((rawBody, i) => {
   // same way it actually runs, not as raw double-backslash source text.
   const body = rawBody.replace(/\\\\d/g, '\\d');
   // eslint-disable-next-line no-new-func
-  const tcToFrames = new Function('tc', 'fps', `${body}\nreturn tcToFrames(tc, fps);`);
+  const tcToFrames = new Function('nominalBase', 'tc', 'fps', `${body}\nreturn tcToFrames(tc, fps);`).bind(null, nominalBase);
 
   ok(tcToFrames('01:00:10:00', 30) === 108300, `def #${i + 1}: NDF timecode still converts correctly`);
   ok(tcToFrames('01:00:10;00', 30) === 108300, `def #${i + 1}: DF timecode ("HH:MM:SS;FF") converts, not silently 0`);

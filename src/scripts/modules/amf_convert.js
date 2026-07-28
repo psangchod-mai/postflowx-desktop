@@ -23,6 +23,7 @@ import { createRadialMenu, RadialIcons } from "../components/radialMenu/index.js
 import { openAnnotateModal as openPfxAnnotateModal } from "../components/annotateModal/index.js";
 import { attachPlayableVideo, releasePlayableVideo, PLAYABLE_STATUS } from "../core/playableMedia.js";
 import { getCachedProxyForFile } from "./proResProxy.js";
+import { nominalBase } from "./utils_time.js";
 
 const SEQ_EXT = new Set(["exr", "dpx", "tif", "tiff"]);
 const LOOK_PRIORITY = ["amf", "cc", "cdl", "cube"];
@@ -2530,7 +2531,10 @@ function tcToFrames(tc, fps) {
   const m = String(tc || "").replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
   if (!m) return 0;
   const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
-  return ((hh * 3600 + mm * 60 + ss) * fps) + ff;
+  // fps may be the raw fractional NTSC rate (23.976/29.97/59.94); timecode's
+  // FF field always counts against the nominal whole-frame base (24/30/60),
+  // not the fractional rate itself.
+  return ((hh * 3600 + mm * 60 + ss) * nominalBase(fps)) + ff;
 }
 
 function normalizeDownloadPath(filename, fallback = "export.txt"){
