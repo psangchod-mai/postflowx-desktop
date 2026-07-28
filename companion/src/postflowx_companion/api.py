@@ -24,7 +24,7 @@ from .imf_scan import scan_imf_package
 from .imf_qc import run_photon as _run_photon_qc
 from .color_lut import get_idt_lut_path as _get_idt_lut_path
 from .models import ErrorPayload, ResponseEnvelope
-from .proxy_service import get_immersive_audio_support, start_iab_decode, start_proxy_playback, stop_session, _extract_dovi, _extract_dovi_from_xml_text, _proxy_cache_path, _restore_running_proxy_session, _read_proxy_sidecar, migrate_named_proxy_cache, _adopt_named_proxy_cache, _resolve_main_media_from_cpl, _proxy_display_name, _find_ffmpeg, _find_ffprobe, _find_art_cmd, _find_arc_cmd, _find_redline, _probe_asset, _timecode_to_seconds, _thumb_cache_dir, _fps_to_base, _seconds_to_timecode, build_preview_proxy, extract_waveform_peaks, extract_embedded_dovi_xml_from_mxf, extract_frame_interleaved_dovi_from_mxf
+from .proxy_service import get_immersive_audio_support, start_iab_decode, start_proxy_playback, stop_session, _extract_dovi, _extract_dovi_from_xml_text, _proxy_cache_path, _restore_running_proxy_session, _read_proxy_sidecar, migrate_named_proxy_cache, _adopt_named_proxy_cache, _resolve_main_media_from_cpl, _proxy_display_name, _find_ffmpeg, _find_ffprobe, _find_art_cmd, _find_arc_cmd, _find_redline, _probe_asset, _timecode_to_seconds, _thumb_cache_dir, _fps_to_base, _is_drop_frame_rate, _seconds_to_timecode, build_preview_proxy, extract_waveform_peaks, extract_embedded_dovi_xml_from_mxf, extract_frame_interleaved_dovi_from_mxf
 from .proxy_registry import content_fingerprint as _reg_fingerprint, lookup_proxy as _reg_lookup, prune_registry as _reg_prune
 from .service_state import create_session, get_session
 from .media import MediaRuntime
@@ -3101,7 +3101,7 @@ class CompanionApi:
 
             # clip is needed by the seek step (Start TC); set it for reused timelines too.
             clip = clips[0] if clips else None
-            drop_frame = fps in (29.97, 59.94, 23.976)
+            drop_frame = _is_drop_frame_rate(fps)
 
             orig_tl = project.GetCurrentTimeline()
             project.SetCurrentTimeline(timeline)
@@ -4054,7 +4054,7 @@ class CompanionApi:
             _passed_start = str(request.get("sourceStartTc") or request.get("source_start_tc") or "").strip()
             if _passed_start:
                 _clip_start_tc = _passed_start
-            _drop = fps in (29.97, 59.94, 23.976)
+            _drop = _is_drop_frame_rate(fps)
             for p in picks:
                 if p["frame"] is None and p["sourceTc"]:
                     try:

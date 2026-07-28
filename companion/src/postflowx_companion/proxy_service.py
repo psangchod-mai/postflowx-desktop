@@ -2407,6 +2407,12 @@ def _fps_to_base(fps: float) -> int:
     return int(min(_TC_BASES, key=lambda b: abs(fps - b)))
 
 
+def _is_drop_frame_rate(fps: float) -> bool:
+    """True only for the 30-based NTSC rates (29.97/59.94) that have a drop-frame
+    variant. 23.976 has no drop-frame form — it always uses non-drop timecode."""
+    return abs(fps - 29.97) < 0.02 or abs(fps - 59.94) < 0.02
+
+
 def _seconds_to_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     """Convert a duration in seconds to HH:MM:SS:FF (or HH:MM:SS;FF for DF)."""
     fps_base = _fps_to_base(fps)
