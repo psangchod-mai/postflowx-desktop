@@ -25,11 +25,13 @@ function normalizeText(s) {
   return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-const TC_EXACT_RE = /^(\d{1,2}):(\d{2}):(\d{2}):(\d{2})$/;
-const TC_FIND_RE = /(\d{1,2}:\d{2}:\d{2}:\d{2})/g;
+// Drop-frame timecodes use "HH:MM:SS;FF" (semicolon before the frame field) —
+// accept ':' or ';' in every field position, matching edl.js's own tcRe.
+const TC_EXACT_RE = /^(\d{1,2})[:;](\d{2})[:;](\d{2})[:;](\d{2})$/;
+const TC_FIND_RE = /(\d{1,2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/g;
 
 function extractFirstTc(s){
-  const m = (s || '').toString().match(/(\d{1,2}:\d{2}:\d{2}:\d{2})/);
+  const m = (s || '').toString().match(/(\d{1,2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/);
   return m ? m[1] : '';
 }
 
@@ -251,7 +253,7 @@ function extractClips(table, fps) {
       let locStart = NaN;
       if (colLoc >= 0 && cells[colLoc]){
         const locText = (cells[colLoc].textContent || '').trim();
-        const m = locText.match(/(\d{2}:\d{2}:\d{2}:\d{2})/);
+        const m = locText.match(/(\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2})/);
         if (m) locStart = tcToFrames(m[1], fps);
       }
 
