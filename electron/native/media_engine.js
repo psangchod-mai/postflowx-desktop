@@ -492,7 +492,10 @@ async function seek({ playerId, frame, timecode } = {}) {
 
   if (timecode && s.info?.fps) {
     const [h, m, sec, f] = String(timecode).split(/[:;]/).map(Number);
-    s.state.frame = Math.round(((h * 3600 + m * 60 + sec) * s.info.fps) + (f || 0));
+    // Nominal (rounded) fps for HH:MM:SS:FF counting, not the exact NTSC rate —
+    // see src/scripts/modules/utils_time.js's nominalBase() for the "two-rate contract".
+    const nominalFps = Math.round(s.info.fps) || 24;
+    s.state.frame = Math.round(((h * 3600 + m * 60 + sec) * nominalFps) + (f || 0));
   } else if (frame != null) {
     s.state.frame = frame;
   }
