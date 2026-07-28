@@ -3943,3 +3943,103 @@ gates all clean). `npm run build:renderer` exit 0, 377 files.
   `translate()` through a still-different call shape will reproduce this same
   blind spot a third way, and will need its own scanner rather than a widened
   regex on `SCANNED` or `SCANNED_LABELS`.
+
+## Audit 35 — a species change: a lifecycle bug, not another i18n gap
+
+### New species
+
+Every fix from Iteration/Audit 29 through 34 was some variant of the same
+species — a string reaching the user without going through `translate()` or
+`friendlyStatus()`'s documented contract. This iteration breaks that streak.
+`electron/companion.js`'s `CompanionBridge.start()` spawns a Python
+subprocess and probes it for readiness, retrying once after a 3-second
+delay. The `catch` block for a *second* consecutive probe failure logged the
+error and emitted `'unavailable'`, but never killed the still-running
+subprocess and never cleared `this._proc`. Because `start()` opens with
+`if (this._proc) return;`, that omission has two compounding effects: the
+Python process is orphaned (no reference left to reap or message it), and
+`start()` becomes permanently inert for the rest of the app's lifetime — the
+only call site, `electron/main.js:292`, would silently no-op on every future
+attempt. This is a resource-lifecycle bug, not a translation gap.
+
+### Why this file, this iteration
+
+A background Explore agent was dispatched with an explicit exclusion list
+covering every previously-fixed i18n bug class (Iterations 29-34) plus every
+previously-identified-and-deferred item (visionscope i18n, the 10 orphaned
+Preflight keys, the 829-string native pass, `render_queue.js`'s
+`_parseError`, and the ~60 files carrying genuine uncommitted in-progress
+work), and an explicit git-cleanliness requirement. It proposed this bug.
+Before acting, every claim was independently re-verified: `git status
+--short`/`git diff --stat` on `electron/companion.js` confirmed a mode-only,
+genuinely clean file; a direct read of lines 1-110 confirmed the exact code
+and line numbers matched the report; a grep across `electron/` and `src/`
+confirmed `main.js:292` is the sole caller of `companion.start()`; and a
+search for existing test coverage confirmed `tests-js/companionAuth.test.mjs`
+— despite the name — tests an unrelated module
+(`src/scripts/modules/companionAuth.js`'s URL-token helpers), leaving
+`CompanionBridge`'s lifecycle genuinely untested. Per this run's standing
+"trust but verify" policy, a background agent's report is not itself
+actionable — it was independently confirmed on every factual point before any
+edit was made.
+
+### The fix
+
+Added `if (this._proc) { this._proc.kill('SIGTERM'); this._proc = null; }`
+to the `catch (retryErr)` block, immediately before the existing
+`this.emit('unavailable', retryErr.message);` call. Deliberately did not add
+a redundant `this._ready = false;` in that branch — `_ready` starts `false`
+in the constructor and is never set `true` on this path, so an assignment
+there would be a no-op restating an existing invariant rather than fixing
+anything.
+
+### Test approach
+
+`electron/companion.js` is CommonJS and destructures
+`const { spawn } = require('child_process');` at module load time, and the
+whole module is exported as a pre-built singleton
+(`module.exports = new CompanionBridge();`), not the class itself. With no
+mocking library in this project's devDependencies, the new
+`tests-js/companionStartupRetry.test.mjs` exploits `require`'s module cache
+directly: it requires `child_process` first, overwrites its `spawn`
+property with a fake that returns an `EventEmitter`-based stand-in process,
+and only then requires `electron/companion.js` — whose own
+`require('child_process')` returns the same cached, now-patched module
+object, so its destructured `spawn` binds to the fake with no interception
+framework needed. The test also stubs the singleton's `_waitReady()` to
+always reject (isolating the bug under test from the unrelated
+length-prefixed-protocol and readiness-probe machinery) and temporarily
+overrides the global `setTimeout` to fire immediately, collapsing the real
+3-second inter-retry delay so the test runs in milliseconds. It asserts the
+fake subprocess was `kill()`ed, `this._proc` is `null`, `isReady` is
+`false`, and that a subsequent `start()` call actually respawns rather than
+being blocked by the `if (this._proc) return;` guard.
+
+### Verification
+
+`node tests-js/companionStartupRetry.test.mjs`: 1/1 green. Mutation-proven:
+reverted the fix to the original log-and-emit-only body, reran — failed
+exactly as expected on
+`the orphaned subprocess must be killed once both probe attempts fail`
+(`false !== true`), restored, green again. Full `npm run build-verify` exit
+0, including `tests-js/selfContained.test.mjs`'s "no new test file is left
+out of git" gate, which failed on the first gate run because the new test
+file was still untracked (`git add`ed and re-run to confirm clean).
+`npm run build:renderer` was not run: `electron/companion.js` is
+Electron main-process code under `electron/`, not `src/`-facing renderer
+code, so per the project's one-source-two-targets convention this fix needs
+no renderer rebuild.
+
+### Still open
+
+- The 10 orphaned label keys, the 829 machine-authored strings wanting a
+  native-speaker pass, and `src/tools/visionscope/*`'s missing i18n all
+  remain exactly as reported in Audit 30 — none touched this iteration.
+- The ~60-file scope of genuinely uncommitted, in-progress work first
+  surfaced in Audit 32 is unchanged this iteration.
+- `render_queue.js`'s private `_parseError` still returns `null` on a miss
+  instead of delegating to `friendlyText` (open since Audit 1) — unchanged.
+- `CompanionBridge` still has other lifecycle paths without dedicated
+  coverage — the first-attempt success path, `stop()`, and `_onData`'s
+  frame-desync recovery (the `MAX_COMPANION_MSG_BYTES` resync branch) among
+  them — any of which could be a future iteration's target.

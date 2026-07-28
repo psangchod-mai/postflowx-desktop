@@ -3461,3 +3461,57 @@ wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all remain
 exactly as reported in Iteration 30 — none touched this iteration.
 
 Commits: `1be92f6`.
+
+## Iteration 35 — a failed companion startup retry never cleaned up the orphaned subprocess
+
+**Found.** `electron/companion.js`'s `CompanionBridge.start()` spawns the
+Python companion subprocess, then probes readiness via `_waitReady()`
+(which round-trips a `getCapabilities` call). If the first probe fails it
+waits 3s and retries once. Reading the `catch (retryErr)` block that handles
+a second consecutive failure (lines 93-96 before this fix) showed it only
+logged the error and emitted `'unavailable'` — it never called
+`this._proc.kill()` and never set `this._proc = null`. Two consequences
+follow directly from `start()`'s own guard at its top,
+`if (this._proc) return;`: (1) the spawned Python process is left running
+unsupervised, with nothing left holding a reference to reap or message it,
+and (2) every future call to `start()` (the only call site is
+`electron/main.js:292`) silently no-ops forever, because `this._proc` is
+still truthy. Confirmed there is no existing test coverage for
+`CompanionBridge`'s lifecycle — `tests-js/companionAuth.test.mjs` is a
+same-named-sounding but unrelated file testing
+`src/scripts/modules/companionAuth.js`'s URL-token helpers, not this class.
+
+**Done.** In the `catch (retryErr)` block, added `if (this._proc) { this._proc.kill('SIGTERM'); this._proc = null; }` before the `emit('unavailable', ...)` call, so a
+double startup-probe failure now tears down the subprocess and leaves
+`start()` able to respawn on a later call. Added
+`tests-js/companionStartupRetry.test.mjs`, which requires `child_process`
+and swaps its `spawn` for a fake before requiring `electron/companion.js`
+(companion.js destructures `spawn` from the same cached module object at
+its own require-time, so the fake binds cleanly with no mocking library
+needed), stubs `_waitReady()` to always reject, and fast-forwards the
+3-second inter-retry `setTimeout` by temporarily overriding the global.
+Asserts that after both probe attempts fail the fake subprocess was
+`kill()`ed, `this._proc` is `null`, `isReady` is `false`, and a subsequent
+`start()` call actually spawns again rather than no-op'ing.
+
+**Gate.** `node tests-js/companionStartupRetry.test.mjs`: 1 test, green.
+Mutation-proven: reverted the fix (dropped the `kill`/null block back to
+just the log-and-emit), reran — failed on
+`the orphaned subprocess must be killed once both probe attempts fail`
+(`false !== true`), restored, green again. Full `npm run build-verify` exit
+0 (Node, JS, Python suites plus innerHTML/XML/fail-open scan gates,
+including the self-containment gate that requires new test files be
+`git add`ed before the suite is considered clean). `npm run build:renderer`
+was not run — this is Electron main-process code under `electron/`, not
+`src/`-facing renderer code, so no rebuild is needed per the project's
+one-source-two-targets convention.
+
+**Still open.** The 10 orphaned label keys, the 829 machine-authored strings
+wanting a native pass, and `src/tools/visionscope/*`'s missing i18n all
+remain exactly as reported in Iteration 30 — none touched this iteration.
+`CompanionBridge` has other untested lifecycle paths (e.g. the first-attempt
+success path, `stop()`, `_onData`'s frame desync recovery) that could use
+dedicated coverage in a future iteration, but were out of scope for this
+specific fix.
+
+Commits: `3f5157c`.
