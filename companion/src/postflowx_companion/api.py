@@ -4441,9 +4441,12 @@ class CompanionApi:
             if not rel_path or content is None:
                 errors.append(f"Skipped invalid entry: {rel_path!r}")
                 continue
-            abs_path = os.path.normpath(os.path.join(output_dir, rel_path))
-            # Security: reject paths that escape outputDir
-            if not abs_path.startswith(os.path.normpath(output_dir)):
+            try:
+                # _confined_join does a real commonpath containment check, unlike a
+                # naive startswith(outputDir) — which "/out".startswith would also
+                # pass for the sibling "/out-evil", letting ../out-evil/x escape.
+                abs_path = _confined_join(output_dir, rel_path)
+            except ValueError:
                 errors.append(f"Rejected path outside outputDir: {rel_path!r}")
                 continue
             try:
