@@ -6,6 +6,8 @@
 // - *** สำหรับ OTIO (sourceType === "otio") จะไม่ Merge overlap
 // -----------------------------------------------------------------------------
 
+import { nominalBase } from './utils_time.js';
+
 /* ---------- Helpers ---------- */
 
 function tcToFrames(tc, fps = 24) {
@@ -16,13 +18,14 @@ function tcToFrames(tc, fps = 24) {
   const m = tc.replace(/;/g, ':').match(/^(\d+):(\d+):(\d+):(\d+)$/);
   if (!m) return 0;
   const hh = +m[1], mm = +m[2], ss = +m[3], ff = +m[4];
-  return ((hh * 3600) + (mm * 60) + ss) * fps + ff;
+  return ((hh * 3600) + (mm * 60) + ss) * nominalBase(fps) + ff;
 }
 
 function framesToTC(fr, fps = 24) {
+  const base = nominalBase(fps);
   fr = Math.round(fr || 0);
-  const totalSec = Math.floor(fr / fps);
-  const ff = fr % fps;
+  const totalSec = Math.floor(fr / base);
+  const ff = fr % base;
   const hh = Math.floor(totalSec / 3600);
   const mm = Math.floor((totalSec % 3600) / 60);
   const ss = totalSec % 60;
