@@ -92,6 +92,14 @@ class CompanionBridge extends EventEmitter {
         return;
       } catch (retryErr) {
         console.warn('[Companion] retry also failed:', retryErr.message);
+        // Both probe attempts failed — the subprocess is still running but will
+        // never become usable. Kill and null it out so it isn't orphaned and so
+        // the `if (this._proc) return;` guard above doesn't lock out every
+        // future start() call.
+        if (this._proc) {
+          this._proc.kill('SIGTERM');
+          this._proc = null;
+        }
         this.emit('unavailable', retryErr.message);
       }
     }
