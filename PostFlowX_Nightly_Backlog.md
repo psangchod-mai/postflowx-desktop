@@ -6114,4 +6114,4 @@ two different `cpl_path` values requesting the same frame, vs. post-fix
 distinct paths. `python3 -m pytest -q` in `companion/`: 313 passed/7
 skipped/2 pre-existing unrelated failures — matches baseline.
 
-Commits: `TBD`.
+Commits: `9634c1c`.
