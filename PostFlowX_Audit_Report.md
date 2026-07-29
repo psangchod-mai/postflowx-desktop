@@ -10835,4 +10835,4 @@ call sites use the same blocking-pipe-iteration pattern seen here (a
 systematic audit of every `subprocess.Popen(..., stderr=PIPE)` call site
 across `companion/` was out of scope for this single-bug iteration).
 
-Commits: `TBD`.
+Commits: `6026143`.
