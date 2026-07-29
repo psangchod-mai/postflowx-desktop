@@ -99,7 +99,16 @@ class IMFPlayer {
 
   async openPackage(inputPath) {
     if (this._disposed) return { ok: false, error: 'disposed' };
+
+    // A concurrent openPackage() call (e.g. rapidly clicking a second package
+    // in a file browser before the first one's IPC round-trip finishes) can
+    // otherwise let a slower first call's response overwrite the second
+    // call's this._packageId/_packageData/_cplId after the fact, binding the
+    // player to the wrong package. _loadSeq lets a stale call detect it was
+    // superseded and bail instead of clobbering the newer selection.
+    const seq = ++this._loadSeq;
     const r = await _pfx().imfEngine.openPackage(inputPath);
+    if (seq !== this._loadSeq) return { ok: false, error: 'superseded' };
     if (!r.ok) return r;
     this._packageId   = r.packageId;
     this._packageData = r.package;

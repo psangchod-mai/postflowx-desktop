@@ -12437,3 +12437,75 @@ race window). Left unaddressed this iteration; a strong candidate for
 a future pass.
 
 Commits: `4d08985`.
+
+## Iteration 122 — IMFPlayer.openPackage() concurrent-call race
+
+**Why this file:** Iteration 121's own "Still open" note flagged
+`openPackage()` in `imf_player_engine.js` as a real, weaker instance of
+the same bug family left unaddressed. With `startPlayback()` already
+fixed and the `_loadSeq` counter already present on the class, this
+was the natural next candidate — same file, same pattern, one method
+over.
+
+**The bug:** `openPackage(inputPath)` writes `this._packageId`,
+`this._packageData`, and `this._cplId` unconditionally after a single
+`await _pfx().imfEngine.openPackage(inputPath)` (the IPC round-trip
+that parses the IMF package on the companion side), with no staleness
+guard. If a user double-clicks package A then quickly clicks package B
+in a file browser before A's round-trip resolves, and A's response
+happens to arrive after B's (e.g. A sits on a slower network mount or
+has a larger CPL manifest), A's `then` continuation fires last and
+overwrites B's already-applied `_packageId`/`_packageData`/`_cplId`
+with A's stale data — even though the UI has already shown B's name
+and the `packageLoaded` event for B has already fired. Any subsequent
+`validatePackage()`/`startPlayback()` call then silently operates on
+the wrong package.
+
+**The fix:** Reused the existing `_loadSeq` counter (already
+initialized once in the constructor, already used by
+`startPlayback()`): `const seq = ++this._loadSeq;` captured in
+`openPackage()` right after the `_disposed` guard and before the
+await, then `if (seq !== this._loadSeq) return { ok: false, error:
+'superseded' };` immediately after the `imfEngine.openPackage()`
+await, before any of the three fields are written.
+
+**Test approach:** `tests-js/imfPlayerOpenPackageStaleRace.test.mjs`,
+a new plain-Node test using linkedom, following the same
+deferred-promise-per-call technique used in Iterations 120-121. A fake
+`window.pfxPlatform.imfEngine.openPackage()` returns an
+independently-resolvable deferred promise per call. The test starts
+`openPackage('/path/A.imf')`, then (before resolving anything) starts
+`openPackage('/path/B.imf')`, resolves B's IPC response first (proving
+the live call writes its own package/CPL), then resolves A's stale
+response late (proving the superseded call is a no-op and doesn't
+clobber B's already-applied state).
+
+**Verification:** Pre-fix (temporarily reverted via a `/tmp` backup,
+restored afterward), 4 of 6 assertions failed exactly as predicted:
+`_loadSeq` wasn't bumped by `openPackage()`, and critically the stale
+A response overwrote B's `_packageId`/`_cplId` once it resolved.
+Post-fix (restored from backup, confirmed via `git diff --stat` — 9
+insertions, 0 deletions, matching the intended scope), all 6
+assertions pass. Full regression suite re-run and matched baseline:
+`test:js` — every file 0 failed except the expected, well-documented
+`selfContained.test.mjs` "no new test file is left out of git" flag
+for this iteration's still-untracked new test file; `test:node` — 72
+passed, 0 failed, 1 skipped; `test:py` — 313 passed, 7 skipped, 2
+failed, both pre-existing and unrelated to this change (`bit_count()`
+AttributeError in `conform_engine.py`'s regional-hash distance helper
+— that file's WIP block is on the do-not-touch list, and the failure
+is caused by this dev environment running Python 3.9.6, which predates
+`int.bit_count()` added in Python 3.10 — not a regression from this
+iteration's fix).
+
+**Still open:** `validatePackage(cplId)` in the same file emits a
+`'validation'` event after a single await against
+`_pfx().imfEngine.validatePackage(...)`, keyed off `this._packageId`/
+`this._cplId` captured at call time, with no staleness guard. A rapid
+CPL switch could let a stale validation result for one CPL emit after
+a newer request for another, showing a wrong validation badge.
+Weaker than `openPackage()` since it only affects an emitted event,
+not core instance state. Left unaddressed this iteration; a candidate
+for a future pass.
+
+Commits: `TBD`.

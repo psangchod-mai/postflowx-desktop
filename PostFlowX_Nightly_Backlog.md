@@ -6601,3 +6601,29 @@ Still open: `openPackage()` in the same file has a weaker,
 single-await instance of the same shape — left for a future pass.
 
 Commits: `4d08985`.
+
+## Iteration 122 — IMFPlayer.openPackage() concurrent-call race
+
+`openPackage(inputPath)` in `imf_player_engine.js` wrote
+`_packageId`/`_packageData`/`_cplId` after a single await on
+`imfEngine.openPackage()` with no staleness guard — flagged as a
+weaker "still open" candidate in Iteration 121. Double-clicking
+package A then B in a file browser could let A's slower IPC response
+overwrite B's already-applied package/CPL selection. Fixed by reusing
+the class's existing `_loadSeq` counter (already present from Iteration
+121's `startPlayback()` fix) — bump before the await, bail if
+superseded after it. Verified with a new test
+(`tests-js/imfPlayerOpenPackageStaleRace.test.mjs`, linkedom + a fake
+`window.pfxPlatform.imfEngine`): pre-fix, a stale package A's late
+response overwrote the live package B's state; post-fix, it's a no-op.
+Full regression suite re-run: `test:js` all files 0 failed (except
+expected self-containment-gate noise for the still-uncommitted test
+file); `test:node` 72/0/1-skipped; `test:py` 313/2-failed/7-skipped,
+both failures pre-existing/unrelated (Python 3.9.6 lacks
+`int.bit_count()`, used in the do-not-touch `conform_engine.py`).
+
+Still open: `validatePackage()` in the same file emits a `'validation'`
+event after a single await with no guard — weaker (event-only, not
+core state) — left for a future pass.
+
+Commits: `TBD`.
