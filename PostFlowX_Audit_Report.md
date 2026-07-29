@@ -8391,3 +8391,5 @@ carries that data; flagged for a future iteration if this surfaces in
 real-world use, not fixed now since inventing frame dimensions the code
 doesn't have would be worse than using a lightweight placeholder
 descriptor that NLEs can still relink by reel/timecode/path.
+
+Commits: `0f67670`.

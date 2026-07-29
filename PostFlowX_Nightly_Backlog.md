@@ -5469,3 +5469,5 @@ semantically loose descriptor choice for video (meant for non-AV data);
 flagged for a future iteration if real frame-geometry data becomes
 available and NLE relink behavior needs it — not fixed now since
 inventing fake dimensions would be worse than a lightweight placeholder.
+
+Commits: `0f67670`.
