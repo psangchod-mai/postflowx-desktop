@@ -6322,3 +6322,23 @@ matched baseline exactly: 313/7/2(pre-existing) Python, 72/1/0 Node,
 22/0 JS.
 
 Commits: `3805fd9`.
+
+## Iteration 109
+
+`proxy_service.py`'s parallel multi-reel decode path
+(`_parallel_decode_and_concat`) spun up one ffmpeg per reel via
+`subprocess.run()` but never registered any of them in session state —
+only `stop_session()`'s single `state["proc"]` key was ever killed on
+cancel. Cancelling a multi-reel proxy build mid-decode left every
+in-flight reel-decoder ffmpeg process running to completion, orphaned,
+burning CPU until it finished or timed out on its own. Fixed by
+switching to `subprocess.Popen`, tracking all live per-reel processes
+in a shared `procs` list on the session, and having `stop_session()`
+kill everything in that list. Verified with a standalone harness
+exercising the real `stop_session()` against real long-running
+subprocesses: pre-fix, all 4 simulated reel-decoder processes survived
+the call; post-fix, all 4 were killed immediately. Full regression
+suite re-run and matched baseline exactly: 313/7/2(pre-existing)
+Python, 72/1/0 Node, 22/0 JS.
+
+Commits: `TBD`.

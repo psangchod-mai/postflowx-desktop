@@ -11433,3 +11433,73 @@ unfixed, for the reasons documented in prior iterations — none is
 touched by this change.
 
 Commits: `3805fd9`.
+
+## Iteration 109
+
+**Why this file:** `proxy_service.py`'s multi-reel parallel-decode path
+(`_transcode_worker_inner` → `_parallel_decode_and_concat`, lines
+~4676–4760) is the fast path used for any IMF/OCF package with 2+
+reels — the common case for real deliveries. `git diff --stat` and
+`git log --oneline -5` on the file showed no uncommitted changes before
+this fix, so there was no WIP to avoid.
+
+**The bug:** `_parallel_decode_and_concat` spins up one ffmpeg process
+per reel inside a `ThreadPoolExecutor`, via `_decode_seg()` calling
+`subprocess.run(cmd, capture_output=True, timeout=...)`. None of these
+per-reel processes were ever registered in the session state — only
+the single sequential-path process (`_run_ffmpeg`) and the final mux
+process are stored via `update_session(session_id, proc=...)`.
+`stop_session()` only ever killed that single `state["proc"]` key. Since
+`subprocess.run()` blocks its worker thread until ffmpeg exits (up to a
+`max(600, exp_dur*4)`-second timeout) or is killed, cancelling a
+multi-reel proxy build mid-decode removed the session bookkeeping but
+left every in-flight reel-decoder ffmpeg process running to completion,
+burning CPU and holding temp files in `tmp_dir` until each one finished
+or timed out on its own. A user who cancels a multi-reel build and
+immediately starts another leaks N orphaned ffmpeg processes contending
+with the new job. This was scouted independently, then verified by
+reading the actual code (confirmed only `proc=`, never `procs=`, is set
+anywhere in the parallel path, and `stop_session` only reads
+`state.get("proc")`).
+
+**The fix:** `_decode_seg()` now uses `subprocess.Popen` instead of
+`subprocess.run`, appending each live `Popen` to a shared
+`_active_procs` list (guarded by a lock) that is registered once via
+`update_session(session_id, procs=_active_procs, ...)` — since the
+dict value is the same list object, later appends are visible to
+whatever reads session state afterward, including `stop_session`.
+`stop_session()` now also iterates `state.get("procs")` and kills every
+entry there, not just the single `state["proc"]`. Exceptions (including
+the per-reel timeout) still kill that reel's own process before
+returning, matching the original behavior for the non-cancellation
+case.
+
+**Test approach:** Because `_decode_seg`/`_active_procs` are closures
+nested three levels inside `_transcode_worker_inner`, they can't be
+imported in isolation without driving a full real IMF-package build.
+Instead, the harness (`/tmp/verify_stop_session_kills_procs.py`) tests
+the exact trust boundary the bug and fix live on: it creates a real
+session via `service_state.create_session` with `state["procs"]` set to
+a list of real long-running `sleep 30` subprocesses (reproducing
+exactly what `_active_procs` looks like mid-decode), then calls the
+real, unmodified `stop_session()` and asserts every process was
+actually killed.
+
+**Verification:** Pre-fix (via `git stash push -- proxy_service.py`),
+`stop_session()` ignored `state["procs"]` entirely — all 4 simulated
+reel-decoder processes were still alive after the call, and
+`Popen.wait(timeout=5)` on them raised `TimeoutExpired`, confirming the
+orphaning. Post-fix, re-run after `git stash pop` restored the fix
+correctly (`git diff` confirmed only content changes, no mode-bit-only
+noise): all 4 processes were killed and reaped immediately. Full
+regression suite re-run and matched baseline exactly: 313/7/2
+(pre-existing, `conform_engine.py` WIP under Python 3.9) Python, 72/1/0
+Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, the Metal HTJ2K WIP
+block, and the `ocf_decode.py` `_decode_sdk()` stub all remain open,
+unfixed, for the reasons documented in prior iterations — none is
+touched by this change.
+
+Commits: `TBD`.

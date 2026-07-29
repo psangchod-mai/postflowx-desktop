@@ -4695,7 +4695,12 @@ def _transcode_worker_inner(session_id: str, folder: Path, cpl_path: Path, ffmpe
 
         threads_per_dec = max(2, _cpu_count // n_segs)
         tmp_dir = Path(_tf.mkdtemp(prefix='pfx_pdec_'))
-        update_session(session_id, stage='parallel_decode', pct=3,
+        # Track every in-flight reel decoder so stop_session() can kill them —
+        # otherwise cancelling mid-decode leaves orphaned ffmpeg processes running
+        # to completion (subprocess.run below blocks each worker thread until exit).
+        _active_procs: list[subprocess.Popen] = []
+        _active_procs_lock = threading.Lock()
+        update_session(session_id, procs=_active_procs, stage='parallel_decode', pct=3,
                        message=f'Parallel decode: 0 / {n_segs} reels…')
 
         # Build the per-segment ffmpeg command (decode + scale + rec709 filter, NO audio, NO re-encode)
@@ -4727,13 +4732,21 @@ def _transcode_worker_inner(session_id: str, folder: Path, cpl_path: Path, ffmpe
         def _decode_seg(idx: int, seg: dict) -> tuple[int, Path | None]:
             tmp_path = tmp_dir / f'seg_{idx:04d}.mp4'
             cmd = _make_seg_cmd(idx, seg, tmp_path)
+            proc: subprocess.Popen | None = None
             try:
-                r = subprocess.run(cmd, capture_output=True,
-                                   timeout=max(600.0, exp_dur * 4))
-                if r.returncode == 0 and tmp_path.is_file() and tmp_path.stat().st_size > 0:
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, start_new_session=True)
+                with _active_procs_lock:
+                    _active_procs.append(proc)
+                rc = proc.wait(timeout=max(600.0, exp_dur * 4))
+                if rc == 0 and tmp_path.is_file() and tmp_path.stat().st_size > 0:
                     return idx, tmp_path
             except Exception:
-                pass
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
             return idx, None
 
         # Phase 1 — parallel decode
@@ -4996,6 +5009,11 @@ def stop_session(session_id: str) -> None:
     if proc:
         try:
             proc.kill()
+        except Exception:
+            pass
+    for _p in state.get("procs") or []:
+        try:
+            _p.kill()
         except Exception:
             pass
     kind = str(state.get("kind") or "")
