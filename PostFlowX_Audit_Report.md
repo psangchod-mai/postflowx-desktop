@@ -12372,4 +12372,4 @@ pass (a superseded `_pollProxy()` chain simply becomes an orphaned
 `_reset()`/a new proxy start — not the "silently write wrong data"
 shape this bug family targets, so left as-is).
 
-Commits: `TBD`.
+Commits: `28ae5da`.
