@@ -7556,3 +7556,81 @@ message).
 **Still open.** None for this fix.
 
 Commits: `8035764`.
+
+---
+
+## Iteration 68 — FCPXML fallback scanners hardcoded source-in trim to frame 0
+
+**Why this file.** `src/scripts/parsers/fcpxml.js` is the FCPXML importer.
+`parseFCPXML` has a two-tier architecture: a recursive walker `collect()`
+handles the normal case, and if it finds zero events, `parseFCPXML` falls
+through to two simpler fallback scanners tried in order —
+`buildFlatFCPXMLEvents` (subtree-wide `querySelectorAll` for
+asset-clip/mc-clip/sync-clip/clip/video, tagged `_fallback:
+'flat-sequence-scan'`) and, only if that also finds nothing,
+`buildTopLevelFCPXMLEvents` (tagged `_fallback: 'top-level-spine-scan'`).
+These exist specifically to salvage events from FCPXML structures that
+`collect()`'s recursion doesn't reach — e.g. a `<spine>` nested more than one
+level below `<sequence>` inside wrapper elements some exporters emit.
+
+**The bug.** In FCPXML, `start` on a clip element is the source-media
+trim-in point — non-zero for virtually any real trimmed clip. Both fallback
+scanners reimplement a subset of `collect()`'s field extraction (offset,
+duration, name, ref) but never read the `start` attribute, hardcoding
+`srcIn: framesToTC(0, fps)` regardless of the clip's actual trim point.
+
+**Concrete failure example.** A sequence whose `<spine>` sits two levels
+below `<sequence>` (`<sequence><outer><inner><spine>...`) defeats
+`collect()`: its generic `:scope > spine` check only matches a spine that is
+a *direct* child of the node currently being visited, and its final
+catch-all recursion only descends into children tagged
+asset-clip/clip/mc-clip/sync-clip/ref-clip/gap/title — an unrecognized
+wrapper tag is none of those, so the recursion never reaches the nested
+spine. `parseFCPXML` then falls through to `buildFlatFCPXMLEvents`, whose
+subtree-wide scan does find the `<asset-clip>` — but reported `srcIn` as
+`00:00:00:00` even when the clip's real `start="480/24s"` (20 seconds into
+the source media), silently discarding the trim point on every event
+produced through this path.
+
+**Why genuine and new.** Distinct from all 20 previously-fixed FCPXML/EDL/OTIO
+bug species (48–67): this is a "fallback-path completeness gap" — the
+fallback scanners are not a rare corner case, they're a documented,
+deliberately-invoked salvage path for structurally atypical exports, and
+they were dropping real trim data on every single event they produced.
+
+**The fix.** Both `buildFlatFCPXMLEvents` and `buildTopLevelFCPXMLEvents` now
+read `const srcF = ratToFrames(node.getAttribute('start'), fps);` and use it
+for `srcIn: framesToTC(srcF, fps)` / `srcOut: framesToTC(srcF + durF, fps)`,
+matching the reference pattern already used by `collect()`'s own `ref-clip`
+handling.
+
+**Test approach.** Added a test to `test/parsers/fcpxml.test.mjs` using a
+genuine, non-contrived fixture built through the public `parseFCPXML()` API
+(no internal functions exported for direct testing): a `<spine>` nested two
+levels below `<sequence>` inside `<outer><inner>` wrapper tags, which — per
+the structural analysis above — genuinely defeats `collect()` while still
+being found by `buildFlatFCPXMLEvents`'s subtree-wide scan. The test asserts
+`res._fallback === 'flat-sequence-scan'` (confirming the fallback path was
+actually exercised, not `collect()`) and that `srcIn`/`srcOut` reflect the
+clip's real `start="480/24s"` (20s) trim point rather than frame 0.
+
+**Verification (mutation testing).** Reverted `buildFlatFCPXMLEvents`'s fix
+(dropped the `srcF` read, restored the `framesToTC(0, fps)` hardcode) and
+reran: the new test failed with `actual: '00:00:00:00', expected:
+'00:00:20:00'` as expected. Restored the fix: all 8 tests in
+`fcpxml.test.mjs` passed again. `buildTopLevelFCPXMLEvents`'s parallel fix
+was verified by direct source read only (the current fixture, being tried
+against `buildFlatFCPXMLEvents` first, doesn't exercise the second-tier
+scanner) — constructing a fixture that defeats both the recursive collector
+and the flat scanner to mutation-test `buildTopLevelFCPXMLEvents`
+independently remains open.
+
+**Gate.** `npm run test:node` passed clean: 72 tests, 71 pass, 1 pre-existing
+skip, 0 fail. Grepped the full log for `not ok|✖|AssertionError`; zero real
+failures.
+
+**Still open.** No fixture yet constructed that defeats both
+`collect()` and `buildFlatFCPXMLEvents` to independently mutation-test
+`buildTopLevelFCPXMLEvents`'s parallel fix.
+
+Commits: `3881348`.

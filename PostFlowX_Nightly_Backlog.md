@@ -5134,3 +5134,41 @@ failure markers, all false positives.
 Commits: `8035764`.
 
 Commits: `2823c48`.
+
+---
+
+## Iteration 68 — FCPXML fallback scanners hardcoded source-in trim to frame 0
+
+**Found.** `buildFlatFCPXMLEvents` and `buildTopLevelFCPXMLEvents` — the two
+fallback scanners `parseFCPXML` uses when its recursive `collect()` walker
+finds zero events (e.g. a `<spine>` nested inside unrecognized wrapper
+elements) — both hardcoded `srcIn` to frame 0 instead of reading the clip's
+`start` attribute (the source-media trim-in point), discarding real trim
+data on every event they produced.
+
+**Done.** Both scanners now read `ratToFrames(node.getAttribute('start'),
+fps)` and use it for `srcIn`/`srcOut`, matching `collect()`'s own
+`ref-clip` reference pattern.
+
+**Tests.** New test in `test/parsers/fcpxml.test.mjs` using a fixture with
+`<spine>` nested two levels below `<sequence>` (`<outer><inner><spine>`) —
+genuinely defeats `collect()`'s recursion while still being found by
+`buildFlatFCPXMLEvents`'s subtree-wide scan. Asserts `res._fallback ===
+'flat-sequence-scan'` and that `srcIn`/`srcOut` reflect the real
+`start="480/24s"` trim point, not frame 0.
+
+**Verification.** Reverted the fix in `buildFlatFCPXMLEvents`, reran: new
+test failed with the expected wrong value (`00:00:00:00` instead of
+`00:00:20:00`). Restored the fix: all 8 tests in `fcpxml.test.mjs` passed.
+`buildTopLevelFCPXMLEvents`'s parallel fix verified by source read only —
+not independently mutation-tested this pass.
+
+**Gate.** `npm run test:node` passed clean: 72 tests, 71 pass, 1
+pre-existing skip, 0 fail. Log grepped for failure markers, zero real
+failures.
+
+**Still open.** Construct a fixture defeating both `collect()` and
+`buildFlatFCPXMLEvents` to mutation-test `buildTopLevelFCPXMLEvents`
+independently.
+
+Commits: `3881348`.
