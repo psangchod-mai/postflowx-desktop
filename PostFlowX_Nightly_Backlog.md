@@ -5202,3 +5202,38 @@ failures.
 **Still open.** None for this fix.
 
 Commits: `171d82e`.
+
+---
+
+## Iteration 70 — IMF CPL SourceDuration wrongly defaults to IntrinsicDuration, ignoring EntryPoint
+
+**Found.** `_parse_cpl()` in `companion/src/postflowx_companion/imf_scan.py`
+defaulted an omitted `<SourceDuration>` to `IntrinsicDuration` alone,
+ignoring `EntryPoint`. Per SMPTE ST 2067-3 the correct default is
+`IntrinsicDuration - EntryPoint`. Overcounts resource duration (and the
+composition's `totalFrames`) by exactly `EntryPoint` whenever
+`SourceDuration` is omitted and `EntryPoint` is nonzero.
+
+**Done.** Computed the correct default explicitly (`max(0, intrinsic -
+entry)`) and removed two redundant `or intrinsic` fallbacks that also
+mishandled an explicit `SourceDuration == 0`.
+
+**Tests.** New `TestSourceDurationDefaulting` class in
+`companion/tests/test_imf_scan.py` with a new `_cpl_with_segment_resource()`
+fixture (the existing `_minimal_cpl()` fixture uses the wrong CPL structure
+and never reaches this code path). 3 tests: omitted+nonzero EntryPoint
+(asserts `800` not `1000`), explicit SourceDuration used verbatim, omitted
+SourceDuration with zero EntryPoint.
+
+**Verification.** Reverted to the original three buggy lines, reran: the
+key test failed with `assert 1000 == 800` as predicted. Restored the fix:
+all 3 new tests and the full 32-test file passed.
+
+**Gate.** `python3 -m pytest companion/tests/` — 269 passed, 7 skipped, 2
+pre-existing unrelated failures (`test_conform_engine.py`, Python 3.10+
+`int.bit_count()` API on this machine's 3.9.6 — confirmed pre-existing via
+`git show HEAD` diff, part of existing uncommitted drift).
+
+**Still open.** None for this fix.
+
+Commits: `a8fdd73`.

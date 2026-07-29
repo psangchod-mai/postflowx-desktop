@@ -7698,3 +7698,88 @@ fixture yet constructed to independently mutation-test
 `buildTopLevelFCPXMLEvents`'s source-in-trim fix.)
 
 Commits: `171d82e`.
+
+---
+
+## Iteration 70 — IMF CPL SourceDuration wrongly defaults to IntrinsicDuration, ignoring EntryPoint
+
+**Why this file.** `companion/src/postflowx_companion/imf_scan.py`'s
+`_parse_cpl()` walks an IMF Composition Playlist's `SegmentList` /
+`Sequence` / `ResourceList` / `Resource` tree to compute per-resource
+durations and the composition's `totalFrames`. `totalFrames` is surfaced to
+the UI as the package's overall runtime and drives duration-mismatch
+warnings elsewhere in the scan pipeline, so a wrong default here silently
+corrupts a headline number.
+
+**The bug.** Per SMPTE ST 2067-3, a `TrackFileResourceType`'s
+`SourceDuration` element is optional; when omitted it must default to
+`IntrinsicDuration - EntryPoint` (the resource plays out everything after
+its EntryPoint skip). The parser instead computed:
+
+```python
+src_dur = int(_text(res, "SourceDuration") or str(intrinsic or 0))
+...
+"sourceDuration": src_dur or intrinsic,
+...
+total_frames += (src_dur or intrinsic) * repeat
+```
+
+— defaulting the omitted case to `IntrinsicDuration` alone, ignoring
+`EntryPoint` entirely. The two `or intrinsic` fallbacks compounded the bug:
+even on the rare path where `src_dur` legitimately parsed as an explicit
+`0`, Python's falsy-`0` would trigger the same wrong `intrinsic` fallback.
+
+**Concrete failure example.** A `<Resource>` with
+`<IntrinsicDuration>1000</IntrinsicDuration>`,
+`<EntryPoint>200</EntryPoint>`, and no `<SourceDuration>` element at all
+should report `sourceDuration = 1000 - 200 = 800`. The old code reported
+`1000` — overcounting this resource's (and the whole composition's)
+duration by exactly its EntryPoint, 200 frames (8.3s at 24fps).
+
+**Why genuine and new.** Distinct from every previously-fixed species per
+`git log | grep 'fix('` review — this is the first fix touching
+`imf_scan.py`'s CPL resource-duration defaulting; all FCPXML/keyframe/
+fallback-scanner fixes (Iterations 48-69) are in unrelated files/functions.
+
+**The fix.** Compute the SMPTE-2067-3-correct default explicitly:
+
+```python
+src_dur_text = _text(res, "SourceDuration")
+src_dur = int(src_dur_text) if src_dur_text else max(0, intrinsic - entry)
+```
+
+and removed the two redundant `or intrinsic` fallbacks on `sourceDuration`
+and `total_frames`, since `src_dur` is now always correctly derived
+(including the true `0` case).
+
+**Test approach.** The existing `_minimal_cpl()` fixture in
+`companion/tests/test_imf_scan.py` uses an Interop-style
+`ReelList/Reel/AssetList/TrackFileList/TrackFile` structure that never
+reaches `_parse_cpl`'s `SegmentList`/`Resource`-parsing loop at all (an
+existing test's own comment confirms `totalFrames` stays `0` against that
+fixture). Added a new `_cpl_with_segment_resource()` fixture builder using
+the actual SMPTE-2067-3 shape the parser expects
+(`SegmentList/Segment/SequenceList/MainImageSequence/ResourceList/
+Resource`), and three tests in a new `TestSourceDurationDefaulting` class:
+omitted `SourceDuration` with nonzero `EntryPoint` (asserts `800`, and
+`totalFrames == 800`), explicit `SourceDuration` used verbatim, and omitted
+`SourceDuration` with `EntryPoint = 0` (equals `intrinsic`, sanity check for
+the old code's coincidentally-correct case).
+
+**Verification (mutation testing).** Reverted `_parse_cpl` to the original
+three buggy lines, reran `TestSourceDurationDefaulting`: the omitted+nonzero-
+EntryPoint test failed with `assert 1000 == 800` exactly as predicted; the
+other two (explicit `SourceDuration`, zero `EntryPoint`) still passed, since
+those inputs don't exercise the difference. Restored the fix: all 3 new
+tests and the full 32-test `test_imf_scan.py` suite passed.
+
+**Gate.** `python3 -m pytest companion/tests/` — 269 passed, 7 skipped, 2
+pre-existing failures in `test_conform_engine.py` (`_regional_distance`
+calling `int.bit_count()`, a Python 3.10+ API on this machine's Python 3.9.6
+— confirmed pre-existing and unrelated by checking `conform_engine.py`
+against `git show HEAD`, which shows it already differs from HEAD as part
+of the repo's existing uncommitted drift, untouched by this fix).
+
+**Still open.** None for this fix.
+
+Commits: `a8fdd73`.
