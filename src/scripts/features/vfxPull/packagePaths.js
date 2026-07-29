@@ -47,7 +47,7 @@ export function buildPackagePaths(outputBase, plateName, shotName = '') {
     geometryFile:   `${root}/metadata/${plateName}_resize.json`,
     resizeFile:     `${root}/metadata/${plateName}_resize.json`,
     colorFile:      `${root}/metadata/${plateName}_color_manifest.json`,
-    pullReportFile: `${root}/metadata/${plateName}_manifest.json`,
+    pullReportFile: `${root}/metadata/${plateName}_pull_report.json`,
     qcFile:         `${root}/metadata/${plateName}_qc.txt`,
     qcJsonFile:     `${root}/metadata/${plateName}_qc.json`,
     // Review files shared across plate versions for the same shot

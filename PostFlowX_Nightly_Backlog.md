@@ -5506,3 +5506,22 @@ stash/pop round-trip. Full suite: 277 passed, 7 skipped, same 2
 pre-existing Python-3.9 `bit_count()` failures (unrelated, out of scope).
 
 Commits: `177def9`.
+
+## Iteration 79 — VFX Pull's pull report and manifest sidecars shared one filename
+
+`packagePaths.js`'s `pullReportFile` was defined byte-identical to
+`manifestFile` (both `${plateName}_manifest.json`) — a copy-paste
+mistake. Both are written for the same plate in the same export run
+(`_runExrExport` → `nativeWritePullSidecars` writes the Python pull
+report first, then `_buildVfxPackageFiles` writes the JS naming
+manifest to the same path), so every VFX Pull export silently
+clobbered the pull report's retime/geometry/color-match/QC data with
+the naming manifest. Fixed by giving `pullReportFile` its own
+`_pull_report.json` suffix. Added
+`tests-js/packagePaths_sidecarCollision.test.mjs`, which asserts no
+two sidecar keys collide; confirmed it fails pre-fix (1/4) and passes
+post-fix (4/4) via a stash/pop round-trip. Full suites: Python 277
+passed/7 skipped (same 2 pre-existing Iteration-76 failures,
+unrelated), JS 0 failures.
+
+Commits: `TBD`.

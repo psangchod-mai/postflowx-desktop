@@ -8559,3 +8559,83 @@ logic bug, out of scope). Other async job runners in this codebase
 was the one outlier using this pattern.
 
 Commits: `177def9`.
+
+## Iteration 79 — VFX Pull's `pullReportFile` and `manifestFile` sidecars were the same path, so every export clobbered the pull report
+
+**Why this file.** `packagePaths.js` is the single factory for every VFX
+Pull sidecar path (AMF, FDL, manifest, frame map, geometry/resize,
+color, pull report, QC), consumed by both the JS export flow and the
+Python `native_helper_client`/`api.py` sidecar writer. A naming mistake
+here silently propagates into every plate's on-disk package.
+
+**The bug.** `buildPackagePaths()` defined
+`pullReportFile: \`${root}/metadata/${plateName}_manifest.json\`` —
+byte-identical to `manifestFile`'s path, a copy-paste-without-rename
+mistake. Both files are written for the same plate within the same VFX
+Pull export run: `_runExrExport()` (`vfxPullPanel.js:6411`) calls
+`nativeWritePullSidecars(job, qcResult)` (`vfxPullPanel.js:5610`),
+which round-trips through `native_helper_client.js` → `api.py`'s
+`_write_pull_sidecars` (line 4942) and writes a rich
+`schemaVersion: "2.0"` JSON (retime/geometry/colorPlan/qtReference/
+colorMatch/frameMatch/output/qc) to `pkg["pullReportFile"]`. Later in
+the same export function, `_buildVfxPackageFiles(exportOpts,
+_state.exrResults || [])` (`vfxPullPanel.js:6441`) builds a
+structurally different naming manifest (shotName, plateName, frame
+range, timecodes, ocfPath, matchConfidence, qcStatus) and writes it to
+`pkg.manifestFile` — the same on-disk path pre-fix.
+
+**Concrete failure example.** Export plate `SHOT_010_PL01_v001` with
+the default (non-manifest-only) render engine: the Python-written pull
+report (retime/geometry/color-match/QC data downstream VFX tools
+depend on) lands at `.../metadata/SHOT_010_PL01_v001_manifest.json`
+first, then the JS-written naming manifest overwrites that exact same
+file moments later — the pull report is gone, replaced by a document
+with none of that data.
+
+**Why genuine and new.** Verified this isn't a latent/unreached
+defect: `_runExrExport`'s manifest-only branch skips the EXR
+render/pull-sidecar step, but the default full-render branch (the
+common case) executes both writers unconditionally in the same
+function for the same job, confirmed by reading
+`vfxPullPanel.js:6400-6450` in full. Distinct from the wrong-API-name
+(Iteration 74), operator-precedence (Iteration 77), and
+`get_session()`-copy-mutation (Iteration 78) bug species already swept
+for.
+
+**The fix.** Gave `pullReportFile` its own suffix:
+`${root}/metadata/${plateName}_pull_report.json`. Also updated the two
+hardcoded fixture strings in `companion/tests/test_vfx_pull_exr.py`
+(lines 299, 360) from `_manifest.json` to `_pull_report.json` for
+consistency, though those fixtures are self-contained and didn't
+require the change for correctness.
+
+**Test approach.** New file
+`tests-js/packagePaths_sidecarCollision.test.mjs`: calls
+`buildPackagePaths()` and asserts `manifestFile !== pullReportFile`,
+that `pullReportFile` carries its own suffix, and that no two sidecar
+keys in the returned object resolve to the same path (excluding the
+intentional `geometryFile`/`resizeFile` alias pair). Confirmed this
+fails pre-fix (1 pass / 3 fail) and passes post-fix (4/4) via a
+`git stash`/re-run/`git stash pop` round-trip on `packagePaths.js`.
+
+**Verification.**
+`node tests-js/packagePaths_sidecarCollision.test.mjs` — 4/4 pass.
+`python3 -m pytest tests/test_vfx_pull_exr.py -q` — 21/21 pass. Full
+companion suite: `python3 -m pytest -q` — 277 passed, 7 skipped, same
+2 pre-existing `test_conform_engine.py` failures from Iterations
+76-78 (`int.bit_count()` needs Python 3.10+; this environment runs
+3.9.6) — unrelated, untouched, out of scope. Full JS suite:
+`npm run test:js` — 0 failures across every test file.
+
+**Gate.** Full companion pytest suite and full JS test suite — both
+pass except the 2 pre-existing, unrelated Python-version failures
+already documented in Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (environment/version issue, not a
+logic bug, out of scope). Other sidecar keys in `packagePaths.js` were
+audited for the same collision pattern as part of writing this fix's
+test — none found beyond the intentional `geometryFile`/`resizeFile`
+alias.
+
+Commits: `TBD`.

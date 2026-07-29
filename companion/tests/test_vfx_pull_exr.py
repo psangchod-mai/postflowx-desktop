@@ -296,7 +296,7 @@ def test_write_pull_sidecars_persists_amf_fdl_and_frame_map(tmp_path):
         "fdlFile": str(tmp_path / "metadata" / "SHOT_PL_v001.fdl.json"),
         "frameMapFile": str(tmp_path / "metadata" / "SHOT_PL_v001_frame_map.csv"),
         "geometryFile": str(tmp_path / "metadata" / "SHOT_PL_v001_resize.json"),
-        "pullReportFile": str(tmp_path / "metadata" / "SHOT_PL_v001_manifest.json"),
+        "pullReportFile": str(tmp_path / "metadata" / "SHOT_PL_v001_pull_report.json"),
         "qcJsonFile": str(tmp_path / "metadata" / "SHOT_PL_v001_qc.json"),
     }
     job = {
@@ -357,7 +357,7 @@ def test_write_pull_sidecars_frame_map_honors_zero_frame_start(tmp_path):
     pkg = {
         "metadata": str(tmp_path / "metadata"),
         "frameMapFile": str(tmp_path / "metadata" / "SHOT_PL_v001_frame_map.csv"),
-        "pullReportFile": str(tmp_path / "metadata" / "SHOT_PL_v001_manifest.json"),
+        "pullReportFile": str(tmp_path / "metadata" / "SHOT_PL_v001_pull_report.json"),
     }
     job = {
         "package": pkg,
