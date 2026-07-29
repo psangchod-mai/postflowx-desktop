@@ -9946,4 +9946,4 @@ renderer-side persist path its own scale-aware cache-key discriminator
 (mirroring `_cacheMode()`), or gate `_persistFrameToCache()` so it never
 writes while `decodeScale !== 1`.
 
-Commits: `TBD`.
+Commits: `11b64c5`.

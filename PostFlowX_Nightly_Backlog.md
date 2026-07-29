@@ -5905,4 +5905,4 @@ using raw `displayMode`, with no discriminator for its own continuous
 `decodeScale` reduction — a related but architecturally distinct risk,
 deliberately scoped out of this fix and flagged for a follow-up.
 
-Commits: `TBD`.
+Commits: `11b64c5`.
