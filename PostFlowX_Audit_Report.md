@@ -12508,4 +12508,4 @@ Weaker than `openPackage()` since it only affects an emitted event,
 not core instance state. Left unaddressed this iteration; a candidate
 for a future pass.
 
-Commits: `TBD`.
+Commits: `dccd431`.

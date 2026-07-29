@@ -6626,4 +6626,4 @@ Still open: `validatePackage()` in the same file emits a `'validation'`
 event after a single await with no guard — weaker (event-only, not
 core state) — left for a future pass.
 
-Commits: `TBD`.
+Commits: `dccd431`.
