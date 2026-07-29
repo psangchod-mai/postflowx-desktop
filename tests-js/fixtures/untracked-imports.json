@@ -1,6 +1,5 @@
 [
   "src/scripts/features/aceslook/index.js -> src/scripts/core/resolveVideoTransport.js",
-  "src/scripts/features/aceslook/services/amfBuilder.js -> src/scripts/features/aceslook/services/ocfIdtResolver.js",
   "src/scripts/features/aceslook/services/presetService.js -> src/scripts/features/aceslook/services/defaultPresets.js",
   "src/scripts/features/home/homeScreen.js -> src/scripts/features/home/appTour.js",
   "src/scripts/features/home/homeScreen.js -> src/scripts/features/home/setupWizard.js",
@@ -11,8 +10,6 @@
   "src/scripts/features/trlconf/index.js -> src/scripts/modules/conform/multiMaster.js",
   "src/scripts/features/trlconf/index.js -> src/scripts/modules/conform/pictureMatcher.js",
   "src/scripts/features/trlconf/index.js -> src/scripts/modules/conform/shotDetect.js",
-  "src/scripts/features/vfxPull/colorPlanEngine.js -> src/scripts/features/aceslook/services/ocfIdtResolver.js",
-  "src/scripts/features/vfxPull/fdlGenerator.js -> src/scripts/features/aceslook/services/ocfIdtResolver.js",
   "src/scripts/features/vfxPull/vfxPullPanel.js -> src/scripts/features/mediaSearch/mediaSearchBox.js",
   "src/scripts/features/vfxPull/vfxPullPanel.js -> src/scripts/features/vfxPull/dbLibrarySource.js",
   "src/scripts/features/vfxPull/vfxPullPanel.js -> src/scripts/features/vfxPull/idtBadge.js",
