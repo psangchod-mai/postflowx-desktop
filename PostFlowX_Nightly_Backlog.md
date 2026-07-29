@@ -6774,3 +6774,34 @@ Still open: no further backup candidate identified this iteration — a
 future iteration should scout fresh for the next stale-race target.
 
 Commits: `289941f`.
+
+## Iteration 128 — IMF Settings tab engine-status refresh stale-race
+
+`imf_ui.js`'s `_loadEngineStatus()` (Engine Status panel on the IMF
+Settings tab) awaited its `engineStatus()` IPC probe then
+unconditionally overwrote the engine list — a double-click on Refresh,
+or a click landing during the Settings-tab-reopen auto-load, could let
+a stale probe overwrite a newer refresh's engine list. Added an
+`_engineStatusSeq` monotonic counter (same pattern as prior
+iterations), checked after the `engineStatus()` await in both the
+success and error paths; a superseded call now bails before
+re-rendering. New test
+`tests-js/imfEngineStatusRefreshStaleRace.test.mjs` (4 assertions)
+drives two overlapping refresh clicks via a mocked `engineStatus()`
+and confirms the stale one never wins. Before/after verified: reverted
+code failed 2/4 as predicted, restored fix re-passed 4/4. This file
+turned out to carry pre-existing, unrelated, uncommitted WIP (a
+PLUGFEST_TESTS MXF-matching fix and an AUD004 label-QC fix) — a
+whole-file `git add` was caught bundling it in and reset; the fix was
+instead staged via a hand-built hunk-only patch (`git apply --cached`),
+landing exactly 6 insertions / 0 deletions and leaving the unrelated
+WIP untouched. Full regression matched baseline (`test:js` all-green
+except expected self-containment-gate noise, resolved by staging the
+new test file; `test:node` 72/0/1-skipped; `test:py`
+313/7-skipped/2-pre-existing-unrelated-failures).
+
+Still open: the pre-existing PLUGFEST_TESTS/AUD004 WIP in this file is
+someone else's in-progress work and was left alone — a future
+iteration should scout a fresh file rather than return here.
+
+Commits: `TBD`.

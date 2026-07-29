@@ -1547,6 +1547,8 @@ function _runPlugfestSuite() {
 
 // ── Engine Status (Settings tab) ──────────────────────────────────────────────
 
+let _engineStatusSeq = 0;
+
 function _wireEngineStatus() {
   const refreshBtn = document.getElementById('imfEngineRefreshBtn');
   if (refreshBtn) {
@@ -1573,8 +1575,11 @@ async function _loadEngineStatus() {
 
   listEl.innerHTML = '<div style="font-size:9px;color:rgba(255,255,255,.35);">Checking engines…</div>';
 
+  const seq = ++_engineStatusSeq;
+
   try {
     const { engines } = await window.pfxPlatform.imf.engineStatus();
+    if (seq !== _engineStatusSeq) return; // superseded by a newer refresh
     if (!engines || engines.length === 0) {
       listEl.innerHTML = '<div style="font-size:9px;color:rgba(255,255,255,.35);">No engines reported</div>';
       return;
@@ -1591,6 +1596,7 @@ async function _loadEngineStatus() {
       </div>`;
     }).join('');
   } catch (err) {
+    if (seq !== _engineStatusSeq) return; // superseded by a newer refresh
     listEl.innerHTML = `<div style="font-size:9px;color:#f55;">Error: ${_esc(err.message)}</div>`;
   }
 }

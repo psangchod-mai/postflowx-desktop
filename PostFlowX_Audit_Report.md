@@ -12917,3 +12917,91 @@ as riskier/weaker matches. A future iteration should scout fresh
 before choosing its target.
 
 Commits: `289941f`.
+
+## Iteration 128 — IMF Settings tab engine-status refresh stale-race
+
+**Why this file:** `src/scripts/modules/imf/imf_ui.js`'s
+`_loadEngineStatus()` is wired via `_wireEngineStatus()` to two
+independent call sites — the Engine Status panel's Refresh button, and
+the "IMF Settings tab re-opened" listener (fires whenever the tab is
+clicked while the list still shows its initial placeholder row). Both
+can kick off an overlapping `window.pfxPlatform.imf.engineStatus()` IPC
+round-trip. This is the same "await an IPC round-trip, then
+unconditionally overwrite shared UI state" shape already fixed in
+`nativeAVPlayer.js`, `player.js`, `imf_player_engine.js`,
+`mpvPlayer.js`'s `seekTime()`, `vfxPullPanel.js`'s `_scanOcfFolder()`
+(Iteration 126), and `resolve_engine_panel.js`'s `_refresh()`
+(Iteration 127) — flagged by this iteration's scout as a strong next
+backup candidate. The file's dynamic-import feasibility under
+linkedom (a large monolith with a 13+-module import chain) was
+confirmed safe via a throwaway probe before committing to this target.
+
+**The bug:** A double-click on Refresh — or a Refresh click landing
+while the Settings-tab-reopen auto-load is still in flight — starts
+two overlapping `_loadEngineStatus()` chains, each awaiting its own
+`engineStatus()` probe before unconditionally overwriting
+`#imfEngineStatusList`'s `innerHTML`. If an earlier call's probe
+resolves after a later call already settled (out-of-order IPC
+resolution), the stale chain overwrites the newer refresh's engine
+list with old data — a real, user-visible "the panel shows the wrong
+engine status" bug, in both the success path and the `catch` error
+path.
+
+**The fix:** Added a module-level `_engineStatusSeq` monotonic counter
+(same pattern as the five prior iterations above). `_loadEngineStatus()`
+captures `const seq = ++_engineStatusSeq` right after posting the
+"Checking engines…" placeholder and before its `await`, then checks
+`seq !== _engineStatusSeq` immediately after the
+`engineStatus()` await resolves (both in the success path and inside
+the `catch` block), returning early without touching
+`#imfEngineStatusList` if superseded by a newer refresh.
+
+**Test approach:** New linkedom test
+(`tests-js/imfEngineStatusRefreshStaleRace.test.mjs`) stubs
+`window`/`document` with an `#imfEngineStatusList` placeholder row and
+an `#imfEngineRefreshBtn`, fakes `window.pfxPlatform.imf.engineStatus`
+with independently-resolvable deferred promises, dynamically imports
+the full `imf_ui.js` module (confirmed via a throwaway probe to import
+cleanly and to have `initIMFTab()` no-op gracefully against a minimal
+DOM/stub with only a benign "anchor not found" log), and calls
+`initIMFTab()` to wire up `_wireEngineStatus()`. It then dispatches two
+`click` events on the Refresh button in quick succession (two
+overlapping probe calls), resolves the *later* call's probe first with
+a distinguishable engine ("FFmpeg"), confirms the list rendered it,
+then resolves the *earlier* (now-stale) call's probe late with a
+different engine ("StaleEngine") and confirms the list still shows
+"FFmpeg" and never renders "StaleEngine".
+
+**Verification:** Backed up the fixed file, reverted the
+`_engineStatusSeq` counter and the two seq-check/early-return lines in
+`_loadEngineStatus()` back to the original unguarded code, then ran
+the test against the reverted code: 2 of 4 assertions failed exactly
+as predicted (the list was overwritten back to "StaleEngine" instead
+of staying on the settled "FFmpeg"). Restored the fixed file from the
+backup; re-ran the test — 4 of 4 passed. Unlike the five prior
+iterations, this file was discovered to already carry pre-existing,
+unrelated, uncommitted WIP in the same file — a PLUGFEST_TESTS
+MXF-file-matching fix (fixing `fileMap` `Map`-vs-plain-object key
+lookup) and an AUD004 IAB label-QC fix (distinguishing "no actionable
+labels found" from "all actionable labels passed") — plus the usual
+pre-existing mode-bit drift (100644 → 100755). A whole-file `git add`
+was caught staging all of this unrelated content together
+(`imf_ui.js | 24 +++++--`) and was immediately unstaged via `git reset`
+before anything was committed. The fix was then staged correctly via a
+hand-built hunk-only patch applied with `git apply --cached`,
+containing only the three Engine Status hunks (the `_engineStatusSeq`
+declaration and the two seq-check insertions); `git diff --cached
+--stat` confirmed exactly 6 insertions / 0 deletions staged, with the
+pre-existing PLUGFEST_TESTS/AUD004 WIP (12 insertions / 6 deletions)
+and the mode-bit drift left untouched and unstaged, matching the
+intended fix scope precisely.
+
+**Still open:** The pre-existing PLUGFEST_TESTS/AUD004 WIP discovered
+in this file belongs to work already in progress outside this loop and
+was deliberately left untouched/uncommitted, per standing instructions
+to never bundle unrelated pre-existing changes into this loop's
+commits. A future iteration should scout fresh rather than returning
+to this file, since any further edits here would need the same
+hunk-selective staging care.
+
+Commits: `TBD`.
