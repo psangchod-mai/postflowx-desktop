@@ -6378,4 +6378,4 @@ partial file mid-write; post-fix, 0/40 torn reads across 20 trials.
 Full regression suite re-run and matched baseline exactly:
 313/7/2(pre-existing) Python, all Node/JS suites passing.
 
-Commits: `TBD`.
+Commits: `d938f46`.
