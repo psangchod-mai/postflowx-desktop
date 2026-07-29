@@ -5314,4 +5314,45 @@ commit passes independent of the unstaged drift.
 this session). Scouting agent's other two candidates (audio correlation
 in `conform_engine.py`; MIC check conflation in `imf_qc.py`) unaddressed.
 
-Commits: `c9ee0d8`.
+Commits: `c9ee0d8`, `7c580a8`.
+
+## Iteration 73 — Python `parse_edl` dropped dissolve/wipe events and used source span for duration_frames
+
+**Found.** `parse_edl` in `companion/src/postflowx_companion/engines/conform_engine.py`
+(the Python-side CMX3600 EDL parser, sibling to Iteration 72's JS fix)
+had two bugs: (1) its event regex hardcoded literal `C` as the edit-type
+token, so `D` (dissolve) and `W###` (wipe) lines never matched and were
+silently dropped — could trigger `RESOLVE_SCRIPT_FAILED: No events found`
+for transition-only EDLs; (2) `duration_frames` was computed from the
+source TC span instead of the record TC span, same bug class as
+Iteration 72 but in this file/function.
+
+**Fix.** Broadened the regex to `([A-Z])\s*(?:\d+)?` (any transition
+letter + optional duration token) and switched duration calc to use
+`rec_in`/`rec_out`, mirroring `edlParser.js`'s already-correct `parseEdl()`.
+
+**Tests.** New file `companion/tests/test_conform_engine_parse_edl.py`:
+one test asserts a cut+dissolve+wipe EDL parses all 3 events; one asserts
+duration comes from a 96-frame record span, not a 48-frame source span.
+
+**Verification.** Confirmed both bugs against the old logic via
+standalone regex/arithmetic snippets. Full suite:
+`python3 -m pytest companion/tests/` — 273 passed, 7 skipped, 2 failed
+(pre-existing Python-3.9 `bit_count()` gate, unrelated).
+
+**Complication.** Both `conform_engine.py` and `test_conform_engine.py`
+carry large pre-existing uncommitted "Picture Conform v1.4" drift.
+Isolated the source fix via a hand-crafted `git apply --cached` patch
+(first awk attempt used a wrong stop-pattern and grabbed ~400 extra
+drift lines — caught by reviewing the patch before applying, fixed).
+For the test file, followed the Iteration 72 precedent directly: put the
+2 new tests in a brand-new dedicated file instead of touching the
+drift-laden existing one.
+
+**Gate.** `python3 -m pytest companion/tests/` — 273 passed, 7 skipped, 2
+pre-existing-unrelated failed.
+
+**Still open.** Both files' pre-existing v1.4 visual-matcher drift
+remains untouched and uncommitted (predates this session, out of scope).
+
+Commits: `f74f89b`.

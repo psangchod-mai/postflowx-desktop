@@ -7967,4 +7967,127 @@ session and is out of scope for this fix. The scouting agent's other two
 flagged candidates (audio correlation in `conform_engine.py`; MIC check
 conflation in `imf_qc.py`) remain unaddressed.
 
-Commits: `c9ee0d8`.
+Commits: `c9ee0d8`, `7c580a8`.
+
+## Iteration 73 — Python `parse_edl` drops dissolve/wipe events and computes duration from the wrong span
+
+**Why this file.** `companion/src/postflowx_companion/engines/conform_engine.py`'s
+`parse_edl` is the Python-side CMX3600 EDL parser feeding
+`run_conform_analyze_async` and `_match_events` — the companion-server
+counterpart to the JS `edlParser.js` fixed in Iteration 72. A scouting
+agent flagged the same bug *class* (dissolve/wipe drop) recurring here in
+a different language/function; independent verification during this
+iteration also turned up a second, related bug the scouting agent missed.
+
+**The bugs.**
+1. **Dissolve/wipe silent drop.** The CMX3600 event regex hardcoded the
+   literal edit-type token `C`:
+   ```python
+   r"^(\d{3,4})\s+(\S+)\s+\S+\s+C\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)"
+   ```
+   Dissolve (`D`) and wipe (`W###`) lines carry a different edit-type
+   letter plus an extra transition-duration field, so they never matched
+   and were silently dropped from the parsed event list — no warning, no
+   error, just missing events.
+2. **Source-vs-record duration.** `duration_frames=max(0, fo - fi)` computed
+   duration from `fi`/`fo` — the parsed *source* TC span (`src_in`/`src_out`)
+   — instead of the *record* TC span (`rec_in`/`rec_out`), the same bug
+   class just fixed in Iteration 72 for `parseFcpXml`, here recurring in a
+   sibling Python function.
+
+**Concrete failure example.** An EDL with a cut, a dissolve
+(`002  AX  V  D  024  ...`), and a wipe (`003  AX  V  W001  ...`): the old
+regex parsed only the cut, silently dropping 2 of 3 events. Downstream,
+`_match_events` would either skip the missing events or — if an EDL
+consisted entirely of transitions — trip the `RESOLVE_SCRIPT_FAILED: No
+events found` error path (confirmed present at 4 call sites via `grep`).
+Separately, a event with source span `00:00:00:00`-`00:00:02:00` (48
+frames) but record span `01:00:00:00`-`01:00:04:00` (96 frames) reported
+`duration_frames=48` instead of the correct `96`.
+
+**Why genuine and new.** Distinct from every previously-fixed species
+(48-72). Same bug *class* as Iteration 72 (source-vs-record duration) but
+a different file, language, and function (`parse_edl`, not `parseFcpXml`).
+The dissolve/wipe-drop bug is a different species than either.
+
+**The fix.** Broadened the regex to accept any transition letter plus an
+optional duration token, and switched the duration calculation to use the
+record TCs — mirroring the JS sibling `parseEdl()` in `edlParser.js`,
+which already handled both correctly and served as the direct model:
+
+```python
+# Matches ANY edit-type letter (C/D/W/K/…) and consumes the optional
+# dissolve/wipe duration token that follows it, so dissolve and wipe
+# events are not silently dropped from the parsed event list.
+m = re.match(
+    r"^(\d{3,4})\s+(\S+)\s+\S+\s+([A-Z])\s*(?:\d+)?\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)",
+    line,
+)
+...
+# Timeline duration comes from the RECORD TCs (authoritative), not
+# the source TCs — source points at WIP masters and is re-resolved
+# by matching. Mirrors edlParser.js's parseEdl().
+fi = _tc_to_frames(rec_in, fps)
+fo = _tc_to_frames(rec_out, fps)
+```
+
+**A complication worth documenting.** Both the source file and its test
+file carried substantial pre-existing uncommitted drift, unrelated to
+this fix — an entire "Picture Conform v1.4" visual-matcher feature
+(~450 lines: `_visual_status`, `_regional_hash_from_gray`,
+`_build_visual_index`, etc.) in `conform_engine.py`, and 4 drift tests
+plus drift imports (~100 lines) in `test_conform_engine.py`. This was a
+more involved isolation than Iteration 72's single-file case, since two
+separate files each needed independent isolation:
+- For `conform_engine.py`: extracted the `parse_edl` hunk from a
+  `git diff -U5` via `awk`, applied with `git apply --check --cached`
+  then `git apply --cached`. First attempt used an incorrect awk
+  stop-pattern (`/^@@ -644/` when the actual next hunk header was
+  `@@ -642,10 +672,309 @@`), which let the "off" flag never trigger and
+  captured ~400 extra lines of unrelated drift into the patch — caught by
+  reviewing the full patch output before applying, fixed by using the
+  exact header text as the stop-pattern.
+- For `test_conform_engine.py`: rather than patch-isolate two new test
+  functions out of a drifted file, followed the Iteration 72 precedent
+  directly — created a new dedicated file,
+  `companion/tests/test_conform_engine_parse_edl.py`, containing just the
+  2 new regression tests and their own self-contained imports, leaving
+  `test_conform_engine.py` completely untouched (verified via
+  `git diff --stat` showing the same original 63-insertion/1-deletion
+  drift, unchanged).
+- Also discovered mid-iteration: `git stash push -- conform_engine.py`
+  (attempted to test the old buggy behavior against a "clean" file)
+  reverted the *entire* file to its last commit, stripping the drift-added
+  `VIS_GRID` constant that the drift tests in `test_conform_engine.py`
+  import, breaking collection with `ImportError: cannot import name
+  'VIS_GRID'`. Recovered via `git stash pop`; switched strategy to
+  reproducing the old buggy regex/duration logic via standalone Python
+  snippets against literal fixture strings instead of touching tracked
+  files.
+
+**Test approach.** New file `test_conform_engine_parse_edl.py`:
+`test_parse_edl_keeps_dissolve_and_wipe_events` parses a cut+dissolve+wipe
+EDL and asserts all 3 events survive; `test_parse_edl_duration_frames_from_record_span_not_source_span`
+constructs an event with a 48-frame source span and 96-frame record span,
+asserting `duration_frames == 96`.
+
+**Verification.** Confirmed both bugs against the old logic via standalone
+regex/arithmetic snippets before fixing. Both new tests pass in isolation
+(`pytest companion/tests/test_conform_engine_parse_edl.py -q` → 2 passed).
+Full suite: 273 passed, 7 skipped, 2 failed — the 2 failures are the
+known pre-existing Python-3.9 `bit_count()` gate (Iterations 70-71),
+unrelated to this change; no regressions. Verified the staged commit's
+`--cached --stat` showed exactly 13 insertions/7 deletions for
+`conform_engine.py`, matching the intended isolated hunk.
+
+**Gate.** `python3 -m pytest companion/tests/` — 273 passed, 7 skipped, 2
+pre-existing-unrelated failed (bit_count, Python 3.9 gap).
+
+**Still open.** Both files' pre-existing "Picture Conform v1.4" drift
+(visual matcher in `conform_engine.py`; drift tests/imports in
+`test_conform_engine.py`) remains completely untouched and uncommitted,
+as it predates this session and is out of scope. The scouting agent's
+other flagged candidates from prior iterations not yet addressed remain
+open.
+
+Commits: `f74f89b`.
