@@ -10287,4 +10287,4 @@ iteration. `_decode_sdk()` (BRAW/RED/ARRI/Canon vendor SDKs) is currently
 a stub that always falls through to ffmpeg, so it was not in scope for
 this key-collision species.
 
-Commits: `TBD`.
+Commits: `8846ceb`.

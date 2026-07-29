@@ -6015,4 +6015,4 @@ fallback (which has no `scale` param at all) is a distinct bug, left open.
 `python3 -m pytest -q`: 313 passed/7 skipped, same 2 pre-existing failures
 as baseline.
 
-Commits: `TBD`.
+Commits: `8846ceb`.
