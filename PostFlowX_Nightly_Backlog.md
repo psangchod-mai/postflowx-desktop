@@ -6512,3 +6512,24 @@ using real 30ms timers plus per-frame deferred fetch gates: pre-fix,
 `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
 
 Commits: `01cfa7d`.
+
+## Iteration 118 — reviews/index.js `__pfxHydrateThumbs()` busy-flag drop
+
+`__pfxHydrateThumbs()` guarded re-entrancy with a bare boolean
+(`if (__pfxHydrateThumbsBusy) return false;`), so an on-demand
+single-marker thumbnail request arriving while a background `{all:true}`
+sweep was already running got dropped silently — `false` immediately,
+never actually loaded — and `__pfxEnsureMarkerThumbLoaded` returned
+`null` for a thumbnail that exists and is reachable. Fixed by adding
+`__pfxHydrateThumbsInFlight`, a promise for the current pass; a busy
+caller now awaits it and re-invokes itself instead of bailing out.
+Verified with a new test (`tests-js/reviewsHydrateThumbsBusyDrop.test.mjs`)
+using a new extract-and-eval technique — slicing the real function
+source out of this 10k-line monolith via `indexOf` and executing it with
+`new Function(...)` against stubbed store/kvGet/kvSet, since the module
+never exports these closures. Pre-fix, the on-demand request resolved to
+`null`; post-fix, it resolves to the real data URL. Full regression suite
+re-run and matched baseline exactly: all `test:js` files 0 failed,
+72/0/1-skipped Node, 315/7/0 Python.
+
+Commits: `TBD`.

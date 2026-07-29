@@ -12166,3 +12166,72 @@ iteration's test — no other stale-draw paths were found in this file
 during this pass.
 
 Commits: `01cfa7d`.
+
+## Iteration 118 — reviews/index.js `__pfxHydrateThumbs()` busy-flag drop
+
+**Why this file:** `src/scripts/features/reviews/index.js`'s
+`__pfxHydrateThumbs()` loads/decodes review-marker thumbnail images from
+IndexedDB and is called two ways: as a debounced background sweep
+(`__pfxScheduleHydrateThumbs` → `{all:true}`) and as an on-demand,
+single-marker request via `__pfxEnsureMarkerThumbLoaded(markerId)`, used
+by several UI sites that need one marker's thumbnail available
+immediately (e.g. rendering a marker into view).
+
+**The bug:** Re-entrancy was guarded with a bare boolean:
+`if (__pfxHydrateThumbsBusy) return false;`. If a background sweep was
+already in flight when an on-demand request for a specific marker
+arrived, the on-demand call got `false` back immediately instead of
+waiting its turn — the requested marker's thumbnail was silently never
+loaded even though it would have succeeded had it simply waited, and
+`__pfxEnsureMarkerThumbLoaded` then returned `null` for a thumbnail that
+actually exists and is reachable in IndexedDB.
+
+**The fix:** Added `__pfxHydrateThumbsInFlight`, a promise reference to
+the currently-running pass. When `__pfxHydrateThumbs()` is called while
+busy, instead of bailing out with `false` it now `await`s the in-flight
+promise and then re-invokes itself (`return __pfxHydrateThumbs(opts)`),
+so the caller's specific request is genuinely serviced once the current
+pass finishes rather than being dropped. The original work body was
+wrapped in an IIFE assigned to `__pfxHydrateThumbsInFlight`, with the
+`finally` block clearing both the busy flag and the in-flight reference.
+
+**Test approach:** `tests-js/reviewsHydrateThumbsBusyDrop.test.mjs`, a
+new test using a technique not previously used in this suite:
+extract-and-eval. `reviews/index.js` is a 10,871-line monolith whose
+functions are private closures inside `mountVfxReviewsTab(mount)`, never
+exported, and the file's only existing test (`saveNotice.test.mjs`)
+handles this by asserting on the source text structurally rather than
+executing it. This iteration goes further: it slices the exact source
+text of `__pfxHydrateThumbs`/`__pfxEnsureMarkerThumbLoaded` and their
+small pure dependencies directly out of the real file via
+`indexOf`-based string extraction, then executes that source through
+`new Function('store','markersBody','notesVisibleIds','kvGet','kvSet',
+block + 'return {...}')` with stubbed closure-captured values injected as
+parameters — so the test runs the real function bodies verbatim, not a
+reimplementation, without mounting the full UI tab. A `slowKvGet` helper
+resolves after a real `setTimeout` delay so a background `{all:true}`
+sweep and an on-demand request for a different marker genuinely overlap
+in time rather than resolving synchronously.
+
+**Verification:** Pre-fix (temporarily reverted to the bare
+`if (__pfxHydrateThumbsBusy) return false;` guard and the simple
+`finally { __pfxHydrateThumbsBusy = false; }` block, via a `/tmp` backup
+restored afterward), both new tests failed exactly as predicted: the
+on-demand request resolved to `null` instead of the real thumbnail data
+URL. Post-fix (restored from backup, confirmed via `git diff -U2` that
+the change is scoped to exactly the intended 2 hunks — the new
+`__pfxHydrateThumbsInFlight` variable and the busy-check/IIFE rewrite,
+19 insertions/7 deletions — alongside 5 pre-existing unrelated WIP hunks
+of UI-copy wording left untouched), both tests pass. Full regression
+suite re-run and matched baseline: `test:js` — every file 0 failed (this
+new test file included; `selfContained.test.mjs` flags it as untracked
+until staged/committed, matching the pattern for every prior iteration's
+new test file); `test:node` — 72 passed, 0 failed, 1 skipped; `test:py`
+— 315 passed, 7 skipped, 0 failed.
+
+**Still open:** Only the busy-flag/re-entrancy path was addressed; the
+per-marker hydration loop body and the trim-memory logic inside
+`__pfxHydrateThumbs` were not otherwise changed or newly tested this
+iteration.
+
+Commits: `TBD`.

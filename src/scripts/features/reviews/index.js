@@ -584,6 +584,7 @@ const __pfxSanitizeMarkerReviewByClipId = (marker = {}, markerId = '') => {
 };
 
 let __pfxHydrateThumbsBusy = false;
+let __pfxHydrateThumbsInFlight = null;
 let __pfxHydrateThumbsTimer = null;
 const __PFX_REV_THUMB_RAM_MAX = 18;
 const __PFX_REV_THUMB_VIEW_MARGIN = 140;
@@ -690,8 +691,16 @@ const __pfxScheduleHydrateThumbs = (delay = 80, opts = null) => {
 };
 
 async function __pfxHydrateThumbs(opts = {}) {
-  if (__pfxHydrateThumbsBusy) return false;
+  if (__pfxHydrateThumbsBusy) {
+    // A pass is already running — it may not cover the marker(s) this call
+    // actually needs (e.g. an on-demand single-marker request arriving
+    // during a background `{all:true}` sweep), so wait for it to finish
+    // and then run this request for real instead of silently dropping it.
+    try { await __pfxHydrateThumbsInFlight; } catch {}
+    return __pfxHydrateThumbs(opts);
+  }
   __pfxHydrateThumbsBusy = true;
+  __pfxHydrateThumbsInFlight = (async () => {
   try {
     const markers = Array.isArray(store?.state?.markers) ? store.state.markers : [];
     if (!markers.length) return false;
@@ -761,7 +770,10 @@ async function __pfxHydrateThumbs(opts = {}) {
     return false;
   } finally {
     __pfxHydrateThumbsBusy = false;
+    __pfxHydrateThumbsInFlight = null;
   }
+  })();
+  return __pfxHydrateThumbsInFlight;
 }
 
 async function __pfxEnsureMarkerThumbLoaded(markerId) {
@@ -2615,7 +2627,7 @@ const __pfxTryRestoreNotesOnly = async () => {
   srcScrub.addEventListener('pointerdown', showSrcOverlay);
   window.addEventListener('pointerup', hideSrcOverlay);
 
-  const sourceHint = el("div", "pfx-reviews-viewerHint", "Select a clip in the bin or drop files");
+  const sourceHint = el("div", "pfx-reviews-viewerHint", "Select a clip from the list, or drag video files here to start.");
   sourceViewer.appendChild(sourceHint);
 
   // Compact source controls: keep a single bottom overlay bar, QuickTime-style.
@@ -2784,7 +2796,7 @@ const __pfxTryRestoreNotesOnly = async () => {
   pgScrub.addEventListener('pointerdown', showOverlay);
   window.addEventListener('pointerup', hideOverlay);
 
-  const viewerHint = el("div", "pfx-reviews-viewerHint", "Drop MP4/MOV (H.264) to build a Review Timeline");
+  const viewerHint = el("div", "pfx-reviews-viewerHint", "Drag MP4 or MOV (H.264) files here to build a review timeline.");
   viewer.appendChild(viewerHint);
 
   // QC toggles (apply as viewer CSS classes)
@@ -6798,8 +6810,8 @@ read -p "  Press Enter to close..."
     try { appendHeaderMediaSummary(clipsHeaderMediaState, clipsShots); } catch {}
 
     if (!allClips.length) {
-      refBody.append(el('div', 'pfx-reviews-empty', 'No refs yet. Add MP4/MOV to V1 (Ref). Then use Load TL for timeline cuts.'));
-      clipsBody.append(el('div', 'pfx-reviews-empty', 'No shots yet. Add MP4/MOV (H.264).'));
+      refBody.append(el('div', 'pfx-reviews-empty', 'No reference clips yet. Drag MP4 or MOV files here to add them, then use “Load TL” to bring in your timeline cuts.'));
+      clipsBody.append(el('div', 'pfx-reviews-empty', 'No shots yet. Drag in MP4 or MOV (H.264) files to review them here.'));
       viewerHint.style.display = 'block';
       pinnedBinClipId = null;
       loadSourceClip(null);
@@ -8770,7 +8782,7 @@ const __rvCtxTargetOk = (target) => {
 
     const normSeverity = (sev) => {
       const s = String(sev || 'S2').trim();
-      // Allow values like "S2 Major", "S2", "S3 Critical"
+      // Allow values like "S1 Critical", "S2 Major", "S2", "S3 Minor"
       const m = s.match(/S\s*([0-9])/i);
       if (m) return `S${m[1]}`;
       return s || 'S2';
@@ -8969,7 +8981,7 @@ const __rvCtxTargetOk = (target) => {
           <div class="boxTitle">Glossary (quick)</div>
           <div class="glGrid">
             <div class="glRow"><span class="term">R4</span><span class="def"><b>Risk score</b> = 4 (auto). Higher = needs more attention. Calculated from <b>Status</b> + <b>Severity</b> + evidence (thumbnail) + note length. (Typical range 0–8)</span></div>
-            <div class="glRow"><span class="term">S2</span><span class="def"><b>Severity level</b>. <b>S2 Major</b> = significant issue that likely requires fixes before approval. S1 = Minor, S3 = Critical.</span></div>
+            <div class="glRow"><span class="term">S2</span><span class="def"><b>Severity level</b>. <b>S1 Critical</b> = most severe, must be fixed. <b>S2 Major</b> = significant issue that likely requires fixes before approval. <b>S3 Minor</b> = low-priority polish.</span></div>
             <div class="glRow"><span class="term">WIP</span><span class="def">Work in progress. Still being worked on / under review.</span></div>
             <div class="glRow"><span class="term">NEED FIX</span><span class="def">Changes required. Must address note(s) before approval.</span></div>
             <div class="glRow"><span class="term">HOLD</span><span class="def">Paused / waiting on dependency (plate, edit lock, client decision, etc.).</span></div>
