@@ -11030,3 +11030,107 @@ grafted on separately. The `conform_engine.py` `suggestedSourceOut`
 finding also remains open for the same reason.
 
 Commits: `c706108`.
+
+## Iteration 104
+
+**Why this file:** `imf_qc.py` is the IMF QC/validation engine invoked by
+`api.py`'s `_run_imf_qc()` and surfaced verbatim to the Electron/renderer
+UI as the package's pass/fail verdict. A wrong `overallStatus` here is a
+false report shown directly to the operator deciding whether to deliver
+a package.
+
+**The bug:** `run_photon()` always runs embedded-MIC verification
+(`verify_essence_mic`) and essence-descriptor conformance
+(`verify_essence_conformance`) independently of whether Netflix Photon
+itself is available, and folds both into a `mic_findings` list. But the
+function's `base` result dict hardcodes `"overallStatus": "fail"` at
+construction time, and none of its four early-return branches — Java
+missing, `photon.jar` missing, Photon timeout, Photon launch exception —
+ever recompute that field from `mic_findings` before returning. Only the
+successful-Photon-run path at the bottom of the function correctly
+derives `overall` from combined `errors`/`warnings`. The practical
+effect: any package with a completely clean embedded MIC and clean
+essence-descriptor conformance, but where Java or `photon.jar` simply
+isn't installed on the machine, is reported to the operator as a hard
+QC **failure** — indistinguishable from a package with a real integrity
+problem.
+
+**Independent verification:** Read `run_photon()` directly
+(`companion/src/postflowx_companion/imf_qc.py`, lines ~309-410) and
+confirmed the exact structure a scout agent had flagged: the `base` dict
+initializes `overallStatus` to `"fail"` (line ~330), `mic_findings` is
+computed at line ~340 but only ever assigned to `base["findings"]`, never
+used to correct `overallStatus`, in the `not java` / `not jar` /
+`TimeoutExpired` / generic-exception branches (lines ~342-378). Confirmed
+`_mic_findings()`/`_conform_findings()` both emit dicts with a
+`"severity"` key using `"ERROR"`/`"WARNING"` (matching the vocabulary the
+successful-run path already filters on at line ~395-396:
+`f["severity"] in ("ERROR", "FATAL")` for errors, `"WARNING"` for
+warnings). Confirmed reachability: `api.py`'s `_run_imf_qc()` calls
+`run_photon` (aliased `_run_photon_qc`) and returns the result verbatim
+via `self._ok(result)`, cached in `self._qc_cache` — no caller
+recomputes `overallStatus`. Confirmed the existing
+`test_imf_qc_mic.py::test_mic_attached_when_photon_absent` test exercises
+the Photon-absent path with a clean MXF but only asserts on
+`res["mic"]["overallStatus"]`, never on the top-level
+`res["overallStatus"]` — leaving this bug uncaught. Confirmed via
+`git diff --stat -- companion/src/postflowx_companion/imf_qc.py` and
+`git log --oneline -5 -- <file>` that the file carried no pre-existing
+uncommitted WIP before this fix (clean at HEAD `0a57b69`), so no
+WIP-overlap risk.
+
+**The fix:** Immediately after computing `mic_findings`, and before any
+of the four early-return branches, compute `base["overallStatus"]` from
+`mic_findings` severities using the same rule the successful-Photon-run
+path already applies: `"fail"` if any finding has severity `"ERROR"` or
+`"FATAL"`, else `"warn"` if any has `"WARNING"`, else `"pass"`. This
+makes every return path — Photon available or not — report a status
+that reflects what MIC/conformance actually found, instead of the four
+early-return branches silently overriding a legitimately clean result
+with the hardcoded `"fail"` default.
+
+**Test approach:** Built a standalone harness
+(`/tmp/verify_imf_qc_fix.py`) that imports `imf_qc` directly and
+monkeypatches `find_java` (→ `None`, simulating Photon unavailable),
+`verify_essence_mic`, and `verify_essence_conformance` to return
+Photon-independent rollups shaped exactly like the real functions'
+output (`results: []` for a clean MIC/conformance pair, matching what
+`_mic_findings`/`_conform_findings` iterate over). Ran the harness
+against the actual unmodified `run_photon()` before applying the fix (via
+`git stash` on just this file) to confirm the bug reproduces: a
+completely clean package with Photon unavailable returned
+`overallStatus: "fail"`. Restored the fix (`git stash pop`) and re-ran
+the identical harness: the same clean package now returns
+`overallStatus: "pass"`. Added a second case in the same harness — a
+dirty MIC (one `ERROR`-severity finding) with Photon still
+unavailable — confirming the fix correctly still reports `"fail"` for a
+genuinely broken package, i.e. this is not a blanket "always pass when
+Photon is missing" regression.
+
+**Verification:** Before-fix run: `overallStatus: fail` for the clean
+case (bug reproduced). After-fix run: `overallStatus: pass` for the
+clean case, `overallStatus: fail` retained for the dirty-MIC case — both
+asserted in the harness with a nonzero exit code on failure; both passed
+cleanly (exit 0) after the fix. Full regression suites re-run and
+confirmed against the established baseline: Python
+(`python3 -m pytest -q` in `companion/`) — 313 passed, 7 skipped, 2
+failed (the same pre-existing, unrelated `test_conform_engine.py`
+`bit_count()` failures documented in prior iterations); Node
+(`npm run test:node`) — 72 passed, 1 skipped, 0 failed; JS
+(`npm run test:js`) — 22 passed, 0 failed. `git diff --stat` on the
+target file showed exactly the intended 10-line insertion (plus the
+pre-existing repo-wide mode-bit drift, `100644`→`100755`, unrelated to
+this change and consistent with every other file touched this session).
+
+**Gate:** No caller of `run_photon()` relies on `overallStatus` staying
+`"fail"` when Photon is unavailable — `api.py`'s `_run_imf_qc()` passes
+the result straight through, and the UI's pass/fail styling is driven
+entirely by this field, so a clean-but-Photon-less package now correctly
+renders as passing rather than failing.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding and the
+`conform_engine.py` `suggestedSourceOut` finding both remain open,
+unfixed, for the same WIP-overlap reason documented in prior iterations —
+neither is touched by this change.
+
+Commits: `TBD`.

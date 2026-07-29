@@ -6214,3 +6214,23 @@ handler (ignored save path + premature success signal) and
 inside pre-existing uncommitted WIP touching the exact same lines.
 
 Commits: `c706108`.
+
+## Iteration 104: `imf_qc.py` `run_photon()` reported "fail" for clean packages when Photon wasn't installed
+
+`run_photon()` always runs embedded-MIC and essence-descriptor
+conformance checks independently of Photon availability, but its result
+dict hardcoded `overallStatus: "fail"` and none of the four early-return
+branches (Java missing, jar missing, timeout, launch exception) ever
+recomputed it from those checks' findings. A completely clean package
+was reported as a hard QC failure whenever Java/`photon.jar` simply
+wasn't installed. Fixed by computing `overallStatus` from `mic_findings`
+severities (`fail`/`warn`/`pass`) right after they're gathered, mirroring
+the same rule the successful-Photon-run path already used. Verified with
+a standalone before/after harness: pre-fix, a clean package with Photon
+unavailable returned `fail` (bug reproduced); post-fix, it returns
+`pass`, while a genuinely dirty MIC still correctly returns `fail` (not
+a blanket pass-when-missing regression). Full regression suite re-run
+and matched baseline exactly: 313/7/2(pre-existing) Python,
+72/1/0 Node, 22/0 JS.
+
+Commits: `TBD`.

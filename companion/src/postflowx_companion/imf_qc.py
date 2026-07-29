@@ -339,6 +339,16 @@ def run_photon(folder_path: str, timeout_s: int = 120) -> dict[str, Any]:
     # first-class findings regardless of Photon availability.
     mic_findings = _mic_findings(mic) + _conform_findings(conf)
 
+    # Photon itself may be unavailable/skipped below, but overallStatus must
+    # still reflect what MIC/conformance actually found — not the "fail"
+    # default, or a clean package would be reported as failed.
+    if any(f["severity"] in ("ERROR", "FATAL") for f in mic_findings):
+        base["overallStatus"] = "fail"
+    elif any(f["severity"] == "WARNING" for f in mic_findings):
+        base["overallStatus"] = "warn"
+    else:
+        base["overallStatus"] = "pass"
+
     if not java:
         base["error"]   = "Java not found. Install a JRE (e.g. brew install openjdk)."
         base["summary"] = "Java runtime not available — Photon validation skipped."
