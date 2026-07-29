@@ -88,6 +88,10 @@ export class OcfSettingsPanel {
     this._logs      = '';
     this._testResult = null;
     this._loading   = false;
+    // Bumped at the start of each _runDecodeTest() call; a call whose
+    // await resolves after a newer call has started discards its result
+    // instead of clobbering the newer call's (possibly already-settled) one.
+    this._testSeq   = 0;
   }
 
   async init() {
@@ -234,6 +238,7 @@ export class OcfSettingsPanel {
   }
 
   async _runDecodeTest() {
+    const seq = ++this._testSeq;
     // Find a Ready ffmpeg/AVF engine and try a minimal test
     const readyFFmpeg = this._rows.find(r => (r.id === 'FFmpegFrameServer' || r.id === 'FFmpeg') && r.status === 'ready');
     if (!readyFFmpeg) {
@@ -248,10 +253,12 @@ export class OcfSettingsPanel {
       const r = await ocfDecodeFrame('lavfi:testsrc=size=1920x1080:rate=24', {
         frameNumber: 0, scale: 320, engine: 'FFmpegFrameServer',
       });
+      if (seq !== this._testSeq) return;
       this._testResult = r?.ok
         ? { ok: true, engine: r.engine }
         : { ok: false, errors: r?.errors ?? ['Unknown error'] };
     } catch (err) {
+      if (seq !== this._testSeq) return;
       this._testResult = { ok: false, errors: [String(err?.message ?? err)] };
     }
     this._render();

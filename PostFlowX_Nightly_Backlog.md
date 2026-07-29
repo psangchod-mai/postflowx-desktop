@@ -6898,3 +6898,44 @@ unaddressed (stale-status race, WIP sits inside the function body —
 still needs hunk-selective staging or deferral).
 
 Commits: `7191dd2`.
+
+## Iteration 132 — OCF Settings: overlapping "Decode Test Frame" clicks let a stale result overwrite a fresh one
+
+`OcfSettingsPanel._attachHandlers()` in `ocfSettings.js` only skips a
+click while `this._loading` is true, but `_runDecodeTest()` (wired
+from the "Decode Test Frame" button via `_handleAction('decode-test')`)
+never touches `_loading` — that flag is only set/cleared by the
+`check-engines`/`init()` paths. A double-click starts two overlapping
+calls, each awaiting `ocfDecodeFrame()` (an IPC round trip to the
+companion). Each call unconditionally overwrote `this._testResult` and
+re-rendered on resolution, so if the older/slower call resolved after
+the newer/faster one, its stale (possibly failed) result silently
+replaced the correct one with no indication to the user. Fixed with a
+`_testSeq` counter: `_runDecodeTest()` captures `const seq =
+++this._testSeq` at entry, then checks `seq !== this._testSeq` right
+after the `await` (in both the success and catch paths) and discards
+the result if a newer call has since started. New test
+`tests-js/ocfSettingsDecodeTestStaleRace.test.mjs` (3 assertions,
+linkedom + a fake `window.pfxCompanion.send` with test-controlled
+resolution order) drives two overlapping `_runDecodeTest()` calls,
+resolves the newer one first (success), then the older one (failure),
+and confirms the panel keeps the newer, correct result. Before/after
+verified by temporarily removing just the two `seq !== this._testSeq`
+guards: 2/3 passed with the exact predicted failure (stale failure
+clobbered the live success), restored fix re-passed 3/3. This file had
+zero pre-existing WIP (confirmed via the clean-file whitelist:
+`git diff --stat` showed exactly 0 insertions/0 deletions before this
+change), so the fix was staged as a whole file with no hunk-splitting
+needed. Full regression matched baseline (`test:js` and `test:node`
+both green; 72 pass/1 skip/0 fail on `test:node`).
+
+Still open: `_refreshStatus()` in `homeScreen.js` was attempted this
+iteration and abandoned — hands-on testing with `git add -p`'s hunk
+`s`(plit) sub-command showed the fix's declaration line lands in the
+same hunk as unrelated in-progress WIP (a new `_updateFixButton()`
+feature), so the WIP is too tightly interleaved to isolate safely right
+now. Do not re-attempt until the developer's WIP in this file is
+committed or shrinks; this supersedes the more optimistic "needs
+hunk-selective staging" note carried over from Iteration 130.
+
+Commits: `TBD`.

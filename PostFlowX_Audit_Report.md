@@ -13262,3 +13262,110 @@ needs careful hunk-selective staging (or should be deferred if the WIP
 can't be cleanly isolated).
 
 Commits: `7191dd2`.
+
+## Iteration 132 — OCF Settings: overlapping "Decode Test Frame" clicks let a stale result overwrite a fresh one
+
+**Why this file:** scouted via a whitelist strategy new this iteration
+— rather than scan the whole repo (saturated with unrelated developer
+WIP that made Iteration 132's first candidate, `homeScreen.js`,
+unsafe — see "Still open" below), enumerated every file under
+`src/scripts/` whose `git diff --stat` showed exactly "0 insertions(+),
+0 deletions(-)" against HEAD (mode-bit-only drift, zero content diff),
+then scouted only within that clean set. An Explore agent proposed
+`ocfSettings.js`'s `OcfSettingsPanel._runDecodeTest()`, which was
+independently verified against the actual source before any fix was
+written.
+
+**The bug:** `OcfSettingsPanel._attachHandlers()` wires every
+`[data-action]` button (including "Decode Test Frame",
+`data-action="decode-test"`) to a click listener that only guards
+against re-entrancy via `if (this._loading) return;`. That `_loading`
+flag, however, is exclusively managed by the `check-engines`/`init()`
+code paths (set true, then false, around their own awaits) — the
+`decode-test` path (`_handleAction('decode-test')` → `_runDecodeTest()`)
+never touches it. So a double-click (or any two overlapping triggers)
+on "Decode Test Frame" starts two concurrent `_runDecodeTest()` calls,
+each of which sets `this._testResult = {ok:null, message:'Running
+decode test…'}`, renders, then `await`s `ocfDecodeFrame(...)` (an IPC
+round trip to the companion process) before unconditionally overwriting
+`this._testResult` with the resolved outcome and calling `_render()`
+again. If the older/slower call's IPC round trip happened to resolve
+*after* the newer/faster call's, the older call's result — which could
+be a stale success, or worse, a stale failure — silently clobbered the
+correct, already-displayed result, with no stale-indicator or warning
+to the user. This is the same shape of bug fixed in `project_setup.js`
+(Iteration 131) and `homeScreen.js`'s (Iteration 130) — a
+fire-and-forget async continuation racing against a newer, overlapping
+invocation of the same operation.
+
+**The fix:** added `this._testSeq = 0` to the constructor (alongside
+the existing `_testResult`/`_loading` fields), then in
+`_runDecodeTest()`: capture `const seq = ++this._testSeq;` as the very
+first statement, and immediately after the `await ocfDecodeFrame(...)`
+call resolves (in both the success branch and the `catch` block),
+check `if (seq !== this._testSeq) return;` before writing to
+`this._testResult` or calling `_render()`. A superseded call's
+continuation now silently no-ops instead of overwriting the live
+result.
+
+**Test:** `tests-js/ocfSettingsDecodeTestStaleRace.test.mjs` uses
+linkedom for the DOM and a hand-rolled fake `window.pfxCompanion.send`
+that intercepts only `action: 'ocfDecodeFrame'` calls and leaves each
+one pending in an array until the test explicitly resolves it — giving
+full control over IPC resolution order without touching the real
+companion bridge. The test constructs an `OcfSettingsPanel` with a
+pre-seeded `_rows` entry marking `FFmpegFrameServer` as `ready` (so
+`_runDecodeTest()` passes its readiness check and reaches the awaited
+IPC call), fires two overlapping `_runDecodeTest()` calls (call A then
+call B), confirms both issued independent IPC requests, resolves B
+(the newer call) first with a success result, confirms the panel shows
+that success, then resolves A (the older, now-stale call) with a
+simulated failure and confirms the panel's `_testResult` still shows
+B's success — i.e., the stale failure never overwrote the live result.
+3 assertions total.
+
+**Verification:** ran the test against the fix first — 3 of 3 passed.
+Backed up the fixed file via `cp` to `/tmp/ocfSettings_fixed.js`, then
+temporarily removed just the two `if (seq !== this._testSeq) return;`
+guard lines and re-ran: 2 of 3 passed, with exactly the predicted
+assertion failing (`the stale, superseded decode-test must not clobber
+the live result with an older one`) — confirming the bug reproduces
+precisely as expected once the guards are absent. Restored the exact
+fixed file via `cp` from the backup and re-ran: 3 of 3 passed again,
+confirming the restoration was exact. This file had zero pre-existing
+WIP — its `git diff --stat` showed exactly "0 insertions(+), 0
+deletions(-)" before this change (confirmed independently, not just
+taken from the scouting agent's report) — so the fix and test were
+staged as whole files with no `git add -p` hunk-splitting required;
+`git diff --stat` on the file after the fix showed a clean "7
+insertions(+), 0 deletions(-)" matching only the intended change. Full
+`npm run test:js` regression is green (the self-containment gate did
+not flag the new test file since it was `git add`ed before the run).
+`npm run test:node` also green, matching baseline (72 pass, 1
+pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` — carried over
+from Iterations 130 and 131 as "needs hunk-selective staging" — was
+actually attempted this iteration and had to be abandoned. The
+`_statusSeq`-counter fix was written and applied, but `git diff --stat`
+revealed the file's pre-existing WIP is far more extensive than
+previously characterized: ~10 non-contiguous hunks (135
+insertions/46 deletions) spanning a full rewrite of the Resolve-status
+section (a new `window.PFX_RESOLVE_STATUS` object), a new "Fix issues"
+button with its own `_updateFixButton()` function, new Setup
+Guide/tour buttons, and status-label text changes — several of which
+sit directly adjacent to or inside `_refreshStatus()` itself. Testing
+isolation via `git add -p`'s hunk `s`(plit) sub-command confirmed the
+fix's `const seq = ++_statusSeq;` declaration line lands in the same
+hunk as the unrelated `_updateFixButton()` WIP even after splitting,
+meaning clean separation is not achievable right now. The fix was
+fully reverted via targeted `Edit` calls (never `git checkout`, to
+avoid destroying the developer's real in-progress work), and confirmed
+via `grep` and `git diff --stat` to match the file's original,
+untouched-by-this-session state exactly. This supersedes the more
+optimistic "needs hunk-selective staging" characterization carried
+over from Iteration 130: do not re-attempt this file until the
+developer's WIP is committed or its footprint shrinks enough for a
+hunk to isolate cleanly.
+
+Commits: `TBD`.
