@@ -11432,4 +11432,4 @@ block, and the `ocf_decode.py` `_decode_sdk()` stub all remain open,
 unfixed, for the reasons documented in prior iterations — none is
 touched by this change.
 
-Commits: `TBD`.
+Commits: `3805fd9`.
