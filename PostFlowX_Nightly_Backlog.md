@@ -5356,3 +5356,39 @@ pre-existing-unrelated failed.
 remains untouched and uncommitted (predates this session, out of scope).
 
 Commits: `f74f89b`.
+
+## Iteration 74 — DoVi `isCut` mirrored `gapBefore`, undercounting real shot cuts
+
+**Found.** `annotateShots()` in `imf_dovi_metafier.js` set
+`isCut = gapBefore > 0`. DoVi CM XML Shot lists are inherently
+scene-based (every listed Shot is a real cut), so well-formed gapless
+content reported near-zero cuts in the IMF UI's "Cuts" counter — a
+contiguous 3-shot sequence with 2 real cuts reported 0.
+
+**Fix.** Redefined `isCut = prev != null` (every shot after the first is
+a cut), independent of `gapBefore`, which keeps its separate meaning as
+a frame-continuity anomaly signal. Updated 3 `imf_ui.js` consumer sites
+(gap marker, tooltip, shot-list badge) that relied on `isCut` for
+gap-only UI to check `gapBefore > 0` directly instead, and removed one
+now-dead guard in the shot-boundary-separator loop.
+
+**Tests.** New file `tests-js/imfDoviAnnotateShotsCuts.test.mjs`: a
+contiguous 3-shot case (0 cuts → 2 cuts fixed) and a gapped-shot case
+confirming `isCut`/`gapBefore` stay independently meaningful.
+
+**Verification.** `node tests-js/imfDoviAnnotateShotsCuts.test.mjs` —
+7/7 pass. Full `npm run test:js` — 0 failures.
+
+**Complication.** `imf_ui.js` carries pre-existing drift at two unrelated
+hunks (PLUGFEST `pkg.fileMap` fix, IAB group-label QC branch). Isolated
+the 4 intended edits via a hand-crafted `git apply --cached` patch; a
+first isolation attempt wrongly captured the drift hunks too — caught
+before applying, fixed with an exact-header pattern-match.
+
+**Gate.** `npm run test:js` — full suite passes, 0 failures.
+
+**Still open.** `imf_ui.js`'s drift and `src/index.html`'s unrelated
+drift (session-store script tag, tab tooltips/group-labels) remain
+untouched and uncommitted (predate this session, out of scope).
+
+Commits: `7e905a6`.

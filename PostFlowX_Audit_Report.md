@@ -8091,3 +8091,107 @@ other flagged candidates from prior iterations not yet addressed remain
 open.
 
 Commits: `f74f89b`.
+
+## Iteration 74 — DoVi shot metadata's `isCut` mirrored `gapBefore`, so the "Cuts" counter under-reported real shot changes
+
+**Why this file.** `annotateShots()` in
+`src/scripts/modules/imf/imf_dovi_metafier.js` walks the Shot list parsed
+from a Dolby Vision CM XML metadata track and annotates each Shot with
+derived fields consumed by the IMF UI's DoVi timeline panel
+(`imf_ui.js`) — including the "Cuts" summary counter, shot-boundary
+separators drawn on the timeline, and per-shot gap warnings.
+
+**The bug(s).** `isCut` was defined as `gapBefore > 0` — i.e. a shot only
+counted as a "cut" if there was a frame gap between it and the previous
+shot. But a DoVi CM XML Shot list is inherently scene-based: every listed
+Shot already represents an editorially distinct shot, whether or not
+there's a frame-continuity gap at its boundary (well-formed, professionally
+mastered content is almost always gapless). Conflating "is a cut" with
+"has a gap" meant the "Cuts" counter reported near-zero cuts for exactly
+the content it should report the most cuts for.
+
+**Concrete failure example.** A 3-shot, perfectly contiguous DoVi Shot
+list (`[0-99], [100-199], [200-299]`, no gaps) has 2 real shot
+boundaries. Under the old logic, `gapBefore` is `0` for every shot, so
+`isCut` is `false` for every shot, and the "Cuts" counter reads `0`
+instead of `2`.
+
+**Why genuine and new.** Not a duplicate of Iterations 48-73's flagged
+bug species (TC parsing, matcher drift, EDL parsing, visual scoring,
+etc.) — this is a DoVi shot-metadata semantics bug specific to
+`imf_dovi_metafier.js`/`imf_ui.js`, confirmed by reading `annotateShots()`
+and its consumers directly rather than trusting the scouting report at
+face value.
+
+**The fix.** Redefined `isCut` to mean "this Shot starts a new boundary"
+(`prev != null`, i.e. true for every shot after the first), independent
+of `gapBefore`:
+
+```js
+shot.gapBefore = prev != null ? Math.max(0, shot.begin - (prev.end + 1)) : 0;
+// Every non-first Shot in the DoVi CM XML is a new shot boundary (an editorial
+// cut), regardless of frame continuity. gapBefore separately flags a metadata
+// anomaly (missing frames between shots) and is NOT itself a cut signal.
+shot.isCut = prev != null;
+```
+
+`gapBefore` keeps its original meaning as an independent frame-continuity
+anomaly signal, untouched by the `isCut` redefinition.
+
+**A complication worth documenting.** Three consumer sites in
+`imf_ui.js` used `shot.isCut` specifically to mean "has a gap" (a gap
+marker, a shot tooltip, and a shot-list table badge, all showing
+gap-warning UI). Left unchanged, they would have regressed under the new
+semantics — firing on nearly every shot instead of only gapped ones.
+Updated all three to check `shot.gapBefore > 0` directly instead of
+`shot.isCut`, preserving their original gap-only behavior. A fourth site
+— the shot-boundary-separator loop's `if (!shot.isCut && shot.gapBefore
+=== 0) continue;` guard — became dead code under the new semantics
+(equivalent to `if (false) continue`) and was removed, so separators now
+draw at every shot boundary as their surrounding naming
+("Shot boundary separators", `imf-tl-dv-shot-sep`) already implied was
+intended. The "Cuts" summary counter itself (`res.shots?.filter(s =>
+s.isCut).length`) needed no change — it becomes correct automatically.
+
+Both source files carried pre-existing uncommitted drift unrelated to
+this fix: `imf_dovi_metafier.js` had only a file-mode bit change
+(100644→100755, left untouched); `imf_ui.js` had two in-progress hunks
+at lines ~1476 (a `pkg.fileMap` Map-handling fix in a PLUGFEST test) and
+~1669 (an IAB group-label QC branch), both left completely untouched.
+Isolated the 4 intended `imf_ui.js` edits via a hand-crafted
+`git apply --cached` patch matched by exact `@@` line-number headers. A
+first isolation attempt using a more complex `awk` toggle script
+incorrectly captured all 6 hunks (2 drift + 4 intended) due to messy
+state-toggling logic — caught by inspecting the patch before applying,
+fixed by rewriting as a simpler explicit pattern-match keyed to the
+intended hunks' exact headers.
+
+**Test approach.** New file
+`tests-js/imfDoviAnnotateShotsCuts.test.mjs`: one case asserts a
+contiguous 3-shot sequence reports `isCut` `false/true/true` and 2 total
+cuts (not 0), with `gapBefore` staying 0 throughout; a second case
+asserts a shot after a genuine 50-frame gap is both `isCut === true` and
+reports the real `gapBefore` value, confirming the two fields remain
+independently meaningful.
+
+**Verification.** `node tests-js/imfDoviAnnotateShotsCuts.test.mjs` — 7/7
+assertions pass. Full `npm run test:js` suite exits cleanly (0 failures)
+after staging the new test file (the suite's own
+`selfContained.test.mjs` git-tracking gate initially failed because the
+new test file was untracked — expected, not a regression; resolved by
+`git add`-ing it). Verified the staged commit's `--cached --stat` showed
+exactly the intended `5 insertions(+)/1 deletion(-)` in
+`imf_dovi_metafier.js` and `7 insertions(+)/2 deletions(-)` in
+`imf_ui.js`, with the remaining unstaged `git diff` in both files
+matching only their pre-existing untouched drift.
+
+**Gate.** `npm run test:js` — full suite passes, 0 failures.
+
+**Still open.** `imf_ui.js`'s pre-existing drift (PLUGFEST `pkg.fileMap`
+fix at ~1476, IAB group-label QC branch at ~1669) and `src/index.html`'s
+unrelated drift (new session-store script tag, tab tooltips, tab-group
+labels) remain completely untouched and uncommitted, as they predate
+this session and are out of scope. The scouting agent's other flagged
+candidates from prior iterations not yet addressed remain open.
+
+Commits: `7e905a6`.
