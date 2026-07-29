@@ -4846,7 +4846,7 @@ class CompanionApi:
         exr_folder = pkg.get("exr") or job.get("outputDir") or ""
         plate_name = job.get("plateName") or job.get("shotId") or ""
         pattern    = job.get("outputPattern") or ""
-        frame_start = int(job.get("frameStart") or 1001)
+        frame_start = int(job.get("frameStart", 1001))
         exp_frames  = int(job.get("expectedRenderedFrameCount") or job.get("frameCount") or 0)
         fps         = float(job.get("fps") or 24)
 
@@ -4987,7 +4987,7 @@ class CompanionApi:
             try:
                 csv_rows = ["timelineFrame,outputFrame,sourceFile,sourceFrame,sourceTC,speed,retimeType"]
                 retime     = job.get("retime") or {}
-                frame_start = int(job.get("frameStart") or 1001)
+                frame_start = int(job.get("frameStart", 1001))
                 fps         = float(job.get("fps") or 24)
                 src_file    = (job.get("sourcePath") or "").split("/")[-1].split("\\")[-1]
                 frame_count = int(job.get("expectedRenderedFrameCount") or job.get("frameCount") or 0)

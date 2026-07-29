@@ -346,6 +346,63 @@ def test_write_pull_sidecars_persists_amf_fdl_and_frame_map(tmp_path):
     assert report["colorMatch"]["confidence"] == 0.91
 
 
+# ── frameStart: 0 is a valid start frame, not "absent" ──────────────────────
+# job.get("frameStart") or 1001 treats a legitimate 0 as falsy and silently
+# substitutes 1001, both in the EXR-sequence QC's start-frame check and in the
+# frame-map CSV writer's outputFrame column.
+
+
+def test_write_pull_sidecars_frame_map_honors_zero_frame_start(tmp_path):
+    api = _new_api()
+    pkg = {
+        "metadata": str(tmp_path / "metadata"),
+        "frameMapFile": str(tmp_path / "metadata" / "SHOT_PL_v001_frame_map.csv"),
+        "pullReportFile": str(tmp_path / "metadata" / "SHOT_PL_v001_manifest.json"),
+    }
+    job = {
+        "package": pkg,
+        "shotId": "SHOT_010",
+        "plateName": "SHOT_PL_v001",
+        "sourcePath": "/ocf/A001.mov",
+        "exportIn": "01:00:00:00",
+        "fps": 24,
+        "frameStart": 0,
+        "expectedFrameCount": 4,
+        "expectedRenderedFrameCount": 4,
+    }
+
+    res = api._write_pull_sidecars({"job": job, "qcResult": {"pass": True}})
+    assert res["status"] == "ok"
+    assert not res["data"]["errors"]
+    frame_map = open(pkg["frameMapFile"], encoding="utf-8").read()
+    rows = [r for r in frame_map.splitlines() if r and not r.startswith("timelineFrame")]
+    first_output_frame = int(rows[0].split(",")[1])
+    assert first_output_frame == 0, \
+        "frameStart: 0 must produce outputFrame starting at 0, not fall back to 1001"
+
+
+def test_qc_exr_sequence_zero_frame_start_matches_detected_start(tmp_path):
+    api = _new_api()
+    exr_dir = tmp_path / "exr"
+    exr_dir.mkdir()
+    plate_name = "SHOT_PL_v001"
+    for i in range(4):
+        (exr_dir / f"{plate_name}.{i:04d}.exr").write_bytes(b"")
+
+    result = api._qc_exr_sequence({
+        "job": {
+            "package": {"exr": str(exr_dir)},
+            "plateName": plate_name,
+            "frameStart": 0,
+            "expectedRenderedFrameCount": 4,
+        }
+    })
+    assert result["status"] == "ok"
+    warnings = result["data"]["warnings"]
+    assert not any("Frame start" in w for w in warnings), \
+        f"frameStart: 0 must not be treated as absent and compared against a wrong 1001 fallback: {warnings}"
+
+
 def test_export_freeze_bake_no_longer_blocks():
     """Freeze-frame retime is now supported via two-stage extract+loop.
 
