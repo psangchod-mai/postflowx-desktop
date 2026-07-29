@@ -10176,3 +10176,115 @@ follow-up (`_persistFrameToCache()`'s renderer-side scale-unaware cache
 writes) remains open and untouched by this change.
 
 Commits: `2cd24af`.
+
+## Iteration 96 — OCF decode's `_decode_avf`/`_decode_ffmpeg`/`_decode_proxy_frame`
+and `resolve_decode_frame()` built their scratch/lookup filename from only
+`clip_path`+`frame_number`, letting two concurrent requests for the same
+frame at different scales clobber or misread each other's output
+
+### Why this file
+Following up on the fifth confirmed instance of the "discriminating
+identity/cache/path key silently dropped across call sites of the same
+resource" species (species #7 — see Iterations 93, 94, 95), a background
+scouting pass was pointed at subsystems outside the IMF pipeline already
+covered by those three iterations. It surfaced the OCF (on-camera-format)
+decode engine, `companion/src/postflowx_companion/ocf_engine/`, which
+independently reimplements the exact same pattern.
+
+### The bug
+`ocf_decode.py`'s `decode_first_frame()` is called with a `scale` parameter
+(default 960, but callers — ultimately `api.py`'s `_ocf_engine_decode_frame`
+IPC handler — pass through whatever scale the UI requested for a given
+preview, e.g. a small thumbnail scale vs. a full-resolution export check).
+That `scale` was accepted by all three concrete decode paths but silently
+dropped when building the on-disk temp/cache filename:
+
+```python
+# _decode_avf / _decode_ffmpeg (ocf_decode.py)
+out_path = str(_ensure_tmp() / f"{_stem(clip_path)}_frame_{frame_number:06d}.png")
+
+# _decode_proxy_frame (ocf_decode.py) — lookup side of the same key
+candidate = str(_OCF_TMP / f"{stem}_frame_{frame_number:06d}{ext}")
+
+# resolve_decode_frame (ocf_resolve_bridge.py)
+out_img = os.path.join(out_dir, f"pfx_ocf_{stem}_frame_{frame_number:06d}.png")
+```
+
+Two concurrent (or rapidly sequential) requests for the same `clip_path`+
+`frame_number` but different `scale` — e.g. the UI drawing a fast low-res
+scrub thumbnail while a full-resolution still is being generated for
+export — resolve to the identical filename. Whichever finishes last wins:
+the other caller either gets the wrong-resolution image silently reported
+as success, or (worst case under `_decode_ffmpeg`'s `-y` overwrite flag) a
+half-written file if the two writes race. `_decode_proxy_frame`'s lookup
+path made this actively worse: it returns *any* previously cached file at
+that key as a hit regardless of the scale that produced it, so a proxy
+generated at scale 320 will be silently served back for a scale 1920
+request without ever going through a decode engine.
+
+### Independent verification
+Read `ocf_decode.py` lines 70-169 directly (all three concrete decode
+functions, plus the shared `_try_engine()` dispatcher) and
+`ocf_resolve_bridge.py`'s `resolve_decode_frame()` (line 58) to confirm the
+`scale` parameter is present in every function signature but absent from
+every constructed path string. Read `api.py` lines 6744-6764
+(`_ocf_engine_decode_frame`) to confirm production reachability: this is
+the companion HTTP/IPC endpoint handler that extracts
+`scale = int(request.get("scale") or 960)` straight from the request body
+and passes it unmodified into `decode_first_frame()` → `_try_engine()` →
+the vulnerable functions. No test coverage previously existed for this
+specific interaction.
+
+### The fix
+Added a `_s{scale}` discriminator suffix to the constructed filename in
+all four call sites (`_decode_avf`, `_decode_ffmpeg`, `_decode_proxy_frame`
+in `ocf_decode.py`; `resolve_decode_frame` in `ocf_resolve_bridge.py`),
+e.g. `f"{stem}_frame_{frame_number:06d}_s{scale}.png"`. Unlike the IMF
+pipeline's pure scratch files (Iterations 94/95, fixed with a random UUID
+since those paths are never re-read), these OCF paths are meant to be
+re-findable/cacheable across calls for the same clip+frame+scale
+combination — `_decode_proxy_frame` explicitly re-reads a previous
+engine's output by filename — so the correct fix is widening the key with
+the missing discriminator, not randomizing it away.
+
+A second, distinct issue was noted but deliberately left out of scope:
+`ocf_resolve_bridge.py`'s `_render_queue_still()` fallback path hardcodes
+`FormatWidth: 1920, FormatHeight: 1080` and has no `scale` parameter at
+all, so it ignores the requested scale entirely rather than colliding on
+an unqualified key. That is a different bug (a request ignored, not two
+requests conflated) and is left for a future iteration.
+
+### Test approach
+Production end-to-end testing of the OCF decode path is not available in
+this environment (it requires real camera-original footage, the compiled
+`avf_bridge` binary, and/or a running DaVinci Resolve instance with its
+scripting API enabled). Verified the fix with a standalone script
+reproducing the exact filename-construction logic from both files:
+confirmed that two requests for the same `clip_path`+`frame_number` at
+different `scale` values produced an identical key before the fix and
+distinct keys after.
+
+### Verification
+```
+PRE-FIX collision: True -> A001_C001_frame_000042.png
+POST-FIX distinct: True -> A001_C001_frame_000042_s320.png vs A001_C001_frame_000042_s1920.png
+```
+
+### Gate
+`python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, 2
+pre-existing failures in `tests/test_conform_engine.py`
+(`test_regional_distance_discards_six_worst_cells`,
+`test_regional_hash_identical_frames_distance_zero`, both
+`AttributeError: 'int' object has no attribute 'bit_count'` from
+`conform_engine.py:738`) — unchanged from baseline, unrelated to this
+change. `npm run test:node` and `npm run test:js` are unaffected since
+this is a Python-only change; not re-run.
+
+### Still open
+`_render_queue_still()`'s hardcoded 1920x1080 fallback resolution
+(ignoring `scale` entirely) is a distinct bug left for a future
+iteration. `_decode_sdk()` (BRAW/RED/ARRI/Canon vendor SDKs) is currently
+a stub that always falls through to ffmpeg, so it was not in scope for
+this key-collision species.
+
+Commits: `TBD`.

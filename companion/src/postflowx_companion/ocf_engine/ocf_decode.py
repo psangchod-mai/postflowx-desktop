@@ -99,7 +99,7 @@ def _decode_avf(clip_path: str, frame_number: int, scale: int) -> dict[str, Any]
     if not sdk.avf:
         return _error_result(ENGINE_AVF, frame_number, "avf_bridge not found")
 
-    out_path = str(_ensure_tmp() / f"{_stem(clip_path)}_frame_{frame_number:06d}.png")
+    out_path = str(_ensure_tmp() / f"{_stem(clip_path)}_frame_{frame_number:06d}_s{scale}.png")
     cmd = [sdk.avf_path, "extract-frame",
            "--input", clip_path,
            "--frame", str(frame_number),
@@ -135,7 +135,7 @@ def _decode_ffmpeg(clip_path: str, frame_number: int, scale: int) -> dict[str, A
     if not ffmpeg:
         return _error_result(ENGINE_FFMPEG_FS, frame_number, "ffmpeg not found")
 
-    out_path = str(_ensure_tmp() / f"{_stem(clip_path)}_frame_{frame_number:06d}.png")
+    out_path = str(_ensure_tmp() / f"{_stem(clip_path)}_frame_{frame_number:06d}_s{scale}.png")
     cmd = [ffmpeg, "-y", "-i", clip_path,
            "-vf", f"select=eq(n\\,{frame_number}),scale={scale}:-1:force_original_aspect_ratio=decrease",
            "-vframes", "1", out_path]
@@ -154,7 +154,7 @@ def _decode_proxy_frame(clip_path: str, frame_number: int, scale: int) -> dict[s
     # Check for a previously generated proxy in our tmp dir
     stem = _stem(clip_path)
     for ext in (".png", ".jpg"):
-        candidate = str(_OCF_TMP / f"{stem}_frame_{frame_number:06d}{ext}")
+        candidate = str(_OCF_TMP / f"{stem}_frame_{frame_number:06d}_s{scale}{ext}")
         if os.path.isfile(candidate):
             return _ok_result(ENGINE_PROXY, frame_number, candidate)
     return _error_result(ENGINE_PROXY, frame_number,

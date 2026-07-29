@@ -55,7 +55,7 @@ def resolve_decode_frame(
 
     out_dir = output_dir or tempfile.gettempdir()
     stem    = os.path.splitext(os.path.basename(clip_path))[0]
-    out_img = os.path.join(out_dir, f"pfx_ocf_{stem}_frame_{frame_number:06d}.png")
+    out_img = os.path.join(out_dir, f"pfx_ocf_{stem}_frame_{frame_number:06d}_s{scale}.png")
 
     try:
         pm      = app.GetProjectManager()

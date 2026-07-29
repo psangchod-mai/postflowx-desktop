@@ -5997,3 +5997,22 @@ iteration's JS temp path). Iteration 93's `_persistFrameToCache()`
 follow-up remains open.
 
 Commits: `2cd24af`.
+
+## Iteration 96 — OCF decode/resolve-bridge temp filenames ignored `scale`
+
+`ocf_decode.py`'s `_decode_avf`/`_decode_ffmpeg`/`_decode_proxy_frame` and
+`ocf_resolve_bridge.py`'s `resolve_decode_frame()` all built their
+scratch/lookup filename from only `clip_path`+`frame_number`, dropping the
+`scale` parameter each function actually receives. A low-res scrub
+thumbnail request and a full-res export-check request for the same frame
+collide on the same on-disk filename; `_decode_proxy_frame`'s lookup side
+made it worse by returning any previously cached file at that key
+regardless of the scale that produced it. Fifth confirmed instance of the
+species #7 pattern (Iterations 93-95 were the IMF pipeline; this is the
+sibling OCF pipeline). Fixed by adding a `_s{scale}` suffix to the key in
+all four call sites. `_render_queue_still()`'s separate hardcoded-1920x1080
+fallback (which has no `scale` param at all) is a distinct bug, left open.
+`python3 -m pytest -q`: 313 passed/7 skipped, same 2 pre-existing failures
+as baseline.
+
+Commits: `TBD`.
