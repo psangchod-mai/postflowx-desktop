@@ -12509,3 +12509,74 @@ not core instance state. Left unaddressed this iteration; a candidate
 for a future pass.
 
 Commits: `dccd431`.
+
+## Iteration 123 — IMFPlayer.validatePackage() concurrent-call race
+
+**Why this file:** `imf_player_engine.js`'s `IMFPlayer` class already
+had two of its three public async, package-scoped methods
+(`startPlayback()` in Iteration 121, `openPackage()` in Iteration 122)
+fixed for the same generation-token race, and Iteration 122's "Still
+open" note flagged `validatePackage(cplId)` as the remaining weaker
+instance of the same bug shape in the same file.
+
+**The bug:** `validatePackage(cplId)` emits a `'validation'` event
+after a single await on
+`_pfx().imfEngine.validatePackage(this._packageId, cplId ||
+this._cplId)`, with no staleness guard. `src/scripts/modules/imf/
+imf_package_ui.js`'s `_onCPLChange()` calls `_doValidate()` on every
+CPL `<select>` change, and `_renderValidation()` paints whatever
+`'validation'` event arrives last. Arrow-keying through the CPL list
+fires `change` per keystroke, so a rapid switch from CPL A to CPL B can
+kick off two overlapping `validatePackage()` calls. If A's IPC
+round-trip resolves after B's (e.g. A's CPL has a larger manifest or
+more assets to check), A's `'validation'` event fires last and paints
+CPL A's validation result/badge even though the UI has already moved
+on to CPL B — a real, user-visible wrong-badge bug.
+
+**The fix:** Reused the same shared `_loadSeq` counter already used by
+`openPackage()` and `startPlayback()` (initialized once in the
+constructor) — treating open/play/validate as one package-lifecycle
+generation, so a new call to any of the three correctly invalidates
+in-flight calls to any of the others. Added `const seq =
+++this._loadSeq;` in `validatePackage()` right before the await, then
+`if (seq !== this._loadSeq) return { ok: false, error: 'superseded' };`
+immediately after, before the `'validation'` event is emitted.
+
+**Test approach:** `tests-js/imfPlayerValidatePackageStaleRace.test.mjs`,
+a new plain-Node test using linkedom, following the same
+deferred-promise-per-call technique used in Iterations 120-122. A fake
+`window.pfxPlatform.imfEngine.validatePackage()` returns an
+independently-resolvable deferred promise per call. The test starts
+`validatePackage('cplA')`, then (before resolving anything) starts
+`validatePackage('cplB')`, resolves A's stale response first (asserting
+it emits no `'validation'` event since it was superseded), then
+resolves B's live response (asserting exactly one `'validation'` event
+fires, and it's for CPL B, not A).
+
+**Verification:** Pre-fix (temporarily reverted via a `/tmp` backup,
+restored afterward), all 5 assertions failed exactly as predicted —
+without the guard, `_loadSeq` wasn't bumped by either call and the
+stale A response emitted a `'validation'` event that a listener would
+have painted over B's. Post-fix (restored from backup, confirmed via
+`git diff --stat` — 8 insertions, 0 deletions, matching the intended
+scope), all 5 assertions pass. Full regression suite re-run and
+matched baseline: `test:js` — every file 0 failed except the expected,
+well-documented `selfContained.test.mjs` "no new test file is left out
+of git" flag for this iteration's still-untracked new test file;
+`test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 313 passed, 7
+skipped, 2 failed, both pre-existing and unrelated to this change
+(`bit_count()` AttributeError in `conform_engine.py`'s regional-hash
+distance helper — that file's WIP block is on the do-not-touch list,
+caused by this dev environment running Python 3.9.6, which predates
+`int.bit_count()` added in Python 3.10 — not a regression from this
+iteration's fix).
+
+**Still open:** No further un-guarded package-lifecycle async methods
+remain in `IMFPlayer` — `openPackage()`, `startPlayback()`, and
+`validatePackage()` now all share the same `_loadSeq` guard. A broader
+sweep of the rest of the codebase for the same bug shape (per the
+Iteration 123 scout's report) found no comparably strong candidate;
+other classes checked have only stateless async functions, not
+instance-state races of this kind.
+
+Commits: `TBD`.

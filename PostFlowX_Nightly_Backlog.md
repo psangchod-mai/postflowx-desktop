@@ -6627,3 +6627,31 @@ event after a single await with no guard — weaker (event-only, not
 core state) — left for a future pass.
 
 Commits: `dccd431`.
+
+## Iteration 123 — IMFPlayer.validatePackage() concurrent-call race
+
+`validatePackage(cplId)` in the same `imf_player_engine.js` emitted a
+`'validation'` event after a single await on
+`imfEngine.validatePackage()` with no staleness guard — the last
+remaining un-guarded instance flagged in Iteration 122's "Still open."
+Arrow-keying rapidly through a CPL `<select>` (which fires `change`
+per keystroke) could let a stale CPL A's late validation result paint
+over a newer CPL B's badge. Fixed by reusing the class's shared
+`_loadSeq` counter (now covering all three package-lifecycle methods:
+`openPackage()`, `startPlayback()`, `validatePackage()`) — bump before
+the await, bail if superseded after it, before emitting. Verified with
+a new test (`tests-js/imfPlayerValidatePackageStaleRace.test.mjs`,
+linkedom + a fake `window.pfxPlatform.imfEngine`): pre-fix, a stale
+CPL A's late response emitted a `'validation'` event that would have
+overwritten CPL B's badge; post-fix, it's a no-op. Full regression
+suite re-run: `test:js` all files 0 failed (except expected
+self-containment-gate noise for the still-uncommitted test file);
+`test:node` 72/0/1-skipped; `test:py` 313/2-failed/7-skipped, both
+failures pre-existing/unrelated (Python 3.9.6 lacks
+`int.bit_count()`, used in the do-not-touch `conform_engine.py`).
+
+Still open: none in `IMFPlayer` — all three package-lifecycle async
+methods now share the `_loadSeq` guard. Broader codebase sweep found
+no comparably strong remaining candidate for this bug shape.
+
+Commits: `TBD`.

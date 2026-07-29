@@ -127,7 +127,15 @@ class IMFPlayer {
 
   async validatePackage(cplId) {
     if (!this._packageId) return { ok: false, error: 'No package loaded' };
+
+    // A rapid CPL switch (e.g. arrow-keying through a <select>, which fires
+    // 'change' per keystroke) can trigger overlapping validatePackage() calls.
+    // Without a guard, a stale call's late 'validation' event can fire after
+    // a newer one and paint the wrong CPL's validation badge. _loadSeq lets a
+    // superseded call detect it and skip its emit.
+    const seq = ++this._loadSeq;
     const r = await _pfx().imfEngine.validatePackage(this._packageId, cplId || this._cplId);
+    if (seq !== this._loadSeq) return { ok: false, error: 'superseded' };
     if (r.ok) this._emit('validation', { validation: r.validation });
     return r;
   }
