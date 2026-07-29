@@ -6654,4 +6654,4 @@ Still open: none in `IMFPlayer` — all three package-lifecycle async
 methods now share the `_loadSeq` guard. Broader codebase sweep found
 no comparably strong remaining candidate for this bug shape.
 
-Commits: `TBD`.
+Commits: `da3564c`.
