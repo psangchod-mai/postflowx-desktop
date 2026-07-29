@@ -97,11 +97,16 @@ def _preview_root(out_dir: str) -> Path | None:
         return None
 
 
-def _preview_proxy_path(out_dir: str, orig_name: str) -> str:
+def _preview_proxy_path(out_dir: str, orig_name: str, cache_key: str = "") -> str:
     root = _preview_root(out_dir)
     if root is None:
         return ""
-    return str(root / f"{_safe_proxy_stem(orig_name)}_proxy.mp4")
+    stem = _safe_proxy_stem(orig_name)
+    key = str(cache_key or "").strip()
+    if key:
+        safe_key = "".join(ch if ch.isalnum() else "_" for ch in key)[:40]
+        stem = f"{stem}_{safe_key}"
+    return str(root / f"{stem}_proxy.mp4")
 
 
 def _preview_cache_entries(out_dir: str) -> dict[str, dict[str, str]]:
@@ -336,7 +341,7 @@ class CompanionHttpHandler(BaseHTTPRequestHandler):
             orig_name = str((query.get("orig_name") or [""])[0] or "").strip()
             entry = _preview_cache_entries(out_dir).get(cache_key) if cache_key and out_dir else None
             if not entry and out_dir and orig_name:
-                candidate = _preview_proxy_path(out_dir, orig_name)
+                candidate = _preview_proxy_path(out_dir, orig_name, cache_key)
                 if candidate:
                     cpath = Path(candidate)
                     try:
@@ -645,7 +650,7 @@ class CompanionHttpHandler(BaseHTTPRequestHandler):
         out_dir = str((query.get("out_dir") or [""])[0] or "").strip()
         cache_key = str((query.get("cache_key") or [""])[0] or "").strip()
         orig_name = str((query.get("orig_name") or [""])[0] or "").strip()
-        output_path = _preview_proxy_path(out_dir, orig_name)
+        output_path = _preview_proxy_path(out_dir, orig_name, cache_key)
         proxy_name = Path(output_path).stem if output_path else _safe_proxy_stem(orig_name)
 
         ffmpeg_path = _find_ffmpeg()

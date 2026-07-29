@@ -5756,3 +5756,35 @@ should either sweep remaining cache paths (thumbnail/waveform, still
 unconfirmed) or pivot to other species/files.
 
 Commits: `c915b4e`.
+
+## Iteration 90 — `http_server.py`'s `_preview_proxy_path()` ignored the available `cache_key`, and its `/cache/lookup/` fallback trusted any file at the collided path with zero identity check
+
+`_preview_proxy_path(out_dir, orig_name)` derived the browser-preview cache
+path purely from the sanitized basename of `orig_name`, with no
+`cache_key` folded in even though both call sites (`/cache/lookup/`'s
+fallback and `/upload/`'s output-path construction) already had one in
+scope. Worse than a simple overwrite: `/cache/lookup/`'s fallback (used
+when the cacheKey-keyed JSON sidecar lookup misses) accepted any existing
+file at that basename-derived path — checking only `is_file()` and
+`size > 0`, zero identity check — and returned `{"found": True, ...}`
+unconditionally. Two uploads sharing a basename (e.g. the same-named clip
+re-uploaded from a different folder/camera card) under different
+`cache_key`/session values collided on the identical path; a second
+session's `/cache/lookup/` call could land on the fallback and get handed
+back the first session's stale, unrelated proxy. No existing test
+(`test_http_server.py` covers only token auth/range/path-traversal)
+guarded any of this. Fix: added an optional `cache_key` parameter to
+`_preview_proxy_path()`, sanitized and folded into the filename stem when
+present (falls back to basename-only when empty), and updated both call
+sites to pass their already-available `cache_key` through. Added
+`test_http_server_preview_cache_identity.py` (3 tests, including the
+direct same-basename/different-cache_key collision regression); confirmed
+genuine via stash/pop — pre-fix code fails all 3 with `TypeError:
+_preview_proxy_path() takes 2 positional arguments but 3 were given`. Full
+suite: 313 passed/7 skipped (same 2 pre-existing Iteration-76 failures,
+unrelated). Fourth instance of bug species #7 — now very well-covered
+across cache/proxy subsystems broadly; a follow-up should strongly
+consider pivoting to other species/files, or one final narrow check of
+thumbnail/waveform caches if still unconfirmed.
+
+Commits: `TBD`.

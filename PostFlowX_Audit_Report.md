@@ -9480,3 +9480,105 @@ thumbnail/waveform caches, still unconfirmed either way) or pivot toward
 other bug species/files given how saturated #7 now is here.
 
 Commits: `c915b4e`.
+
+## Iteration 90 — `http_server.py`'s `_preview_proxy_path()` ignored the available `cache_key`, and its `/cache/lookup/` fallback trusted any file at the collided path with zero identity check
+
+**Why this file.** Iterations 88-89 fixed two sibling instances of bug
+species #7 in the proxy-generation subsystem (`ocf_proxy.py`,
+`media_engine/proxy_engine.py`). A scouting agent (background, non-user
+input) was seeded with the ten established bug species and explicitly
+steered away from re-scouting the proxy subsystem specifically for species
+#7 (already fixed three times: `proxy_service.py`, `ocf_proxy.py`,
+`proxy_engine.py`), while still leaving other cache-writing paths
+(thumbnail/waveform, the browser-preview cache) fair game. It reported a
+fourth, architecturally distinct instance in `http_server.py`'s
+browser-preview cache path.
+
+**The bug.** `_preview_proxy_path(out_dir, orig_name)` derived the cache
+path purely from `_safe_proxy_stem(orig_name)` — the sanitized basename of
+the original filename — with no `cache_key` folded in, even though both
+call sites already had a `cache_key` value in scope. This was
+architecturally worse than a simple overwrite: `_preview_cache_entries()`
+(the *preferred* lookup path) already keys its returned dict by the
+sidecar JSON's `cacheKey` field and works correctly. But the `/cache/lookup/`
+GET handler's *fallback* — used whenever the cacheKey-keyed sidecar lookup
+misses — recomputed the basename-derived candidate path and accepted
+*any* existing file there, checking only `is_file()` and `size > 0`, with
+zero identity verification, then unconditionally returned
+`{"found": True, "outputPath": ...}`.
+
+**Independent verification.** Read `http_server.py` lines 75-204 (helpers:
+`_safe_proxy_stem`, `_preview_root`, `_preview_proxy_path`,
+`_preview_cache_entries`), 320-389 (`/cache/lookup/` GET handler), and
+610-680 (`/upload/` POST handler) in full. Confirmed `_preview_proxy_path`
+took only `(out_dir, orig_name)` with no `cache_key` parameter, confirmed
+both call sites (`/cache/lookup/`'s fallback and `/upload/`'s
+`output_path` construction) already had a `cache_key` variable in scope
+that was silently dropped, and confirmed the exact fallback logic:
+`is_file() and size > 0` with no cache-key/identity comparison before
+returning `found: True`. Grepped the file and confirmed exactly 3
+references to `_preview_proxy_path` (1 definition, 2 call sites) — no call
+site was missed by the fix. Read `test_http_server.py` and confirmed it
+covers only token auth, range requests, and path traversal — zero existing
+coverage of `_preview_proxy_path`, `_preview_cache_entries`, `/cache/lookup/`,
+or `/upload/`. Concrete failure scenario: two uploads sharing a basename
+(e.g. the same-named clip re-uploaded from a different folder or camera
+card) under different `cache_key`/session values collide on the identical
+`{out_dir}/{stem}_proxy.mp4` path; a second session's `/cache/lookup/`
+call — landing on the fallback because its own cacheKey isn't in any
+sidecar yet — finds the first session's file sitting at that path and
+reports `found: True`, handing back a stale, unrelated source's proxy.
+
+**The fix.** Added an optional `cache_key: str = ""` parameter to
+`_preview_proxy_path()`, sanitized and folded into the filename stem when
+present (falls back to the original basename-only path when empty, so any
+caller not supplying a `cache_key` is unaffected):
+
+```python
+def _preview_proxy_path(out_dir: str, orig_name: str, cache_key: str = "") -> str:
+    root = _preview_root(out_dir)
+    if root is None:
+        return ""
+    stem = _safe_proxy_stem(orig_name)
+    key = str(cache_key or "").strip()
+    if key:
+        safe_key = "".join(ch if ch.isalnum() else "_" for ch in key)[:40]
+        stem = f"{stem}_{safe_key}"
+    return str(root / f"{stem}_proxy.mp4")
+```
+
+Updated both call sites — the `/cache/lookup/` fallback and `/upload/`'s
+`output_path` construction — to pass the already-available `cache_key`
+variable through.
+
+**Test approach.** Added `test_http_server_preview_cache_identity.py` (3
+tests): two uploads sharing a basename but different `cache_key` values
+get different paths (the direct regression case for the reported
+collision); the same `cache_key` and basename produce a stable path across
+calls; and an empty `cache_key` falls back to the original basename-only
+path (backward-compatibility check).
+
+**Verification.** `python3 -m pytest tests/test_http_server_preview_cache_identity.py -v`
+— 3/3 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`http_server.py`: reverting to pre-fix code fails all 3 tests with
+`TypeError: _preview_proxy_path() takes 2 positional arguments but 3 were
+given` (the pre-fix signature has no third parameter). Restored the fix,
+reran — 3/3 green, and confirmed via `git diff --stat` that only the
+intended 9-insertion/4-deletion fix diff was restored. Full companion
+suite: `python3 -m pytest -q` — 313 passed (up from 310), 7 skipped, same
+2 pre-existing `test_conform_engine.py` failures from Iterations 76-83
+(unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2 pre-existing,
+unrelated Python-version failures already documented since Iteration 76.
+
+**Still open.** This is the fourth instance of bug species #7 — after
+`proxy_service.py`'s IMF proxy cache, `ocf_proxy.py`'s OCF clip proxy
+cache, and `media_engine/proxy_engine.py`'s transcode-proxy cache. Species
+#7 is now extremely well-covered across cache/proxy-writing subsystems
+broadly; a follow-up scouting pass should strongly consider pivoting to
+other bug species/files, or doing one final narrow check of any remaining
+cache-writing code not yet covered (e.g. thumbnail/waveform caches
+specifically, if still unconfirmed either way).
+
+Commits: `TBD`.
