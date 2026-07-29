@@ -593,7 +593,7 @@ export function extractAdmProgrammeTreeFromCompanion({ programmeNames = [], cont
     speakerLabels: [],
     objectCount: totalObj - (bedFromSummary || bedObjects.length),
     bedCount: bedObjects.length || bedFromSummary,
-    isAtmos: (totalObj - bedFromSummary) > 0,
+    isAtmos: (totalObj - (bedFromSummary || bedObjects.length)) > 0,
     is51: bedFromSummary > 0 || bedObjects.length > 0,
     is71: false,
   };
