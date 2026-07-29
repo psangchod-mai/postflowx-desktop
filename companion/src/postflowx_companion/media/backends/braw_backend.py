@@ -104,6 +104,17 @@ _FRAME_GetResourceType  = 6   # (this, *BMD_RESOURCE_TYPE) → HRESULT
 # IBlackmagicRawTimecode
 _TC_GetString           = 3   # (this, **const char) → HRESULT
 
+# BRAW SDK resource-type codes (from _BlackmagicRawResourceFormat) whose pixel
+# layout is BGRA rather than RGBA — the decoded byte order is platform/GPU
+# dependent, so it must be read via GetResourceType() rather than assumed.
+_BGRA_RESOURCE_TYPES = {1, 8}
+
+
+def _raw_mode_for_resource_type(resource_type: int) -> str:
+    """Map an IBlackmagicRawFrame::GetResourceType() code to a PIL raw mode."""
+    return "BGRA" if resource_type in _BGRA_RESOURCE_TYPES else "RGBA"
+
+
 # ---------------------------------------------------------------------------
 # Callback shim
 # ---------------------------------------------------------------------------
@@ -113,7 +124,7 @@ class _FrameCallback:
 
     def __init__(self):
         self.event  = threading.Event()
-        self.result = None    # (width, height, bytes_per_row, raw_rgba_bytes) or None
+        self.result = None    # (width, height, bytes_per_row, raw_bytes, resource_type) or None
         self.error  = None    # HRESULT error code
 
         # Build a COM object in memory:
@@ -144,7 +155,13 @@ class _FrameCallback:
                     if hr == _S_OK and data_ptr.value:
                         n_bytes = h.value * bpr.value
                         raw = bytes(ctypes.cast(data_ptr.value, ctypes.POINTER(ctypes.c_ubyte * n_bytes))[0])
-                        self.result = (w.value, h.value, bpr.value, raw)
+
+                        resource_type = ctypes.c_uint32(0)
+                        rt_hr = _call(frame, _FRAME_GetResourceType, ctypes.c_uint32,
+                                      ctypes.POINTER(ctypes.c_uint32), ctypes.byref(resource_type))
+                        rt_val = resource_type.value if rt_hr == _S_OK else 0
+
+                        self.result = (w.value, h.value, bpr.value, raw, rt_val)
                     else:
                         self.error = hr if hr != _S_OK else -1
                 except Exception as e:
@@ -423,16 +440,16 @@ class BrawBackend(BaseMediaBackend):
 
         return meta
 
-    def _decode_frame_rgba(self, path: str, frame_index: int) -> tuple[int, int, int, bytes] | None:
+    def _decode_frame_rgba(self, path: str, frame_index: int) -> tuple[int, int, int, bytes, int] | None:
         """
-        Decode one frame to raw RGBA bytes using the BRAW SDK async pipeline.
-        Returns (width, height, bytes_per_row, raw_bytes) or None on failure.
+        Decode one frame to raw pixel bytes using the BRAW SDK async pipeline.
+        Returns (width, height, bytes_per_row, raw_bytes, resource_type) or None on failure.
         """
         # _codec.SetCallback + FlushJobs is not reentrant — serialize all SDK calls.
         with self._lock:
             return self._decode_frame_rgba_locked(path, frame_index)
 
-    def _decode_frame_rgba_locked(self, path: str, frame_index: int) -> tuple[int, int, int, bytes] | None:
+    def _decode_frame_rgba_locked(self, path: str, frame_index: int) -> tuple[int, int, int, bytes, int] | None:
         clip_ptr = self._open_clip(path)
         if not clip_ptr:
             return None
@@ -467,7 +484,7 @@ class BrawBackend(BaseMediaBackend):
             # Wait for callback (should already be done after FlushJobs, but be safe)
             cb.event.wait(timeout=30)
 
-            return cb.result  # (w, h, bpr, raw_bytes) or None
+            return cb.result  # (w, h, bpr, raw_bytes, resource_type) or None
 
         except Exception:
             return None
@@ -475,14 +492,15 @@ class BrawBackend(BaseMediaBackend):
             _release(clip_ptr)
 
     def _save_frame(self, raw_rgba: tuple, out_path: Path, fmt: str, target_w: int, target_h: int) -> None:
-        """Convert raw RGBA bytes → scaled JPEG/PNG saved to out_path."""
-        w, h, bpr, data = raw_rgba
+        """Convert raw pixel bytes → scaled JPEG/PNG saved to out_path."""
+        w, h, bpr, data, resource_type = raw_rgba
         try:
             from PIL import Image
             import io
-            # BRAW SDK returns BGRA or RGBA depending on platform
-            # Detect byte order: if it's BGRA swap R/B channels
-            img = Image.frombytes("RGBA", (w, h), data, "raw", "RGBA", bpr)
+            # BRAW SDK returns BGRA or RGBA depending on platform/GPU — read the
+            # actual byte order from GetResourceType() instead of assuming RGBA.
+            raw_mode = _raw_mode_for_resource_type(resource_type)
+            img = Image.frombytes("RGBA", (w, h), data, "raw", raw_mode, bpr)
             img = img.resize((target_w, target_h), Image.LANCZOS)
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{fmt}", dir=str(out_path.parent))
             os.close(tmp_fd)
@@ -496,10 +514,10 @@ class BrawBackend(BaseMediaBackend):
                 try: Path(tmp_path).unlink(missing_ok=True)
                 except: pass
         except ImportError:
-            # Pillow not available — write raw RGBA as PPM fallback, convert with ffmpeg
-            self._save_frame_via_ffmpeg(w, h, bpr, data, out_path, fmt, target_w, target_h)
+            # Pillow not available — write raw pixels as PPM fallback, convert with ffmpeg
+            self._save_frame_via_ffmpeg(w, h, bpr, data, resource_type, out_path, fmt, target_w, target_h)
 
-    def _save_frame_via_ffmpeg(self, w, h, bpr, data, out_path, fmt, target_w, target_h):
+    def _save_frame_via_ffmpeg(self, w, h, bpr, data, resource_type, out_path, fmt, target_w, target_h):
         """Fallback: write raw pixels then convert with ffmpeg."""
         import subprocess
         from .standard_media_backend import _find_ffmpeg_cached
@@ -508,10 +526,11 @@ class BrawBackend(BaseMediaBackend):
             raise RuntimeError("Neither Pillow nor ffmpeg available for frame save")
         raw_path = out_path.with_suffix(".raw")
         raw_path.write_bytes(data)
+        pix_fmt = "bgra" if resource_type in _BGRA_RESOURCE_TYPES else "rgba"
         try:
             cmd = [
                 ffmpeg, "-y",
-                "-f", "rawvideo", "-pix_fmt", "rgba",
+                "-f", "rawvideo", "-pix_fmt", pix_fmt,
                 "-video_size", f"{w}x{h}",
                 "-i", str(raw_path),
                 "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease",

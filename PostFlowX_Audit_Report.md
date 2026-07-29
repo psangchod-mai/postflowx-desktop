@@ -8706,3 +8706,96 @@ companion codebase were not exhaustively re-audited this iteration;
 unaffected by this fix.
 
 Commits: `8378d50`.
+
+## Iteration 81 — BRAW backend always decoded frames as RGBA even though the SDK reports BGRA on some platforms/GPUs
+
+**Why this file.** `companion/src/postflowx_companion/media/backends/braw_backend.py`
+implements `BrawBackend`, the still-frame decode path for `.braw` clips
+via ctypes calls into the Blackmagic RAW SDK's COM-style vtable
+interfaces. `get_frame()` is the public entry point invoked on every
+preview/thumbnail/seek-frame request when the SDK is present.
+
+**The bug.** `_save_frame()` (formerly lines 477-486) contained the
+comment `# BRAW SDK returns BGRA or RGBA depending on platform` /
+`# Detect byte order: if it's BGRA swap R/B channels`, but the actual
+code unconditionally called
+`Image.frombytes("RGBA", (w, h), data, "raw", "RGBA", bpr)` — no
+detection logic existed anywhere in the file.
+`IBlackmagicRawFrame::GetResourceType` (vtable slot 6, constant
+`_FRAME_GetResourceType` defined at line 102) was never called from
+any site in the file, confirming the intended detection was never
+wired up, not that it was deliberately skipped.
+
+**Concrete failure example.** On any platform/GPU combination where
+the BRAW SDK's async decode callback (`_FrameCallback._read_complete`)
+returns frame bytes packed as BGRA rather than RGBA, every BRAW
+preview/thumbnail/seek-frame image silently has its red and blue
+channels swapped — skin tones and color-critical VFX reference frames
+would look visibly wrong with no error surfaced anywhere.
+
+**Why genuine and new.** Independently verified by reading the full
+call chain: `get_frame()` (line 283) → `_decode_frame_rgba()` (line
+426) → `_decode_frame_rgba_locked()` (line 435) →
+`_FrameCallback._read_complete` (line 134, the callback that actually
+copies raw bytes via `_FRAME_GetBytes`) → `_save_frame()` (call site
+line 302). This is the sole, fully-implemented BRAW still-frame decode
+path — not dead code, not gated behind an unreachable flag. Confirmed
+via a dedicated grep that `_FRAME_GetResourceType` has exactly one
+occurrence in the file (its definition) prior to this fix. A new bug
+species: an SDK/platform-dependent pixel-format assumption hardcoded
+despite a code comment acknowledging the variability — distinct from
+the wrong-API-name, operator-precedence, `get_session()`-copy-mutation,
+sidecar-path-collision, and floor-division species already swept for
+in Iterations 74-80.
+
+**The fix.** Added `_raw_mode_for_resource_type()`, a pure helper
+mapping a `GetResourceType()` code to a PIL raw mode (`"BGRA"` for the
+known BGRA-packed resource-type codes, `"RGBA"` otherwise). Extended
+`_FrameCallback._read_complete` to also call `_FRAME_GetResourceType`
+on the decoded frame and thread the result through
+`_decode_frame_rgba_locked()`'s return tuple (now 5-tuple:
+`w, h, bpr, raw_bytes, resource_type`). `_save_frame()` now picks the
+PIL raw mode via the new helper instead of hardcoding `"RGBA"`.
+`_save_frame_via_ffmpeg()` (the no-Pillow fallback) similarly picks
+`ffmpeg`'s `-pix_fmt` (`bgra` vs `rgba`) from the same resource type
+instead of hardcoding `rgba`.
+
+**Test approach.** New file `companion/tests/test_braw_backend_bgra.py`
+(4 tests) exercising the pure `_raw_mode_for_resource_type()` helper
+directly (RGBA code → `"RGBA"`, each known BGRA code → `"BGRA"`,
+unknown code → defaults to `"RGBA"`), plus one test that calls
+`_save_frame()` with a stubbed-in fake `PIL.Image` module to confirm
+it passes the correct raw mode through end-to-end for both a BGRA and
+an RGBA resource type. No real BRAW SDK is required — the helper and
+`_save_frame()` are pure/mockable, consistent with how the module's
+ctypes SDK calls are already fully lazy (never invoked at import
+time). Confirmed the test file fails to even collect
+(`ImportError: cannot import name '_raw_mode_for_resource_type'`)
+against pre-fix code and passes 4/4 post-fix via a stash/pop
+round-trip on `braw_backend.py`.
+
+**Verification.**
+`python3 -m pytest tests/test_braw_backend_bgra.py -v` — 4/4 pass.
+Full companion suite: `python3 -m pytest -q` — 285 passed, 7 skipped,
+same 2 pre-existing `test_conform_engine.py` failures from Iterations
+76-80 (`int.bit_count()` needs Python 3.10+; this environment runs
+3.9.6) — unrelated, untouched, out of scope.
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented in
+Iteration 76.
+
+**Still open.** The exact integer values of the BRAW SDK's
+`_BlackmagicRawResourceFormat` enum could not be verified against the
+vendor's official header from this environment (no SDK/header present,
+offline); the fix uses the values documented in Blackmagic's publicly
+distributed sample code
+(`blackmagicRawResourceFormatRGBAU8 = 0`,
+`blackmagicRawResourceFormatBGRAU8 = 1`,
+`blackmagicRawResourceFormatBGRAU8Planar = 8`). If a future BRAW SDK
+revision changes these codes, `_raw_mode_for_resource_type()` is the
+single place to update. The `int.bit_count()` / Python 3.9
+incompatibility in `conform_engine.py` remains unfixed (environment
+issue, out of scope).
+
+Commits: `TBD`.

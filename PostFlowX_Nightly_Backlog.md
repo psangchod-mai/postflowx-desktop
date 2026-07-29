@@ -5540,3 +5540,26 @@ post-fix via a stash/pop round-trip. Full suite: 281 passed/7 skipped
 (same 2 pre-existing Iteration-76 failures, unrelated).
 
 Commits: `8378d50`.
+
+## Iteration 81 — BRAW backend hardcoded RGBA decode despite acknowledging BGRA is platform-dependent
+
+`braw_backend.py`'s `_save_frame()` had a comment ("BRAW SDK returns
+BGRA or RGBA depending on platform... Detect byte order") but the code
+unconditionally called
+`Image.frombytes("RGBA", (w, h), data, "raw", "RGBA", bpr)` —
+`_FRAME_GetResourceType` (vtable slot 6) was defined but had zero call
+sites anywhere in the file, so the acknowledged detection was never
+implemented. On any platform/GPU where the SDK returns BGRA-packed
+frames, every BRAW preview/thumbnail/seek-frame silently had its red
+and blue channels swapped. Fixed by calling
+`IBlackmagicRawFrame::GetResourceType()` in `_FrameCallback._read_complete`,
+threading the result through the decode call chain, and adding
+`_raw_mode_for_resource_type()` to pick `"BGRA"` vs `"RGBA"` for both
+the Pillow path and the ffmpeg fallback's `-pix_fmt`. Added
+`test_braw_backend_bgra.py` (4 tests: helper direct + `_save_frame`
+end-to-end via a fake `PIL.Image`); confirmed it fails to even collect
+(`ImportError`) pre-fix and passes 4/4 post-fix via a stash/pop
+round-trip. Full suite: 285 passed/7 skipped (same 2 pre-existing
+Iteration-76 failures, unrelated).
+
+Commits: `TBD`.
