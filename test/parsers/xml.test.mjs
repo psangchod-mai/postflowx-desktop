@@ -117,6 +117,46 @@ test('every broadcast rate splits into a whole base and an exact rate', () => {
   }
 });
 
+// ── Zero srcIn is a real in-point, not a stub sentinel ─────────────────────
+// The post-parse "normalize" step used to drop any event whose srcIn was
+// literally "00:00:00:00" as soon as its source group contained another
+// event with a non-zero srcIn — treating a zero in-point as a placeholder
+// left by some other bug, rather than what it actually is: an ordinary edit
+// that happens to cut in from the very first frame of the source media.
+// Two clips reusing the same camera master (one cut in from frame 0, one
+// cut in later) silently lost the frame-0 clip from the parser's output.
+test('a clip cut in from frame 0 of its source survives even when another clip reuses the same source non-zero', () => {
+  const xml = `<?xml version="1.0"?><xmeml version="5"><sequence>
+    <name>ZERO IN</name><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+    <timecode><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+      <frame>0</frame><displayformat>NDF</displayformat></timecode>
+    <media><video><track>
+      <clipitem><name>shot_010</name>
+        <start>0</start><end>100</end><in>0</in><out>100</out>
+        <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+        <file><name>A001C001.mov</name><pathurl>file:///media/A001C001.mov</pathurl>
+          <timecode><frame>0</frame><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate></timecode>
+        </file>
+      </clipitem>
+      <clipitem><name>shot_020</name>
+        <start>100</start><end>200</end><in>240</in><out>340</out>
+        <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+        <file><name>A001C001.mov</name><pathurl>file:///media/A001C001.mov</pathurl>
+          <timecode><frame>0</frame><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate></timecode>
+        </file>
+      </clipitem>
+    </track></video></media></sequence></xmeml>`;
+
+  const res = parseXMEML(xml);
+  const evs = assertParseResult(res, { sourceType: 'xml' });
+
+  assert.equal(evs.length, 2, 'both clips survive (was 1: the frame-0 clip vanished)');
+  assert.equal(evs[0].clipName, 'shot_010');
+  assert.equal(evs[0].srcIn, '00:00:00:00', 'a genuine cut-in-from-frame-0 is not a stub sentinel');
+  assert.equal(evs[1].clipName, 'shot_020');
+  assert.equal(evs[1].srcIn, '00:00:09:15', 'media start 0 + in 240 = 9.6s at 25fps');
+});
+
 test('an unparseable document returns the contract shape, not a throw', () => {
   const res = parseXMEML('not xml at all');
   assert.ok(Array.isArray(res.events) && res.events.length === 0, 'no events');

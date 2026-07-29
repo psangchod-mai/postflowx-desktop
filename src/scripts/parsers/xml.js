@@ -1223,7 +1223,11 @@ export function parseXMEML(xmlText) {
     }
   }
 
-  // normalize: ตัด event ที่ srcIn == "00:00:00:00" ถ้า srcFile เดียวกันมีทั้ง 00:00:00:00 และ non-zero
+  // normalize: drop literal duplicate rows within the same source — same
+  // record range AND same source out, differing only by a stray zero srcIn.
+  // srcIn == "00:00:00:00" is NOT itself a signal of a bogus/unresolved row:
+  // it is a perfectly ordinary in-point for a clip cut in from the first
+  // frame of its media, so it must never be dropped just for being zero.
   const ZERO_TC = "00:00:00:00";
   const bySrc = new Map();
 
@@ -1235,13 +1239,12 @@ export function parseXMEML(xmlText) {
 
   const normalizedEvents = [];
   for (const [, group] of bySrc.entries()) {
-    const hasNonZero = group.some(ev => (ev.srcIn && ev.srcIn !== ZERO_TC));
-    if (!hasNonZero) {
-      normalizedEvents.push(...group);
-    } else {
-      for (const ev of group) {
-        if (ev.srcIn !== ZERO_TC) normalizedEvents.push(ev);
-      }
+    for (const ev of group) {
+      const isDuplicateStub = ev.srcIn === ZERO_TC && group.some(other =>
+        other !== ev && other.srcIn !== ZERO_TC &&
+        other.recIn === ev.recIn && other.recOut === ev.recOut && other.srcOut === ev.srcOut
+      );
+      if (!isDuplicateStub) normalizedEvents.push(ev);
     }
   }
 
