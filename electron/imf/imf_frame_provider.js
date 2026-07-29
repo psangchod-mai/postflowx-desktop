@@ -804,7 +804,8 @@ async function decodeFrame(args = {}) {
 
   // ── Cache check ───────────────────────────────────────────────────────────
   const cache     = _ensureCache();
-  const cached    = cache.get(packageHash, cplId, frameNumber, displayMode);
+  const cmode     = _cacheMode(displayMode, lowres);
+  const cached    = cache.get(packageHash, cplId, frameNumber, cmode);
   if (cached) {
     log.push('[IMF] cache hit');
     return { ok: true, imagePath: cached, imageUrl: _mediaUrl(cached), imfDemuxerOK: true, fromCache: true, errors, log };
@@ -941,7 +942,7 @@ async function decodeFrame(args = {}) {
 
   // ── Persist to cache ──────────────────────────────────────────────────────
   cache.ensureDir(packageHash, cplId);
-  const cachePath = cache.framePath(packageHash, cplId, frameNumber, displayMode);
+  const cachePath = cache.framePath(packageHash, cplId, frameNumber, cmode);
   if (cachePath) {
     try { fs.copyFileSync(outPath, cachePath); } catch {}
   }

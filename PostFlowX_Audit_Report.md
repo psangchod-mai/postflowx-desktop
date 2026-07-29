@@ -9824,3 +9824,126 @@ individually examined for these bug species —
 follow-up scouting pass.
 
 Commits: `9a40200`.
+
+## Iteration 93 — `imf_frame_provider.js`'s `decodeFrame()` keyed its preview cache on raw `displayMode`, ignoring `lowres` — letting a low-res scrub request silently return a stale/mismatched full-res frame
+
+**Why this file.** `electron/imf/imf_frame_provider.js` implements the
+primary FFmpeg-IMF-demuxer decode path for IMF package preview frames,
+alongside a peer decode path (`requestFrame()`/`_cacheHit()` in the same
+file) and the on-disk cache layer (`electron/imf/imf_cache.js`). Cross-
+referencing every cache-key call site against every cache-read call site
+in a single module is exactly the kind of quiet, one-file inconsistency
+that survives a long time in the wild — nothing else in the codebase
+depends on it being wrong, and it only diverges under the specific
+low-res-scrub condition.
+
+**The bug.** `IMFPreviewCache` supports a compound "variant" key
+(`framePath`/`get(packageHash, cplId, mxfFrame, variant, ext)`), and
+`_safeVariant()` in `imf_cache.js` deliberately preserves `.` characters
+in that key specifically so values like `"sdr.lr2"` survive sanitization
+— confirming the cache layer was designed, from the start, to support a
+`"<displayMode>.lr<lowres>"` compound key. `requestFrame()`/`_cacheHit()`
+in this same file already build that key correctly via a local
+`_cacheMode(displayMode, lowres)` helper. `decodeFrame()`, the other
+consumer of the same cache, did not: its cache-read
+(`cache.get(packageHash, cplId, frameNumber, displayMode)`) and its
+cache-write (`cache.framePath(packageHash, cplId, frameNumber,
+displayMode)`) both used the raw `displayMode` string, silently dropping
+the `lowres` discriminator. Concretely: a full-res decode
+(`lowres: 0`) persists a frame at key `"sdr"`; a subsequent low-res
+scrub-preview decode (`lowres: 2`) for the *same* frame number reads
+that same `"sdr"` key, finds it, and returns the full-res image as if it
+were the requested low-res one (`fromCache: true`) — and conversely, once
+a low-res-tagged decode overwrites that slot (impossible here since the
+key collides identically, but the direction that matters is: any first
+writer at `"sdr"` locks all later requests, of any lowres level, into
+that entry). The net effect for a user: switching between playback
+(low-res-scrub) and full-quality-preview does not always route to a
+correctly-sized decode — it can silently return the wrong resolution for
+that frame until the cache entry ages out or the frame number moves on.
+
+**Independent verification.** Traced every `cache.get`/`cache.framePath`
+call site in `imf_frame_provider.js` (`requestFrame()`'s `_cacheHit()`
+helper, `decodeFrame()`'s two sites, and a poster-frame lookup) and
+confirmed `_cacheMode()` is the file's own established, working pattern
+for this exact purpose — `decodeFrame()` is the only call site that
+omits it. Read `imf_cache.js` in full to confirm `_safeVariant()`'s
+comment ("keeps '.' so legitimate variant keys such as 'sdr.lr2' survive")
+is not incidental — the cache layer was explicitly built to carry this
+compound key.
+
+**The fix.** In `decodeFrame()`: `const cmode = _cacheMode(displayMode,
+lowres);` computed once, immediately before the cache-read
+(`cache.get(packageHash, cplId, frameNumber, cmode)`), and reused at the
+cache-write site (`cache.framePath(packageHash, cplId, frameNumber,
+cmode)`) — matching the pattern already used by `_cacheHit()` in the same
+file exactly.
+
+**Test approach.** No existing test harness covers this module (Electron
+main-process code with a hard `require('electron')` dependency used only
+for `app.getPath('userData')`). Wrote a standalone Node script that
+requires the real module directly and drives `decodeFrame()` against a
+synthetic package/CPL, pre-populating the on-disk cache to simulate a
+prior full-res decode, then requesting the same frame at `lowres: 2` and
+asserting the response is *not* `fromCache: true`.
+
+First attempt at this harness gave a **false pass in both the pre-fix and
+post-fix case** — worth recording since it's a genuine trap for this
+kind of test. Two separate causes had to be found and fixed before the
+harness was trustworthy: (1) the fake `cplPath` initially didn't exist on
+disk, tripping `decodeFrame()`'s early `CPL_NOT_FOUND` gate before the
+cache-check code ever ran — fixed by writing a real (dummy-content) file
+to that path; (2) the project's own installed `node_modules/electron`
+package (a plain string path, not `{app}`, since it's a native-binary
+launcher, not a real Electron runtime) always wins Node's normal module
+resolution over an `NODE_PATH`-based stub, so `app.getPath('userData')`
+throws inside `_ensureCache()` and it silently falls back to bare
+`os.tmpdir()` as the cache base directory — not the subdirectory the
+harness had pre-populated, so the cache read always missed regardless of
+which code version was under test. Fixed by pointing the harness's
+cache pre-population directly at that real fallback location
+(`os.tmpdir()/PostFlowXCache/IMFPreview/...`) instead of fighting module
+resolution.
+
+**Verification.** With both harness bugs fixed: run against a confirmed
+pre-fix copy of `decodeFrame()` (fix hunks manually reverted, sibling
+file placed inside `electron/imf/` so its relative `require()`s still
+resolve) — genuinely reproduced the bug: `{"fromCache": true, "ok": true,
+"imagePath": ".../42_sdr.png"}` for the `lowres: 2` request, i.e. the
+low-res request was wrongly satisfied by the full-res-only cache entry.
+Run against the real, fixed `decodeFrame()` — `fromCache` absent, the
+low-res request correctly missed the full-res-only cache entry and fell
+through toward the real decode path (which then fails harmlessly on the
+synthetic fake CPL with `PROBE_FAILED`, confirming the cache-check ran
+and moved past it rather than short-circuiting on an unrelated gate).
+Full regression: `npm run test:node` — 72 passed, 1 skipped (pre-existing
+skip), 0 failed; `npm run test:js` — 47 passed (`tests-js/*.test.mjs`
+suites), 0 failed. No regressions from an isolated 4-line change.
+
+**Gate.** Genuine pre-fix-reproduction / post-fix-confirmation via a
+standalone Node harness driving the real module directly (isolating
+Electron's `app.getPath` dependency by targeting its real fallback
+behavior rather than mocking it away), plus a clean full JS regression
+run.
+
+**Still open.** `cacheFrame()`/`_persistFrameToCache()` — the
+renderer-to-main-process persist path used during continuous IMF
+playback (`src/scripts/modules/imf/imf_player.js`) — also calls into this
+cache using raw `displayMode` with no low-res discriminator. During
+playback the renderer computes `decodeScale = S.isPlaying ?
+(S.previewScale || 1) : 1` and can decode at a reduced scale for
+real-time performance, then unconditionally calls
+`_persistFrameToCache(frame, imageData)` regardless of whether that
+decode was full-res or scaled-down — meaning a reduced-quality,
+scaled-down frame decoded during scrubbing/playback can be persisted into
+what should be the full-res cache slot for that frame number. This was
+investigated this iteration and found to be architecturally distinct from
+the `decodeFrame()`/`requestFrame()` discrete `lowres`-level system fixed
+here — it's a continuous DWT-scale reduction mechanism with its own
+`renderScale`/`decodeScale` split — so it was deliberately scoped out of
+this fix rather than folded in. Flagging as a follow-up: either give the
+renderer-side persist path its own scale-aware cache-key discriminator
+(mirroring `_cacheMode()`), or gate `_persistFrameToCache()` so it never
+writes while `decodeScale !== 1`.
+
+Commits: `TBD`.

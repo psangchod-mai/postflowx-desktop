@@ -5868,3 +5868,41 @@ this package (`ThumbnailGenerator.swift`, `WaveformGenerator.swift`,
 follow-up scouting pass.
 
 Commits: `9a40200`.
+
+## Iteration 93 — `imf_frame_provider.js`'s `decodeFrame()` keyed its preview cache on raw `displayMode`, ignoring `lowres` — letting a low-res scrub request silently return a stale/mismatched full-res frame
+
+`decodeFrame()`'s cache-read and cache-write both keyed on plain
+`displayMode` (e.g. `"sdr"`), dropping the `lowres` level that the
+peer decode path (`requestFrame()`/`_cacheHit()`, same file) already
+folds in via a local `_cacheMode(displayMode, lowres)` helper — and that
+`imf_cache.js`'s `_safeVariant()` was explicitly built to carry (its
+comment names `"sdr.lr2"` as a legitimate variant key). Effect: a
+full-res decode caches at `"sdr"`; a later low-res scrub-preview request
+for the same frame reads that same key and gets served the full-res
+image as if it were the low-res one, and vice versa for whichever variant
+writes first. Fix: `decodeFrame()` now computes `const cmode =
+_cacheMode(displayMode, lowres)` once and uses it at both the read and
+write sites, matching `_cacheHit()`'s existing pattern exactly.
+
+Verified with a standalone Node harness driving the real module directly
+against a synthetic package/CPL and pre-populated cache. First harness
+attempt gave a false pass in both directions — two bugs in the harness
+itself: a non-existent fake `cplPath` tripped an earlier `CPL_NOT_FOUND`
+gate before the cache-check code ever ran, and the project's own
+installed `node_modules/electron` (a plain string, not `{app}`) always
+wins module resolution over an `NODE_PATH` stub, so `app.getPath`
+throws and the cache silently falls back to bare `os.tmpdir()` — not the
+directory the harness pre-populated. Fixed both, then confirmed
+genuinely: pre-fix code returned `fromCache: true` for the low-res
+request (bug reproduced against a real synthetic cache collision);
+post-fix code correctly missed the full-res-only entry. Full regression
+clean: `npm run test:node` 72/73 (1 pre-existing skip), `npm run test:js`
+47/47.
+
+Still open: the renderer's playback-time persist path
+(`_persistFrameToCache()` in `imf_player.js`) also writes this cache
+using raw `displayMode`, with no discriminator for its own continuous
+`decodeScale` reduction — a related but architecturally distinct risk,
+deliberately scoped out of this fix and flagged for a follow-up.
+
+Commits: `TBD`.
