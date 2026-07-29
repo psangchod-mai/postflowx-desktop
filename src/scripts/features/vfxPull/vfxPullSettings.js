@@ -80,6 +80,13 @@
     dirty: false,
   };
 
+  // Bumped every time _vs.settings is reassigned wholesale (load/reset), so
+  // in-flight async callbacks (e.g. the Browse folder picker) that captured
+  // the sequence at click-time can detect a stale target and skip their
+  // write instead of silently corrupting a settings object the user has
+  // since reloaded or reset.
+  var _vsSeq = 0;
+
   // ── Storage ───────────────────────────────────────────────────────────────────
 
   function _vsKey() {
@@ -99,6 +106,7 @@
     } catch (e) {
       _vs.settings = Object.assign({}, DEFAULTS);
     }
+    _vsSeq++;
   }
 
   function _vsSave() {
@@ -675,11 +683,16 @@
     var pickBtn = body.querySelector('#pfxVfxStPickFolder');
     if (pickBtn) {
       pickBtn.addEventListener('click', function () {
+        var seqAtClick = _vsSeq;
         try {
           chrome.runtime.sendMessage(
             { type: 'IMF_COMPANION_CALL', payload: { action: 'pickFolder', title: 'Select VFX Pull Output Folder', mode: 'write' }, timeoutMs: 30000 },
             function (res) {
               void chrome.runtime.lastError;
+              // Settings may have been reloaded or reset while the native
+              // picker was open — discard a stale result instead of writing
+              // it into a settings object the user no longer sees.
+              if (seqAtClick !== _vsSeq) return;
               var path = res && res.ok && (res.response && (res.response.path || res.response.folder || (res.response.data && (res.response.data.path || res.response.data.folder))));
               if (path) {
                 _vs.settings.outputRootPath = path;
@@ -729,6 +742,7 @@
       resetBtn.addEventListener('click', function () {
         if (confirm('Reset all VFX Pull settings to defaults?')) {
           _vs.settings = Object.assign({}, DEFAULTS);
+          _vsSeq++;
           _vs.dirty = true;
           _vsRenderBody();
         }

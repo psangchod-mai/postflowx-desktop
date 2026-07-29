@@ -13716,3 +13716,79 @@ re-attempt until the developer's WIP in that file is committed or
 shrinks.
 
 Commits: `fa232ae`.
+
+## Iteration 137 — VFX Pull Settings: a stale "Browse…" folder-picker result can clobber a freshly reloaded or reset settings object
+
+**Why this file:** `src/scripts/features/vfxPull/vfxPullSettings.js`
+was on the clean-file whitelist (no pre-existing uncommitted diff). A
+first scouted candidate this iteration, `imf_proxy.js`'s `_httpToken`
+race, was independently read in full and rejected: all its writers
+write the same conceptual value (the companion's current session
+token), and `_fetchWithTokenRefresh()` already retries once on 403 by
+re-fetching a fresh token, so a stale write costs at most one extra
+round trip — not a persistent wrong result. `vfxPullSettings.js` was
+re-scouted and independently verified to meet the established bar: its
+stale write sticks (persists to `localStorage`) and is visibly wrong
+(wrong folder path shown and used for output) with no self-correction.
+
+**The bug:** the Export tab's "Browse…" button
+(`#pfxVfxStPickFolder`) sends an async `chrome.runtime.sendMessage`
+IPC call to the native folder picker; its callback unconditionally
+wrote the returned path into `_vs.settings.outputRootPath` and set
+`_vs.dirty = true`. But `_vs.settings` itself is reassigned wholesale
+in two places elsewhere in the same module: `_vsLoad()` (called from
+`_vsOpen()` whenever the modal reopens with no unsaved edits) and the
+Reset Defaults handler. Clicking Browse, then closing and reopening
+the settings modal (or hitting Reset Defaults) before the native
+picker resolved, meant the picker's callback still held a reference to
+the *old* `_vs.settings` object conceptually but wrote through the
+`_vs.settings` binding at call time — landing the stale folder choice
+into whatever settings object the user was now looking at, silently
+corrupting it. That corruption then persisted to `localStorage` on the
+very next Save/Close, with no downstream validation to catch it.
+
+**The fix:** added `var _vsSeq = 0;` alongside the `_vs` state object,
+bumped once at the end of `_vsLoad()` and once in the Reset Defaults
+click handler (the two places that reassign `_vs.settings` wholesale).
+The Browse click handler now captures `var seqAtClick = _vsSeq;`
+before firing the IPC call, and its callback's first line is
+`if (seqAtClick !== _vsSeq) return;` — discarding the stale result
+instead of writing it into a settings object the user has since
+reloaded or reset.
+
+**Test:** `tests-js/vfxPullSettingsBrowseStaleRace.test.mjs` (linkedom,
+since the module touches `document`/`window`/`chrome.runtime` at wire
+time and is a non-module IIFE script loaded via dynamic `import()` for
+its side effects). Opens the settings modal via
+`window._pfxVfxSettingsOpen()`, clicks the Export tab to render the
+Browse… button, clicks it to suspend on a test-controlled
+`chrome.runtime.sendMessage` callback, then closes and reopens the
+modal (forcing `_vsLoad()` to swap in a fresh `_vs.settings`) before
+resolving the stale picker callback with `/Volumes/Shared/STALE_PICK`.
+Asserts the reloaded settings' `outputRootPath` is neither the stale
+path nor mutated from its fresh default. 4 assertions total.
+
+**Verification:** ran the test against the fix first — 4 of 4 passed.
+Backed up the fixed file via `cp` to
+`/tmp/vfxPullSettings.js.fixed`, then temporarily removed the
+`if (seqAtClick !== _vsSeq) return;` guard line and re-ran: 2 of 4
+passed, with exactly the predicted two assertions failing ("stale
+Browse result must not be written into the reloaded settings object"
+and "reloaded settings kept their fresh default output path") —
+confirming the bug reproduces precisely as expected once the guard is
+absent. Restored the exact fixed file via `cp` from the backup and
+re-ran: 4 of 4 passed again. This file had zero pre-existing WIP (per
+the clean-file whitelist), so the fix was staged as a whole file with
+no `git add -p` hunk-splitting required. Full `npm run test:js`
+regression is green across every suite (0 failures anywhere in the
+run). `npm run test:node` also green, matching baseline (72 pass, 1
+pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-136 — its pre-existing
+WIP is too tightly interleaved (a fix-line hunk shares boundaries with
+an unrelated `_updateFixButton()` feature) to isolate safely; do not
+re-attempt until the developer's WIP in that file is committed or
+shrinks.
+
+Commits: `TBD`.

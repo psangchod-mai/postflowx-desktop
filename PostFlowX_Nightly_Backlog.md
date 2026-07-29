@@ -7088,3 +7088,33 @@ baseline (`test:js` all green across every suite including the
 staged; `test:node` 72 pass/1 skip/0 fail).
 
 Commits: `fa232ae`.
+
+## Iteration 137 — VFX Pull Settings: a stale "Browse…" folder-picker result can clobber a freshly reloaded or reset settings object
+
+`vfxPullSettings.js`'s Export tab "Browse…" button fires an async
+`chrome.runtime.sendMessage` round trip to the native folder picker,
+whose callback writes the chosen path straight into `_vs.settings.outputRootPath`
+with no guard. But `_vs.settings` itself gets reassigned wholesale in
+two places — `_vsLoad()` (called on modal reopen whenever there are no
+unsaved edits) and the Reset Defaults handler — so a user who clicks
+Browse, then closes/reopens the modal (or hits Reset Defaults) before
+the native picker resolves, gets the picker's late callback silently
+writing into the brand-new settings object instead of being discarded,
+corrupting a session the user never intended it for; that corruption
+then persists to `localStorage` on the next Save/Close with no
+downstream re-validation. Fixed with a module-level `_vsSeq` counter
+bumped every time `_vs.settings` is reassigned (`_vsLoad()` and Reset
+Defaults); the Browse click handler captures `seqAtClick = _vsSeq` and
+the picker callback bails out if `_vsSeq` has since moved on. New test
+`tests-js/vfxPullSettingsBrowseStaleRace.test.mjs` (4 assertions,
+linkedom) opens the modal, switches to Export, clicks Browse to
+suspend on a test-controlled picker callback, closes and reopens the
+modal to force a fresh `_vs.settings`, then resolves the stale picker
+result and confirms it did not land in the reloaded settings. Verified
+by stripping the guard line: 2 of 4 assertions failed exactly as
+predicted, restored fix re-passed 4/4. File had zero pre-existing WIP
+(confirmed via the clean-file whitelist). Full regression matched
+baseline (`test:js` all green across every suite; `test:node` 72
+pass/1 skip/0 fail).
+
+Commits: `TBD`.
