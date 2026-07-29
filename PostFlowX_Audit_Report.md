@@ -9704,3 +9704,123 @@ unexplored Swift Package with its own `MediaEngine.swift`,
 of its batch-dispatch code shares this same pattern.
 
 Commits: `fe1d2c1`.
+
+## Iteration 92 — `PFXNativeMediaEngine`'s `probeAsset()` truncated `duration * fps` instead of rounding, silently reporting one frame fewer than a clip actually has
+
+**Why this file.** Iteration 91's "Still open" section flagged
+`electron/native/PFXNativeMediaEngine/` — a separate, actively-used Swift
+Package (confirmed via `grep` against `pfx_native_engine.js`, `ipc.js`, and
+`preload.js`; it is wired into the desktop app's native media path, not
+dead code) — as an unexplored follow-up target after finding a new bug
+species in the sibling `avf_bridge.swift` bridge. A scouting pass over this
+package's `MediaEngine.swift` surfaced a distinct issue in `probeAsset()`
+(lines 280-321), the function every session-open and probe call routes
+through to compute `MediaInfo`, including `frameCount`.
+
+**The bug.** `probeAsset()` computed the clip's frame count as:
+
+```swift
+let durationSec = CMTimeGetSeconds(dur)
+let frameCount  = fps > 0 ? Int(durationSec * fps) : 0
+```
+
+`CMTimeGetSeconds` converts the asset's rational `CMTime` duration
+(`value`/`timescale`) to a `Double`, and `fps` is likewise a `Double`
+conversion of the track's rational `nominalFrameRate`. Multiplying two
+independently-rounded doubles that are mathematically supposed to produce
+an exact integer routinely lands a hair under the true boundary instead of
+exactly on it — e.g. `119.99999999999999` instead of `120.0` — because the
+rounding errors in the two conversions don't cancel out. `Int(...)`
+truncates toward zero, so `119.99999999999999` becomes `119`: one frame
+short of the clip's actual, whole-frame length. This is most visible on
+non-integer timebases like `30000/1001` (29.97fps) and `24000/1001`
+(23.976fps), which are exactly the timebases most common in real-world
+broadcast and film delivery.
+
+**Independent verification.** Confirmed the exact buggy code by reading
+`MediaEngine.swift` lines 280-321 directly. Confirmed the sibling function
+`tcToFrame(_:fps:)` (lines 388-392) already gets this right — it uses
+`Int(fps.rounded())` rather than truncating — establishing that
+`probeAsset()`'s truncation was an inconsistency, not an intentional
+choice: two functions in the same file take opposite stances on
+rounding vs. truncating the same kind of fps-derived value. Confirmed via
+`grep` two downstream consumers of `frameCount` as a seek-clamp upper
+bound (`playbackSeek`, lines 140 and 142):
+`s.state.frame = max(0, min(f, s.info.frameCount - 1))` and
+`s.state.frame = max(0, min(Int(t * s.info.fps), s.info.frameCount - 1))`
+— so an off-by-one-low `frameCount` makes the clip's true last frame
+permanently unreachable via seek (and via any playback/thumbnail path that
+clamps against `frameCount - 1`), not just a cosmetically wrong number in
+a UI label.
+
+Also independently reproduced the exact failure numerically before
+touching any code: `4004/1001` frames-of-duration-seconds computation
+confirmed in Python that `CMTime(value: 120120, timescale: 30000)` (120
+frames at 30000/1001fps, i.e. a real 4.004s/29.97fps clip) yields
+`dur * fps == 119.99999999999999` in IEEE double arithmetic — truncating
+to 119, rounding to the correct 120.
+
+**The fix.** Round instead of truncate, matching `tcToFrame()`'s existing
+convention:
+
+```swift
+let durationSec = CMTimeGetSeconds(dur)
+let frameCount  = fps > 0 ? Int((durationSec * fps).rounded()) : 0
+```
+
+**Test approach.** No XCTest target is available for this package (its
+own `Package.swift` comment notes "XCTest is unavailable with Command Line
+Tools only"), so verification followed the same manual pre-fix/post-fix
+binary-comparison discipline established in Iteration 91, adapted to this
+package's HTTP-server architecture: build the release binary, start it,
+`curl` a `media.probe` request against a real test clip, and read
+`frameCount` back out of the JSON response — once against the pre-fix
+binary (via `git stash` on just this file) and once against the post-fix
+binary.
+
+Built a genuine 120-frame, 64x64, `30000/1001`fps (29.97fps) `.mov` via
+`ffmpeg` (`ffmpeg -f lavfi -i testsrc=size=64x64:rate=30000/1001 -frames:v
+120 ...`), confirmed via `ffprobe` as exactly `duration=4.004000,
+nb_frames=120, r_frame_rate=30000/1001` — a real, unremarkable delivery
+clip, not a contrived edge case.
+
+**Verification.** Pre-fix binary (`git stash -- MediaEngine.swift`, `swift
+build -c release`, run, `curl /command` with `media.probe`): response
+included `"frameCount":119,"fps":29.970029830932617,"duration":
+4.0039999999999996` — reproducing the exact reported bug against a real
+120-frame clip. Post-fix binary (`git stash pop`, rebuild, same request):
+response included `"frameCount":120` — the correct value — with `fps` and
+`duration` unchanged, confirming the fix is isolated to the rounding
+change and doesn't perturb anything else the response depends on. `swift
+build -c release` succeeds cleanly on the restored fix (pre-existing
+warnings only, no new ones). Full companion suite: `python3 -m pytest -q`
+— 313 passed, 7 skipped, same 2 pre-existing `test_conform_engine.py`
+failures from Iterations 76-83 (unrelated, out of scope) — expected to be
+unaffected by a pure Swift/native change, and confirmed so.
+
+**Gate.** Manual end-to-end HTTP-server binary verification (pre-fix
+reproduction against a real 29.97fps clip + post-fix confirmation), since
+no XCTest harness is available for this package; full companion pytest
+suite unaffected.
+
+**Still open.** This is a new instance of previously-catalogued bug
+species #8 (truncation instead of rounding for a fractional-fps-derived
+nominal/count value), but in a distinct conversion context from the
+earlier instances (`duration * fps -> frameCount` here, vs. fps-to-nominal-
+base conversions previously) — recorded as species #8 rather than a new
+species, since the underlying defect (truncate vs. round on an
+fps-derived double) is the same shape. No automated regression test was
+added to the repo, for the same reason as Iteration 91: this package has
+no XCTest target wired up (only a plain executable check harness,
+`Tests/MediaStoreCheck`, aimed at the SQLite `PFXMediaCore` library, not
+`MediaEngine`). A follow-up could add an XCTest target to this package's
+`Package.swift` (Xcode.app's Swift toolchain, not just Command Line
+Tools, would be required) if this package accumulates more fixes; until
+then, `Tests/MediaStoreCheck`-style plain executable harnesses remain the
+pragmatic option. `PFXNativeMediaEngine` has several other files not yet
+individually examined for these bug species —
+`ThumbnailGenerator.swift`, `WaveformGenerator.swift`, `ProxyCreator.swift`,
+`RenderEngine.swift`, `HTTPServer.swift`, `IMFEngine.swift` — worth a
+follow-up scouting pass.
+
+Commits: `TBD`.

@@ -5830,3 +5830,41 @@ unexplored `electron/native/PFXNativeMediaEngine/` Swift package shares
 this pattern if it's actively used.
 
 Commits: `fe1d2c1`.
+
+## Iteration 92 — `PFXNativeMediaEngine`'s `probeAsset()` truncated `duration * fps` instead of rounding, silently reporting one frame fewer than a clip actually has
+
+Following up on Iteration 91's flag to check the separate, actively-used
+`electron/native/PFXNativeMediaEngine/` Swift package (confirmed live via
+`pfx_native_engine.js`/`ipc.js`/`preload.js`, not dead code), found
+`probeAsset()` computing `frameCount` as `Int(durationSec * fps)` —
+truncating rather than rounding a value that two independent
+rational-to-double conversions (`CMTimeGetSeconds` on the asset's
+duration, and the track's `nominalFrameRate`) routinely land a hair under
+its true integer boundary (e.g. `119.99999999999999` instead of `120.0`)
+for non-integer timebases like `30000/1001` (29.97fps). Sibling function
+`tcToFrame()` already correctly uses `Int(fps.rounded())`, confirming this
+was an inconsistency rather than intentional. `frameCount` is used
+downstream as a seek-clamp upper bound
+(`min(f, s.info.frameCount - 1)`), so an off-by-one-low value makes a
+clip's true last frame permanently unreachable via seek/thumbnail/
+playback. Fix: `Int((durationSec * fps).rounded())`. Verified end-to-end
+against the package's HTTP server: built a real 120-frame,
+64x64, 29.97fps `.mov` via `ffmpeg` (confirmed via `ffprobe`:
+`duration=4.004000, nb_frames=120`); pre-fix binary (`git stash` on just
+`MediaEngine.swift`) returned `frameCount: 119` for a `media.probe`
+request against this clip; post-fix binary returned `frameCount: 120`,
+with `fps`/`duration` unchanged. `swift build -c release` clean both
+before and after (pre-existing warnings only). Full companion suite
+unaffected: 313 passed/7 skipped (same 2 pre-existing Iteration-76
+failures). This is a new instance of bug species #8 (truncation instead
+of rounding on an fps-derived value), in a different conversion context
+(`duration * fps -> frameCount`) than its earlier instances. No automated
+regression test added — this package has no XCTest target (Command Line
+Tools only; only a plain-executable check harness exists, aimed at the
+SQLite `PFXMediaCore` library, not `MediaEngine`). Several other files in
+this package (`ThumbnailGenerator.swift`, `WaveformGenerator.swift`,
+`ProxyCreator.swift`, `RenderEngine.swift`, `HTTPServer.swift`,
+`IMFEngine.swift`) remain unexamined for these bug species — worth a
+follow-up scouting pass.
+
+Commits: `TBD`.

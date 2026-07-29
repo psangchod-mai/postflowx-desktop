@@ -307,7 +307,11 @@ actor MediaEngine {
         }
 
         let durationSec = CMTimeGetSeconds(dur)
-        let frameCount  = fps > 0 ? Int(durationSec * fps) : 0
+        // Rational-to-float duration conversion routinely lands a hair under
+        // the true frame-count boundary (e.g. 119.99999999999999 instead of
+        // 120.0) for timebases like 30000/1001; round rather than truncate,
+        // matching tcToFrame()'s fps.rounded() below.
+        let frameCount  = fps > 0 ? Int((durationSec * fps).rounded()) : 0
         let needsProxy  = (width * height >= 3840 * 2160) || isProRes || bitrate > 50_000_000
         let ext         = (path as NSString).pathExtension.lowercased()
 
