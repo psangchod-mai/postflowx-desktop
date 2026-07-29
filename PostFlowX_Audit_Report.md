@@ -9319,4 +9319,4 @@ re-verified — a follow-up iteration should either independently verify
 those three or pivot to sweeping a different file/bug species, since
 `color_lut.py` may now be largely exhausted for this species.
 
-Commits: `TBD`.
+Commits: `317d358`.

@@ -5696,4 +5696,4 @@ iteration finding a spec-mismatch bug in `color_lut.py` — LogC3,
 S-Log3, and V-Log were reported clean by this iteration's scouting
 agent but not independently re-verified.
 
-Commits: `TBD`.
+Commits: `317d358`.
