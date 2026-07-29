@@ -6554,3 +6554,24 @@ matched baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped
 Node, 315/7/0 Python.
 
 Commits: `78a331e`.
+
+## Iteration 120 — OcfViewer.openClip() concurrent-call race
+
+`OcfViewer.openClip(clipPath)` (src/scripts/features/ocf_engine/
+ocfViewer.js) writes shared instance fields (`_clipPath`, `_probe`,
+`_engine`, `_colorBadge`, `_imageUrl`, ...) across two awaits
+(`ocfOpen()` then `ocfDecodeFrame()`) with no staleness guard —
+clicking a second clip in the media bin before the first finishes
+probing/decoding could let a stale call's late-resolving continuation
+overwrite the currently-displayed clip's data with the wrong clip's
+probe/engine/image, the same shared-mutable-state-across-an-await
+shape already fixed in `reviews/player.js` (Iterations 116, 119) and
+`reviews/index.js` (Iteration 118). Fixed by adding the same
+`_loadSeq` generation-token guard. Verified with a new test
+(`tests-js/ocfViewerOpenClipStaleRace.test.mjs`, linkedom + a fake
+`window.pfxCompanion.send`): pre-fix, a stale clip's late decode
+overwrote the live clip's `_imageUrl`; post-fix, it's a no-op. Full
+regression suite re-run and matched baseline exactly: all `test:js`
+files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
+
+Commits: `TBD`.

@@ -114,14 +114,21 @@ export class OcfViewer {
     this._error   = null;
     this._logsVisible = false;
     this._proxyJobId  = null;
+    this._loadSeq = 0;
     this._render();
   }
 
   async openClip(clipPath) {
     this._reset();
+    // A concurrent openClip() call (e.g. clicking a second clip before the
+    // first finishes probing/decoding) can otherwise interleave writes to
+    // these shared instance fields — _loadSeq lets a stale call detect it
+    // was superseded and bail instead of rendering the wrong clip.
+    const seq = ++this._loadSeq;
     this._showLoading('Probing clip…');
     try {
       const opened = await ocfOpen(clipPath);
+      if (seq !== this._loadSeq) return;
       this._clipPath   = opened.clipPath;
       this._probe      = opened.probe;
       this._engine     = opened.engine;
@@ -137,6 +144,7 @@ export class OcfViewer {
         engine: this._engine,
         probe: this._probe,
       });
+      if (seq !== this._loadSeq) return;
 
       if (decoded?.ok && decoded.imagePath) {
         this._imageUrl = 'pfx-file://' + decoded.imagePath;
@@ -151,6 +159,7 @@ export class OcfViewer {
       }
       this._render();
     } catch (err) {
+      if (seq !== this._loadSeq) return;
       this._error = { message: String(err?.message ?? err) };
       this._render();
     }

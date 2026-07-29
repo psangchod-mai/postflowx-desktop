@@ -12296,3 +12296,80 @@ addressed. No other callers of `this.standby`/`this.active` in this file
 were found missing the `_loadSeq` guard during this pass.
 
 Commits: `78a331e`.
+
+## Iteration 120 — OcfViewer.openClip() concurrent-call race
+
+**Why this file:** `src/scripts/features/ocf_engine/ocfViewer.js`'s
+`OcfViewer` class is a self-contained panel that probes, engine-selects,
+and decodes an OCF (camera-original-format) clip's first frame for
+preview. `openClip(clipPath)` writes several shared instance fields
+(`this._clipPath`, `this._probe`, `this._engine`, `this._fallbacks`,
+`this._colorBadge`, `this._imageUrl`, `this._error`) across two
+`await` boundaries (`ocfOpen()` then `ocfDecodeFrame()`), the same
+shared-mutable-state-across-an-await shape already fixed in
+`reviews/player.js` (Iterations 116, 119) and `reviews/index.js`
+(Iteration 118).
+
+**The bug:** `openClip()` had no staleness guard at all. If a user
+clicks a second clip in the media bin before the first clip's probe/
+decode finishes — an entirely ordinary interaction, no double-click
+required — the two `openClip()` calls' continuations interleave on the
+same instance. Whichever call's `ocfOpen()` await resolves *last* wins
+the write to `this._clipPath`/`_probe`/`_engine`/`_colorBadge`,
+regardless of which clip was actually requested last, and the
+subsequent `ocfDecodeFrame()` call reads `this._engine`/`this._probe`
+at call time but may have those fields swapped out from under it by
+the other call by the time it resolves. Net effect: the viewer can
+render one clip's decoded frame together with a different clip's probe
+data/engine badge, or a long-superseded call can resolve late and
+silently overwrite the currently-displayed clip's image with stale
+data.
+
+**The fix:** Added the same `_loadSeq` generation-token pattern used
+in `reviews/player.js`: `this._loadSeq = 0` initialized once in the
+constructor (deliberately *not* reset by `_reset()`, so it stays
+monotonic across calls), `const seq = ++this._loadSeq;` captured in
+`openClip()` right after `_reset()`, and `if (seq !== this._loadSeq)
+return;` checks after both the `ocfOpen()` await and the
+`ocfDecodeFrame()` await, plus in the `catch` block, so a superseded
+call's error handling can't overwrite the live call's error state
+either.
+
+**Test approach:** `tests-js/ocfViewerOpenClipStaleRace.test.mjs`, a
+new plain-Node test using linkedom, following the reviews-feature race
+tests' style. Since `OcfViewer` imports `ocfOpen`/`ocfDecodeFrame`
+directly from `ocfEngine.js` (which route through
+`window.pfxCompanion.send`), the test installs a fake
+`window.pfxCompanion.send` returning independently-resolvable deferred
+promises keyed by `(action, clipPath)`. It starts `openClip('clipA.
+mov')`, then — before resolving anything — starts `openClip('clipB.
+mov')`, then resolves clip A's probe/play (proving the stale call
+doesn't write), then clip B's probe/play and decode (proving the live
+call does write), then finally resolves clip A's long-superseded
+decode call late (proving it can't clobber clip B's already-rendered
+state).
+
+**Verification:** Pre-fix (temporarily reverted via a `/tmp` backup,
+restored afterward), the test failed exactly as predicted: the stale
+`_loadSeq` assertions failed (field didn't exist), and critically the
+late-resolving stale clip-A decode overwrote `viewer._imageUrl` with
+`pfx-file:///tmp/a-frame.png` even though clip B was the live,
+currently-displayed clip — the exact "wrong clip's data clobbers the
+current one" symptom this fix targets. Post-fix (restored from backup,
+confirmed via `git diff --stat` — 9 insertions, 0 deletions, matching
+the intended scope), all 8 assertions pass. Full regression suite
+re-run and matched baseline: `test:js` — every file 0 failed except
+the expected, well-documented `selfContained.test.mjs` "no new test
+file is left out of git" flag for this iteration's still-untracked new
+test file; `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` —
+315 passed, 7 skipped, 0 failed.
+
+**Still open:** Only `openClip()`'s race was addressed.
+`_startProxy()`/`_pollProxy()` also share `this._proxyJobId` across an
+async poll loop but were not found to have a comparable race in this
+pass (a superseded `_pollProxy()` chain simply becomes an orphaned
+`setTimeout` that no-ops once `this._proxyJobId` is nulled by
+`_reset()`/a new proxy start — not the "silently write wrong data"
+shape this bug family targets, so left as-is).
+
+Commits: `TBD`.
