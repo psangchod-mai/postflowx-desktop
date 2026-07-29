@@ -11289,3 +11289,81 @@ WIP block all remain open, unfixed, for the same WIP-overlap reason
 documented in prior iterations — none is touched by this change.
 
 Commits: `7e55bf5`.
+
+## Iteration 107
+
+**Why this file:** `companion/src/postflowx_companion/native_host.py` is
+the single-threaded stdin/stdout bridge between the Chrome extension
+and the Python companion. Every native-messaging call passes through
+one of two paths: dispatched to a background thread (if the action is
+in `_ASYNC_ACTIONS`) or run synchronously inline on the same thread
+that reads stdin. A different bug class than the last three iterations
+(torn cache writes) — this one is main-loop starvation from a missing
+dispatch-table entry.
+
+**The bug:** `_ASYNC_ACTIONS` lists sibling long-running Resolve
+actions — `vfxPreviewResolveStill`, `vfx.preview.resolveStill`,
+`resolve.extractStillFrame`, etc., under a comment reading "OCF Resolve
+still preview — imports OCF into Resolve and renders a frame (can take
+30+ s)" — but was missing `"ocfDecodeFrame"`. That action is routed
+(`api.py` → `self._ocf_engine_decode_frame`) through
+`ocf_engine/ocf_router.py`'s `select_ocf_engine()`, which falls through
+to `ENGINE_RESOLVE` for BRAW/RED/ARRI/Canon/Sony-raw clips whenever a
+vendor SDK isn't linked — and `ocf_engine/ocf_decode.py`'s
+`_decode_sdk()` (lines 126-129) is a hard-coded stub that always
+returns a "not yet linked" failure, so in practice this is the common
+path, not a rare fallback. Because `ocfDecodeFrame` was absent from
+`_ASYNC_ACTIONS`, this call ran synchronously inline on the same thread
+that reads stdin, freezing the entire native-messaging bridge — no
+pings, health checks, or other extension calls could be serviced — for
+however long the Resolve import/render took.
+
+**Independent verification:** Confirmed `git diff --stat` and
+`git log --oneline -5` on `native_host.py` showed no content diff
+(mode-bit only) and no WIP overlap. Grepped `_ASYNC_ACTIONS` and
+confirmed `"ocfDecodeFrame"` was absent from the frozenset while its
+Resolve-preview siblings were present. Grepped `api.py` and confirmed
+line 381 routes `"ocfDecodeFrame"` to `self._ocf_engine_decode_frame`.
+Read `ocf_engine/ocf_decode.py` and confirmed the `ENGINE_RESOLVE`
+branch (line 83) unconditionally calls the stubbed `_decode_sdk()`
+(line 86), which always fails (lines 126-129), so `select_ocf_engine()`
+in practice routes to Resolve. Confirmed reachability from real UI:
+`src/scripts/features/ocf_engine/ocfViewer.js` lines 134 and 315 call
+this path, including an explicit `engine: 'ResolveEngine'` invocation.
+
+**The fix:** Added `"ocfDecodeFrame"` to `_ASYNC_ACTIONS`, alongside its
+Resolve-preview siblings and under the existing "can take 30+ s"
+comment, so it is now dispatched to a background thread like the rest
+of that family — keeping the main stdin loop free to flush async
+responses and service pings while the Resolve import/render runs.
+
+**Test approach:** Built a standalone before/after harness
+(`/tmp/verify_native_host_async.py`) that imports `native_host`
+directly, monkeypatches `CompanionApi.handle` so `"ocfDecodeFrame"`
+sleeps 0.3s and `"ping"` returns instantly, and runs `run_native_host()`
+against a real OS pipe (so `select()` on stdin behaves like the real
+process) with a custom stdout capturer that timestamps each framed
+response as it's written. Sends an `ocfDecodeFrame` message followed
+immediately by a `ping`, once with `_ASYNC_ACTIONS` in its real
+(post-fix) state and once with `"ocfDecodeFrame"` removed from the set
+to reproduce the pre-fix behavior.
+
+**Verification:** Post-fix, the `ping` response arrived at 0.003s —
+before the slow response's 0.329s — proving the main loop kept
+servicing stdin while the Resolve-style call ran in the background.
+Pre-fix (with `ocfDecodeFrame` removed from `_ASYNC_ACTIONS`), the
+`ping` response was withheld until 0.304s, arriving simultaneously with
+the slow response, confirming the starvation bug is real and that the
+fix resolves it. Full regression suite re-run and matched baseline
+exactly: 313/7/2(pre-existing) Python, 72/1/0 Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, and the Metal HTJ2K
+WIP block all remain open, unfixed, for the same WIP-overlap reason
+documented in prior iterations — none is touched by this change. The
+`ocf_decode.py` `_decode_sdk()` stub itself (why Resolve is the de
+facto engine for raw formats even when a vendor SDK path is intended)
+is also unaddressed — fixing it is a larger SDK-integration task
+outside this iteration's scope.
+
+Commits: `TBD`.

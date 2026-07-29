@@ -6277,3 +6277,27 @@ re-run and matched baseline exactly: 313/7/2(pre-existing) Python,
 72/1/0 Node, 22/0 JS.
 
 Commits: `7e55bf5`.
+
+## Iteration 107
+
+`native_host.py`'s `_ASYNC_ACTIONS` frozenset was missing
+`"ocfDecodeFrame"`, even though its Resolve-preview siblings
+(`vfxPreviewResolveStill`, `resolve.extractStillFrame`, etc.) are all
+present under a comment noting they "can take 30+ s". Because
+`ocfDecodeFrame` routinely falls through to the Resolve import/render
+path (the `ocf_decode.py` SDK path is a stubbed no-op), this ran
+synchronously inline and froze the entire native-messaging stdin loop —
+no pings or other extension calls could be serviced — for the duration
+of the Resolve call. Different bug class than the last three
+iterations' torn-write races: this is main-loop starvation from a
+missing dispatch-table entry. Fixed by adding `"ocfDecodeFrame"` to
+`_ASYNC_ACTIONS`. Verified with a standalone before/after harness
+feeding real framed messages through `run_native_host()` over an OS
+pipe: post-fix, a `ping` sent right after `ocfDecodeFrame` answered in
+0.003s while the slow call was still in flight; pre-fix (with the entry
+removed), the `ping` was withheld until the slow call finished 0.3s
+later, confirming both the bug and the fix. Full regression suite
+re-run and matched baseline exactly: 313/7/2(pre-existing) Python,
+72/1/0 Node, 22/0 JS.
+
+Commits: `TBD`.

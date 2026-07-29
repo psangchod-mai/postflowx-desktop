@@ -158,6 +158,7 @@ _ASYNC_ACTIONS = frozenset({
     "inspectImmersiveAudio",
     "startIabDecode",
     # OCF Resolve still preview — imports OCF into Resolve and renders a frame (can take 30+ s)
+    "ocfDecodeFrame",
     "vfxPreviewResolveStill",
     "vfx.preview.resolveStill",
     "vfxPreviewResolveStillBatch",
