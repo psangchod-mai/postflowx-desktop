@@ -10836,3 +10836,93 @@ systematic audit of every `subprocess.Popen(..., stderr=PIPE)` call site
 across `companion/` was out of scope for this single-bug iteration).
 
 Commits: `6026143`.
+
+## Iteration 102: `_extractEvents()` in `prproj.js` treated a genuine source-tick-0 `Out` value as "missing," silently substituting the wrong duration basis for freeze-frames
+
+**Why this file:** A background scout was tasked with hunting for bug
+species other than discriminator-drop. Its top candidate — a missing
+`suggestedSourceOut` field in `conform_engine.py`'s visual-match candidate
+builder — turned out to sit entirely inside a large (~455-line) pre-existing
+*uncommitted* WIP feature ("Picture Conform v1.4" visual fingerprinting,
+confirmed via `git diff --stat` on that file before touching it). Per this
+loop's standing discipline of never grafting a partial fix onto in-progress
+uncommitted work, that candidate was reverted untouched and a secondary
+lead the same scouting pass had also surfaced — `src/scripts/parsers/prproj.js`
+— was pursued instead, after confirming via `git diff --stat` /
+`git log --oneline` that this file was fully clean and committed (only a
+pre-existing mode-bit flip, no content changes).
+
+**The bug:** `src/scripts/parsers/prproj.js:261-262`, inside `_extractEvents`
+(the Adobe Premiere `.prproj` timeline parser):
+```js
+const srcInTick  = videoStartTick + (clipInTick  >= 0 ? clipInTick  : 0);
+const srcOutTick = videoStartTick + (clipOutTick >  0 ? clipOutTick : (recEndTick - recStartTick));
+```
+`clipInTick` uses `>= 0` (zero is valid data) but `clipOutTick` uses `> 0`
+(zero is treated as absent). A clip whose Premiere `Out` value genuinely
+serializes as source tick `0` — e.g. a single-frame freeze held at the very
+start of a source clip, extended out to fill a longer record duration on
+the timeline — falls into the "missing" branch and gets `recEndTick -
+recStartTick` (the *timeline* record duration in ticks) substituted for
+the source-tick duration instead. Record duration and source duration are
+different bases whenever there's a freeze, retime, or speed change, so
+`srcOutTick`, and therefore the exported `srcOut` timecode
+(`_ticksToTC(srcOutTick, ...)` at line 298), comes out silently wrong — no
+error, no warning, just a corrupted source-out range feeding the
+conform/EDL pipeline for that event.
+
+**Independent verification (reachability):** A dedicated Explore agent
+confirmed this is a real user-facing import path, not test-only code:
+`ui.js` dynamically imports `parsePRPROJ` from this file and routes any
+`.prproj` file dropped/picked by the user directly to it
+(`parseFromFiles`), and `timelineFormats.js` registers `.prproj` in the
+conform router's canonical extension set.
+
+**The fix:** Made the guard symmetric, matching `clipInTick`'s existing
+`>= 0` check:
+```js
+const srcOutTick = videoStartTick + (clipOutTick >= 0 ? clipOutTick : (recEndTick - recStartTick));
+```
+
+**Test approach:** No existing fixture exercises an `Out=0` clip, so a
+synthetic gzip-XML `.prproj` fixture was built standalone
+(`/tmp/freeze_test.prproj`) — a single `ClipItem` with `In=0`, `Out=0`,
+`Start=0`, `End=2032128000` (a ~5-frame record hold at 24fps) — and run
+through the real `parsePRPROJ()` entry point.
+
+**Verification:**
+- Post-fix: `srcIn` = `01:00:00:00`, `srcOut` = `01:00:00:00` — correct,
+  the freeze holds at source tick 0 as encoded.
+- Pre-fix (confirmed by temporarily reverting the guard via `sed` and
+  re-running the same fixture, then restoring the fix): `srcOut` came out
+  as `01:00:00:05` — the record-duration substitution bleeding into the
+  source-tick domain, exactly the predicted failure mode.
+- `git diff -- src/scripts/parsers/prproj.js` showed exactly the intended
+  one-line hunk; the file's mode-bit flip (`100644` → `100755`) was
+  confirmed pre-existing (present before this edit, 0 content diff) and
+  left untouched per standing discipline.
+- `npm run test:node`: 72 passed, 1 pre-existing skip, 0 failures —
+  including the existing `test/parsers/prproj.test.mjs` golden test
+  (unaffected since both its fixture clips have non-zero `Out` values).
+- `npm run test:js`: 22 passed, 0 failed.
+- `python3 -m pytest -q` in `companion/` (unaffected by a JS-only change,
+  run for full-suite confidence): 313 passed, 7 skipped, the same 2
+  pre-existing unrelated failures as every prior iteration's baseline.
+
+**Gate:** One-character-class fix (`>` → `>=`) with no effect on any clip
+whose `Out` value is genuinely positive — the entire existing golden
+fixture and regression suite is unaffected. Landing.
+
+**Still open:** The reverted `conform_engine.py` / `suggestedSourceOut`
+finding remains a real, reachable bug (confirmed: it also produces a
+malformed `00:00:00:00` `Out` timecode in EDL exports, and an unguarded
+Resolve-timeline-append path with no `out > in` check) — but it lives
+inside uncommitted WIP and should be fixed as part of that feature landing,
+not grafted on separately. Two further unverified leads from the same
+scouting pass were not pursued this iteration: an `electron/ipc.js`
+`pfx:download` handler said to ignore the chosen save path and report
+success before the download starts, and a possible non-atomic
+direct-to-cache-path write in `r3d_backend.py`'s `_decode_frame_helper`
+under concurrent prefetch.
+
+Commits: `TBD`.

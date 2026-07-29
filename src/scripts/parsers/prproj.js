@@ -259,7 +259,7 @@ function _extractEvents(seq, uidMap, fps, ticksPerFrame, seqOffset, audioMap, se
       const clipOutTick    = parseInt(_text(ci, 'Out') || '0', 10);
 
       const srcInTick  = videoStartTick + (clipInTick  >= 0 ? clipInTick  : 0);
-      const srcOutTick = videoStartTick + (clipOutTick >  0 ? clipOutTick : (recEndTick - recStartTick));
+      const srcOutTick = videoStartTick + (clipOutTick >= 0 ? clipOutTick : (recEndTick - recStartTick));
 
       // ── Clip name / reel / file path ─────────────────────────────────────────
       const clipName = _text(ci, 'Name') || (mc && _text(mc, 'Name')) || '';

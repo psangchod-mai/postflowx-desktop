@@ -6146,3 +6146,37 @@ deadline and cleans up the process/thread within the expected window.
 unrelated failures — matches baseline.
 
 Commits: `6026143`.
+
+## Iteration 102: `prproj.js` treated a genuine source-tick-0 `Out` value as "missing," borrowing the wrong duration basis for freeze-frames
+
+`_extractEvents` in `src/scripts/parsers/prproj.js` used an asymmetric
+guard: `clipInTick >= 0` (zero is valid) but `clipOutTick > 0` (zero is
+treated as absent). A clip whose Premiere `Out` genuinely serializes as
+source tick `0` — e.g. a single-frame freeze held at the start of a source
+clip and extended on the timeline — fell into the "missing" branch and got
+the timeline's record duration substituted for the source duration
+instead, silently corrupting `srcOut` whenever record and source durations
+differ (freezes, retimes, speed changes). Confirmed reachable from real
+imports: `ui.js` routes any dropped/picked `.prproj` straight to
+`parsePRPROJ`, and `.prproj` is a registered extension in
+`timelineFormats.js`'s conform router. A sibling of the discriminator-drop
+species but a distinct mechanism — wrong comparison operator on a
+boundary value, not a missing cache-key component.
+
+The scouting agent's primary lead this iteration (`conform_engine.py`
+missing a default `suggestedSourceOut` field) was real and verified but
+abandoned — it lives entirely inside ~455 lines of pre-existing
+*uncommitted* WIP ("Picture Conform v1.4" visual matching), so per standing
+discipline it wasn't partially fixed.
+
+Fix: made the guard symmetric (`clipOutTick >= 0`). Verified via a
+standalone crafted `.prproj` fixture (`In=0, Out=0` freeze) run through the
+real `parsePRPROJ`: pre-fix produced `srcOut: 01:00:00:05` (borrowed record
+duration), post-fix produced the correct `srcOut: 01:00:00:00`. Pre-existing
+mode-bit drift on this file (100644→100755) confirmed present before the
+edit and left untouched. `npm run test:node`: 72 passed/1 pre-existing
+skip/0 failed. `npm run test:js`: 22 passed/0 failed. `python3 -m pytest -q`
+in `companion/`: 313 passed/7 skipped/2 pre-existing unrelated failures —
+matches baseline.
+
+Commits: `TBD`.
