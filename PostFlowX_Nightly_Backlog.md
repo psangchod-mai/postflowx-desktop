@@ -4872,3 +4872,54 @@ condition spans ~400+ files, not a small known set — going forward,
 any file is chosen as a fix target.
 
 Commits: `5d4e82a`.
+
+## Iteration 61 — Canon C-Log2 footage misclassified as C-Log3 in ocfIdtResolver.js
+
+**Found.** `src/scripts/features/aceslook/services/ocfIdtResolver.js`'s
+`_findBySearchStr` returns the first `IDT_MAP` entry whose `match` array hits
+a token in the combined metadata string. The Canon C-Log3 entry's match list
+included a bare `'canon'` vendor token and sat *before* the C-Log2 entry, so
+any Canon-tagged metadata (via `cameraFamily: 'Canon'`) short-circuited to
+C-Log3 regardless of the actual log profile — misclassifying real C-Log2
+footage, and even plain non-log Canon Rec.709 footage.
+
+**Done.** Removed the bare `'canon'` token from the C-Log3 match array,
+leaving log-specific tokens only (`['clog3', 'c-log3', 'cinema gamut']`).
+Non-log Canon footage now correctly falls through to the existing Rec.709
+fallback entry. Added a comment above the Canon section warning against
+adding a bare vendor token ahead of more specific same-vendor entries.
+
+**Tests.** New `tests-js/ocfIdtResolverCanonLog.test.mjs` (plain Node, 3
+assertions): Canon C-Log2 → C-Log2 IDT, Canon C-Log3 → C-Log3 IDT (regression
+guard), plain Canon Rec.709 → Rec.709 fallback (not swept into C-Log3).
+
+**Verification.** Target file was untracked (new, no `HEAD` version), so
+`git stash push -- <file>` mutation-testing doesn't apply — used a plain
+`/tmp` file-copy backup/restore instead. With the bare `'canon'` token
+reintroduced: 1 passed / 2 failed. With the fix restored: 3 passed / 0
+failed.
+
+**Gate.** `npm run build-verify` first failed on
+`tests-js/selfContained.test.mjs`'s baseline-shrink check:
+`tests-js/fixtures/untracked-imports.json` had 3 stale entries pointing at
+`ocfIdtResolver.js` now that it's tracked. Removed exactly those 3 lines;
+reran gate clean (Python suite 261 passed / 7 skipped, XSS/XXE/fail-open
+gates clean).
+
+**Still open.** No further fix needed. Worth a future pass auditing other
+`IDT_MAP` vendor sections (RED, Sony, Blackmagic, DJI) for the same
+bare-vendor-token-before-specific-token ordering risk, though none currently
+exhibit it.
+
+**Lessons learned.**
+- `git diff --stat -- <file>` being empty does not distinguish "tracked and
+  clean" from "untracked and new" — both look empty. Check `git status
+  --porcelain -- <file>` for a `??` before assuming a git-stash-based
+  mutation-testing workflow will work; untracked files need a plain file-copy
+  backup/restore instead.
+- Tracking a previously-untracked file for the first time can retire stale
+  entries in `tests-js/fixtures/untracked-imports.json` — check for and
+  remove them in the same change, or `build-verify` fails on the
+  baselines-only-shrink check.
+
+Commits: `26f460d`.

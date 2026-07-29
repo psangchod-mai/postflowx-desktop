@@ -6786,3 +6786,94 @@ target, regardless of bug quality, since a fix there can never be
 committed in isolation.
 
 Commits: `5d4e82a`.
+
+## Iteration 61 — Canon C-Log2 footage silently misclassified as C-Log3 in ocfIdtResolver.js — new species
+
+**Why this file.** `src/scripts/features/aceslook/services/ocfIdtResolver.js`
+bridges OCF probe metadata to the ACES IDT (Input Device Transform) auto-detection
+used by both ACES Look and VFX Pull's color-plan/AMF/FDL generation. It was
+confirmed **untracked** (not present in `HEAD` at all — `git diff --stat`
+against `HEAD` was trivially empty because there was no `HEAD` version to diff
+against, not because the file was "clean" in the usual sense). This is a
+narrower but real variant of the "clean-candidate" check: a brand-new,
+never-committed file has no HEAD entanglement risk, so a fix (and the file
+itself) could be added in one clean, scoped commit.
+
+**The bug.** `_findBySearchStr(searchStr)` iterates `IDT_MAP` in array order
+and returns the *first* entry whose `match` array contains a token found in
+`searchStr` (a lowercased concatenation of `colorSpace + codec + cameraType +
+cameraFamily + format + container`). The Canon C-Log3 entry's match list was
+`['clog3', 'c-log3', 'cinema gamut', 'canon']` — including the bare vendor
+token `'canon'` — and it appeared in `IDT_MAP` *before* the Canon C-Log2 entry
+(`['clog2', 'c-log2']`). Any OCF metadata carrying `cameraFamily: 'Canon'` (or
+a `cameraType` string containing "Canon") matches the generic `'canon'` token
+on the earlier C-Log3 entry, short-circuiting the search before the more
+specific `'clog2'`/`'c-log2'` tokens are ever checked.
+
+Concrete failure:
+```js
+resolveIdtFromOCFMeta({ colorSpace: 'C-Log2', cameraFamily: 'Canon', codec: 'XF-AVC' })
+```
+`searchStr` = `"c-log2 xf-avc  canon "`. This contains both `'c-log2'` (which
+should hit the C-Log2 entry) and `'canon'` (which hits the earlier C-Log3
+entry). `_findBySearchStr` returns the **C-Log3** IDT
+(`IDT.Canon.CLog3_CGamut.a1.v1`, label "Canon C-Log3 / Cinema Gamut") instead
+of the correct C-Log2 IDT. The same generic token also swallows plain
+non-log Canon footage (e.g. `cameraType: 'Canon EOS R5 C', colorSpace:
+'Rec.709', codec: 'H.264'`), misclassifying it as ACES log footage instead of
+falling through to the Rec.709 fallback entry.
+
+**Why this is a genuine correctness bug.** The wrong IDT means the wrong
+log-curve/gamut decode transform gets applied to the footage — a silent,
+incorrect color-science result. `isAutoDetected: true` is still set on the
+mismatched result, so nothing flags it to the user as a guess or fallback.
+Canon C-Log2 is a common profile (e.g. C300 Mark III workflows); any such
+shoot was silently transformed as if it were C-Log3.
+
+**The fix.** Removed the bare `'canon'` token from the C-Log3 entry's `match`
+array, leaving only log-profile-specific markers (`['clog3', 'c-log3',
+'cinema gamut']`). Cameras that are Canon but don't hit `clog2`/`clog3`
+correctly fall through to the existing Rec.709 fallback entry later in
+`IDT_MAP`, which already handles "Canon but unknown log profile" without a
+false-positive short-circuit. A comment was added directly above the Canon
+section explaining why a bare vendor token must never be added to a
+match array ahead of more specific tokens for the same vendor.
+
+**Test approach.** `tests-js/ocfIdtResolverCanonLog.test.mjs` — plain Node,
+no DOM/linkedom shim needed (the module has no browser dependencies). Three
+assertions: (1) Canon C-Log2 metadata resolves to the C-Log2 IDT (was
+resolving to C-Log3 before the fix — this is the actual bug), (2) Canon
+C-Log3 metadata still resolves to the C-Log3 IDT (regression guard on the
+still-valid case), (3) plain non-log Canon Rec.709 footage still resolves to
+the Rec.709 fallback rather than being swept up by a vendor-token match.
+
+**Verification (mutation testing).** Since the target file was untracked
+(not in `HEAD`), the usual pathspec-scoped `git stash push -- <file>`
+mutation-testing technique doesn't apply to it (stash requires a tracked
+diff to stash by default). Instead, mutated via a plain file copy: saved the
+fixed file to `/tmp`, reintroduced the bare `'canon'` token, ran the test
+(1 of 3 passed — the two bug-triggering assertions failed exactly as
+expected), then restored the fixed file from the `/tmp` copy and reran (3 of
+3 passed). No git state was touched during this mutation cycle.
+
+**Gate.** `npm run build-verify` initially failed on an unrelated-looking but
+directly-caused check: `tests-js/selfContained.test.mjs`'s "the baselines do
+not outlive what they describe" test failed, because
+`tests-js/fixtures/untracked-imports.json` is a debt allowlist of
+tracked-file-imports-an-untracked-file pairs that must only ever shrink, and
+adding `ocfIdtResolver.js` to git retired 3 of its entries
+(`amfBuilder.js`, `colorPlanEngine.js`, `fdlGenerator.js` → `ocfIdtResolver.js`)
+that were now stale. Removed exactly those 3 lines from the baseline
+(confirmed via `git show HEAD:tests-js/fixtures/untracked-imports.json` diff
+that no other lines were touched) and reran the gate: clean pass — companion
+Python suite 261 passed / 7 skipped, `✓ XSS gate clean`, `✓ XXE gate clean`,
+`✓ Fail-open gate clean`.
+
+**Still open.** None for this fix. `IDT_MAP` should probably be audited for
+other vendor sections with a similar bare-vendor-token-before-specific-token
+ordering risk (RED, Sony, Blackmagic, DJI sections all list a bare vendor
+name in at least one entry's match array), but none of those currently sit
+*before* a more specific same-vendor entry the way Canon's did, so no
+further fix was made this iteration.
+
+Commits: `26f460d`.
