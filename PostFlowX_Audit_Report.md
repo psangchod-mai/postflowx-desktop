@@ -8276,3 +8276,118 @@ this session and is out of scope. The scouting agent's other flagged
 candidates from prior iterations not yet addressed remain open.
 
 Commits: `5abf65a`.
+
+## Iteration 76 — `aaf_export.py` AAF export was completely non-functional: 7 distinct wrong-property/wrong-class defects across the video and audio exporters
+
+**Found.** Investigating a scouted `comp_clip['StartPosition'].value = src_in`
+double-offset bug in `export_nle_linked_aaf()` led to discovering that
+`companion/src/postflowx_companion/aaf_export.py` was written against a
+property vocabulary that does not match the vendored `pyaaf2` library's
+actual AAF class dictionary (`companion/src/aaf2/model/classdefs.py`) at
+all. Every one of the module's `SourceClip`/`SourceReference` property
+accesses, and two of its `EssenceDescriptor` subclass choices, were wrong
+— meaning both `export_nle_linked_aaf()` (video/NLE-linked AAF) and
+`export_protools_aaf()` (audio/Pro Tools AAF) raised immediately on any
+real payload and had apparently never worked.
+
+**The 7 defects, in the order each was uncovered by iterative
+`KeyError`/`AttributeError` failures on a real end-to-end export run:**
+
+1. **`Timecode(..., start=tl_start)` kwarg.** `f.create.Timecode()` takes
+   no `start` kwarg in this vendored version; fixed by constructing bare
+   and assigning `tc_obj.start = tl_start` afterward. (Same bug present
+   at both call sites — video's `tl_start` and audio's `tl_start_s`.)
+2. **`ImportDescriptor` has no `SampleRate`/`Length`.** Its classdef
+   entry (`classdefs.py` line 484) has an empty property dict — those
+   fields only exist on `FileDescriptor` and its subclasses. The video
+   resolved-media branch was swapped to `DataEssenceDescriptor` (extends
+   `FileDescriptor` directly, its one extra property `DataEssenceCoding`
+   is optional — no additional mandatory fields to satisfy, unlike
+   `CDCIDescriptor`, which was tried first and rejected: it requires 7
+   mandatory frame-geometry fields — `ComponentWidth`,
+   `HorizontalSubsampling`, `StoredHeight`, `StoredWidth`, `FrameLayout`,
+   `VideoLineMap`, `ImageAspectRatio` — that this code has no source data
+   to populate, since it only tracks fps/duration/path).
+3. **`TapeDescriptor['TapeName']` doesn't exist.** Its real properties
+   (`classdefs.py` lines 308-317) are `FormFactor, VideoSignal,
+   TapeFormat, Length, ManufacturerID, Model, TapeBatchNumber,
+   TapeStock` — no `TapeName`. Fixed by removing the line; the reel
+   identity is already carried by `sm.name = reel` set earlier in the
+   same block.
+4. **`export_protools_aaf()`'s unresolved/linked audio branch had the
+   same `ImportDescriptor` bug as #2**, fixed by swapping to
+   `WAVEDescriptor` (a `FileDescriptor` subclass already proven correct
+   one branch earlier in the same function's embed path).
+5. **`desc.locators.append(loc)` (plural) is not a real attribute** on
+   any `EssenceDescriptor`-derived class — `EssenceDescriptor` defines
+   only a singular `.locator` property (`essence.py` line 50-52) backed
+   by the `'Locator'` dict key. Always raised `AttributeError`. Fixed in
+   both the video and audio linked-media branches.
+6. **`SourceClip`/`SourceReference` wrong property names.**
+   `['StartPosition']` and `['SourceSlotID']` don't exist anywhere in
+   the AAF dictionary for this or any ancestor class — the real
+   properties (`classdefs.py` lines 79-93) are `StartTime` and
+   `SourceMobSlotID`. Fixed all 8 occurrences (4 in each of the video
+   and audio paths' `mm_clip`/`comp_clip` construction) using the
+   vendor's own idiomatic Python wrappers: `.start` (→`StartTime`) and
+   `.slot_id` (→`SourceMobSlotID`), per `components.py`'s `SourceClip`/
+   `SourceReference` property definitions.
+7. **The original scouted bug**: `comp_clip.start = src_in` double-applied
+   the source in-point. The MasterMob's own `SourceClip` already re-bases
+   the SourceMob's file-relative `src_in` offset to local frame 0 (its
+   Sequence spans `[0, src_dur)`); the CompositionMob's `SourceClip`,
+   which references that MasterMob, must start at local frame 0, not
+   `src_in` again — double-applying it pushed every video event with a
+   nonzero source in-point off its MasterMob's valid range. Fixed to
+   `comp_clip.start = 0`.
+
+**Test approach.** New file `companion/tests/test_aaf_export_nle.py`
+drives `export_nle_linked_aaf()` end-to-end with a real dummy `.mov`
+path and a nonzero source in-point (`01:00:10:00` → frame 90250 @
+25fps), then opens the resulting AAF via `aaf2.open()` and asserts the
+CompositionMob's `SourceClip.start == 0` and the MasterMob's
+`SourceClip.start == 90250`. Also fixed two latent test-authoring bugs
+discovered while writing the assertions: `media_kind` returns the
+datadef's title-cased `short_name` (`'Picture'`, not `'picture'`) even
+though it's *set* with the lowercase convenience string, and the
+correct accessor for a `SourceClip`'s referenced mob is `.mob`, not a
+nonexistent `.source_mob`. A parallel manual smoke test exercised
+`export_protools_aaf()`'s linked-audio branch (the `WAVEDescriptor`
+swap) end-to-end and confirmed `status: 'ok'`.
+
+**Verification.** `python3 -m pytest tests/test_aaf_export_nle.py -v` —
+1/1 passes. Full `python3 -m pytest -q` in `companion/` — 274 passed, 7
+skipped, 2 failed; both failures (`test_conform_engine.py`'s
+`_regional_distance` tests) are pre-existing and unrelated — they call
+`int.bit_count()`, added in Python 3.10, on this environment's Python
+3.9.6, nothing to do with AAF export. `npm run test:js` — 22/22 pass, 0
+failures.
+
+**A complication worth documenting.** `aaf_export.py` carried
+pre-existing drift unrelated to this fix: a file-mode bit change
+(100644→100755). All of this iteration's content fixes were isolated
+into the git index via a hand-crafted `git apply --cached` patch (the
+full `git diff` with its `old mode`/`new mode` lines stripped before
+applying), leaving only the mode-bit change unstaged.
+
+**Gate.** `python3 -m pytest tests/test_aaf_export_nle.py -v` and
+`npm run test:js` both pass cleanly.
+
+**Still open.** `aaf_export.py`'s pre-existing mode-bit drift
+(100644→100755) remains untouched and uncommitted, as it predates this
+session and is out of scope. The scope of this iteration grew far
+beyond the single originally-scouted bug — nearly every AAF property
+access in this module was wrong — which is why all 7 defects are
+documented together as one iteration rather than split across several:
+they were discovered serially, each only surfacing once the prior one
+was fixed and the export ran one step further, and none is independently
+meaningful without the others (the export function did not produce a
+valid AAF until all 7 were fixed together). The video resolved-media
+branch's `DataEssenceDescriptor` choice is a functionally-correct but
+semantically loose fit (it's meant for non-AV data essence, not video) —
+NLEs performing a true frame-accurate relink by pixel format/resolution
+may still want real `CDCIDescriptor` geometry fields once the payload
+carries that data; flagged for a future iteration if this surfaces in
+real-world use, not fixed now since inventing frame dimensions the code
+doesn't have would be worse than using a lightweight placeholder
+descriptor that NLEs can still relink by reel/timecode/path.

@@ -5426,3 +5426,46 @@ additions) remains untouched and uncommitted (predates this session, out
 of scope).
 
 Commits: `5abf65a`.
+
+## Iteration 76 — `aaf_export.py` AAF export was completely non-functional: 7 wrong-property/wrong-class defects
+
+**Found.** Scouted bug (`comp_clip['StartPosition'].value = src_in`
+double-offset) led to discovering `aaf_export.py`'s property vocabulary
+doesn't match the vendored `pyaaf2` classdef dictionary at all — both
+`export_nle_linked_aaf()` and `export_protools_aaf()` raised immediately
+on any real payload.
+
+**Fix.** 7 defects fixed together (each only surfaced once the prior was
+fixed): (1) `Timecode(start=...)` invalid kwarg → construct bare +
+`.start =`, (2) `ImportDescriptor` has no `SampleRate`/`Length` (video) →
+swapped to `DataEssenceDescriptor`, (3) `TapeDescriptor['TapeName']`
+doesn't exist → removed, (4) same `ImportDescriptor` bug in audio's
+linked branch → swapped to `WAVEDescriptor`, (5) `.locators` (plural)
+typo → `.locator`, (6) `['StartPosition']`/`['SourceSlotID']` don't
+exist → `.start`/`.slot_id` (real props are `StartTime`/
+`SourceMobSlotID`) across all 8 SourceClip sites, (7) the original
+scouted double-offset → `comp_clip.start = 0`.
+
+**Tests.** New `companion/tests/test_aaf_export_nle.py` drives
+`export_nle_linked_aaf()` end-to-end and asserts CompositionMob
+`SourceClip.start == 0` / MasterMob `SourceClip.start == 90250`. Manual
+smoke test confirmed `export_protools_aaf()`'s linked-audio branch also
+now succeeds.
+
+**Verification.** `pytest tests/test_aaf_export_nle.py -v` — 1/1 pass.
+Full `pytest -q` — 274 passed/7 skipped/2 pre-existing-unrelated failures
+(Python 3.9 lacks `int.bit_count()`, nothing to do with AAF). `npm run
+test:js` — 22/22 pass.
+
+**Complication.** `aaf_export.py`'s pre-existing mode-bit drift
+(100644→100755) isolated out via hand-crafted `git apply --cached`
+patch, left unstaged.
+
+**Gate.** Both test suites above pass cleanly.
+
+**Still open.** Mode-bit drift untouched (predates session, out of
+scope). `DataEssenceDescriptor` is a functionally-correct but
+semantically loose descriptor choice for video (meant for non-AV data);
+flagged for a future iteration if real frame-geometry data becomes
+available and NLE relink behavior needs it — not fixed now since
+inventing fake dimensions would be worse than a lightweight placeholder.

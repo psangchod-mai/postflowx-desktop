@@ -256,7 +256,8 @@ def export_nle_linked_aaf(payload):
             comp['UsageCode'].value = 'Usage_TopLevel'
             f.content.mobs.append(comp)
 
-            tc_obj = f.create.Timecode(fps=fps_i, drop=drop, start=tl_start)
+            tc_obj = f.create.Timecode(fps=fps_i, drop=drop)
+            tc_obj.start = tl_start
             tc_obj.length = tl_dur
             tc_slot = f.create.TimelineMobSlot()
             tc_slot.slot_id = 100
@@ -309,25 +310,24 @@ def export_nle_linked_aaf(payload):
 
                     media_path = _resolve_media_path(ev, media_roots, media_cache)
                     if media_path:
-                        desc = f.create.ImportDescriptor()
+                        desc = f.create.DataEssenceDescriptor()
                         desc['SampleRate'].value = fps_frac
                         desc['Length'].value = src_dur
                         loc = f.create.NetworkLocator()
                         loc['URLString'].value = Path(media_path).as_uri()
-                        desc.locators.append(loc)
+                        desc.locator.append(loc)
                         sm.descriptor = desc
                     else:
                         report['unresolved'].append({'reel': reel, 'clipName': clip_name})
                         report['warnings'].append(f'Unresolved media for reel: {reel}')
                         desc = f.create.TapeDescriptor()
-                        desc['TapeName'].value = reel
                         sm.descriptor = desc
 
                     mm_clip = f.create.SourceClip(media_kind='picture')
                     mm_clip.length = src_dur
-                    mm_clip['StartPosition'].value = src_in
+                    mm_clip.start = src_in
                     mm_clip['SourceID'].value = sm.mob_id
-                    mm_clip['SourceSlotID'].value = 1
+                    mm_clip.slot_id = 1
                     mm_seq = f.create.Sequence(media_kind='picture')
                     mm_seq.length = src_dur
                     mm_seq.components.append(mm_clip)
@@ -343,9 +343,9 @@ def export_nle_linked_aaf(payload):
                 mm = master_mobs_map[mob_key]
                 comp_clip = f.create.SourceClip(media_kind='picture')
                 comp_clip.length = rec_dur
-                comp_clip['StartPosition'].value = src_in
+                comp_clip.start = 0
                 comp_clip['SourceID'].value = mm.mob_id
-                comp_clip['SourceSlotID'].value = 1
+                comp_clip.slot_id = 1
                 v1_comps.append(comp_clip)
                 cursor = max(cursor, rec_in + rec_dur)
 
@@ -546,7 +546,8 @@ def export_protools_aaf(payload):
             comp['UsageCode'].value = 'Usage_TopLevel'
             f.content.mobs.append(comp)
 
-            tc_obj = f.create.Timecode(fps=fps_i, drop=drop, start=tl_start_s)
+            tc_obj = f.create.Timecode(fps=fps_i, drop=drop)
+            tc_obj.start = tl_start_s
             tc_obj.length = tl_dur_f
             tc_slot = f.create.TimelineMobSlot()
             tc_slot.slot_id = 100
@@ -595,13 +596,13 @@ def export_protools_aaf(payload):
                         ess.write(wav_bytes)
                         f.content.essence.append(ess)
                     else:
-                        desc = f.create.ImportDescriptor()
+                        desc = f.create.WAVEDescriptor()
                         desc['SampleRate'].value = audio_rate
                         desc['Length'].value = d_samp
                         if Path(wav).exists():
                             loc = f.create.NetworkLocator()
                             loc['URLString'].value = Path(wav).as_uri()
-                            desc.locators.append(loc)
+                            desc.locator.append(loc)
                         sm.descriptor = desc
 
                     sm_seq = f.create.Sequence(media_kind='sound')
@@ -619,9 +620,9 @@ def export_protools_aaf(payload):
 
                     mm_clip = f.create.SourceClip(media_kind='sound')
                     mm_clip.length = d_samp
-                    mm_clip['StartPosition'].value = 0
+                    mm_clip.start = 0
                     mm_clip['SourceID'].value = sm.mob_id
-                    mm_clip['SourceSlotID'].value = 1
+                    mm_clip.slot_id = 1
                     mm_seq2 = f.create.Sequence(media_kind='sound')
                     mm_seq2.length = d_samp
                     mm_seq2.components.append(mm_clip)
@@ -635,9 +636,9 @@ def export_protools_aaf(payload):
 
                     comp_clip = f.create.SourceClip(media_kind='sound')
                     comp_clip.length = d_samp
-                    comp_clip['StartPosition'].value = 0
+                    comp_clip.start = 0
                     comp_clip['SourceID'].value = mm.mob_id
-                    comp_clip['SourceSlotID'].value = 1
+                    comp_clip.slot_id = 1
                     audio_comps.append(comp_clip)
                     cursor_samp = ri_samp + d_samp
 
