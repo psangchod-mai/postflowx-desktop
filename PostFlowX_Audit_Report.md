@@ -7783,3 +7783,89 @@ of the repo's existing uncommitted drift, untouched by this fix).
 **Still open.** None for this fix.
 
 Commits: `a8fdd73`.
+
+---
+
+## Iteration 71 — EXR sequence QC and frame-map CSV writer treat frameStart: 0 as absent
+
+**Why this file.** `companion/src/postflowx_companion/api.py` hosts
+`CompanionApi`, the request-routed surface the Electron renderer calls into
+for OCF/VFX-pull work, including EXR-sequence QC (`qcExrSequence` →
+`_qc_exr_sequence`) and pull-sidecar generation (`_write_pull_sidecars`,
+which writes the per-frame timeline-to-source CSV used by conform/retime
+tooling downstream).
+
+**The bug.** Both `_qc_exr_sequence`'s "Start frame check" and the frame-map
+CSV writer computed the job's configured first frame as:
+
+```python
+frame_start = int(job.get("frameStart") or 1001)
+```
+
+`frameStart` is a legitimate job-config field — most VFX pipelines start
+EXR sequences at frame `1001` by convention, but some pipelines legitimately
+start at `0`. Python's `or` treats `0` as falsy, so a job explicitly
+configured with `frameStart: 0` silently had it discarded and replaced by
+the `1001` default, exactly the same footgun class fixed in Iteration 70
+for IMF CPL's `SourceDuration`. Four other call sites in this same file
+already use the correct presence-check idiom, `job.get("frameStart",
+1001)`, which only substitutes the default when the key is absent, not
+when it's falsy-but-present — these two sites were the odd ones out.
+
+**Concrete failure example.** A job configured with `frameStart: 0`
+exporting an EXR sequence `SHOT_PL_v001.0000.exr` through
+`SHOT_PL_v001.0003.exr`: `_qc_exr_sequence` detects the first file's frame
+number as `0`, compares it against the wrongly-defaulted `frame_start =
+1001`, and emits a spurious `"Frame start: 0 found, 1001 expected"`
+warning on an entirely correct export. Separately, `_write_pull_sidecars`'s
+frame-map CSV writer computes `out_f = frame_start + i` for every row —
+with the same wrong default, every `outputFrame` in the CSV is shifted by
++1001, corrupting the frame map for any downstream conform/retime step that
+consumes it.
+
+**Why genuine and new.** Distinct from every previously-fixed species per
+`git log | grep 'fix('` review, including Iteration 70 — that fix was in
+`imf_scan.py`'s CPL-parsing code; this is the same bug *class*
+(falsy-`0`-vs-absent) recurring independently in `api.py`'s EXR/frame-map
+code, a different file and different field (`frameStart` vs
+`SourceDuration`). Confirmed via `grep -n "frameStart"
+companion/src/postflowx_companion/api.py`, which found exactly these 2
+buggy sites (lines 4849, 4990) against 4 already-correct sites (lines 2379,
+4618, 4726, 5082) using the right idiom.
+
+**The fix.** Switched both sites from `job.get("frameStart") or 1001` to
+`job.get("frameStart", 1001)`, matching the codebase's own
+already-established-correct idiom used elsewhere in the same file.
+
+**Test approach.** Added two tests to
+`companion/tests/test_vfx_pull_exr.py`:
+`test_write_pull_sidecars_frame_map_honors_zero_frame_start` (asserts the
+first CSV row's `outputFrame` is `0`, not `1001`, for a job with
+`frameStart: 0`), and
+`test_qc_exr_sequence_zero_frame_start_matches_detected_start` (builds a
+real temp directory of 4 empty `.exr` files named
+`SHOT_PL_v001.0000.exr`..`.0003.exr`, calls `_qc_exr_sequence` with
+`frameStart: 0`, and asserts no `"Frame start"` warning is emitted).
+
+**Verification (mutation testing).** Reverted exactly the two fixed lines
+back to `int(job.get("frameStart") or 1001)` (by line number, to avoid
+touching the 4 already-correct sites that share the same post-fix text).
+Reran the two new tests: both failed exactly as predicted — first
+`outputFrame` was `1001` instead of `0`, and the QC warning
+`"Frame start: 0 found, 1001 expected"` appeared. Restored the fix from a
+backup copy; reran both tests: both passed. Also caught and corrected a
+stray Unix permission-bit change (`100755` → `100644`) introduced by the
+backup-restore `cp`, by checking the actual committed mode via `git
+ls-files -s` (which showed this file is `100755` in the repo, i.e.
+intentionally executable) and `chmod`-ing back to `755` before diffing/
+committing, so the final diff contains only the 2 intended content lines.
+
+**Gate.** `python3 -m pytest companion/tests/` — 271 passed, 7 skipped, 2
+pre-existing failures in `test_conform_engine.py` (`_regional_distance`
+calling `int.bit_count()`, a Python 3.10+ API on this machine's Python
+3.9.6 — the same pre-existing/unrelated failures confirmed in Iteration
+70, untouched by this fix).
+
+**Still open.** None for this fix.
+
+Commits: `08ed84b`.

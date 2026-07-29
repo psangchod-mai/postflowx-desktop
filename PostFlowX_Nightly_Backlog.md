@@ -5237,3 +5237,38 @@ pre-existing unrelated failures (`test_conform_engine.py`, Python 3.10+
 **Still open.** None for this fix.
 
 Commits: `a8fdd73`.
+
+---
+
+## Iteration 71 — EXR sequence QC and frame-map CSV writer treat frameStart: 0 as absent
+
+**Found.** `_qc_exr_sequence`'s start-frame check and
+`_write_pull_sidecars`'s frame-map CSV writer in
+`companion/src/postflowx_companion/api.py` both computed `frame_start =
+int(job.get("frameStart") or 1001)`. A legitimate `frameStart: 0` is falsy
+in Python, so `or` silently discarded it and substituted the VFX-convention
+default of `1001` — same bug class as Iteration 70's IMF `SourceDuration`
+fix, recurring independently in a different file/field. 4 other call sites
+in the same file already use the correct `job.get("frameStart", 1001)`
+idiom.
+
+**Done.** Switched both sites to `job.get("frameStart", 1001)`, matching
+the codebase's own already-correct idiom.
+
+**Tests.** 2 new tests in `companion/tests/test_vfx_pull_exr.py`:
+frame-map CSV's first `outputFrame` is `0` (not `1001`) for `frameStart:
+0`; `_qc_exr_sequence` emits no `"Frame start"` warning for a real 4-file
+`.exr` sequence starting at `0000` with `frameStart: 0`.
+
+**Verification.** Reverted exactly the 2 fixed lines (by line number, to
+avoid touching the 4 correct sites sharing the same post-fix text): both
+new tests failed as predicted (`outputFrame == 1001`, spurious `"Frame
+start: 0 found, 1001 expected"` warning). Restored the fix: both passed.
+
+**Gate.** `python3 -m pytest companion/tests/` — 271 passed, 7 skipped, 2
+pre-existing unrelated failures (`test_conform_engine.py`, same
+`int.bit_count()` Python-version issue as Iteration 70).
+
+**Still open.** None for this fix.
+
+Commits: `08ed84b`.
