@@ -138,6 +138,13 @@ function _isElectron() {
 
 // ── Build live state from IPC calls ──────────────────────────────────────────
 
+// Monotonic token guarding _refresh() (Refresh-button click, tab re-open, and
+// mount-time initial fetch can all overlap). Bumped at the start of every
+// _refresh() call; a call whose token is no longer current after the
+// _fetchLiveState() await bails out instead of overwriting newer UI state
+// with stale engine/GPU status.
+let _refreshSeq = 0;
+
 async function _fetchLiveState() {
   const out = {
     resolveFound:     false,
@@ -339,8 +346,10 @@ function _buildPanelHTML() {
 // ── Mount ─────────────────────────────────────────────────────────────────────
 
 async function _refresh() {
+  const seq = ++_refreshSeq;
   _renderLoading();
   const live = await _fetchLiveState();
+  if (seq !== _refreshSeq) return; // superseded by a newer refresh
   _renderList(live);
 
   // Update GPU badge

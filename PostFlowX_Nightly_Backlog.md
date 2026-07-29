@@ -6748,3 +6748,29 @@ sites noted in the audit report — a future iteration should scout
 fresh for the next target.
 
 Commits: `b048f1f`.
+
+## Iteration 127 — DaVinci Resolve engine-panel refresh stale-race
+
+`_refresh()` in `src/scripts/modules/resolve_engine_panel.js` awaited
+an IPC probe (`_fetchLiveState()`) with no staleness check, so
+overlapping calls from the Refresh button, the IMF Settings tab-reopen
+listener, and the panel's own mount-time initial fetch could resolve
+out of order and let a stale probe overwrite a newer refresh's engine
+status/project name/GPU badge. Added an `_refreshSeq` monotonic
+counter (same pattern as prior iterations), checked after the
+`_fetchLiveState()` await; a superseded call now bails before
+re-rendering. New test
+`tests-js/resolveEnginePanelRefreshStaleRace.test.mjs` (6 assertions)
+drives two overlapping refreshes via a mocked `sendNativeCommand` and
+confirms the stale one never wins. Before/after verified: reverted
+code failed 2/6 as predicted, restored fix diffed to exactly 9
+insertions / 0 deletions, re-passed 6/6. Full regression matched
+baseline (`test:js` all-green except expected self-containment-gate
+noise, resolved by staging the new test file; `test:node`
+72/0/1-skipped; `test:py` 313/7-skipped/2-pre-existing-unrelated-
+failures).
+
+Still open: no further backup candidate identified this iteration — a
+future iteration should scout fresh for the next stale-race target.
+
+Commits: `TBD`.

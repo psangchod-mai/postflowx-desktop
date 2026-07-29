@@ -12836,3 +12836,84 @@ iteration's scout beyond the two informational (non-bug) unguarded
 scout fresh before choosing its target.
 
 Commits: `b048f1f`.
+
+## Iteration 127 — DaVinci Resolve engine-panel refresh stale-race
+
+**Why this file:** `src/scripts/modules/resolve_engine_panel.js`'s
+`_refresh()` is triggered from three independent call sites — the
+panel's Refresh button, the `imfTabSettings` tab-click listener (fires
+every time the IMF Settings tab is opened), and the panel's own
+mount-time initial fetch — each of which can kick off a fresh
+`_fetchLiveState()` IPC round-trip while a previous one is still in
+flight. This is the same "await an IPC round-trip, then unconditionally
+overwrite shared state" shape already fixed in `nativeAVPlayer.js`,
+`player.js`, `imf_player_engine.js`, `mpvPlayer.js`'s `seekTime()`, and
+`vfxPullPanel.js`'s `_scanOcfFolder()` (Iteration 126) — a natural next
+backup candidate, and one flagged by this iteration's scout as
+git-clean (no pre-existing uncommitted work in the file beyond a
+pre-existing mode-bit drift).
+
+**The bug:** `_refresh()` calls `_renderLoading()`, then
+`await _fetchLiveState()` (itself up to three sequential awaits:
+`sendNativeCommand({ type: 'resolve.engineStatus' })`,
+`resolveStatus()`, and `companionStatus()`), then unconditionally calls
+`_renderList(live)` and updates the GPU badge — with no staleness
+check. If the Refresh button is clicked twice in quick succession, or
+the Settings tab is reopened while a previous refresh's probe is still
+in flight, two overlapping `_refresh()` chains can be running at once.
+If the earlier chain's probe resolves after the later one already
+settled (out-of-order IPC resolution), the stale chain overwrites the
+newer refresh's engine status list, project name, and GPU badge with
+old data — a real, user-visible "the panel shows the wrong
+project/status" bug.
+
+**The fix:** Added a module-level `_refreshSeq` monotonic counter.
+`_refresh()` captures `const seq = ++_refreshSeq` before its first
+`await`, and checks `seq !== _refreshSeq` immediately after
+`_fetchLiveState()` resolves, returning early (skipping `_renderList()`
+and the GPU badge update) if superseded by a newer refresh.
+
+**Test approach:** New linkedom test
+(`tests-js/resolveEnginePanelRefreshStaleRace.test.mjs`) stubs
+`window`/`document` (linkedom) with a `#smartEnginePanel` anchor,
+fakes `window.pfxPlatform.sendNativeCommand` with
+independently-resolvable deferred promises and a stub
+`companionStatus()`, and stubs `fetch` to reject immediately so that
+`smart_playback_engine.js`'s `resolveStatus()` best-effort supplement
+path (reached because `window.pfxPlatform.smartMedia` is deliberately
+left undefined, so `IS_ELECTRON` is `false` inside that module) settles
+fast and deterministically — it's wrapped in its own `try/catch` in
+`_fetchLiveState()` regardless of outcome. The test mounts the panel
+(settling its own initial refresh first), then calls
+`refreshResolveEnginePanel()` twice in a row while both probes are
+still in flight, resolves the later call's probe first with a
+distinguishable project name ("NewerProject"), confirms the panel
+rendered it, then resolves the earlier (now-stale) call's probe late
+with a different project name ("StaleProject") and confirms the panel
+still shows "NewerProject" and never renders "StaleProject".
+
+**Verification:** Backed up the fixed file, reverted the `_refreshSeq`
+counter and the seq-check/early-return in `_refresh()` back to the
+original unguarded code, then ran the test against the reverted code:
+2 of 6 assertions failed exactly as predicted (the panel was overwritten
+back to "StaleProject" instead of staying on the settled
+"NewerProject"). Restored the fixed file from the backup; `git diff
+--stat` showed exactly 9 insertions / 0 deletions matching the intended
+fix scope; re-ran the test — 6 of 6 passed. This file's only
+pre-existing uncommitted change was a mode-bit drift (100644 →
+100755); the working-tree file was `chmod 644`'d back to match HEAD
+*before* `git add`, so the fix staged cleanly on the first attempt with
+no mode-line in the diff and no other WIP to restore afterward. Full
+regression suite matched baseline: `test:js` — every file 0 failed
+(including `selfContained.test.mjs`, once the new test file was
+staged); `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 313
+passed, 7 skipped, 2 failed, the same pre-existing, unrelated
+`bit_count()`/Python-3.9.6 failures in `conform_engine.py` documented
+in prior iterations.
+
+**Still open:** No further backup candidate was identified by this
+iteration beyond the two runner-up candidates the scout deprioritized
+as riskier/weaker matches. A future iteration should scout fresh
+before choosing its target.
+
+Commits: `TBD`.
