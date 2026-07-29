@@ -6938,4 +6938,4 @@ now. Do not re-attempt until the developer's WIP in this file is
 committed or shrinks; this supersedes the more optimistic "needs
 hunk-selective staging" note carried over from Iteration 130.
 
-Commits: `TBD`.
+Commits: `c31479c`.
