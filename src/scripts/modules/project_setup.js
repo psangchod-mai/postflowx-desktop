@@ -193,8 +193,10 @@ let _pssSettings = null;
 let _pssDirty    = false;
 let _pssIdbOk    = false;
 let _pssCsOk     = false;
+let _pssLoadSeq  = 0; // guards against a superseded _pssLoad() clobbering a newer one's result
 
 async function _pssLoad() {
+  const seq = ++_pssLoadSeq;
   const projKey = _pssProjectKey();
   let loaded = null;
 
@@ -207,11 +209,16 @@ async function _pssLoad() {
   }
 
   const defaults = _pssDefaults();
-  _pssSettings = loaded
+  const merged = loaded
     ? _pssMerge(defaults, loaded)
     : defaults;
 
-  _pssDirty = false;
+  // A newer _pssLoad() call has since started or finished — its result is the
+  // one that should win. Don't let this stale call overwrite it.
+  if (seq === _pssLoadSeq) {
+    _pssSettings = merged;
+    _pssDirty = false;
+  }
   return _pssSettings;
 }
 
@@ -367,6 +374,7 @@ function _pssFlushAutosave() {
 let _pssOpen      = false;
 let _pssActiveTab = 'general';
 let _pssEl        = null;   // the panel root element
+let _setupSeq     = 0;      // guards openProjectSetup() against overlapping calls
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 function _pssUpdateStatusBar() {
@@ -1859,6 +1867,7 @@ export function startResolveStatusWatcher() {
 
 // ── Panel open / close ────────────────────────────────────────────────────────
 export async function openProjectSetup(tabId = null) {
+  const seq = ++_setupSeq;
   try {
     if (tabId && _PSS_TABS.find(t => t.id === tabId)) _pssActiveTab = tabId;
 
@@ -1866,6 +1875,14 @@ export async function openProjectSetup(tabId = null) {
     // changes are reflected. _pssFlushAutosave() saves dirty state on close,
     // so reloading here always gives the last persisted values.
     await _pssLoad();
+
+    // A newer open (e.g. a second click landing before this one's storage
+    // read resolved — _pssOpen only flips true at the end of this function,
+    // so rapid double-clicks both pass the toggle's "not open yet" check)
+    // has since started or finished. Bail out without touching the DOM so
+    // this stale call can't tear down the newer panel's already-wired
+    // listeners and replace it with one built from an older tab/settings.
+    if (seq !== _setupSeq) return;
 
     // Remove stale panel if any
     const old = document.getElementById('pfxSetupOverlay');

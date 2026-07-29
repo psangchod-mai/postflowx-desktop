@@ -6860,3 +6860,41 @@ staging or should be deferred) and `openProjectSetup()` in
 more feasible for a future iteration).
 
 Commits: `742d1ce`.
+
+## Iteration 131 — Project Setup panel: overlapping opens corrupt shared settings and duplicate the panel
+
+`openProjectSetup()` in `project_setup.js` unconditionally awaited
+`_pssLoad()` (an IndexedDB round trip) then unconditionally tore down
+any existing `#pfxSetupOverlay` and rebuilt it, with `_pssOpen` only
+flipping true at the very end — so two rapid clicks (or a click racing
+the settings-changed reopen path) could both start an open before
+either finished. If the older call's storage read resolved last, it
+both (a) rebuilt/re-appended the DOM panel over the newer, already-open
+one, and (b) — the deeper part of the bug — `_pssLoad()` itself
+unconditionally overwrote the shared `_pssSettings` module variable
+with its own (stale) data, corrupting the live panel's settings even
+after the DOM-level guard was added. Fixed with two guards: a
+`_setupSeq` counter in `openProjectSetup()` that skips DOM rebuild for
+a superseded call, and a `_pssLoadSeq` counter inside `_pssLoad()`
+itself so a superseded load's result never overwrites `_pssSettings`.
+New test `tests-js/projectSetupOpenStaleRace.test.mjs` (7 assertions,
+linkedom + a fake IndexedDB with test-controlled resolution order)
+drives two overlapping `openProjectSetup()` calls, resolves the newer
+one first, then the stale one, and confirms exactly one panel remains,
+the panel stays open, and its settings still reflect the newer call's
+data. Before/after verified by temporarily reverting just the
+`_pssLoad()` guard: 6/7 passed with the exact predicted failure (stale
+call clobbered live settings), restored fix re-passed 7/7. Pre-existing
+WIP (input clamping in `_pssWireSection()`, "Resolve optional" status
+change in `autoConnectResolveOnBoot()`) and mode-bit drift
+(`100644`→`755`) both left untouched — staged via `git add -p` to pull
+in only the fix's 6 hunks. Full regression matched baseline
+(`test:js` and `test:node` both green after `git add`ing the new test
+file, matching the self-containment gate's expected pattern from prior
+iterations).
+
+Still open: `_refreshStatus()` in `homeScreen.js:668` remains
+unaddressed (stale-status race, WIP sits inside the function body —
+still needs hunk-selective staging or deferral).
+
+Commits: `TBD`.

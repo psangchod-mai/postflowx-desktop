@@ -13168,3 +13168,97 @@ hunk-selective staging, or defer entirely) and `openProjectSetup()` in
 inside this function, making it more feasible for a future iteration).
 
 Commits: `742d1ce`.
+
+## Iteration 131 — Project Setup panel: overlapping opens corrupt shared settings and duplicate the panel
+
+**Why this file:** `project_setup.js:1873`'s `openProjectSetup()` was
+flagged as a runner-up candidate in Iteration 130's "Still open"
+section — real pre-existing WIP exists elsewhere in the file, but not
+directly inside this function, making hunk-selective staging feasible.
+
+`openProjectSetup()` (the Setup panel's open entry point — reached from
+the toolbar button, keyboard shortcut, and a settings-changed reopen
+path) unconditionally awaits `_pssLoad()`, an IndexedDB (falling back
+to `chrome.storage`) round trip, then unconditionally tears down any
+existing `#pfxSetupOverlay` and rebuilds a fresh one from whatever
+`_pssLoad()` just resolved to. `_pssOpen` only flips `true` at the very
+end of the function, so two overlapping calls — a fast double-click, or
+a click racing the settings-changed auto-reopen — can both be in
+flight before either finishes. If the OLDER call's storage read
+happens to resolve LAST, two distinct problems compound:
+
+1. **DOM-level:** the older call tears down and replaces the newer
+   call's already-open, already-wired panel with a second one built
+   from stale data — a visible "my last click's settings vanished, and
+   the panel flickered" bug.
+2. **Data-level, and the deeper half of this bug:** independent of any
+   DOM guard, `_pssLoad()` itself unconditionally executed
+   `_pssSettings = merged; _pssDirty = false;` on every call. Even
+   after adding a caller-side guard in `openProjectSetup()`, the guard
+   check only runs *after* `await _pssLoad()` resolves — by which point
+   `_pssLoad()` has already clobbered the shared `_pssSettings` module
+   variable with the stale call's older data. Since `_pssSettings` is
+   read live by `getSettings()` and by the still-open, newer panel,
+   this corrupted state even when the DOM was never touched. `_pssLoad()`
+   is called from five independent sites in the file, so this couldn't
+   be fixed by guarding any single caller — the guard had to live
+   inside `_pssLoad()` itself, protecting the shared state directly.
+
+Fixed with two independent sequence-number guards, one per layer:
+- `_setupSeq`, a module-level counter bumped at the top of
+  `openProjectSetup()`. After `await _pssLoad()` resolves, if
+  `seq !== _setupSeq` a newer call has since started (or finished), so
+  this stale call returns immediately without touching the DOM.
+- `_pssLoadSeq`, a counter bumped at the top of `_pssLoad()` itself
+  (independent of `_setupSeq`, since `_pssLoad()` has callers other
+  than `openProjectSetup()`). After its own awaits resolve, it only
+  commits `_pssSettings = merged; _pssDirty = false;` if
+  `seq === _pssLoadSeq`; otherwise it returns the *current*
+  `_pssSettings` (whatever the winning, newer call last set) without
+  overwriting it.
+
+New test `tests-js/projectSetupOpenStaleRace.test.mjs` (7 assertions,
+linkedom + a fake IndexedDB whose `get()` requests are left pending
+until the test explicitly resolves them, so resolution order is fully
+test-controlled) drives two overlapping `openProjectSetup('general')`
+calls (A older, B newer), resolves B's storage read first with
+`{ naming: { show: 'B_SHOW' } }`, confirms exactly one panel is mounted
+and `getSettings()` reflects B, then resolves A's storage read late
+with `{ naming: { show: 'A_SHOW' } }` and confirms: still exactly one
+panel (no duplicate append), settings still read `B_SHOW` (not
+clobbered by A), and the panel remains open.
+
+**Verification:** Confirmed the pre-fix file had zero content diff
+against HEAD, aside from a large volume of pre-existing, unrelated WIP
+elsewhere in the same file (input clamping in `_pssWireSection()` and
+an idle-status wording change in `autoConnectResolveOnBoot()`) which
+was left completely untouched throughout. Applied the fix (19
+insertions, 2 deletions across 6 hunks: two module-level declaration
+sites and the bodies of `_pssLoad()` and `openProjectSetup()`). Ran the
+new test against the fix: 7 of 7 assertions passed. Backed up the fixed
+file via `cp` to `/tmp/project_setup_fixed.js`, then manually reverted
+just the fix code (both the `_pssLoadSeq` guard in `_pssLoad()` and the
+`_setupSeq` staleness check in `openProjectSetup()`) and re-ran the
+test: 6 of 7 passed, with exactly the predicted assertion failing
+(`the stale, superseded open must not clobber the live panel's
+settings with older data`) — confirming the settings-corruption bug
+reproduces precisely as expected once the fix is absent. Restored the
+exact fixed file via `cp` from the backup and re-ran: 7 of 7 passed
+again, confirming the restoration was exact. Used `git add -p` to
+stage only the 6 fix-related hunks, leaving the 2 pre-existing WIP
+hunks (now shifted a few lines down by the fix's insertions) unstaged;
+`git diff --cached` and `git diff` were each independently checked to
+confirm the split was exact — no WIP leaked into the staged fix, and no
+fix code was left behind in the unstaged diff. Full `npm run test:js`
+regression is green (the self-containment gate flagged the new test
+file as untracked until `git add`ed, the same expected pattern
+documented in Iteration 130 — not a real failure). `npm run test:node`
+also green, matching baseline (72 pass, 1 pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js:668` remains
+unaddressed from Iteration 130's carryover — a stale-status-chip race
+where the WIP sits directly inside the function body, so it still
+needs careful hunk-selective staging (or should be deferred if the WIP
+can't be cleanly isolated).
+
+Commits: `TBD`.
