@@ -5867,4 +5867,4 @@ this package (`ThumbnailGenerator.swift`, `WaveformGenerator.swift`,
 `IMFEngine.swift`) remain unexamined for these bug species — worth a
 follow-up scouting pass.
 
-Commits: `TBD`.
+Commits: `9a40200`.
