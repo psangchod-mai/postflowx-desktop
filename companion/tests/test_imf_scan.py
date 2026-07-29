@@ -233,6 +233,81 @@ class TestParseAssetMap:
         assert result["assets"] == {}
 
 
+# ── SourceDuration / EntryPoint defaulting (ST 2067-3 §6.6) ────────────────────
+# A <Resource> with no explicit <SourceDuration> must default to
+# IntrinsicDuration - EntryPoint, not to IntrinsicDuration alone — a resource
+# can validly skip its first EntryPoint frames without ever stating
+# SourceDuration explicitly.
+
+def _cpl_with_segment_resource(*, intrinsic: int, entry: int, source_duration: str | None) -> str:
+    cpl_id = str(uuid.uuid4())
+    sd_tag = f"<SourceDuration>{source_duration}</SourceDuration>" if source_duration is not None else ""
+    return textwrap.dedent(f"""<?xml version="1.0" encoding="UTF-8"?>
+    <CompositionPlaylist
+        xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">
+      <Id>urn:uuid:{cpl_id}</Id>
+      <EditRate>24 1</EditRate>
+      <ContentTitle>Test Title</ContentTitle>
+      <SegmentList>
+        <Segment>
+          <Id>urn:uuid:{uuid.uuid4()}</Id>
+          <SequenceList>
+            <MainImageSequence>
+              <Id>urn:uuid:{uuid.uuid4()}</Id>
+              <TrackId>urn:uuid:{uuid.uuid4()}</TrackId>
+              <ResourceList>
+                <Resource>
+                  <Id>urn:uuid:{uuid.uuid4()}</Id>
+                  <TrackFileId>urn:uuid:{uuid.uuid4()}</TrackFileId>
+                  <EditRate>24 1</EditRate>
+                  <IntrinsicDuration>{intrinsic}</IntrinsicDuration>
+                  <EntryPoint>{entry}</EntryPoint>
+                  {sd_tag}
+                </Resource>
+              </ResourceList>
+            </MainImageSequence>
+          </SequenceList>
+        </Segment>
+      </SegmentList>
+    </CompositionPlaylist>
+    """)
+
+
+class TestSourceDurationDefaulting:
+    def test_omitted_source_duration_defaults_to_intrinsic_minus_entry_point(self, tmp_path):
+        cpl = tmp_path / "cpl.xml"
+        cpl.write_text(
+            _cpl_with_segment_resource(intrinsic=1000, entry=200, source_duration=None),
+            encoding="utf-8",
+        )
+        result = _parse_cpl(cpl)
+        resource = result["segments"][0]["resources"][0]
+        assert resource["sourceDuration"] == 800, \
+            "omitted SourceDuration must default to IntrinsicDuration - EntryPoint (1000-200), not IntrinsicDuration alone"
+        assert result["totalFrames"] == 800
+
+    def test_explicit_source_duration_is_used_verbatim(self, tmp_path):
+        cpl = tmp_path / "cpl.xml"
+        cpl.write_text(
+            _cpl_with_segment_resource(intrinsic=1000, entry=200, source_duration="500"),
+            encoding="utf-8",
+        )
+        result = _parse_cpl(cpl)
+        resource = result["segments"][0]["resources"][0]
+        assert resource["sourceDuration"] == 500
+        assert result["totalFrames"] == 500
+
+    def test_zero_entry_point_omitted_source_duration_equals_intrinsic(self, tmp_path):
+        cpl = tmp_path / "cpl.xml"
+        cpl.write_text(
+            _cpl_with_segment_resource(intrinsic=1000, entry=0, source_duration=None),
+            encoding="utf-8",
+        )
+        result = _parse_cpl(cpl)
+        resource = result["segments"][0]["resources"][0]
+        assert resource["sourceDuration"] == 1000
+
+
 # ── scan_imf_package integration ───────────────────────────────────────────────
 
 def _write_minimal_package(root: Path) -> tuple[str, str]:

@@ -256,7 +256,10 @@ def _parse_cpl(cpl_path: Path) -> dict[str, Any]:
                 res_rate = _parse_rate(res_er, edit_rate)
                 intrinsic = int(_text(res, "IntrinsicDuration") or "0")
                 entry = int(_text(res, "EntryPoint") or "0")
-                src_dur = int(_text(res, "SourceDuration") or str(intrinsic or 0))
+                src_dur_text = _text(res, "SourceDuration")
+                # Per SMPTE ST 2067-3, an omitted SourceDuration defaults to
+                # IntrinsicDuration - EntryPoint, not to IntrinsicDuration alone.
+                src_dur = int(src_dur_text) if src_dur_text else max(0, intrinsic - entry)
                 repeat = max(1, int(_text(res, "RepeatCount") or "1"))
                 file_id = _clean_uuid(_text(res, "TrackFileId"))
                 ess_desc_id = _clean_uuid(_text(res, "EssenceDescriptorId") or _text(res, "SourceEncoding"))
@@ -268,7 +271,7 @@ def _parse_cpl(cpl_path: Path) -> dict[str, Any]:
                     "editRate": res_rate,
                     "intrinsicDuration": intrinsic,
                     "entryPoint": entry,
-                    "sourceDuration": src_dur or intrinsic,
+                    "sourceDuration": src_dur,
                     "repeatCount": repeat,
                     "trackFileId": file_id,
                     "essenceDescriptorId": ess_desc_id,
@@ -276,7 +279,7 @@ def _parse_cpl(cpl_path: Path) -> dict[str, Any]:
                 resources.append(parsed_res)
                 seq_resources.append(parsed_res)
                 if seq_type == "MainImageSequence" or "Image" in seq_type:
-                    total_frames += (src_dur or intrinsic) * repeat
+                    total_frames += src_dur * repeat
 
             if seq_resources:
                 sequences.append({
