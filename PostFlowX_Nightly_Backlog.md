@@ -4826,3 +4826,49 @@ median/patch-filtering SOP+power+saturation solve, worth a dedicated
 audit pass).
 
 Commits: `3e3a941`.
+
+## Iteration 60 — ReviewPlayer._sameSource false-matched distinct clips via substring containment
+
+**Found.** `src/scripts/features/reviews/player.js`'s `_sameSource(video,
+url)` — the gate `ReviewPlayer` uses at 7 call sites to decide "seek in
+place" vs. "load a new clip" — fell back to `cur.includes(want) ||
+want.includes(cur)` when the URLs weren't an exact match. That falsely
+returns `true` whenever one URL is a literal prefix of the other (e.g.
+`"...?clip=clip1"` vs. `"...?clip=clip10"`), so the player silently kept
+showing the old clip's frames instead of loading the new one — wrong
+footage, no error.
+
+**Done.** Replaced the substring fallback with an exact comparison of
+resolved absolute URLs (`new URL(cur, document.baseURI).href === new
+URL(want, document.baseURI).href`), keeping the existing exact-string
+fast path and empty-input early return. All 7 call sites unchanged — the
+method's boolean contract didn't change.
+
+**Tests.** New `tests-js/reviewPlayerSameSource.test.mjs`, 9 assertions
+via the `linkedom` DOM-shim pattern (per `pfxTransportDom.test.mjs`):
+prefix-containment pairs (both directions) return `false`; exact matches
+and relative/absolute forms of the same URL return `true`; empty/null/
+undefined inputs and a `null` video return `false`.
+
+**Verification.** Mutation-tested via `git stash push --
+src/scripts/features/reviews/player.js`: exactly the 2
+prefix-containment assertions failed with the fix reverted; `git stash
+pop` restored the fix and all 9 passed again.
+
+**Gate.** New test file staged by explicit `git add` before `npm run
+build-verify` (per the Iteration 58 lesson). Full gate passed clean:
+companion Python suite 261 passed / 7 skipped, all three security scan
+gates clean.
+
+**Still open.** All items carried from Iterations 52–59 remain pending
+and unchanged. This iteration's original target
+(`src/scripts/features/trlconf/index.js`, an fps/fpsExact timecode-base
+bug) was found and fixed but **abandoned and fully reverted** — the file
+is entangled in ~1500 lines of pre-existing uncommitted work not present
+in `HEAD`, making a clean scoped commit impossible there. That
+investigation also revealed the repo's pre-existing dirty-vs-`HEAD`
+condition spans ~400+ files, not a small known set — going forward,
+`git diff --stat -- <file>` against `HEAD` must be confirmed empty before
+any file is chosen as a fix target.
+
+Commits: `5d4e82a`.

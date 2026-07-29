@@ -6668,3 +6668,121 @@ median/patch-filtering SOP+power+saturation solve — no concrete bug found,
 but density/complexity make it worth a dedicated audit pass).
 
 Commits: `3e3a941`.
+
+---
+
+## Iteration 60 — ReviewPlayer._sameSource used substring containment as a URL-equality fallback (src/scripts/features/reviews/player.js) — new species
+
+**New species.** An 11th distinct bug shape: a same-source/identity check
+used substring containment (`a.includes(b) || b.includes(a)`) as a fallback
+for "are these the same resource," which is unsound whenever one string can
+be a literal prefix of another distinct string — unlike any prior
+iteration's arithmetic, branch-selection, or propagation bugs.
+
+**Why this file.** `src/scripts/features/reviews/player.js`'s
+`ReviewPlayer` class drives the Reviews feature's dual-`<video>`-element
+"virtual timeline player," swapping an `active`/`standby` pair
+(`_swapVideos()`) to make clip-to-clip playback smoother than a single
+`<video>` element reloading on every cut. `_sameSource(video, url)` is the
+gate used at 7 call sites (`loadAtGlobalTime`, `stepFrames`,
+`preloadNext`, `_switchToNextIfNeeded`) to decide "is the requested clip
+already loaded in this video element (just seek) or a different one
+(reload)."
+
+**The bug.**
+```js
+_sameSource(video, url) {
+  const cur = String(video?.currentSrc || video?.src || '');
+  const want = String(url || '');
+  if (!cur || !want) return false;
+  return cur === want || cur.includes(want) || want.includes(cur);
+}
+```
+The substring-containment fallback falsely reports "same source" whenever
+one URL is a literal prefix of the other, even though they identify
+genuinely different clips — e.g. `".../stream?clip=clip1"` vs.
+`".../stream?clip=clip10"`: `want.includes(cur)` is `true` because `cur`
+is exactly the first N characters of `want`. When this fires, the player
+skips loading the new clip entirely and seeks within the video element
+still showing the *old* clip's frames — wrong footage displayed, with no
+error, no reload, and no check that the visible content actually matches
+the requested clip.
+
+**The fix.** Replaced the substring fallback with an exact comparison of
+resolved absolute URLs:
+```js
+_sameSource(video, url) {
+  const cur = String(video?.currentSrc || video?.src || '');
+  const want = String(url || '');
+  if (!cur || !want) return false;
+  if (cur === want) return true;
+  try {
+    return new URL(cur, document.baseURI).href === new URL(want, document.baseURI).href;
+  } catch {
+    return false;
+  }
+}
+```
+`new URL(..., document.baseURI)` normalizes relative vs. absolute forms of
+the same URL to the same `.href` (so legitimate same-source cases —
+`currentSrc` reported as an absolute URL by the browser vs. a relative
+`url` argument — still match) while making two distinct URLs that merely
+share a prefix compare unequal. All 7 call sites were left untouched since
+the method's boolean contract didn't change, only its internal
+correctness.
+
+**Test approach.** New file `tests-js/reviewPlayerSameSource.test.mjs`,
+using the `linkedom`-based DOM shim pattern already established in
+`tests-js/pfxTransportDom.test.mjs` (`parseHTML` → `globalThis.document`).
+Since `linkedom`'s `document.baseURI` is `null` with no document URL,
+the test explicitly defines it (`Object.defineProperty(document,
+'baseURI', ...)`) so the code under test has a real base to resolve
+relative URLs against. 9 assertions: (1)-(2) `clip=clip1` vs. `clip=clip10`
+in both directions — the exact "one URL is a literal prefix of the other"
+shape the old code got wrong — must return `false`; (3) identical absolute
+URLs must return `true`; (4) a relative URL that resolves to the same
+absolute URL as `currentSrc` must return `true` (confirms the `new
+URL(...)` normalization doesn't break legitimate same-source detection);
+(5)-(9) empty/null/undefined `url`, empty `currentSrc`, and a `null` video
+must all return `false` (existing early-return behavior preserved).
+
+Note: an earlier draft of this test used `".../clip1.mp4"` vs.
+`".../clip12.mp4"` as the false-positive example — but that pair does
+*not* actually trigger the old substring bug, because the differing file
+extensions break the containment relationship (`"clip1.mp4"` is not a
+substring of `"clip12.mp4"`). The real bug needs a true prefix
+relationship end-to-end, which query-string clip ids without a
+disambiguating suffix (`clip=clip1` vs. `clip=clip10`) provide.
+
+**Verification.** Mutation-tested via `git stash push --
+src/scripts/features/reviews/player.js` (pathspec-scoped): with the fix
+reverted, exactly the 2 prefix-containment assertions failed (7 of 9
+passed — the other assertions were unaffected, confirming the mutation
+only broke the intended cases). `git stash pop` restored the fix; reran
+to confirm all 9 assertions passed. Staged the new test file by explicit
+`git add` before running `npm run build-verify` (per the Iteration 58
+lesson): clean pass — companion Python suite 261 passed / 7 skipped, `✓
+XSS gate clean`, `✓ XXE gate clean`, `✓ Fail-open gate clean`. Confirmed
+`git diff -- src/scripts/features/reviews/player.js` showed only the
+intended `_sameSource` change (the file was verified byte-identical to
+`HEAD` before this session's edit, per the new pre-selection practice
+below).
+
+**Lesson learned — new pre-selection practice.** This iteration's
+original scouting target (a fps/fpsExact timecode-base confusion in
+`src/scripts/features/trlconf/index.js`) was found, fixed, and verified,
+but ultimately **abandoned and fully reverted**: the file turned out to be
+entangled in ~1500 lines of pre-existing uncommitted work-in-progress not
+present in `HEAD` at all (`git show HEAD:... | wc -l` was ~1400 lines
+shorter, and the surrounding functions didn't exist in `HEAD`), making any
+fix there impossible to isolate into a clean, scoped commit. Investigating
+this also surfaced that the working tree's pre-existing dirty-vs-`HEAD`
+condition is far larger than previously assumed — roughly 400+ files
+across nearly the entire repository, not a small set of known "noise"
+files. **New practice for all future iterations:** before investing any
+effort into a candidate fix, first run `git diff --stat -- <file>` against
+`HEAD` and confirm it is empty; reject any file that is already dirty as a
+target, regardless of bug quality, since a fix there can never be
+committed in isolation.
+
+Commits: `5d4e82a`.
