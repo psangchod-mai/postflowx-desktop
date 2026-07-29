@@ -8969,4 +8969,4 @@ Iteration 76.
 **Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
 `conform_engine.py` remains unfixed (environment issue, out of scope).
 
-Commits: `TBD`.
+Commits: `3e954e2`.
