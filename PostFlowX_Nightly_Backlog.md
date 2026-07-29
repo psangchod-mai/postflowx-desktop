@@ -5172,3 +5172,33 @@ failures.
 independently.
 
 Commits: `3881348`.
+
+---
+
+## Iteration 69 — Animated-transform keyframe times mis-parsed as bare numerator
+
+**Found.** `readFCPTransform()` in `src/scripts/parsers/fcpxml.js` parsed
+`<keyframe time="...">` with a ternary whose two branches computed the same
+thing (`parseFloat` either way) — never actually handling FCPXML's rational
+`"N/Ds"` time format. `parseFloat("12345/24000s")` returns `12345` instead
+of `0.514375`, corrupting every animated-transform keyframe (pan/zoom/rotate
+ramps) whose numerator isn't a whole number of seconds.
+
+**Done.** Added `ratToSeconds(val)` (unrounded sibling of `ratToFrames`) and
+used it for keyframe `time` parsing.
+
+**Tests.** New test in `test/parsers/fcpxml.test.mjs`: a two-keyframe
+position animation with `time="12345/24000s"` / `"24690/24000s"`, asserting
+the parsed keyframe times equal the true fractions, not the bare numerators.
+
+**Verification.** Reverted to the original ternary, reran: test failed with
+`actual: 12345, expected: 0.514375`. Restored the fix: all 9 tests in
+`fcpxml.test.mjs` passed.
+
+**Gate.** `npm run test:node` passed clean: 73 tests, 72 pass, 1
+pre-existing skip, 0 fail. Log grepped for failure markers, zero real
+failures.
+
+**Still open.** None for this fix.
+
+Commits: `171d82e`.

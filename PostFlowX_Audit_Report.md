@@ -7634,3 +7634,67 @@ failures.
 `buildTopLevelFCPXMLEvents`'s parallel fix.
 
 Commits: `3881348`.
+
+---
+
+## Iteration 69 — Animated-transform keyframe times mis-parsed as bare numerator
+
+**Why this file.** `src/scripts/parsers/fcpxml.js`'s `readFCPTransform()`
+(called from the main `collect()` walker) reads `<adjust-transform>` /
+`<param>` / `<keyframe>` elements — the animated position/scale/rotation
+ramps behind any FCP X "Ken Burns"-style pan/zoom or rotate edit — and
+attaches the parsed keyframes to the event as `event.transform.keys`.
+
+**The bug.** FCPXML keyframe `time` attributes are rational-time strings
+like `"12345/24000s"`, exactly the same format `ratToFrames()` in this same
+file special-cases for (its own doc comment explains why naive parsing of
+rational FCPXML values is wrong). `readFCPTransform()` instead ran:
+```js
+const tSec = t.endsWith('s') ? parseFloat(t) : (parseFloat(t) || 0);
+```
+Both branches of this ternary compute the identical thing — a tell that the
+"handle the rational case" branch was never actually implemented.
+`parseFloat("12345/24000s")` stops at the first non-numeric character (`/`)
+and returns `12345`, not `12345/24000 = 0.514375`.
+
+**Concrete failure example.** A keyframe at `time="12345/24000s"` (0.514375s)
+was recorded as `time: 12345` — wrong by a factor of ~24000. Every keyframe
+in an animated transform whose numerator isn't a whole number of seconds
+gets this same misparse, and because each keyframe's numerator/denominator
+pair collapses independently, the resulting `keys[field]` array is not just
+scaled wrong but internally inconsistent (different keyframes get different
+effective error factors depending on their numerators).
+
+**Why genuine and new.** Distinct from the FCPXML fallback-scanner bug fixed
+in Iteration 68 (68 was about the two fallback scanners' `srcIn` field; this
+is about `readFCPTransform()`, an entirely separate function invoked from
+the primary `collect()` path, and a different field — animated keyframe
+timing, not clip source-in). Also distinct from all other previously-fixed
+species per full `git log` review before starting.
+
+**The fix.** Added a small `ratToSeconds(val)` helper next to `ratToFrames`
+— same rational-parsing logic, but returns exact (unrounded) real seconds
+instead of a rounded frame count, since keyframe times aren't being snapped
+to a frame grid. `readFCPTransform()` now calls `ratToSeconds(t)` instead of
+the broken ternary.
+
+**Test approach.** Added a test to `test/parsers/fcpxml.test.mjs` with a
+two-keyframe `<adjust-transform><param key="position">` animation using
+`time="12345/24000s"` and `time="24690/24000s"`, asserting
+`evs[0].transform.keys.position` contains the exact fractional-second values
+(`12345/24000`, `24690/24000`), not the bare numerators.
+
+**Verification (mutation testing).** Reverted `readFCPTransform()`'s call
+back to the original broken ternary, reran: the new test failed with
+`actual: 12345, expected: 0.514375` as predicted. Restored the fix: all 9
+tests in `fcpxml.test.mjs` passed again.
+
+**Gate.** `npm run test:node` passed clean: 73 tests, 72 pass, 1 pre-existing
+skip, 0 fail. Grepped the full log for `not ok|✖|AssertionError`; zero real
+failures.
+
+**Still open.** None for this fix. (Carried over from Iteration 68: no
+fixture yet constructed to independently mutation-test
+`buildTopLevelFCPXMLEvents`'s source-in-trim fix.)
+
+Commits: `171d82e`.
