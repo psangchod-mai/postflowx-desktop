@@ -9236,4 +9236,4 @@ Iteration 85). `_logc3_to_lin()`, `_slog3_to_lin()` (Sony S-Log3),
 V-Log) remain unaudited against their respective vendor specs — a
 follow-up iteration should check each the same way.
 
-Commits: `TBD`.
+Commits: `3093eab`.

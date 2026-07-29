@@ -5671,4 +5671,4 @@ failures, unrelated). Second consecutive iteration finding a
 spec-mismatch bug in `color_lut.py` — LogC3, S-Log3, C-Log2, and V-Log
 remain unaudited.
 
-Commits: `TBD`.
+Commits: `3093eab`.
