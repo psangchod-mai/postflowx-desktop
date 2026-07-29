@@ -6361,3 +6361,21 @@ matched baseline exactly: 313/7/2(pre-existing) Python, 72/1/0 Node,
 22/0 JS.
 
 Commits: `6e44543`.
+
+## Iteration 111 — color_lut.py torn-write race on concurrent OCF exports
+
+`get_idt_lut_path()`/`_write_cube()` in `color_lut.py` had an
+unsynchronized check-then-write plus a non-atomic direct file write for
+`.cube` LUT files, reachable by concurrent OCF export jobs (each runs
+on its own thread) processing clips from the same camera family. A
+reader could see a truncated/partial `.cube` file mid-write. Fixed with
+a `threading.Lock()` around the check-then-write and a
+write-to-tmp-then-`os.replace()` atomic write, matching the pattern
+already used elsewhere in the codebase (`frame_cache.py`,
+`proxy_registry.py`). Verified with a targeted concurrent-read harness
+driving the real, unmodified functions: pre-fix, 14/54 reads caught a
+partial file mid-write; post-fix, 0/40 torn reads across 20 trials.
+Full regression suite re-run and matched baseline exactly:
+313/7/2(pre-existing) Python, all Node/JS suites passing.
+
+Commits: `TBD`.

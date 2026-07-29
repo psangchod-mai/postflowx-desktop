@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -23,6 +24,10 @@ from typing import Callable, Optional
 
 LUT_SIZE = 33           # 33^3 = 35 937 entries; good balance of accuracy vs size
 _CACHE: dict[str, str] = {}    # camera_family → resolved .cube path
+# Guards the check-then-write below — OCF export jobs run one per thread, so
+# concurrent exports of the same camera family would otherwise race to write
+# the same .cube file simultaneously.
+_CACHE_LOCK = threading.Lock()
 
 
 # ── 3×3 matrix multiply ───────────────────────────────────────────────────────
@@ -240,8 +245,12 @@ def _write_cube(path: str, title: str,
                 or_, og, ob = fn(r, g, b)
                 lines.append(f"{or_:.6f} {og:.6f} {ob:.6f}")
 
-    with open(path, "w", encoding="utf-8") as fh:
+    # Write to a per-thread temp file and atomically rename into place, so a
+    # reader (ffmpeg's lut3d filter) never sees a partially-written file.
+    tmp_path = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+    os.replace(tmp_path, path)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -287,9 +296,12 @@ def get_idt_lut_path(idtName: str, lut_dir: str) -> Optional[str]:
     title, fn = entry
     os.makedirs(lut_dir, exist_ok=True)
     path = os.path.join(lut_dir, f"idt_{key}.cube")
-    if not os.path.isfile(path):
-        _write_cube(path, title, fn)
-    _CACHE[key] = path
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            return _CACHE[key]
+        if not os.path.isfile(path):
+            _write_cube(path, title, fn)
+        _CACHE[key] = path
     return path
 
 

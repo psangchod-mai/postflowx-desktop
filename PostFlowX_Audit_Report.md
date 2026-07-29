@@ -11564,3 +11564,78 @@ unfixed, for the reasons documented in prior iterations — none is
 touched by this change.
 
 Commits: `6e44543`.
+
+## Iteration 111
+
+**Why this file:** `color_lut.py`'s `get_idt_lut_path()`/`_write_cube()`
+generate and cache per-camera-family `.cube` 3D LUT files used by the
+OCF EXR export path. `api.py`'s `_ocf_exr_export_start()` spawns one
+`threading.Thread(target=self._ocf_run_export, ...)` per OCF export
+job (line 2344), and `_ocf_run_export()` calls
+`_get_idt_lut_path(_idt_name, _lut_cache_dir)` (line 2532) — so two
+concurrent OCF export jobs for clips of the same camera family
+genuinely race on the same cache directory and the same `.cube` path.
+Confirmed via `git diff --stat`/`git log --oneline -5 --
+color_lut.py`: no pre-existing WIP on this file, only unrelated prior
+color-math fix commits.
+
+**The bug:** `get_idt_lut_path()` did an unsynchronized
+check-then-write (`if not os.path.isfile(path): _write_cube(path, ...)`)
+with no lock, and `_write_cube()` wrote the ~36,000-line `.cube` file
+directly to its final path via a single `open(path, "w")` +
+`fh.write()` — not atomically. Two concurrent threads processing clips
+of the same camera family could both pass the `isfile()` check and
+both write to the same path concurrently, and — independent of that —
+any reader (a third OCF job reusing the cached path, or ffmpeg's
+`lut3d` filter) could open the file while a writer's buffered `write()`
+calls were still flushing to disk in multiple OS-level writes, seeing
+a truncated/partial file rather than a complete one.
+
+**The fix:** Added a module-level `threading.Lock()` (`_CACHE_LOCK`)
+guarding the check-then-write in `get_idt_lut_path()` (re-checking the
+in-memory `_CACHE` dict first inside the lock, to avoid holding the
+lock for cache hits from a second thread). Made `_write_cube()`'s file
+write atomic: write to a per-thread/per-process temp path
+(`{path}.tmp.{pid}.{thread_id}`), then `os.replace(tmp_path, path)` —
+the same write-to-tmp-then-rename pattern already used elsewhere in
+the codebase (`frame_cache.py`, `proxy_registry.py`).
+
+**Test approach:** Two standalone harnesses drove the real, unmodified
+`color_lut` module functions directly (no mocking — this file is pure
+Python with no external dependencies):
+- `/tmp/verify_lut_race.py`: 12 real `threading.Thread`s calling
+  `get_idt_lut_path("ARRI LogC3", lut_dir)` concurrently across 5
+  trials, validating exact line count and well-formed rows. This
+  harness passed both before and after the fix — expected, since all
+  racing threads write byte-identical LUT content for the same camera
+  family key, so a torn write rarely produces a *detectably* corrupt
+  file at this size/timing.
+- `/tmp/verify_lut_torn_read.py`: a more targeted harness isolating the
+  actual atomicity property the fix provides. One thread calls the
+  real `_write_cube()` directly; a second thread concurrently polls
+  the target path in a tight loop (with `sys.setswitchinterval(0.00005)`
+  to widen the GIL-scheduling window enough for the race to surface),
+  reading and checking for the expected line count / trailing newline
+  on every read that catches the file mid-write, across 20 trials.
+
+**Verification:** Pre-fix (via `git stash push -- color_lut.py`), the
+torn-read harness reproduced the bug directly: 14 of 54 reads that
+caught the file while being written saw a partial/truncated `.cube`
+file. Post-fix (after `git stash pop`, confirmed via `git diff` that
+only genuine content changes were restored — no mode-bit-only noise on
+this file), the same harness saw 0 torn reads across 40 reads in 20
+trials, and the original 12-thread concurrency harness still passed
+(35942/35942 lines, well-formed, no leftover `.tmp.` files). Full
+regression suite re-run and matched baseline exactly: 313/7/2
+(pre-existing, `conform_engine.py` WIP under Python 3.9) Python via
+direct `pytest -q` in the companion venv (315/7/0 as reported by
+`npm test`'s newer Python interpreter), all Node (`node --test`) and
+JS suites passing with 0 failures.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, the Metal HTJ2K WIP
+block, and the `ocf_decode.py` `_decode_sdk()` stub all remain open,
+unfixed, for the reasons documented in prior iterations — none is
+touched by this change.
+
+Commits: `TBD`.
