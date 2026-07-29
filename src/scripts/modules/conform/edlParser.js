@@ -98,7 +98,10 @@ export function parseFcpXml(text) {
       srcOut: framesToTc(srcOut, fps),
       recIn:  framesToTc(recIn,  fps),
       recOut: framesToTc(recOut, fps),
-      durationFrames: Math.max(0, srcOut - srcIn),
+      // Timeline duration comes from the RECORD TCs (authoritative), not the
+      // source TCs — source points at WIP masters and is re-resolved by
+      // matching. See parseEdl above.
+      durationFrames: Math.max(0, recOut - recIn),
       fps, track: 'V', comment: '',
     });
   });
