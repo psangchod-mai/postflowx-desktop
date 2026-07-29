@@ -6256,3 +6256,24 @@ regression suite re-run and matched baseline exactly:
 313/7/2(pre-existing) Python, 72/1/0 Node, 22/0 JS.
 
 Commits: `1abd62a`.
+
+## Iteration 106 — arri_backend.py torn-write race in art-cmd decode path
+
+`ArriBackend._decode_frame_tool()`'s final ffmpeg encode wrote directly
+to `out_path` — the same path every caller's cache-hit check and final
+base64-read both use — same defect class as `braw_backend.py`
+(Iteration 105) and `r3d_backend.py` (Iteration 103), but present here
+independently. Fixed with the same pattern: ffmpeg now writes to a
+`tempfile.mkstemp()` path, then `os.replace()`s it into `out_path`
+atomically, unlinking the temp file on failure. Verified with a
+standalone harness against the real `ArriBackend` (subprocess/`art-cmd`
+faked to write a stub EXR + a two-chunk delayed ffmpeg write): post-fix
+produces a stable 206-byte JPEG with no torn appearances and no
+leftover temp files. As with Iteration 105, the race itself couldn't
+be caught by black-box polling at this test's write speed — reported
+honestly rather than claiming a reproduction that didn't happen; the
+structural write-path change stands on its own. Full regression suite
+re-run and matched baseline exactly: 313/7/2(pre-existing) Python,
+72/1/0 Node, 22/0 JS.
+
+Commits: `TBD`.

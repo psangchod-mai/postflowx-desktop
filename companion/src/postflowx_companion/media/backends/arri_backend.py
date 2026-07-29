@@ -589,11 +589,19 @@ class ArriBackend(BaseMediaBackend):
                 else:
                     # No ACES 2.0 LUT available — straight EXR→image (AP0 looks flat).
                     vf = f"scale={width}:{height}:flags=lanczos"
-                fr = subprocess.run(
-                    [self._ffmpeg, "-y", "-i", exr, "-vf", vf, "-frames:v", "1", str(out_path)],
-                    capture_output=True, timeout=60)
-                if fr.returncode != 0 or not (out_path.is_file() and out_path.stat().st_size > 0):
-                    raise RuntimeError(f"ffmpeg encode of ARRI frame failed: {fr.stderr.decode(errors='replace')[:300]}")
+                enc_fd, enc_tmp = tempfile.mkstemp(suffix=f".{fmt}", dir=str(self._cache))
+                os.close(enc_fd)
+                try:
+                    fr = subprocess.run(
+                        [self._ffmpeg, "-y", "-i", exr, "-vf", vf, "-frames:v", "1", enc_tmp],
+                        capture_output=True, timeout=60)
+                    if fr.returncode != 0 or not (os.path.isfile(enc_tmp) and os.path.getsize(enc_tmp) > 0):
+                        raise RuntimeError(f"ffmpeg encode of ARRI frame failed: {fr.stderr.decode(errors='replace')[:300]}")
+                    os.replace(enc_tmp, str(out_path))
+                except Exception:
+                    try: os.unlink(enc_tmp)
+                    except OSError: pass
+                    raise
             finally:
                 import shutil as _sh
                 try: _sh.rmtree(tmp, ignore_errors=True)

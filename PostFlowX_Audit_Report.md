@@ -11219,3 +11219,73 @@ WIP block all remain open, unfixed, for the same WIP-overlap reason
 documented in prior iterations — none is touched by this change.
 
 Commits: `1abd62a`.
+
+## Iteration 106
+
+**Why this file:** A background scout agent flagged
+`companion/src/postflowx_companion/media/backends/arri_backend.py` as a
+candidate for the same torn-write defect class already fixed in
+`braw_backend.py` (Iteration 105) and `r3d_backend.py` (Iteration 103),
+existing here independently. `git diff --stat` and
+`git log --oneline -5 -- <file>` confirmed only the repo-wide mode-bit
+drift (0 content diff) — no uncommitted WIP overlapping this function,
+safe to fix.
+
+**The bug:** `ArriBackend._decode_frame_tool()` (the `art-cmd` /
+ARRI Reference Tool CMD decode path) had its final `ffmpeg` encode
+write directly to `out_path` — the same path every caller's cache-hit
+check (`out_path.is_file() and out_path.stat().st_size > 0`) and the
+final base64-read both use. `ffmpeg -y ... str(out_path)` truncates and
+then writes progressively, so a concurrent reader — e.g. the
+`PrefetchScheduler`'s background worker threads decoding nearby frames
+while the main playback thread's `ThreadingHTTPServer` request handles
+the same frame — can observe `out_path` as existing and non-empty
+mid-write and read a torn JPEG/PNG straight into its response with no
+error. `ArriBackend`/`ArriToolBridgeBackend` are real, registered
+backends (selected automatically for `.ari`/`.arx`/ARRIRAW-wrapped
+`.mxf` when `art-cmd` is installed but the full SDK isn't) — not dead
+code.
+
+**Independent verification:** Read the full body of
+`_decode_frame_tool()` directly, confirming the same-path write/read
+overlap in source, and confirmed via `git diff`/`git log` (above) that
+the file was safe to touch.
+
+**The fix:** The final `ffmpeg` invocation now writes to a
+`tempfile.mkstemp(suffix=f".{fmt}", dir=str(self._cache))` path instead
+of `out_path` directly, checks success/size on that temp path, then
+`os.replace()`s it into `out_path` — an atomic swap identical in shape
+to the `braw_backend.py`/`r3d_backend.py` fixes. On failure the leftover
+temp file is unlinked before the exception propagates.
+
+**Test approach:** A standalone harness
+(`/tmp/verify_arri_atomic.py`) calling `_decode_frame_tool()` directly
+on a real, unmodified `ArriBackend` instance, with `subprocess.run` and
+`_is_art_cmd()` faked to simulate `art-cmd` writing a stub EXR and
+`ffmpeg` writing the final frame in two chunks with a deliberate delay
+between them (50 bytes, sleep 20ms, then 156 more bytes) — a real
+watcher thread polls the exact final `out_path` (computed the same way
+the function does, via the real `aces2_luts` registry, not guessed) at
+~1ms intervals with a 3ms settle window.
+
+**Verification:** Post-fix: the harness confirms `_decode_frame_tool()`
+returns a `previewImagePath` matching the expected `out_path`, the file
+is a stable 206-byte JPEG, the watcher observed no size change across
+any poll, and no leftover temp files remain in the cache directory
+afterward. Pre-fix (via `git stash push -- <file>` / `pop` around the
+same harness): the code was confirmed writing directly to `out_path`
+just like the post-fix temp file receives its writes, but the
+polling-based watcher did not catch a torn read at this test's write
+speed/interval — this is reported honestly rather than claiming an
+empirical reproduction that didn't happen, consistent with the same
+caveat noted for Iteration 105. The structural guarantee (temp-file
+write + atomic rename vs. direct-write-to-final-path) stands on the
+code itself regardless. Full regression suite re-run and matched
+baseline exactly: 313/7/2(pre-existing) Python, 72/1/0 Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, and the Metal HTJ2K
+WIP block all remain open, unfixed, for the same WIP-overlap reason
+documented in prior iterations — none is touched by this change.
+
+Commits: `TBD`.
