@@ -259,10 +259,16 @@ func batchExtract(filePath: String, frames: [FrameSpec],
     gen.requestedTimeToleranceBefore   = CMTime(value: 1, timescale: 600)
     gen.requestedTimeToleranceAfter    = CMTime(value: 1, timescale: 600)
 
-    // Build an Int64-keyed index map for O(1) callback lookup.
+    // Build an Int64-keyed index queue for O(1) callback lookup.
     // CMTimeValue is Int64 (Sendable); avoids capturing [NSValue] in a @Sendable closure.
-    var timeToIndex = [CMTimeValue: Int]()
-    for (i, nv) in times.enumerated() { timeToIndex[nv.timeValue.value] = i }
+    // Different FrameSpecs routinely clamp to the same frame number (e.g. several
+    // hero-frame offsets all landing on maxF for a short clip), so the same
+    // CMTimeValue can appear at multiple indices. Each value maps to a queue of
+    // its indices rather than a single Int, so every callback invocation — the
+    // generator calls back once per element of `times`, including duplicates —
+    // claims a distinct index instead of colliding on the same (last-written) one.
+    var timeToIndices = [CMTimeValue: [Int]]()
+    for (i, nv) in times.enumerated() { timeToIndices[nv.timeValue.value, default: []].append(i) }
 
     let labelSnapshot    = labels
     let frameNumSnapshot = frameNums
@@ -275,7 +281,15 @@ func batchExtract(filePath: String, frames: [FrameSpec],
 
         gen.generateCGImagesAsynchronously(forTimes: times) {
             reqT, img, actualT, status, err in
-            let idx   = timeToIndex[reqT.value] ?? 0
+            lock.lock()
+            let idx: Int
+            if var indices = timeToIndices[reqT.value], !indices.isEmpty {
+                idx = indices.removeFirst()
+                timeToIndices[reqT.value] = indices
+            } else {
+                idx = 0
+            }
+            lock.unlock()
             let label = idx < labelSnapshot.count    ? labelSnapshot[idx]    : "\(idx)"
             let nomF  = idx < frameNumSnapshot.count ? frameNumSnapshot[idx] : 0
 

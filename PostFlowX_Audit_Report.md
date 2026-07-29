@@ -9582,3 +9582,125 @@ cache-writing code not yet covered (e.g. thumbnail/waveform caches
 specifically, if still unconfirmed either way).
 
 Commits: `9177200`.
+
+## Iteration 91 — `avf_bridge.swift`'s `batchExtract()` used a plain `CMTimeValue -> Int` map as a callback identity key, silently dropping frames when two requests clamp to the same timestamp
+
+**Why this file.** A scouting agent (background, non-user input) was
+seeded with all ten established bug species and steered away from the
+now-saturated proxy/preview-cache subsystem (species #7, found four
+times) and away from a possible fourth `color_lut.py` finding (species
+#10, found three times), toward other subsystems: session/state,
+path/URL construction, timecode/frame arithmetic, EDL/FCPXML/OTIO
+parsers, native bridges, and Electron IPC. It reported a bug in
+`electron/native/avf_bridge.swift`, a standalone Swift script (compiled
+via `swiftc`, not a Swift package/module) invoked as a subprocess by
+`electron/native/media_engine.js` to extract stills/hero-frames via
+`AVAssetImageGenerator`.
+
+**The bug.** `batchExtract()` built an index map for matching each
+`generateCGImagesAsynchronously(forTimes:)` completion-handler
+invocation back to its originating request:
+`var timeToIndex = [CMTimeValue: Int]()`, populated via
+`for (i, nv) in times.enumerated() { timeToIndex[nv.timeValue.value] = i }`.
+`frameTime(f, fps:)` is a pure function of the frame number, and multiple
+`FrameSpec`s in one batch routinely clamp to the same frame number via
+`min(..., maxF)` — e.g. several hero-frame offsets all landing on `maxF`
+for a short clip — producing identical `CMTime` values and thus identical
+dictionary keys. The last-write-wins construction left `timeToIndex`
+holding only the *highest* colliding index for that key. Apple's
+generator still invokes the completion handler once per element of
+`times`, including duplicates, so `remaining` decrements to exactly 0 and
+the continuation resolves normally with no error or timeout — but both
+duplicate-time callbacks resolved `idx` to the same (higher) index via
+`timeToIndex[reqT.value] ?? 0`, both wrote `out[idx] = entry` (one
+harmlessly overwriting the other with equivalent content), and the lower
+colliding index's slot in `out` was never written — it stayed the empty
+placeholder `{}` from `out`'s initialization
+(`[[String: Any]](repeating: [:], count: count)`), with no `ok`, `label`,
+`error`, or `dataUrl` key at all.
+
+**Independent verification.** Read the full relevant source: the
+`Command`/`FrameSpec` Decodable structs, `tcToFrame`, `frameTime` (a pure
+function confirming identical inputs always produce identical `CMTime`
+values), `handleGetStill`/`handleGetStills` (both delegate to
+`batchExtract`), and the complete `batchExtract()` body including the
+dictionary construction and the completion-handler closure. Confirmed
+there is no existing test/CI coverage of this file at all — `npm test`
+only runs Node parser/pipeline/color tests, `tests-js/*.test.mjs`, and
+Python companion pytest; `avf_bridge.swift` is a standalone script with no
+harness. Built and ran an end-to-end reproduction against a synthetic
+8-frame/8fps ffmpeg test clip (`maxF = 7`), sending a `getStills` request
+with frame values `[0, 20, 5, 999, 6]` (`20` and `999` both clamp to `7`)
+against a pre-fix binary compiled straight from the unmodified source:
+the response's second entry (label `"b"`, requested frame `20`) came back
+as a completely bare `{}` — no `ok` key, no `label` key, nothing —
+confirming the exact failure mode. Concrete downstream impact: any
+`getHeroFrames`/`getStills` batch request on a short clip where several
+distinct-labeled offset requests clamp to the same `maxF` produces a
+`frames` array whose length matches the request count but with one or
+more bare `{}` slots, breaking any consumer in `media_engine.js` or the
+renderer that assumes every element has an `ok`/`label` key — likely a
+silently blank/broken thumbnail tile, or a crash on `frame.error.*`
+against a slot with no `error` key either.
+
+**The fix.** Replaced the single-`Int`-valued map with a per-key queue of
+indices, `var timeToIndices = [CMTimeValue: [Int]]()`, populated via
+`timeToIndices[nv.timeValue.value, default: []].append(i)` so a colliding
+`CMTimeValue` retains every index that mapped to it instead of just the
+last one written. In the completion handler, each invocation pops one
+index off its key's queue (`indices.removeFirst()`) under the same
+`NSLock` already guarding `out`/`remaining` — necessary because Apple's
+completion handler can fire concurrently across multiple threads and the
+queue mutation must be atomic. Each of the `N` callback invocations for a
+duplicated `CMTimeValue` now claims a distinct index, so every requested
+frame gets its own populated `out` slot regardless of clamping
+collisions.
+
+**Test approach.** No existing Swift/native test harness exists in this
+repo for `avf_bridge.swift` (no Swift Package, no XCTest target — it is a
+free-standing script built via `swiftc` directly in `package.json`'s
+`build:avf`/`build:avf:arm64` scripts). Verified via a manual end-to-end
+binary test instead: generated a synthetic 8-frame, 8fps, 64x64 clip via
+`ffmpeg -f lavfi -i testsrc=size=64x64:rate=8:duration=1 -pix_fmt yuv420p`
+(confirmed via ffprobe: `r_frame_rate=8/1`, `nb_read_frames=8`, giving
+`maxF=7`), then sent a `getStills` request with frame values
+`[0, 20, 5, 999, 6]` — two of which (`20`, `999`) clamp to the shared
+`maxF=7` — via stdin to a compiled binary, asserting every response entry
+has an `ok` key and that labels match the original request order.
+
+**Verification.** Pre-fix binary (compiled straight from unmodified
+`avf_bridge.swift` via `git stash`): entry index 1 (label `"b"`, the
+first of the two colliding requests) came back as a bare `{}` with no
+`ok`/`label` key — confirmed genuine reproduction of the exact reported
+mechanism. Restored the fix via `git stash pop`, confirmed via
+`git diff --stat -- electron/native/avf_bridge.swift` that only the
+intended 18-insertion/4-deletion fix diff was restored, rebuilt, and
+reran the identical request: all 5 entries came back with `ok: true` and
+correctly matching labels (`a`, `b`, `c`, `d`, `e`), including both
+colliding requests (`b`→frame 7, `d`→frame 7) now resolving to distinct,
+independently-populated output slots. `swiftc -typecheck` and a full
+`swiftc` build both succeed cleanly. Full companion suite:
+`python3 -m pytest -q` — 313 passed, 7 skipped, same 2 pre-existing
+`test_conform_engine.py` failures from Iterations 76-83 (unrelated,
+out of scope) — expected to be unaffected by a pure Swift/native change,
+and confirmed so.
+
+**Gate.** Manual end-to-end binary verification (pre-fix reproduction +
+post-fix confirmation), since no automated harness exists for this file;
+full companion pytest suite unaffected.
+
+**Still open.** This is an eleventh, genuinely new bug species —
+"non-unique key used as an identity map" in batch async-callback
+dispatch — distinct from the ten previously catalogued. No automated
+regression test was added to the repo for this fix, since there is no
+existing Swift/native test harness or CI wiring to hang one on (`npm test`
+does not touch `avf_bridge.swift`); a follow-up could establish a minimal
+one (e.g. a small shell/JS script that builds the binary and exercises it
+against a checked-in tiny fixture clip) if this bridge accumulates more
+fixes. A follow-up scouting pass should also check whether the separate
+`electron/native/PFXNativeMediaEngine/` Swift package (a distinct,
+unexplored Swift Package with its own `MediaEngine.swift`,
+`ThumbnailGenerator.swift`, etc.) is actively used and, if so, whether any
+of its batch-dispatch code shares this same pattern.
+
+Commits: `TBD`.

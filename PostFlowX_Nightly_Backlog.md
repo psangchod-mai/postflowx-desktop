@@ -5788,3 +5788,45 @@ consider pivoting to other species/files, or one final narrow check of
 thumbnail/waveform caches if still unconfirmed.
 
 Commits: `9177200`.
+
+## Iteration 91 — `avf_bridge.swift`'s `batchExtract()` used a plain `CMTimeValue -> Int` map as a callback identity key, silently dropping frames when two requests clamp to the same timestamp
+
+`batchExtract()` in `electron/native/avf_bridge.swift` (a standalone
+Swift script, compiled via `swiftc`, invoked as a subprocess by
+`media_engine.js` to serve `getStill`/`getStills`/`getHeroFrames`)
+matched each `generateCGImagesAsynchronously(forTimes:)` completion
+callback back to its request via `timeToIndex: [CMTimeValue: Int]`, built
+with last-write-wins semantics. Multiple `FrameSpec`s in a batch routinely
+clamp to the same frame number via `min(..., maxF)` (e.g. several
+hero-frame offsets landing on `maxF` for a short clip), producing
+identical `CMTime` values and thus identical dictionary keys. Apple's
+generator still calls back once per element including duplicates, so
+`remaining` reaches 0 and the continuation resolves normally with no
+error — but both duplicate-time callbacks resolved to the same (higher)
+index, one harmlessly overwriting the other, while the lower colliding
+index's output slot was never written and stayed the empty placeholder
+`{}` — no `ok`/`label`/`error`/`dataUrl` key at all. Any
+`getHeroFrames`/`getStills` batch on a short clip where offsets clamp
+together would return a `frames` array with correct length but bare `{}`
+holes, breaking any consumer assuming every element has an `ok` key
+(likely a silent blank thumbnail or a crash on `frame.error.*`). No
+existing test/CI touches this file at all (`npm test` doesn't run it; no
+Swift/XCTest harness exists in the repo). Fix: replaced the map with
+`timeToIndices: [CMTimeValue: [Int]]`, a per-key queue of indices; each
+callback invocation pops one index off its key's queue under the existing
+`NSLock`, so every duplicated-time callback claims a distinct index
+instead of colliding. Verified end-to-end with a synthetic 8-frame/8fps
+ffmpeg test clip (`maxF=7`): a pre-fix binary compiled via `git
+stash`-reverted source produced a bare `{}` for one of two colliding
+requests (frames 20 and 999, both clamping to 7); the fixed binary
+returned all 5 requested entries with `ok: true` and correctly matching
+labels. `swiftc -typecheck`/full build clean both before and after.
+Full companion suite unaffected: 313 passed/7 skipped (same 2
+pre-existing Iteration-76 failures). Eleventh, genuinely new bug
+species — "non-unique key used as an identity map" in batch async-callback
+dispatch. No automated regression test added (no harness exists for this
+file to hang one on); a follow-up could check whether the separate,
+unexplored `electron/native/PFXNativeMediaEngine/` Swift package shares
+this pattern if it's actively used.
+
+Commits: `TBD`.
