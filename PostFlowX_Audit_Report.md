@@ -12373,3 +12373,67 @@ pass (a superseded `_pollProxy()` chain simply becomes an orphaned
 shape this bug family targets, so left as-is).
 
 Commits: `28ae5da`.
+
+## Iteration 121 — IMFPlayer.startPlayback() concurrent-call race
+
+**Why this file:** `src/scripts/modules/imf/imf_player_engine.js`'s
+`IMFPlayer` class already had one instance of the "stale async write"
+bug family, `_scrubFrame()`, guarded with a `_scrubSeq` token. Its
+`startPlayback()` method has the exact same shape — writes shared
+instance fields across awaits — but had no guard at all, making it the
+natural next candidate.
+
+**The bug:** `startPlayback(opts)` writes `this._sessionId`,
+`this._streamUrl`, `this._frameUrl`, and `this._info` after two
+sequential awaits: `await this._stopSession()` (when a session is
+already active) and `await _pfx().imfEngine.startPlayback(...)` (the
+IPC round-trip that spins up the companion-side decode session). If a
+user rapidly switches CPLs and re-triggers playback before the first
+call's IPC round-trip resolves — an ordinary "changed my mind" UI
+interaction, not a double-click edge case — the two calls interleave.
+Whichever call's IPC response resolves last wins the write to
+`_sessionId`/`_streamUrl`/`_frameUrl`/`_info`, regardless of which CPL
+was actually requested last, binding the player to a stale/wrong
+session (wrong stream URL, wrong frame endpoint, wrong duration/codec
+HUD info) while potentially leaking the other CPL's companion-side
+session.
+
+**The fix:** Added the same `_loadSeq` generation-token pattern used
+in `reviews/player.js` and `ocf_engine/ocfViewer.js` (Iterations 116,
+119, 120): `this._loadSeq = 0` initialized once in the constructor,
+`const seq = ++this._loadSeq;` captured in `startPlayback()` right
+after the package/CPL guard checks, and `if (seq !== this._loadSeq)
+return { ok: false, error: 'superseded' };` checks after both the
+`_stopSession()` await and the `imfEngine.startPlayback()` await.
+
+**Test approach:** `tests-js/imfPlayerStartPlaybackStaleRace.test.mjs`,
+a new plain-Node test using linkedom, following the same
+deferred-promise-per-call technique introduced in Iteration 120. A
+fake `window.pfxPlatform.imfEngine.startPlayback()` returns an
+independently-resolvable deferred promise per call, letting the test
+start `startPlayback()` for CPL A, then (before resolving anything)
+switch to CPL B and start a second `startPlayback()`, then resolve
+CPL A's session late (proving the stale call doesn't write) and CPL
+B's session (proving the live call does write and transitions to
+`'playing'`).
+
+**Verification:** Pre-fix (temporarily reverted via a `/tmp` backup,
+restored afterward), 3 of 6 assertions failed exactly as predicted:
+`_loadSeq` didn't exist yet, and critically the stale CPL-A session
+write went through unguarded. Post-fix (restored from backup,
+confirmed via `git diff --stat` — 10 insertions, 0 deletions, matching
+the intended scope), all 6 assertions pass. Full regression suite
+re-run and matched baseline: `test:js` — every file 0 failed except
+the expected, well-documented `selfContained.test.mjs` "no new test
+file is left out of git" flag for this iteration's still-untracked new
+test file; `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` —
+315 passed, 7 skipped, 0 failed.
+
+**Still open:** `openPackage()` in the same file has a single-await
+version of the same shape (writes `_packageId`/`_packageData`/`_cplId`
+after one await, no guard) — a real but weaker instance of the same
+bug family (triggered less often than play, single await narrows the
+race window). Left unaddressed this iteration; a strong candidate for
+a future pass.
+
+Commits: `TBD`.

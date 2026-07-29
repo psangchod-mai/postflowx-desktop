@@ -6575,3 +6575,29 @@ regression suite re-run and matched baseline exactly: all `test:js`
 files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
 
 Commits: `28ae5da`.
+
+## Iteration 121 — IMFPlayer.startPlayback() concurrent-call race
+
+`IMFPlayer.startPlayback()` (src/scripts/modules/imf/
+imf_player_engine.js) writes shared instance fields (`_sessionId`,
+`_streamUrl`, `_frameUrl`, `_info`) across two awaits (`_stopSession()`
+then the IPC `imfEngine.startPlayback()` round-trip) with no staleness
+guard — rapidly switching CPLs and re-triggering play before the first
+call's IPC round-trip resolves could let a stale call's late response
+bind the player to the wrong session, the same shared-mutable-
+state-across-an-await shape already fixed in `reviews/player.js`
+(Iterations 116, 119) and `ocf_engine/ocfViewer.js` (Iteration 120).
+The class already had one instance of this pattern guarded
+(`_scrubFrame()`'s `_scrubSeq`) but `startPlayback()` was unguarded.
+Fixed by adding the same `_loadSeq` generation-token guard. Verified
+with a new test (`tests-js/imfPlayerStartPlaybackStaleRace.test.mjs`,
+linkedom + a fake `window.pfxPlatform.imfEngine`): pre-fix, a stale
+CPL's late session response overwrote the live CPL's session data;
+post-fix, it's a no-op. Full regression suite re-run and matched
+baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped Node,
+315/7/0 Python.
+
+Still open: `openPackage()` in the same file has a weaker,
+single-await instance of the same shape — left for a future pass.
+
+Commits: `TBD`.

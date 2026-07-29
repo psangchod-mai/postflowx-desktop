@@ -73,6 +73,7 @@ class IMFPlayer {
     this._pendingFrames = [];       // queue of decoded ImageBitmaps
     this._scrubTimer    = null;
     this._scrubSeq      = 0;
+    this._loadSeq       = 0;
 
     this._handlers = new Map();
   }
@@ -130,14 +131,23 @@ class IMFPlayer {
       return { ok: false, error: 'No package or CPL selected', code: 'NO_PACKAGE' };
     }
 
+    // A concurrent startPlayback() call (e.g. rapidly switching CPLs before the
+    // first call's session finishes starting) can otherwise interleave writes
+    // to this._sessionId/_streamUrl/_frameUrl/_info — _loadSeq lets a stale
+    // call detect it was superseded and bail instead of binding the player to
+    // the wrong session.
+    const seq = ++this._loadSeq;
+
     // If already playing, stop first and restart.
     if (this._sessionId) await this._stopSession();
+    if (seq !== this._loadSeq) return { ok: false, error: 'superseded' };
 
     const r = await _pfx().imfEngine.startPlayback(
       this._packageId, this._cplId,
       { startFrame: this._currentFrame, outputWidth: opts.outputWidth || 1920,
         quality: this._quality, ...opts }
     );
+    if (seq !== this._loadSeq) return { ok: false, error: 'superseded' };
     if (!r.ok) {
       this._emitError(r.code || 'START_FAILED', r.error || 'Playback start failed');
       return r;
