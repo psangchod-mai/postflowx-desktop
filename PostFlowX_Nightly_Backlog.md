@@ -6805,3 +6805,26 @@ someone else's in-progress work and was left alone — a future
 iteration should scout a fresh file rather than return here.
 
 Commits: `2f529f2`.
+
+## Iteration 129 — Smart Media Settings engine-check stale-race
+
+`checkEngines()` in `smart_engine_settings.js` (triggered by both the
+Check Engines button and an IMF-Settings-tab auto-check) awaited its
+status probe (`pfxPlatform.smartMedia.status()` or `fetch()`) then
+unconditionally re-rendered the engine list — a double-click or a
+click racing the tab auto-check could let a stale probe overwrite a
+newer one's rendered state, and could also prematurely re-enable the
+button. Fixed with a `_checkEnginesSeq` monotonic counter guarding the
+success path, the error path, and the `finally` block's button
+re-enable. New test
+`tests-js/smartEngineCheckEnginesStaleRace.test.mjs` (4 assertions)
+drives two overlapping check clicks via a mocked `status()` and
+confirms the stale one never wins. Before/after verified: reverted
+code failed 2/4 as predicted, restored fix re-passed 4/4. No
+pre-existing WIP or mode-bit drift in this file — staged normally.
+Full regression matched baseline.
+
+Still open: none for this fix; other engine-status panels may still
+warrant a scout pass.
+
+Commits: `TBD`.

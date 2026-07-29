@@ -13005,3 +13005,72 @@ to this file, since any further edits here would need the same
 hunk-selective staging care.
 
 Commits: `2f529f2`.
+
+## Iteration 129 — Smart Media Settings engine-check stale-race
+
+**Why this file:** `src/scripts/modules/smart_engine_settings.js`'s
+`checkEngines()` is wired to two independent triggers — the "Check
+Engines" button's click listener and an auto-check listener on the IMF
+Settings tab that fires `checkEngines()` whenever the tab is opened
+while the list still shows placeholder text. Both paths await an async
+IPC/`fetch()` probe before rendering, the same class of stale-refresh
+race already fixed in six prior iterations across `nativeAVPlayer.js`,
+`player.js`, `imf_player_engine.js`, `mpvPlayer.js`, `vfxPullPanel.js`,
+`resolve_engine_panel.js`, and `imf_ui.js`'s `_loadEngineStatus()`
+(Iteration 128).
+
+**The bug:** `checkEngines()` awaits `api.status()` (Electron path, via
+`window.pfxPlatform.smartMedia.status()`) or `fetch()` (Chrome
+extension path) before unconditionally overwriting
+`#smartEngineStatusList`'s `innerHTML` via `_renderEngineRows(engines)`
+— no staleness guard. A double-click on Check Engines, or a click
+landing while the Settings-tab auto-check is still in flight, starts
+two overlapping probes; if the earlier call's probe resolves after the
+later one already settled (out-of-order IPC/fetch resolution), the
+stale call overwrites the newer check's rendered engine list with old
+data. The `finally` block's button re-enable (`btn.disabled = false`)
+had the same gap: a stale call finishing after a newer one started
+could prematurely re-enable "Check Engines" while the newer probe was
+still in flight.
+
+**The fix:** Added a `_checkEnginesSeq` monotonic counter. Each call
+captures `const seq = ++_checkEnginesSeq;` right after writing the
+"Scanning engines…" placeholder and before its `try`. Both the
+success-path render and the `catch` block's error render are guarded
+with `if (seq !== _checkEnginesSeq) return;` before touching the DOM.
+The `finally` block's button re-enable is additionally guarded with
+`if (seq === _checkEnginesSeq && btn) { ... }` so a stale call cannot
+re-enable the button while a newer check is still pending.
+
+**Test approach:** New test
+`tests-js/smartEngineCheckEnginesStaleRace.test.mjs` (linkedom,
+stubbing `window.pfxPlatform.smartMedia.status()` with
+deferred/resolvable promises) dispatches two `click` events on the
+Check Engines button in quick succession (two overlapping probe
+calls), resolves the *later* call's probe first with a distinguishable
+engine ("FFmpeg"), confirms the list rendered it, then resolves the
+*earlier* (now-stale) call's probe late with a different engine
+("StaleEngine") and confirms the list still shows "FFmpeg" and never
+renders "StaleEngine".
+
+**Verification:** Backed up the fixed file, reverted the
+`_checkEnginesSeq` counter, the `seq` capture, both seq-check lines,
+and the `finally`-block guard back to the original unguarded code, then
+ran the test against the reverted code: 2 of 4 assertions failed
+exactly as predicted (the list was overwritten back to "StaleEngine"
+instead of staying on the settled "FFmpeg"). Restored the fixed file
+from the backup; re-ran the test — 4 of 4 passed. Confirmed via `git
+diff --stat` that the fix is exactly 7 insertions / 1 deletion with no
+other changes. Unlike Iteration 128's target, this file had no
+pre-existing WIP and no mode-bit drift (`git ls-files -s` already
+showed `100755` matching the working tree), so a plain `git add` on
+the file was safe. Full `npm run test:js` regression matched baseline:
+all suites green after staging the new test file resolved the expected
+self-containment-gate check (which flags any untracked test file —
+resolves once the file is `git add`ed, not a real failure).
+
+**Still open:** None identified for this fix; the same stale-race
+pattern may still exist in other engine-status/media-check panels not
+yet scouted.
+
+Commits: `TBD`.

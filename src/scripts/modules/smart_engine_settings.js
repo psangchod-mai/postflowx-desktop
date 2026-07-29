@@ -74,6 +74,8 @@ function _esc(s = '') {
 
 // ── Check Engines ─────────────────────────────────────────────────────────────
 
+let _checkEnginesSeq = 0;
+
 async function checkEngines() {
   const btn  = _q('smartEngineCheckBtn');
   const list = _q('smartEngineStatusList');
@@ -81,6 +83,8 @@ async function checkEngines() {
 
   if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   list.innerHTML = '<div style="font-size:9px;color:rgba(255,255,255,.35);">Scanning engines…</div>';
+
+  const seq = ++_checkEnginesSeq;
 
   try {
     const api = _pfx();
@@ -99,12 +103,14 @@ async function checkEngines() {
       const data = await resp.json();
       engines = Array.isArray(data?.engines) ? data.engines : [];
     }
+    if (seq !== _checkEnginesSeq) return; // superseded by a newer check
     _renderEngineRows(engines);
   } catch (err) {
+    if (seq !== _checkEnginesSeq) return; // superseded by a newer check
     const line = friendlyStatus(`${translate('Engine check failed')}: ${err.message}`);
     list.innerHTML = `<div style="font-size:9px;color:#e74c3c;white-space:pre-wrap;">${_esc(line)}</div>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Check Engines'; }
+    if (seq === _checkEnginesSeq && btn) { btn.disabled = false; btn.textContent = 'Check Engines'; }
   }
 }
 
