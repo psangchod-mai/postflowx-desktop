@@ -7869,3 +7869,102 @@ calling `int.bit_count()`, a Python 3.10+ API on this machine's Python
 **Still open.** None for this fix.
 
 Commits: `08ed84b`.
+
+---
+
+## Iteration 72 — FCPXML conform parser derives durationFrames from the source span instead of the record span
+
+**Why this file.** `src/scripts/modules/conform/edlParser.js` normalizes
+EDL / FCP XML / OTIO into a uniform `ConformEvent` list consumed by
+downstream conform/retime tooling. It documents its own duration policy
+explicitly, in a comment above `parseEdl` (lines 99-100): "Timeline
+duration comes from the RECORD TCs (authoritative), not the source TCs —
+source points at WIP masters and is re-resolved by matching." `parseEdl`
+follows this policy correctly (`durationFrames: Math.max(0, recOutF -
+recInF)`); its sibling `parseFcpXml`, which parses FCP7 XML / FCPXML,
+did not.
+
+**The bug.** `parseFcpXml` computed:
+
+```js
+durationFrames: Math.max(0, srcOut - srcIn),
+```
+
+using the clip's *source* `<in>`/`<out>` frame values instead of its
+*record* `<start>`/`<end>` values — the exact inverse of the file's stated
+policy and of `parseEdl`'s own implementation two functions above it.
+
+**Concrete failure example.** A retimed clip (e.g. a ramp/speed-change)
+with source span `<in>100</in><out>148</out>` (48 frames of source media)
+but record span `<start>500</start><end>596</end>` (96 frames on the
+timeline, because the clip plays at half speed): the buggy code reported
+`durationFrames: 48`, silently corrupting the timeline duration for any
+FCPXML containing a retime — half the correct value — which propagates
+into any conform/retime step consuming this event list.
+
+**Why genuine and new.** Distinct from every previously-fixed species
+(48-71) per `git log | grep 'fix('` review. This is a source-vs-record
+mixup specific to `parseFcpXml`'s duration computation; `parseEdl`,
+`parseOtio`, and every other function in this file already use the
+correct span for their respective duration fields.
+
+**The fix.** Changed the source spans to record spans:
+
+```js
+// Timeline duration comes from the RECORD TCs (authoritative), not the
+// source TCs — source points at WIP masters and is re-resolved by
+// matching. See parseEdl above.
+durationFrames: Math.max(0, recOut - recIn),
+```
+
+**A complication worth documenting.** `edlParser.js` and its existing test
+file (`tests-js/edlParserConform.test.mjs`) both carry substantial
+pre-existing *uncommitted* drift unrelated to this fix — a full
+drop-frame-timecode rewrite (`fpsIsDrop`, rewritten `tcToFrames`/
+`framesToTc`), a rewritten `parseEdl` regex (dissolve/wipe/audio-track
+handling), and a dynamic FCM line in `eventsToEdl` — none of which had
+ever been committed (`git log --oneline -- <path>` showed only the
+original `b173ee8` repo-init commit). A naive `git diff --stat` on this
+file showed 74 insertions/22 deletions, far larger than this single-hunk
+fix, which was the signal that something else was mixed in. Rather than
+committing that drift under this iteration's name (or reverting it, which
+would destroy unrelated in-progress work), the fix was isolated with a
+hand-crafted unified-diff patch applied via `git apply --cached --check`
+then `git apply --cached`, staging only the intended 4-line hunk into the
+index while leaving the rest of the file's working-tree changes untouched
+and unstaged. Likewise, `edlParserConform.test.mjs` is untracked but
+already contained both the drift's tests and a duration test overlapping
+this fix — committing it whole would have pulled the drift in and created
+a commit whose tests reference exports (`fpsIsDrop`) not present in the
+scoped source change. Instead, a new, minimal, self-contained test file
+was created for just this fix, and left `edlParserConform.test.mjs`
+completely untouched.
+
+**Test approach.** New file `tests-js/edlParserFcpXmlDuration.test.mjs`:
+constructs an FCPXML clip with source span 48 frames (`in=100, out=148`)
+and record span 96 frames (`start=500, end=596`), asserting
+`durationFrames === 96` (record span), not `48` (source span).
+
+**Verification.** Ran the new test against the buggy code (pre-fix): failed
+with `durationFrames === 48` exactly as predicted. Re-ran after applying
+the fix: passed. Additionally verified the *staged* commit's
+self-consistency independent of the file's unstaged drift: extracted the
+exact index version via `git show :src/scripts/modules/conform/edlParser.js`
+into a scratch directory (with `node_modules` symlinked in for `linkedom`),
+copied the new test alongside it, and ran it there directly — passed
+identically, confirming the commit does not implicitly depend on any of
+the unstaged drift.
+
+**Gate.** `npm run test:js` — full green across all `tests-js/*.test.mjs`
+files (grepped the full log for `not ok|✖|AssertionError|Error:|FAIL`;
+all matches were legitimate "PASS -" assertion-description text, not
+actual failures).
+
+**Still open.** The pre-existing uncommitted drift in `edlParser.js` and
+`edlParserConform.test.mjs` (drop-frame math, `parseEdl` regex rewrite,
+FCM export logic) remains uncommitted and untouched, as it predates this
+session and is out of scope for this fix. The scouting agent's other two
+flagged candidates (audio correlation in `conform_engine.py`; MIC check
+conflation in `imf_qc.py`) remain unaddressed.
+
+Commits: `c9ee0d8`.

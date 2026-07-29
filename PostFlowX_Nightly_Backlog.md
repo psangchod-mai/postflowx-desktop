@@ -5272,3 +5272,46 @@ pre-existing unrelated failures (`test_conform_engine.py`, same
 **Still open.** None for this fix.
 
 Commits: `08ed84b`.
+
+---
+
+## Iteration 72 — FCPXML conform parser used source span instead of record span for durationFrames
+
+**Found.** `parseFcpXml` in `src/scripts/modules/conform/edlParser.js`
+computed `durationFrames: Math.max(0, srcOut - srcIn)` (source `<in>`/
+`<out>`) instead of the record `<start>`/`<end>` span, contradicting the
+file's own documented policy and its sibling `parseEdl`'s correct
+implementation. A retimed clip has a different source span than its
+record span (e.g. 48 source frames vs 96 record frames for a half-speed
+ramp), so this silently halved the reported timeline duration for any
+FCPXML containing a retime.
+
+**Done.** Changed `parseFcpXml` to `durationFrames: Math.max(0, recOut -
+recIn)`, matching `parseEdl`'s existing correct pattern.
+
+**Complication.** `edlParser.js` and its existing test file carry large
+pre-existing *uncommitted* drift (drop-frame math rewrite, `parseEdl`
+regex rewrite, FCM export logic — never committed, per `git log
+--oneline -- <path>` showing only the original repo-init commit).
+Isolated the fix into a hand-crafted patch staged via `git apply --cached`
+so only the intended 4-line hunk was committed, leaving the drift
+untouched in the working tree. Created a new dedicated test file instead
+of committing the drift-laden existing one.
+
+**Tests.** New file `tests-js/edlParserFcpXmlDuration.test.mjs`: FCPXML
+clip with 48-frame source span but 96-frame record span; asserts
+`durationFrames === 96`.
+
+**Verification.** Failed as predicted against the buggy code
+(`durationFrames === 48`); passed after the fix. Also verified in an
+isolated scratch dir (extracted via `git show :<path>`) that the staged
+commit passes independent of the unstaged drift.
+
+**Gate.** `npm run test:js` — full green across all `tests-js/*.test.mjs`.
+
+**Still open.** Pre-existing drift in `edlParser.js` /
+`edlParserConform.test.mjs` remains uncommitted (out of scope, predates
+this session). Scouting agent's other two candidates (audio correlation
+in `conform_engine.py`; MIC check conflation in `imf_qc.py`) unaddressed.
+
+Commits: `c9ee0d8`.
