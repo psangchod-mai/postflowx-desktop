@@ -228,6 +228,86 @@ class TestVerifyMxfMic:
         }
 
 
+def _build_multi_partition_mxf(runs, algorithm=_ALG_SHA1):
+    """Build an MXF with one EssenceIntegrityPack per essence *run*.
+
+    ``runs`` is a list of essence-chunk-lists; each run gets its own body
+    partition worth of essence elements followed by its own correctly-scoped
+    EssenceIntegrityPack, mirroring how real multi-partition MXF/IMF track
+    files are written (SMPTE ST 429-6 -- one MIC per partition's essence).
+    """
+    out = bytearray()
+    out += imf_mic._klv(imf_mic._partition_pack_key(0x02), b"\x00" * 8)
+    element_number = 1
+    for run in runs:
+        hasher = imf_mic._ALG_HASHLIB[algorithm]()
+        total = 0
+        for chunk in run:
+            hasher.update(chunk)
+            total += len(chunk)
+            out += imf_mic._klv(imf_mic._essence_element_key(element_number), chunk)
+            element_number += 1
+        pack_val = build_integrity_pack_value(algorithm, total, hasher.digest())
+        out += imf_mic._klv(_ESSENCE_INTEGRITY_PACK_KEY, pack_val)
+    out += imf_mic._klv(imf_mic._partition_pack_key(0x04), b"\x00" * 8)
+    return bytes(out)
+
+
+class TestMultiPartitionMic:
+    """Regression: a per-partition EssenceIntegrityPack must be verified against
+    only the essence elements written in its own partition run, not the whole
+    file. Before the fix, verify_mxf_mic accumulated every essence element
+    file-wide and compared the aggregate digest against only the *last*
+    integrity pack found, silently discarding all earlier packs.
+    """
+
+    def _write(self, tmp_path, data, name="video.mxf"):
+        p = tmp_path / name
+        p.write_bytes(data)
+        return p
+
+    def test_two_valid_partitions_pass(self, tmp_path):
+        data = _build_multi_partition_mxf([[b"frame0", b"frame1"], [b"frame2"]])
+        p = self._write(tmp_path, data)
+        r = verify_mxf_mic(p)
+        assert r.present is True
+        assert r.ok is True
+        assert r.essence_element_count == 3
+        assert r.essence_bytes == len(b"frame0") + len(b"frame1") + len(b"frame2")
+
+    def test_second_partition_corruption_is_detected(self, tmp_path):
+        # Before the fix: the whole-file digest would be recomputed over ALL
+        # essence (both runs) and compared only to the second pack, which
+        # happens to still make this fail -- so this alone wouldn't catch a
+        # regression. The companion case below is the one that actually
+        # distinguishes correct per-partition scoping from whole-file
+        # aggregation.
+        data = bytearray(_build_multi_partition_mxf([[b"frame0"], [b"frame1"]]))
+        f = io.BytesIO(bytes(data))
+        elements = [kl for kl in iter_klv(f) if is_essence_element(kl.key)]
+        # Corrupt the second run's essence element only.
+        data[elements[1].value_offset] ^= 0xFF
+        p = self._write(tmp_path, bytes(data))
+        r = verify_mxf_mic(p)
+        assert r.ok is False
+
+    def test_first_partition_corruption_is_detected(self, tmp_path):
+        # This is the case that whole-file aggregation gets wrong: corrupting
+        # the FIRST run's essence does not change the digest checked against
+        # the LAST pack under the old (buggy) whole-file-vs-last-pack logic,
+        # because that logic silently drops the first pack entirely -- it
+        # only ever compares against the last one. Per-partition scoping must
+        # catch this.
+        data = bytearray(_build_multi_partition_mxf([[b"frame0"], [b"frame1"]]))
+        f = io.BytesIO(bytes(data))
+        elements = [kl for kl in iter_klv(f) if is_essence_element(kl.key)]
+        data[elements[0].value_offset] ^= 0xFF
+        p = self._write(tmp_path, bytes(data))
+        r = verify_mxf_mic(p)
+        assert r.ok is False
+        assert "mismatch" in (r.error or "")
+
+
 # ── batch rollup ─────────────────────────────────────────────────────────────
 
 class TestVerifyMicForAssets:

@@ -294,47 +294,69 @@ def verify_mxf_mic(path: str | Path) -> MicResult:
                 return result
             f.seek(0)
 
+            # Each EssenceIntegrityPack (ST 429-6) covers only the essence elements
+            # written since the previous one -- a multi-partition MXF can carry one
+            # pack per body partition. Bucket elements per pack rather than
+            # aggregating the whole file into a single digest, otherwise every pack
+            # but the last is silently discarded and a valid multi-partition file
+            # reads as tampered (or a truncated one reads as clean).
             essence_elements: list[KlvTriplet] = []
-            integrity_value: bytes | None = None
+            pack_count = 0
+            total_essence_bytes = 0
+            total_essence_elements = 0
+            all_ok = True
+            first_error: str | None = None
 
             for kl in iter_klv(f):
                 if is_essence_element(kl.key):
                     essence_elements.append(kl)
                 elif is_integrity_pack(kl.key):
+                    pack_count += 1
                     cur = f.tell()
                     f.seek(kl.value_offset)
                     integrity_value = f.read(kl.length)
                     f.seek(cur)
 
-            result.essence_element_count = len(essence_elements)
+                    pack = parse_integrity_pack(integrity_value)
+                    result.algorithm = _ALG_NAMES.get(pack.algorithm, f"0x{pack.algorithm:02x}")
+                    result.stored_digest = pack.digest.hex()
 
-            if integrity_value is None:
+                    computed, total = _digest_over_essence(f, essence_elements, pack.algorithm)
+                    result.computed_digest = computed.hex()
+                    total_essence_bytes += total
+                    total_essence_elements += len(essence_elements)
+
+                    digest_match = computed == pack.digest
+                    # If the pack recorded an essence length, it must also agree.
+                    length_match = (pack.essence_length == 0) or (pack.essence_length == total)
+                    if not (digest_match and length_match):
+                        all_ok = False
+                        if first_error is None:
+                            if not digest_match:
+                                first_error = "essence digest mismatch (file corrupt or tampered)"
+                            else:
+                                first_error = (
+                                    f"essence length mismatch: pack={pack.essence_length} "
+                                    f"bytes, computed={total} bytes"
+                                )
+                    essence_elements = []
+
+            result.essence_element_count = total_essence_elements
+            result.essence_bytes = total_essence_bytes
+
+            if pack_count == 0:
                 # Cleanly gate: no embedded MIC present.
                 result.present = False
                 result.ok = None
+                result.algorithm = ""
+                result.stored_digest = ""
+                result.computed_digest = ""
                 return result
 
             result.present = True
-            pack = parse_integrity_pack(integrity_value)
-            result.algorithm = _ALG_NAMES.get(pack.algorithm, f"0x{pack.algorithm:02x}")
-            result.stored_digest = pack.digest.hex()
-
-            computed, total = _digest_over_essence(f, essence_elements, pack.algorithm)
-            result.computed_digest = computed.hex()
-            result.essence_bytes = total
-
-            digest_match = computed == pack.digest
-            # If the pack recorded an essence length, it must also agree.
-            length_match = (pack.essence_length == 0) or (pack.essence_length == total)
-            result.ok = bool(digest_match and length_match)
+            result.ok = all_ok
             if not result.ok:
-                if not digest_match:
-                    result.error = "essence digest mismatch (file corrupt or tampered)"
-                else:
-                    result.error = (
-                        f"essence length mismatch: pack={pack.essence_length} "
-                        f"bytes, computed={total} bytes"
-                    )
+                result.error = first_error
             return result
     except MxfParseError as exc:
         result.error = f"MXF parse error: {exc}"
