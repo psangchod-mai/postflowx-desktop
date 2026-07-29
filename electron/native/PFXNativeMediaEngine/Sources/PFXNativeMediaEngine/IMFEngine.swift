@@ -157,7 +157,7 @@ final class IMFEngine {
         let outputWidth = payload["outputWidth"] as? Int    ?? 1920
 
         let tmpPath  = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("pfx_native_\(packageId)_\(frame).jpg").path
+            .appendingPathComponent("pfx_native_\(packageId)_\(frame)_\(UUID().uuidString).jpg").path
 
         let resp = try await helper.sendCommand("seekFrame", params: [
             "frame":       frame,
@@ -209,7 +209,7 @@ final class IMFEngine {
         let currentFrame  = session.currentFrame
 
         let tmpPath = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("pfx_step_\(packageId)_\(currentFrame).jpg").path
+            .appendingPathComponent("pfx_step_\(packageId)_\(currentFrame)_\(UUID().uuidString).jpg").path
 
         let resp = try await helper.sendCommand("stepFrame", params: [
             "direction":   direction,
@@ -259,7 +259,7 @@ final class IMFEngine {
         let width = payload["width"] as? Int ?? 320
 
         let tmpPath = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("pfx_thumb_\(packageId)_\(frame).jpg").path
+            .appendingPathComponent("pfx_thumb_\(packageId)_\(frame)_\(UUID().uuidString).jpg").path
 
         let resp = try await helper.sendCommand("grabThumbnail", params: [
             "frame":      frame,

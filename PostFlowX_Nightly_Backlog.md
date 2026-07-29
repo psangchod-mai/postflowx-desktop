@@ -5906,3 +5906,52 @@ using raw `displayMode`, with no discriminator for its own continuous
 deliberately scoped out of this fix and flagged for a follow-up.
 
 Commits: `11b64c5`.
+
+## Iteration 94 — `IMFEngine.swift`'s `seekFrame()`/`stepFrame()`/`grabThumbnail()` built their pfx-helper scratch-file path from only `packageId`+`frame`, letting two concurrent requests for the same frame clobber or delete each other's temp file
+
+Following up on Iteration 92's flag to check the remaining unexamined
+`PFXNativeMediaEngine` files, found all three of `IMFEngine.swift`'s
+frame-extraction entry points constructing their temp JPEG output path
+(handed to the separate `pfx-helper` child process, then read back and
+deleted) from only `packageId` and the frame number — e.g.
+`pfx_native_\(packageId)_\(frame).jpg`. Two concurrent requests for the
+same package/frame (a routine scrub-and-thumbnail overlap) collide on
+this identical path: whichever request's helper writes second clobbers
+the first's file mid-read, and whichever request cleans up first
+deletes the file out from under the other, so a caller can silently
+receive the wrong frame's image data or an outright read failure.
+Confirmed reachable in production: `CommandRouter.swift` routes
+`imf.seekFrame`/`imf.stepFrame`/`imf.grabThumbnail` straight to these
+methods as live HTTP command targets, not dormant code. This is a new
+instance of bug species #7 (a discriminating identity key silently
+dropped across "the same resource"'s call sites) — here applied to a
+temp-file naming scheme rather than an in-memory/on-disk cache key, as
+in Iteration 93. Fix: append `_\(UUID().uuidString)` to all three tmp
+path constructions so concurrent requests never share a path.
+
+Full end-to-end verification (opening a real IMF session against the
+external `pfx-helper` binary and a real MXF package) is infeasible in
+this sandbox — no such fixture exists and building one is out of scope
+for a temp-filename defect. Instead, extracted the exact vulnerable
+path-construction logic (pre-fix and post-fix forms) verbatim into a
+standalone Swift script that models the real race directly: two
+concurrent "requests" write their own frame data to their tmp path,
+then read-and-delete in the order the real race would produce.
+Pre-fix construction reproduced both real failure modes in one
+deterministic run — the first request read back the second request's
+data (wrong frame silently served), and the second request's own file
+had already vanished under it (`<missing>`). Post-fix construction
+gave each request back exactly its own data, uncorrupted. `swift build
+-c release` clean before and after (pre-existing warnings only). No
+automated regression test added — this package still has no XCTest
+target (Command Line Tools only). Full regression clean: `npm run
+test:node` 72/73 (1 pre-existing skip), `npm run test:js` all suites
+passed, `python3 -m pytest -q` 313 passed/7 skipped (same 2
+pre-existing Iteration-76 failures).
+
+Still open: this closes out Iteration 92's flagged list of unexamined
+`PFXNativeMediaEngine` files. Iteration 93's `_persistFrameToCache()`
+follow-up (raw `displayMode` cache key, no `decodeScale` discriminator)
+remains open for a future iteration.
+
+Commits: `TBD`.

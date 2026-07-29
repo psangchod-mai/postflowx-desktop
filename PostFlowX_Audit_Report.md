@@ -9947,3 +9947,128 @@ renderer-side persist path its own scale-aware cache-key discriminator
 writes while `decodeScale !== 1`.
 
 Commits: `11b64c5`.
+
+## Iteration 94 — `IMFEngine.swift`'s `seekFrame()`/`stepFrame()`/`grabThumbnail()` built their pfx-helper scratch-file path from only `packageId`+`frame`, letting two concurrent requests for the same frame clobber or delete each other's temp file
+
+**Why this file.** Iteration 92's "Still open" section flagged several
+files in `electron/native/PFXNativeMediaEngine/` — `ThumbnailGenerator.swift`,
+`WaveformGenerator.swift`, `ProxyCreator.swift`, `RenderEngine.swift`,
+`HTTPServer.swift`, `IMFEngine.swift` — as unexamined follow-up targets.
+A scouting pass over these confirmed the first five are clean (correct
+clamping in `ThumbnailGenerator.swift`, no fps/duration arithmetic in
+`WaveformGenerator.swift`, correct `.rounded()` usage in
+`ProxyCreator.swift`, standard floor-based frame-start semantics in
+`RenderEngine.swift`, no cache/fps logic in `HTTPServer.swift`), but
+surfaced a genuine defect in `IMFEngine.swift` — confirmed reachable in
+production via `CommandRouter.swift`, which routes `imf.seekFrame`,
+`imf.stepFrame`, and `imf.grabThumbnail` HTTP commands directly to these
+three methods (not dormant/unwired code).
+
+**The bug.** All three methods build a scratch file path for the
+pfx-helper child process to write its decoded JPEG into, keyed on only
+`packageId` and the current frame number:
+
+```swift
+let tmpPath  = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("pfx_native_\(packageId)_\(frame).jpg").path
+```
+
+Each method also accepts parameters that materially change what gets
+written to that path — `seekFrame`'s `displayMode`/`outputWidth`,
+`stepFrame`'s `direction`/`displayMode`/`outputWidth`, `grabThumbnail`'s
+`width` — but none of those discriminators are folded into the filename.
+`IMFEngine` is a plain class (not an actor), each command dispatches as
+an independent `async` call with no lock guarding the temp-file path
+itself, and the underlying `pfx-helper` writes happen out-of-process on
+its own schedule. Two concurrent requests for the same `packageId`+
+`frame` — e.g. an HDR full-res seek racing an SDR scrub-bar hover, both
+landing while the user drags the timeline — collide on the identical
+tmp path: whichever helper process finishes writing second clobbers the
+first's bytes before the first request reads them back, and whichever
+caller's `removeItem(atPath:)` runs first deletes the file out from
+under the other. The result is either a caller silently receiving the
+wrong request's frame image (wrong displayMode/resolution rendered) or
+an `"output file not written"` / `"output file missing"` error thrown
+for whichever request loses the race — this is the same "cache/identity
+key discriminator dropped across call sites" shape as species #7
+(Iteration 93's `decodeFrame()` cache-key bug), applied here to a
+temp-file name instead of an in-memory/on-disk cache key.
+
+**Independent verification.** Confirmed via direct reading of
+`IMFEngine.swift` lines 147-286 that `seekFrame()`, `stepFrame()`, and
+`grabThumbnail()` all share this exact pattern, and via
+`CommandRouter.swift` lines 52-54 that all three are live HTTP command
+targets (`case "imf.seekFrame": return try await imfEngine.seekFrame(...)`,
+etc.), not unreferenced code.
+
+**The fix.** Added a per-call `UUID().uuidString` suffix to each of the
+three tmp-path constructions, guaranteeing every request gets its own
+scratch file regardless of `displayMode`/`outputWidth`/`direction`/
+`width`, matching the "give every concurrent variant its own identity"
+principle already established in Iteration 93:
+
+```swift
+let tmpPath  = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("pfx_native_\(packageId)_\(frame)_\(UUID().uuidString).jpg").path
+```
+
+(and analogously for `pfx_step_...` and `pfx_thumb_...`).
+
+**Test approach.** Exercising this end-to-end would require a real
+IMF package decoded by the separate `pfx-helper` C++ binary
+(`electron/imf/pfx-helper/`) — no such fixture package exists in this
+repo, and fabricating an encrypted/real-world IMF asset purely to test a
+temp-filename defect is out of scope. Since the defect lives entirely in
+how `tmpPath` is constructed (and not in anything the helper process
+itself does), the path-construction logic was extracted verbatim from
+`IMFEngine.swift`'s pre-fix and post-fix `seekFrame()` forms into a
+standalone Swift script and exercised directly against the exact race
+described in the bug report: two concurrent "requests" for the same
+`packageId`+`frame` but different `displayMode` (`"hdr"` vs. `"sdr"`),
+modeling the real interleaving of two independent, lock-free pfx-helper
+completions — request A writes, request B writes (landing before A
+reads, since two child-process completions have no ordering guarantee),
+A reads and deletes, B reads and deletes.
+
+**Verification.** Pre-fix path construction (no UUID suffix, both
+requests share one path): A's read-back returned `"sdr"` instead of its
+own `"hdr"` bytes (A silently served B's frame data), and B's
+subsequent read-back returned `"<missing>"` (A's `removeItem` had
+already deleted the shared file) — reproducing both failure modes
+described in the bug report against a real filesystem, not a mocked one.
+Post-fix path construction (UUID-suffixed, distinct paths per request):
+A read back `"hdr"` and B read back `"sdr"` — each request correctly
+isolated from the other. `swift build -c release` succeeds cleanly on
+`electron/native/PFXNativeMediaEngine` with the restored fix (pre-existing
+warnings only — the known `NSLock` async-context warnings and a
+no-op-`await` warning in `MediaEngine.swift`, both present before this
+change, no new warnings introduced). Full regression suite: `npm run
+test:node` 72/73 passed (1 pre-existing skip, 0 failed), `npm run
+test:js` all suites passed (0 failed across the full `tests-js/*.test.mjs`
+run), `python3 -m pytest -q` in `companion/` — 313 passed, 7 skipped,
+same 2 pre-existing `test_conform_engine.py` failures from Iterations
+76-83 (unrelated `int.bit_count()` Python-version issue, out of scope) —
+all confirming this native Swift-only change perturbs nothing else.
+
+**Gate.** Extracted-logic standalone-script verification (pre-fix
+reproduction of both described failure modes + post-fix confirmation),
+since no XCTest target exists for this package (consistent with
+Iterations 91-92) and no real IMF/pfx-helper fixture exists to exercise
+the methods end-to-end; full Node/JS/Python regression suites unaffected.
+
+**Still open.** New instance of previously-catalogued species #7
+(cache/identity-key discriminator dropped across call sites of "the same
+resource"), here applied to temp-file naming rather than an in-memory or
+on-disk cache key — recorded as species #7 rather than a new species,
+since the underlying defect shape (a discriminating parameter silently
+omitted from an identity/path key) is the same. No automated regression
+test was added to the repo, for the same reason as Iterations 91-92:
+`PFXNativeMediaEngine` has no XCTest target wired up. This closes out
+the full list of `PFXNativeMediaEngine` files flagged in Iteration 92's
+"Still open" section (`ThumbnailGenerator.swift`, `WaveformGenerator.swift`,
+`ProxyCreator.swift`, `RenderEngine.swift`, `HTTPServer.swift`,
+`IMFEngine.swift` — all now examined). The renderer-side
+`_persistFrameToCache()` follow-up flagged in Iteration 93 remains open
+and is a candidate for a future iteration.
+
+Commits: `TBD`.
