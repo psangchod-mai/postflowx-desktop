@@ -8970,3 +8970,106 @@ Iteration 76.
 `conform_engine.py` remains unfixed (environment issue, out of scope).
 
 Commits: `3e954e2`.
+
+## Iteration 84 — `color_lut.py`'s `_write_cube()` wrote IDT LUTs with Red and Blue axes swapped
+
+**Why this file.** `companion/src/postflowx_companion/color_lut.py`
+generates the per-camera-family `.cube` 3D LUTs (ARRI LogC3/LogC4, RED
+Log3G10, Sony S-Log3, Canon C-Log2, Panasonic V-Log → ACES2065-1) used
+by the VFX Pull / EXR render path whenever `job.colorPlan.idtName` names
+a known camera log family. `get_idt_lut_path()` caches the generated
+file under `~/.postflowx/idt_luts/idt_<family>.cube` and `api.py` wires
+it into ffmpeg's filter chain via `-vf lut3d=...` at both the normal
+render path (`api.py` around line 2532-2536) and the freeze-frame bake
+path (`api.py` around lines 2588-2590) — so this LUT touches every
+EXR/review-proxy render for a job with a known camera IDT.
+
+**The bug.** The `.cube` format (Adobe/Iridas spec, consumed by
+ffmpeg's `lut3d` filter) requires the 3D lattice to be written with
+**Red varying fastest, then Green, then Blue**. `_write_cube()` nested
+its loops backwards — `for ri: for gi: for bi:`, i.e. Blue varying
+fastest — with a comment incorrectly asserting this was the correct
+order:
+
+```python
+# .cube iteration order: B varies fastest, then G, then R.
+for ri in range(size):
+    r = ri * step
+    for gi in range(size):
+        g = gi * step
+        for bi in range(size):
+            b = bi * step
+            or_, og, ob = fn(r, g, b)
+            lines.append(f"{or_:.6f} {og:.6f} {ob:.6f}")
+```
+
+Because ffmpeg's `lut3d` filter indexes the file assuming R is the
+fastest axis, every sample it reads for a given input pixel actually
+comes from the wrong lattice point whenever R and B differ — the red
+and blue channels of the applied IDT transform get swapped. For any
+shot with a real camera IDT applied (which is most VFX Pull work), this
+silently inverts red/blue color balance in the rendered EXRs — e.g. a
+warm ARRI LogC3 skin tone would render distinctly blue-shifted instead.
+
+**Why genuine and new.** The sibling generator
+`tools/gen_aces2_luts.py`'s `write_cube()` implements the correct
+convention (`for b: for g: for r:`, R innermost/fastest) with an
+explicit correct comment ("`.cube` order: red varies fastest") and is
+validated directly against OCIO via `companion/tests/test_aces2_luts.py`
+(`test_lut_matches_ocio`) — confirming R-fastest is in fact the
+established, tested-correct convention elsewhere in this same codebase.
+`color_lut.py`'s independent `_write_cube()` implementation never had
+that validation and had the axes backwards. No prior audit entry
+mentions `color_lut.py`, `_write_cube`, or `.cube` axis order — this is
+a new bug species (LUT lattice iteration-order mismatch against a
+documented file-format convention), not a duplicate of any earlier
+iteration.
+
+**The fix.** Swap the loop nesting so R is innermost (fastest-varying)
+and B is outermost, matching `gen_aces2_luts.py`'s convention, and
+correct the misleading comment:
+
+```python
+# .cube iteration order: R varies fastest, then G, then B (Adobe/Iridas
+# spec; matches tools/gen_aces2_luts.py's write_cube(), which is
+# validated against OCIO directly).
+for bi in range(size):
+    b = bi * step
+    for gi in range(size):
+        g = gi * step
+        for ri in range(size):
+            r = ri * step
+            or_, og, ob = fn(r, g, b)
+            lines.append(f"{or_:.6f} {og:.6f} {ob:.6f}")
+```
+
+**Test approach.** Added `test_color_lut_cube_axis_order.py`: writes a
+3x3x3 identity-transform `.cube` file via `_write_cube()` and parses its
+data rows directly, asserting row 1 differs from row 0 only in R (the
+fastest axis), row 3 (after one full R cycle) increments G with R
+reset, and row 9 (after one full R*G cycle) increments B with R and G
+reset — a direct, format-level check of the lattice iteration order
+independent of any specific camera transform.
+
+**Verification.** `python3 -m pytest tests/test_color_lut_cube_axis_order.py -v`
+— 1/1 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`color_lut.py`: reverting to pre-fix code fails the test exactly as
+predicted (row 1 comes out `(0.0, 0.0, 0.5)` — B changed, not R).
+Restored the fix, reran — 1/1 green. Full companion suite:
+`python3 -m pytest -q` — 294 passed (up from 293), 7 skipped, same 2
+pre-existing `test_conform_engine.py` failures from Iterations 76-83
+(`int.bit_count()` needs Python 3.10+; unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented since
+Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (environment issue, out of scope).
+The other five camera-family transforms in `color_lut.py`'s registry
+were not individually re-validated against OCIO (only the lattice
+iteration order was tested) — a follow-up could add an
+`test_lut_matches_ocio`-style cross-check for `color_lut.py`'s
+transforms too, mirroring `test_aces2_luts.py`'s coverage.
+
+Commits: `TBD`.

@@ -5605,3 +5605,26 @@ against pre-fix code (whole-fps control case correctly unaffected) and
 skipped (same 2 pre-existing Iteration-76 failures, unrelated).
 
 Commits: `3e954e2`.
+
+## Iteration 84 — `color_lut.py`'s `_write_cube()` swapped the Red and Blue lattice axes in every IDT LUT
+
+The `.cube` format requires R to vary fastest, then G, then B — but
+`_write_cube()` nested its loops `for ri: for gi: for bi:` (B fastest),
+with a comment wrongly claiming that was correct. Every camera-family
+IDT LUT it generates (ARRI LogC3/LogC4, RED Log3G10, Sony S-Log3, Canon
+C-Log2, Panasonic V-Log) is wired into ffmpeg's `-vf lut3d=...` filter
+for VFX Pull/EXR renders via `api.py`, so any job with a known camera
+IDT applied got its red and blue channels silently swapped. The sibling
+generator `tools/gen_aces2_luts.py`'s `write_cube()` already implements
+the correct R-fastest convention and is validated against OCIO, but
+`color_lut.py`'s independent implementation had never been checked
+against that convention. Fixed by swapping the loop nesting to put R
+innermost (fastest) and B outermost, and correcting the comment. Added
+`test_color_lut_cube_axis_order.py`, which writes a 3x3x3 identity-
+transform `.cube` and asserts the lattice increments R first, then G,
+then B; confirmed it fails against pre-fix code (row 1 shows B changed
+instead of R) and passes post-fix via a stash/pop round-trip. Full
+suite: 294 passed/7 skipped (same 2 pre-existing Iteration-76 failures,
+unrelated).
+
+Commits: `TBD`.

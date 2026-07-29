@@ -211,13 +211,15 @@ def _write_cube(path: str, title: str,
         "DOMAIN_MAX 1.0 1.0 1.0",
         "",
     ]
-    # .cube iteration order: B varies fastest, then G, then R.
-    for ri in range(size):
-        r = ri * step
+    # .cube iteration order: R varies fastest, then G, then B (Adobe/Iridas
+    # spec; matches tools/gen_aces2_luts.py's write_cube(), which is
+    # validated against OCIO directly).
+    for bi in range(size):
+        b = bi * step
         for gi in range(size):
             g = gi * step
-            for bi in range(size):
-                b = bi * step
+            for ri in range(size):
+                r = ri * step
                 or_, og, ob = fn(r, g, b)
                 lines.append(f"{or_:.6f} {og:.6f} {ob:.6f}")
 
