@@ -5063,3 +5063,37 @@ Python suite: 262 passed, 7 skipped.
 Commits: `621a708`.
 
 Commits: `7be729e`.
+
+## Iteration 66 — companion drop-frame timecode only changed the separator, not the frame count
+
+**Found.** `companion/src/postflowx_companion/proxy_service.py`'s
+`_seconds_to_timecode()` used `drop_frame` only to pick `;` vs `:` — the
+frame-number arithmetic itself always ran plain non-drop math. A 29.97fps
+drop-frame clip one minute and two frames in (`60.06s`) was labeled
+`"00:01:00;00"` instead of the correct SMPTE drop-frame `"00:01:00;02"`,
+off by up to 18 frames near a 10-minute boundary. Distinct from species 51
+(which fixed *classifying* 23.976 as drop-frame) — this bug is in the
+frame-count math itself, which had zero test coverage.
+
+**Done.** Implemented the standard drop-frame compensation algorithm
+(matches the codebase's own correct JS `_dfFramesToTC` in
+`utils_time.js`): convert the real elapsed frame count into the equivalent
+nominal-fps labeled count before dividing, only when `drop_frame` is set
+and the rate is 29.97/59.94-based.
+
+**Tests.** Three new tests in `companion/tests/test_drop_frame_rate.py`:
+one-minute skip at 29.97 (`60.06s → "00:01:00;02"`), no skip at a
+10-minute boundary (`600.0s → "00:10:00;00"`), and the four-frame skip at
+59.94 (`60.06s → "00:01:00;04"`).
+
+**Verification.** File was tracked — used plain file-copy backup/restore.
+Disabling the new branch: all 3 new tests failed with the old wrong
+values. With the fix: 7/7 passing.
+
+**Gate.** `npm run build-verify` passed clean on the first attempt — both
+files were already tracked, no `untracked-imports.json` baseline issue.
+Python suite: 265 passed (262 + 3 new), 7 skipped.
+
+**Still open.** None.
+
+Commits: `2823c48`.

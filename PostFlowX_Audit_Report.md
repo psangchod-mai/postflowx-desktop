@@ -7318,4 +7318,129 @@ literal string "SyntaxError").
 
 Commits: `621a708`.
 
+## Iteration 66 — companion drop-frame timecode only changed the separator, not the frame count — new species
+
+**Why this file.** `companion/src/postflowx_companion/proxy_service.py`
+already carries the fix for species 51 (23.976 wrongly classified as
+drop-frame). A scouting pass over the same drop-frame code path, focused
+on areas not yet covered by species 48-65, found that the *classification*
+fix from species 51 was correct but the *arithmetic* right next to it had
+never implemented SMPTE drop-frame compensation at all.
+
+**The bug.** `_seconds_to_timecode()` (lines 2421-2434, before this fix):
+
+```python
+def _seconds_to_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
+    """Convert a duration in seconds to HH:MM:SS:FF (or HH:MM:SS;FF for DF)."""
+    fps_base = _fps_to_base(fps)
+    if fps_base <= 0:
+        fps_base = 24
+    total_frames = int(round(max(0.0, seconds) * fps))
+    h = total_frames // (fps_base * 3600)
+    remaining = total_frames - h * fps_base * 3600
+    m = remaining // (fps_base * 60)
+    remaining -= m * fps_base * 60
+    s = remaining // fps_base
+    f = remaining % fps_base
+    sep = ';' if drop_frame else ':'
+    return f"{h:02d}:{m:02d}:{s:02d}{sep}{f:02d}"
+```
+
+`drop_frame` is used only to pick `;` vs `:` — the frame-number arithmetic
+above it is plain non-drop division regardless. SMPTE drop-frame timecode
+for 29.97/59.94 must additionally skip frame *labels* 00/01 (or 00-03 at
+59.94) at the start of every minute except every 10th, so that the
+displayed timecode tracks wall-clock time. This codebase already has a
+correct implementation of that algorithm in
+`src/scripts/modules/utils_time.js` (`_dfFramesToTC`), so the Python side
+silently diverges from the JS side for the same input.
+
+**Concrete failure example.** `_seconds_to_timecode(60.06, 29.97, True)` —
+a 29.97fps drop-frame clip, one minute and two frames in — computed
+`total_frames = round(60.06 * 29.97) = 1800` and returned `"00:01:00;00"`.
+The correct SMPTE drop-frame label for that instant is `"00:01:00;02"`
+(frames 00 and 01 are skipped labels at the top of a non-tenth minute).
+The error is as large as 18 frames (~0.6s) near a 10-minute boundary. This
+is reached whenever a 29.97/59.94fps clip has an embedded drop-frame
+QuickTime timecode track — `proxy_service.py` sets `out['dropFrame'] = ';'
+in out['startTimecode']` and then calls this function to build
+`out['durationTimecode']`, which flows into `api.py`'s OCF preview/seek
+and batch-pick paths (lines 143, 3174, 3231) and the renderer's TC
+display.
+
+**Why genuine and new.** Species 51 was a *classification* bug — deciding
+whether a rate should use drop-frame formatting at all. This bug is
+different in kind: the rate is correctly identified as drop-frame, but the
+frame-number math needed to actually produce a correct drop-frame label
+was never implemented — only the cosmetic separator changed. It is
+unrelated to fps-base rounding, cache identity, races, key normalization,
+propagation, branch selection, containment matching, short-circuit
+ordering, async staleness, shader integer/float semantics, sentinel
+conflation, or HTTP range parsing (species 48-65). The existing regression
+suite for species 51
+(`companion/tests/test_drop_frame_rate.py`) only asserted separator
+presence/absence for the non-drop 23.976 case — it never asserted a
+correct frame *number* for a true drop-frame timecode, so this bug had
+zero coverage.
+
+**The fix.** Convert the real elapsed frame count into the equivalent
+nominal-fps labeled count (the standard drop-frame compensation formula)
+before doing the division, only when `drop_frame` is set and the rate is
+one of the two that has a drop-frame form:
+
+```python
+    total_frames = int(round(max(0.0, seconds) * fps))
+    if drop_frame and fps_base in (30, 60):
+        # SMPTE drop-frame: 29.97/59.94 skip frame *labels* (not real frames) so
+        # the displayed TC tracks wall-clock time. Convert the real elapsed frame
+        # count into the equivalent nominal-fps labeled count before dividing.
+        drop_count = 2 if fps_base == 30 else 4
+        frames_per_min = fps_base * 60 - drop_count
+        frames_per_10min = frames_per_min * 10 + drop_count
+        d, m = divmod(total_frames, frames_per_10min)
+        if m >= drop_count:
+            total_frames += drop_count * (9 * d + (m - drop_count) // frames_per_min)
+        else:
+            total_frames += drop_count * 9 * d
+    h = total_frames // (fps_base * 3600)
+```
+
+This is the canonical drop-frame algorithm (same shape as the codebase's
+own `_dfFramesToTC` in `utils_time.js`, verified by hand against it before
+implementing). Safe because it only executes inside the new
+`drop_frame and fps_base in (30, 60)` branch — the non-drop path used by
+every other rate, and by drop_frame=False calls at 29.97/59.94, is
+untouched.
+
+**Test approach.** Added three tests to the existing
+`companion/tests/test_drop_frame_rate.py`: one asserting the one-minute
+skip at 29.97 (`60.06s → "00:01:00;02"`), one asserting no skip at a
+10-minute boundary (`600.0s → "00:10:00;00"`), and one asserting the
+four-frame skip at 59.94 (`60.06s → "00:01:00;04"`). Values were derived
+by hand from the drop-frame algorithm and cross-checked by running the
+actual function before trusting them (an early draft of the 10-minute-
+boundary test used the wrong `seconds` value and had to be corrected after
+seeing its actual output).
+
+**Verification (mutation testing).** File was tracked and clean. Used the
+plain file-copy backup/restore technique: disabled the new branch via
+`if False and drop_frame and ...`, reran — all three new tests failed with
+the expected wrong values (`'00:01:00;00' == '00:01:00;02'`,
+`'00:09:59;12' == '00:10:00;00'`, `'00:01:00;00' == '00:01:00;04'`), the 4
+pre-existing tests in the file still passed. Restored the fix: all 7 tests
+in `test_drop_frame_rate.py` passed.
+
+**Gate.** `npm run build-verify` passed clean (exit 0) on the first
+attempt — both target files were already tracked, so no
+`untracked-imports.json` baseline issue. Full Python suite: 265 passed
+(262 + 3 new), 7 skipped. Grepped the full log for failure markers and
+confirmed all hits were false positives inside passing tests' names or
+messages (error-classifier tests whose input literally contains
+"SyntaxError", and an OTIO-parse-failure test literally named/asserting
+"SyntaxError" as expected content).
+
+**Still open.** None for this fix.
+
+Commits: `2823c48`.
+
 Commits: `50e0be7`.
