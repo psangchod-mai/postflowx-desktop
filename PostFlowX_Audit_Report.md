@@ -10926,3 +10926,107 @@ direct-to-cache-path write in `r3d_backend.py`'s `_decode_frame_helper`
 under concurrent prefetch.
 
 Commits: `f0fcac6`.
+
+## Iteration 103: `_decode_frame_helper()` in `r3d_backend.py` wrote the
+## final encoded frame straight to its own cache-lookup path, letting a
+## concurrent reader observe a truncated/partial JPEG mid-write
+
+**Why this file:** `r3d_backend.py` is the RED R3D decode backend behind
+full-quality frame previews. `_decode_frame_helper()` is the hot path any
+time a `.r3d` clip is scrubbed or previewed at full resolution.
+
+**The bug:** At line 673, `out_path = self._cache / f"{cache_key}.{fmt}"`
+is both the final encoded-frame destination *and* the cache-hit check any
+caller uses (`out_path.is_file() and out_path.stat().st_size > 0`, line
+675). The intermediate raw decode buffer already used a proper
+`tempfile.mkstemp(dir=str(self._cache))` + cleanup pattern, but the final
+ffmpeg encode step had ffmpeg write its JPEG/PNG output directly to
+`str(out_path)` with `-y` (truncate-and-write) — no temp file, no atomic
+rename. Any thread checking the cache-hit condition while ffmpeg's write
+was in flight could observe `out_path` as an existing, non-empty, but
+incomplete/corrupt file.
+
+**Independent verification (reachability):** A dedicated Explore agent
+confirmed a genuine concurrent-access path, not a theoretical one:
+`companion/.../http_server.py` runs a `ThreadingHTTPServer` (one thread
+per request), and `ring_buffer.py`'s `PrefetchScheduler` independently
+runs 2 worker threads that call `backend.get_frame()` for nearby frames
+while the user scrubs. The in-flight dedup in the prefetch queue only
+prevents double-scheduling *within* the prefetch queue — it does nothing
+to stop a foreground HTTP request thread and a prefetch worker thread
+from racing on the same `cache_key`/`out_path` for the same frame, which
+is exactly what happens during timeline scrubbing near a frame the
+prefetcher has also queued. `git diff --stat` on the file showed 0
+content diff (only the pre-existing repo-wide mode-bit chmod drift) and
+`git log --oneline` showed no uncommitted WIP touching this file — clean
+to fix.
+
+**The fix:** Mirrored the existing raw-buffer pattern for the encoded
+output: added `enc_tmp` via `tempfile.mkstemp(suffix=f".{fmt}",
+dir=str(self._cache))`, pointed both ffmpeg `cmd` invocations (ACES2 and
+default-look branches) at `enc_tmp` instead of `str(out_path)`, changed
+the post-encode success check to inspect `enc_tmp`, and added
+`os.replace(enc_tmp, out_path)` for an atomic swap once encoding is
+confirmed complete. Extended the existing `finally` cleanup block to also
+unlink any leftover `enc_tmp` (e.g. on an ffmpeg failure before the
+rename runs).
+
+**Test approach:** A standalone harness (`/tmp/verify_r3d_atomic.py`) was
+built to genuinely exercise the real, unmodified `_decode_frame_helper`
+method — not just review the diff. It instantiates a real `R3dBackend`
+pointed at an isolated temp cache dir, monkeypatches `_get_metadata_impl`
+to skip the unrelated R3D-header/ffprobe/native-probe metadata layers,
+and points `_helper` at a fake shell script (`/tmp/fake_r3d_helper.sh`)
+that mimics the native decode helper's CLI contract (writes a raw BGRA
+buffer + a JSON status line). A background watcher thread polls the
+exact computed final cache path (`out_path`, using the same SHA-256
+`cache_key` formula as the real code) every ~1ms, comparing file size
+across a 3ms window, to detect any moment the file exists but is still
+being written to.
+
+**Verification:**
+- Post-fix: decode succeeded and returned a valid result dict
+  (`cacheHit: False`, non-empty `dataUrl`); the watcher recorded 11
+  consecutive polls of the final cache file, every one at the same
+  complete size (208 bytes) — the file never appeared in a partial state,
+  because ffmpeg now writes to a distinctly-named `enc_tmp` file that the
+  watcher (correctly) never matches until `os.replace` makes the complete
+  file appear atomically under its final name. No leftover temp files
+  remained in the cache dir afterward.
+- Pre-fix (confirmed by temporarily reverting the temp-file/`os.replace`
+  change via a scripted string-replace, re-running the identical harness,
+  then restoring the fix from a backup copy): the watcher still did not
+  catch a torn read on this run, because the test payload (16×16px, a
+  208-byte JPEG) is small enough that ffmpeg's direct `-y` write to
+  `out_path` completes faster than the ~1ms polling interval can reliably
+  observe — flagged here explicitly rather than glossed over. The
+  structural argument for the fix does not depend on reproducing the race
+  under polling: pre-fix, ffmpeg's `-y` open is truncate-then-write, which
+  by construction has a window (however narrow) where `out_path` exists
+  at zero or partial length while a concurrent reader's cache-hit check
+  could pass; post-fix, that window cannot exist for `out_path` at all,
+  since nothing ever writes to it except the atomic `os.replace` of a
+  fully-formed file.
+- `python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, the same
+  2 pre-existing unrelated failures as every prior iteration's baseline.
+- `npm run test:node`: 72 passed, 1 pre-existing skip, 0 failed.
+- `npm run test:js`: 22 passed, 0 failed.
+- `git diff --stat -- companion/src/postflowx_companion/media/backends/r3d_backend.py`
+  showed exactly 8 insertions / 3 deletions (the intended hunk) plus the
+  pre-existing mode-bit flip; `electron/ipc.js` and `conform_engine.py`
+  remained untouched in their prior WIP state.
+
+**Gate:** Purely additive (new temp file + atomic rename around an
+existing encode step); no change to cache-key derivation, decode
+parameters, or any caller-visible return shape. Landing.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding from
+Iteration 102 remains real, reachable, and unfixed — abandoned again this
+iteration because the exact handler lines (the `dialog.showSaveDialog` /
+`downloadURL` calls) sit directly inside a 541-line uncommitted WIP diff
+(the Meechum-OAuth `mainWindow` → `_activeWindow` rename) that touches
+those same lines. This should be fixed as part of that WIP landing, not
+grafted on separately. The `conform_engine.py` `suggestedSourceOut`
+finding also remains open for the same reason.
+
+Commits: `TBD`.

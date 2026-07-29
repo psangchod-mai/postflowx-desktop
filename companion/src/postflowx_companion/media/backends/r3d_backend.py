@@ -678,6 +678,8 @@ class R3dBackend(BaseMediaBackend):
             suffix = ".raw"
             raw_fd, raw_tmp = tempfile.mkstemp(suffix=suffix, dir=str(self._cache))
             os.close(raw_fd)
+            enc_fd, enc_tmp = tempfile.mkstemp(suffix=f".{fmt}", dir=str(self._cache))
+            os.close(enc_fd)
             try:
                 pixfmt = "aceshalf" if aces2_vf else "bgra8"
                 r = subprocess.run(
@@ -699,18 +701,21 @@ class R3dBackend(BaseMediaBackend):
                     vf = f"{aces2_vf},scale={width}:{height}:flags=lanczos"
                     cmd = [self._ffmpeg, "-y", "-f", "rawvideo", "-pix_fmt", "gbrpf32le",
                            "-s", f"{dw}x{dh}", "-i", raw_tmp,
-                           "-vf", vf, "-frames:v", "1", str(out_path)]
+                           "-vf", vf, "-frames:v", "1", enc_tmp]
                 else:
                     # raw BGRA (RED default look) → scaled JPEG/PNG
                     cmd = [self._ffmpeg, "-y", "-f", "rawvideo", "-pixel_format", "bgra",
                            "-video_size", f"{dw}x{dh}", "-i", raw_tmp,
                            "-vf", f"scale={width}:{height}:flags=lanczos",
-                           "-frames:v", "1", str(out_path)]
+                           "-frames:v", "1", enc_tmp]
                 fr = subprocess.run(cmd, capture_output=True, timeout=60)
-                if fr.returncode != 0 or not (out_path.is_file() and out_path.stat().st_size > 0):
+                if fr.returncode != 0 or not (os.path.isfile(enc_tmp) and os.path.getsize(enc_tmp) > 0):
                     raise RuntimeError(f"ffmpeg encode of R3D frame failed: {fr.stderr.decode(errors='replace')[:300]}")
+                os.replace(enc_tmp, out_path)
             finally:
                 try: Path(raw_tmp).unlink(missing_ok=True)
+                except Exception: pass
+                try: Path(enc_tmp).unlink(missing_ok=True)
                 except Exception: pass
 
         import base64

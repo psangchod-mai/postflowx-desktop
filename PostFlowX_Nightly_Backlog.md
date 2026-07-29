@@ -6180,3 +6180,37 @@ in `companion/`: 313 passed/7 skipped/2 pre-existing unrelated failures —
 matches baseline.
 
 Commits: `f0fcac6`.
+
+## Iteration 103: `r3d_backend.py`'s `_decode_frame_helper` wrote the final
+encoded frame straight into its own cache-lookup path, so a concurrent
+reader (HTTP request thread vs. prefetch worker thread, both racing on the
+same `cache_key`) could observe a truncated/partial JPEG mid-write.
+
+Verified reachable: `ThreadingHTTPServer` (one thread/request) plus
+`PrefetchScheduler`'s 2 background workers both call `backend.get_frame()`
+independently during scrubbing; the prefetch queue's in-flight dedup does
+not protect against a foreground request racing a prefetch worker.
+Confirmed git-clean (0 content diff before the fix, no WIP touching this
+file).
+
+Fix: mirrored the existing raw-buffer temp-file pattern for the encoded
+output — ffmpeg now writes to a separate `enc_tmp` file, success is
+verified against `enc_tmp`, then `os.replace(enc_tmp, out_path)` performs
+an atomic swap into the cache-lookup path. Verified with a standalone
+harness driving the real `_decode_frame_helper` against a fake native-
+helper script: post-fix, the final cache file was observed at a stable,
+complete size across 11 consecutive polls with zero leftover temp files;
+the pre-fix race window exists by construction (ffmpeg's direct `-y`
+truncate-then-write to the cache-hit path) but wasn't reliably reproducible
+under black-box polling for a file this small — noted rather than glossed
+over. `python3 -m pytest -q` in `companion/`: 313 passed/7 skipped/2
+pre-existing unrelated failures — matches baseline. `npm run test:node`:
+72 passed/1 pre-existing skip/0 failed. `npm run test:js`: 22 passed/0
+failed.
+
+Still open (unfixed, WIP-blocked): `electron/ipc.js`'s `pfx:download`
+handler (ignored save path + premature success signal) and
+`conform_engine.py`'s `suggestedSourceOut` finding — both real, both sit
+inside pre-existing uncommitted WIP touching the exact same lines.
+
+Commits: `TBD`.
