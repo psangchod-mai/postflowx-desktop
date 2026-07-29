@@ -5562,4 +5562,4 @@ end-to-end via a fake `PIL.Image`); confirmed it fails to even collect
 round-trip. Full suite: 285 passed/7 skipped (same 2 pre-existing
 Iteration-76 failures, unrelated).
 
-Commits: `TBD`.
+Commits: `dd8c190`.
