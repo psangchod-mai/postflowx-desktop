@@ -11503,3 +11503,64 @@ unfixed, for the reasons documented in prior iterations — none is
 touched by this change.
 
 Commits: `4efae26`.
+
+## Iteration 110
+
+**Why this file:** `resolve_engine.py`'s `_run_proxy_export` (the
+DaVinci Resolve proxy-export job path, lines ~627-854) is the primary
+production path for any proxy-export job run against a live Resolve
+instance. `git diff --stat -- companion/src/postflowx_companion/engines/resolve_engine.py`
+and `git log --oneline -5` on the file showed no uncommitted changes
+before this fix, so there was no WIP to avoid.
+
+**The bug:** After `StartRendering()` completes, the "verify output"
+step (originally lines 830-833) globbed the *entire* `outputDir` for
+any `.mov`/`.mp4`/`.mxf` file and reported all of them as this job's
+`outputs`, with no filtering by render start time or expected
+filename. Since `outputDir` can be reused across jobs (e.g. re-running
+a failed job into the same folder, or a shared per-project output
+directory), any stale file left over from a prior render would pass
+the same glob check and get reported as this render's own output —
+silently handing the caller a wrong/stale proxy path, and also masking
+a genuine render failure that produced zero new files if a pre-existing
+file alone satisfied the non-empty check.
+
+**The fix:** Capture `render_start_ts = time.time()` immediately before
+`StartRendering()` is called, then filter the output-directory glob to
+only files with `st_mtime >= render_start_ts - 2.0` (a small negative
+epsilon to tolerate clock skew between the filesystem and the Python
+process). Minimal, 9-line change; no behavior change for the common
+case of an empty/dedicated `outputDir`.
+
+**Test approach:** `_run_proxy_export` drives the real DaVinci Resolve
+scripting API (`resolve_app.GetProjectManager()` → `pm.CreateProject()`
+→ `project.GetMediaPool()` → …), which isn't available outside a
+running Resolve instance. The harness
+(`/tmp/verify_proxy_export_stale_glob.py`) mocks only the Resolve API
+surface (`resolve_app`/`pm`/`project`/`media_pool`) with `MagicMock`,
+configured so `GetRenderJobStatus()` reports `"Complete"` immediately
+and, on that same call, creates the real render's output file on disk
+— mirroring the real timing where Resolve writes the file at/after job
+completion. A stale `.mov` file with an mtime one hour in the past is
+pre-seeded in the shared `outputDir` before calling the real,
+unmodified `_run_proxy_export()`.
+
+**Verification:** Pre-fix (via `git stash push -- resolve_engine.py`),
+the harness's `outputs` result included both the stale leftover file
+and the real render output — reproducing the bug exactly. Post-fix,
+re-run after `git stash pop` restored the fix correctly (`git diff`
+confirmed only content changes, no mode-bit-only noise): `outputs`
+contained only the real render's own file, and the stale file was
+excluded. Full regression suite re-run and matched baseline exactly:
+313/7/2 (pre-existing, `conform_engine.py` WIP under Python 3.9) Python
+via direct `pytest -q` in the companion venv (315/7/0 as reported by
+`npm test`'s newer Python interpreter — same known environmental
+difference documented in prior iterations), 72/1/0 Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, the Metal HTJ2K WIP
+block, and the `ocf_decode.py` `_decode_sdk()` stub all remain open,
+unfixed, for the reasons documented in prior iterations — none is
+touched by this change.
+
+Commits: `TBD`.

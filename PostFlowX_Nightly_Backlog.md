@@ -6342,3 +6342,22 @@ suite re-run and matched baseline exactly: 313/7/2(pre-existing)
 Python, 72/1/0 Node, 22/0 JS.
 
 Commits: `4efae26`.
+
+**Iteration 110 — `resolve_engine.py` `_run_proxy_export` stale-output
+glob.** After a Resolve render completes, the "verify output" step
+globbed the entire `outputDir` for any `.mov`/`.mp4`/`.mxf` file with
+no filtering by render time or expected filename — so a stale leftover
+file from a prior job in a reused `outputDir` would be reported as
+this render's own output, or mask a genuine render failure that
+produced zero new files. Fixed by capturing a `render_start_ts`
+timestamp right before `StartRendering()` and filtering the glob to
+only files modified at or after that time (with a small clock-skew
+epsilon). Verified with a standalone harness mocking only the Resolve
+scripting API and driving the real, unmodified `_run_proxy_export()`
+against a shared output dir seeded with a stale file: pre-fix, the
+stale file was included in the reported outputs; post-fix, only the
+real render's own file was reported. Full regression suite re-run and
+matched baseline exactly: 313/7/2(pre-existing) Python, 72/1/0 Node,
+22/0 JS.
+
+Commits: `TBD`.

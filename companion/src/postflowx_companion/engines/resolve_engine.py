@@ -767,6 +767,10 @@ def _run_proxy_export(
         if not render_job_id:
             raise RuntimeError("RENDER_QUEUE_FAILED: AddRenderJob() returned None/empty")
 
+        # Captured just before the render starts so "verify output" below can tell
+        # this render's files apart from stale leftovers in a reused outputDir.
+        render_start_ts = time.time()
+
         if not project.StartRendering(render_job_id):
             raise RuntimeError("RENDER_FAILED: StartRendering() returned False")
 
@@ -827,9 +831,14 @@ def _run_proxy_export(
         _update_session(session_id, "verify_output", PROGRESS_STEPS["verify_output"],
                         "Verifying output…")
 
+        # Only count files this render actually produced — a reused outputDir can
+        # hold stale files from a prior job that would otherwise pass the glob
+        # check below and get reported as this job's outputs.
+        _MTIME_SKEW_S = 2.0
         output_files = [
             str(f) for f in Path(output_dir).iterdir()
             if f.suffix.lower() in (".mov", ".mp4", ".mxf")
+            and f.stat().st_mtime >= render_start_ts - _MTIME_SKEW_S
         ]
         if not output_files:
             raise RuntimeError("OUTPUT_NOT_FOUND: No output files found in outputDir")
