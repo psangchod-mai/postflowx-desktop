@@ -6115,3 +6115,34 @@ distinct paths. `python3 -m pytest -q` in `companion/`: 313 passed/7
 skipped/2 pre-existing unrelated failures — matches baseline.
 
 Commits: `9634c1c`.
+
+## Iteration 101: `generate_proxy()` had an unreachable ffmpeg timeout — stalled encodes leaked the process and worker thread forever
+
+`ocf_proxy.py`'s `generate_proxy()` read ffmpeg progress via
+`for line in (proc.stderr or []):`, which blocks until the pipe hits EOF —
+i.e. until ffmpeg exits. The `proc.wait(timeout=600)` on the next line can
+therefore never actually enforce a timeout: a stalled ffmpeg (corrupt
+camera-original file, malformed timecode atom, an unresponsive
+network-mounted OCF volume) that stops emitting progress lines without
+exiting blocks the loop forever, leaking the ffmpeg child process and the
+daemon thread it runs on (`generate_proxy_async`), and leaving
+`_jobs[job_id]` stuck at `"running"` indefinitely with no error and no way
+for the UI's polling to detect or recover. A new bug species this
+iteration — a dead timeout guard behind an unbounded blocking iterator —
+found by explicitly directing the scouting agent away from the
+discriminator-drop pattern that had already produced 8 fixes this loop.
+
+Independently verified via a dedicated Explore agent that `generate_proxy`
+is never called directly from an HTTP handler thread (only via
+`generate_proxy_async`'s daemon-thread wrapper), so the leak is
+process/thread/job-state, not a stuck request. Fix: replaced the blocking
+iteration with a `select.select()`-based polling loop against an explicit
+600s deadline that kills the process and raises `TimeoutExpired` on
+expiry, so the existing timeout-error handling now actually fires.
+Standalone script confirmed the pre-fix loop shape stays blocked past its
+stated timeout, while the post-fix loop shape enforces a short test
+deadline and cleans up the process/thread within the expected window.
+`python3 -m pytest -q` in `companion/`: 313 passed/7 skipped/2 pre-existing
+unrelated failures — matches baseline.
+
+Commits: `TBD`.

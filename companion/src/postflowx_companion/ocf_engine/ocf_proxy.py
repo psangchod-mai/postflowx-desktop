@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import select
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,11 +74,23 @@ def generate_proxy(
             cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True
         )
         duration_s = _probe_duration(clip_path, ffprobe)
-        for line in (proc.stderr or []):
+        deadline = time.monotonic() + 600
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(cmd, 600)
+            ready, _, _ = select.select([proc.stderr], [], [], min(remaining, 1.0))
+            if not ready:
+                continue
+            line = proc.stderr.readline()
+            if line == "":
+                break
             if callback and "time=" in line:
                 pct = _parse_progress(line, duration_s)
                 callback(pct, line.strip())
-        proc.wait(timeout=600)
+        proc.wait(timeout=max(0.1, deadline - time.monotonic()))
         frame_count = _probe_frame_count(out_path, ffprobe)
 
         if proc.returncode != 0:

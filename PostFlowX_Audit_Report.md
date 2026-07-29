@@ -10715,3 +10715,124 @@ before this fix too (just under a collision-prone key) and is a separate,
 pre-existing concern from the correctness bug fixed here.
 
 Commits: `9634c1c`.
+
+## Iteration 101: `generate_proxy()` in `ocf_proxy.py` had an unreachable 600s timeout — a stalled ffmpeg leaked its process and worker thread forever
+
+**Why this file:** `companion/src/postflowx_companion/ocf_engine/ocf_proxy.py` implements
+OCF (camera-original) proxy generation via ffmpeg, invoked asynchronously
+from the `ocfGenerateProxy` HTTP endpoint. Given how many discriminator-drop
+bugs had already been found and fixed this loop, this iteration's scouting
+agent was explicitly asked to hunt for a *different* bug species —
+concurrency, resource leaks, dead error handling, and similar — rather than
+another cache-key variant.
+
+**The bug:** `generate_proxy()` read ffmpeg's progress like this:
+```python
+proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+duration_s = _probe_duration(clip_path, ffprobe)
+for line in (proc.stderr or []):
+    if callback and "time=" in line:
+        pct = _parse_progress(line, duration_s)
+        callback(pct, line.strip())
+proc.wait(timeout=600)
+```
+Iterating a pipe file object blocks on `readline()` until either a line
+arrives or the pipe hits EOF — and the pipe only reaches EOF when ffmpeg
+closes stderr, i.e. when the process exits. So the `for` loop cannot return
+before ffmpeg terminates on its own; the `proc.wait(timeout=600)` on the
+next line is unreachable as a timeout guard — by the time execution gets
+there the process has already exited, or the loop is already blocked
+forever with no timeout at all. The `except subprocess.TimeoutExpired:
+"ffmpeg proxy generation timed out (>10 min)"` handler further down is dead
+code for the actual hang scenario (a process that stops producing stderr
+output without exiting), even though it correctly fires for the unrelated
+case of `proc.wait()` itself timing out post-EOF.
+
+**Independent verification:** Read the full file directly and confirmed
+lines 70-79 matched the scouting report exactly. Spawned a dedicated Explore
+agent to confirm every call site of `generate_proxy`/`generate_proxy_async`:
+the only production caller is `generate_proxy_async` (`ocf_proxy.py:135`),
+which always runs `generate_proxy` inside a `daemon=True` background thread
+(`ocf_proxy.py:138`), reached via `api.py:6818`'s `ocfGenerateProxy` HTTP
+handler. Confirmed `generate_proxy` is never called directly from an HTTP
+request-handler thread — so the bug doesn't stall a request thread, but it
+does leak the daemon thread and the orphaned ffmpeg child process
+indefinitely, and leaves `_jobs[job_id]` stuck at `{"state": "running"}`
+forever with no error, no timeout, and no way for the UI's
+`ocfProxyJobStatus` polling to detect or recover from the stall. Realistic
+trigger: a corrupt/malformed camera-original file (bad ARRIRAW/R3D wrapper,
+malformed timecode atom) or a network-mounted OCF volume that stops
+responding mid-encode — ffmpeg stops emitting progress lines without
+exiting.
+
+**The fix:** Replaced the blocking iteration with a deadline-aware
+`select.select()` polling loop that actually enforces the 600s budget and
+kills the process on expiry:
+```python
+deadline = time.monotonic() + 600
+while True:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        proc.kill()
+        proc.wait()
+        raise subprocess.TimeoutExpired(cmd, 600)
+    ready, _, _ = select.select([proc.stderr], [], [], min(remaining, 1.0))
+    if not ready:
+        continue
+    line = proc.stderr.readline()
+    if line == "":
+        break
+    if callback and "time=" in line:
+        pct = _parse_progress(line, duration_s)
+        callback(pct, line.strip())
+proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+```
+The existing `except subprocess.TimeoutExpired` handler now correctly
+catches this manually-raised timeout too, so the job surfaces a real
+"timed out" error instead of hanging forever. (Uses `select`, POSIX-only —
+acceptable since this is a macOS-only companion app per its AVFoundation/
+DaVinci Resolve native bridges.)
+
+**Test approach:** A real end-to-end repro needing a stalled ffmpeg encode
+of a corrupt camera file is impractical to automate reliably, so a
+standalone script (`/tmp/verify_iter101.py`) demonstrates the underlying
+mechanism directly: it spawns a real subprocess (`sleep 30`, a stand-in for
+a hung encoder that never writes to stderr or exits) and runs both the
+pre-fix loop shape and the post-fix loop shape against it inside a bounded
+test window.
+
+**Verification:**
+- Pre-fix loop shape: still blocked after 3 real seconds despite the
+  `proc.wait(timeout=600)` on the very next line — confirming the timeout
+  is unreachable.
+- Post-fix loop shape: with a 1.5s deadline, the worker thread observed the
+  deadline, killed the process, raised `TimeoutExpired`, and finished
+  within the 3s join window — confirming the timeout is now real and the
+  process/thread are no longer leaked.
+- `git diff -- ocf_proxy.py` showed exactly the intended hunks (new
+  `select`/`time` imports plus the loop rewrite), file mode unchanged
+  (already `100755` before this edit — pre-existing drift, not introduced
+  here).
+- `python3 -m py_compile` confirmed valid syntax.
+- `python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, 2
+  pre-existing failures in `test_conform_engine.py`
+  (`test_regional_distance_discards_six_worst_cells`,
+  `test_regional_hash_identical_frames_distance_zero`, both
+  `AttributeError: 'int' object has no attribute 'bit_count'`) — matching
+  the confirmed baseline exactly, unrelated to this change.
+
+**Gate:** Fix makes the already-documented 600s timeout behavior actually
+work, with no change to the success-path behavior (progress callbacks and
+return values are unchanged for a normally-completing encode). Regression
+suite unaffected. Landing.
+
+**Still open:** The H.264 fallback path (`subprocess.run(cmd_h264,
+capture_output=True, timeout=600)`, line 91) uses `subprocess.run`'s own
+built-in timeout, which does *not* share this bug — `run()` internally uses
+`communicate()`, which is deadline-aware and kills the process on timeout.
+Not investigated this iteration: whether other companion-server subprocess
+call sites use the same blocking-pipe-iteration pattern seen here (a
+systematic audit of every `subprocess.Popen(..., stderr=PIPE)` call site
+across `companion/` was out of scope for this single-bug iteration).
+
+Commits: `TBD`.
