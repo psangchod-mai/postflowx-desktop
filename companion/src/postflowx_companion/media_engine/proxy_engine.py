@@ -83,7 +83,7 @@ def generate_proxy_async(
     timecode_start: str = "",
 ) -> None:
     """Fire-and-forget async proxy generation. Updates service_state session."""
-    from ..service_state import create_session, get_session
+    from ..service_state import create_session, update_session
 
     create_session(session_id, {
         "kind": "proxy",
@@ -97,8 +97,7 @@ def generate_proxy_async(
 
     def _run() -> None:
         try:
-            state = get_session(session_id) or {}
-            state.update({"stage": "transcoding", "message": "Transcoding…", "pct": 5})
+            update_session(session_id, stage="transcoding", message="Transcoding…", pct=5)
             result = generate_proxy(
                 source_path=source_path,
                 output_dir=output_dir,

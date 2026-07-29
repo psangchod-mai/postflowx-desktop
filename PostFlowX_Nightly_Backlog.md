@@ -5488,3 +5488,21 @@ Full suite: 276 passed, 7 skipped, same 2 pre-existing Python-3.9
 `bit_count()` failures from Iteration 76 (unrelated, out of scope).
 
 Commits: `8cec8cc`.
+
+## Iteration 78 — Proxy transcode progress never reached the session store
+
+`generate_proxy_async()` in `proxy_engine.py` fetched the session via
+`get_session()` (which returns a copy, by design) and called
+`.update({"stage": "transcoding", ...})` on that copy — which was then
+discarded. `update_session()`, the function that writes back to the
+real store, wasn't even imported. Result: pollers watching a proxy
+job's status saw it frozen at "queued / 0%" for the whole transcode,
+then jump straight to complete/failed. Fixed by calling
+`update_session(session_id, stage="transcoding", message="Transcoding…", pct=5)`
+directly. Added `test_proxy_engine_async_progress.py`, which blocks a
+faked transcode mid-flight and asserts the session store actually shows
+"transcoding"/5% during that window; confirmed it fails pre-fix via a
+stash/pop round-trip. Full suite: 277 passed, 7 skipped, same 2
+pre-existing Python-3.9 `bit_count()` failures (unrelated, out of scope).
+
+Commits: `TBD`.

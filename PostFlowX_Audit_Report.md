@@ -8477,3 +8477,85 @@ wrong-property/wrong-class pattern as Iteration 76; this iteration's bug
 is unrelated to AAF, found via a broader sweep of `media_engine/`.
 
 Commits: `8cec8cc`.
+
+## Iteration 78 — Proxy-generation progress update mutated a throwaway copy and never reached the session store
+
+**Why this file.** `generate_proxy_async()` in
+`companion/src/postflowx_companion/media_engine/proxy_engine.py` runs a
+proxy transcode on a background thread and reports progress into the
+in-memory session store (`service_state.py`) so the UI can poll
+`GET`-style session status endpoints and show "Queued… / Transcoding…
+5% / Proxy ready" as the job advances.
+
+**The bug.** The mid-run progress update was written as:
+
+```python
+state = get_session(session_id) or {}
+state.update({"stage": "transcoding", "message": "Transcoding…", "pct": 5})
+```
+
+`service_state.get_session()` deliberately returns `dict(state)` — a
+fresh copy of the stored session, not a reference to it — precisely so
+callers can't accidentally mutate the store by hand. `_run()` did
+exactly that anyway: it grabbed a copy, updated the copy, and then
+never did anything with it. The mutated copy is discarded at the end
+of the `try` block; `update_session()` (the function that actually
+writes back to `_sessions`) isn't even imported in this file.
+
+**Concrete failure example.** A client calls the proxy-transcode
+endpoint, gets a `sessionId`, and polls it while ffmpeg runs. Because
+the "transcoding / 5%" write never reaches the store, the poll response
+stays frozen at `{"stage": "queued", "pct": 0}` for the entire transcode
+— which can be minutes for a large source — then jumps straight to
+`complete`/`failed` (those terminal states use `create_session()`,
+which does write through). A UI or any timeout/retry logic watching for
+forward progress would read this as a hung job.
+
+**Why genuine and new.** Confirmed `get_session()`'s copy-return
+behavior by reading `service_state.py` directly, confirmed `state` in
+`_run()` is never referenced again after the `.update()` call, and
+confirmed `update_session` isn't imported anywhere in `proxy_engine.py`
+— it's only used for the two terminal states via `create_session()`
+(which overwrites the whole session dict, unrelated to this bug).
+Independently re-derived the same conclusion the scouting agent
+reported, then verified it against the running code.
+
+**The fix.** Call `update_session()` directly instead of mutating a
+throwaway copy:
+
+```python
+from ..service_state import create_session, update_session
+...
+update_session(session_id, stage="transcoding", message="Transcoding…", pct=5)
+```
+
+**Test approach.** New file
+`companion/tests/test_proxy_engine_async_progress.py`: monkeypatches
+`proxy_engine.generate_proxy` with a fake that signals a
+`threading.Event` once it starts (simulating "the transcode has begun")
+and blocks on a second `Event` until released. The test waits for the
+first event, then reads `service_state.get_session()` directly and
+asserts `stage == "transcoding"` and `pct == 5`, then releases the
+worker to finish. Confirmed this fails against the pre-fix code
+(`assert 'queued' == 'transcoding'`) via a `git stash`/re-run/
+`git stash pop` round-trip, and passes post-fix.
+
+**Verification.**
+`python3 -m pytest tests/test_proxy_engine_async_progress.py -v` — 1/1
+pass. Full companion suite: `python3 -m pytest -q` — 277 passed, 7
+skipped, and the same 2 pre-existing `test_conform_engine.py` failures
+from Iterations 76/77 (`int.bit_count()` needs Python 3.10+; this
+environment runs 3.9.6) — unrelated, untouched, out of scope.
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented in
+Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (environment/version issue, not a
+logic bug, out of scope). Other async job runners in this codebase
+(e.g. `proxy_service.py`) were spot-checked and correctly call
+`update_session()` for progress — `proxy_engine.py`'s `generate_proxy_async`
+was the one outlier using this pattern.
+
+Commits: `TBD`.
