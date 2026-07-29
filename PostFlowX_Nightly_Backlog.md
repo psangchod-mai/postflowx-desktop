@@ -6213,4 +6213,4 @@ handler (ignored save path + premature success signal) and
 `conform_engine.py`'s `suggestedSourceOut` finding — both real, both sit
 inside pre-existing uncommitted WIP touching the exact same lines.
 
-Commits: `TBD`.
+Commits: `c706108`.
