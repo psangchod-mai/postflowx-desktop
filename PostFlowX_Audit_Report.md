@@ -12835,4 +12835,4 @@ iteration's scout beyond the two informational (non-bug) unguarded
 `_scanOcfFolder()` call sites noted above. A future iteration should
 scout fresh before choosing its target.
 
-Commits: `TBD`.
+Commits: `b048f1f`.
