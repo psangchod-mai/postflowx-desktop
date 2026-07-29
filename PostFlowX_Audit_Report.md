@@ -12087,3 +12087,82 @@ or seek checks `standbyReady`/`needReload` — not exercised by this
 iteration's test.
 
 Commits: `4519da8`.
+
+## Iteration 117 — IMFPlayer._scrubFrame() stale-draw race
+
+**Why this file:** `src/scripts/modules/imf/imf_player_engine.js`'s
+`_scrubFrame(frame)` is the scrubber-drag single-frame-preview path,
+called from `seek()`, `stepForward()`, and `stepBack()` — all real,
+event-driven user interactions (dragging the timeline scrubber, or
+stepping frame-by-frame).
+
+**The bug:** `_scrubFrame()` debounces rapid calls with
+`clearTimeout(this._scrubTimer)` followed by a 30ms `setTimeout`. That
+debounce only cancels a *pending* (not-yet-fired) timer — once a timeout
+callback has started its `await fetch(...)` / `await
+createImageBitmap(...)` chain (primary path) or its `await
+_pfx().imfEngine.getFrame(...)` + `img.onload` chain (IPC fallback path),
+a later scrub's callback can start and its awaits can resolve faster.
+Without a staleness check, the earlier (now-stale) callback's
+`this._ctx.drawImage(...)` call can execute *after* the fresh one,
+painting an old frame over the canvas following a scrubber drag or a
+step action — the displayed frame no longer matches the frame the user
+last requested.
+
+**The fix:** Added a `_scrubSeq` generation-token counter, mirroring the
+same pattern already used for `_loadSeq` in `ReviewPlayer`
+(Iteration 116) and other prior iterations. `_scrubFrame()` now captures
+`const seq = ++this._scrubSeq;` immediately before scheduling the
+`setTimeout`, then checks `if (seq !== this._scrubSeq) return;`
+immediately before each of the two `drawImage` call sites — in the
+primary path, `bm.close()` is called first (before the early return) so
+the `ImageBitmap` doesn't leak even when its draw is discarded as stale.
+
+**Test approach:** `tests-js/imfPlayerScrubStaleRace.test.mjs`, a new
+plain-Node test (no linkedom — `imf_player_engine.js` only touches a
+stubbed `window`, `fetch`, `Blob`, and `createImageBitmap`, all set as
+bare globals). Unlike the deferred-promise-gate technique of
+Iteration 115 or the shared-DOM-dispatch-once technique of
+Iteration 116, this test uses **real `setTimeout` delays** (`await new
+Promise(r => setTimeout(r, 40))`) so the actual 30ms debounce timers
+genuinely fire in sequence, combined with a `deferred()` promise gate per
+frame number to control exactly when each in-flight fake `fetch`
+resolves. The fake `fetch` returns a genuine one-byte `ArrayBuffer` with
+the frame number encoded as that byte's value, so the real `new
+Uint8Array(ab)` / `new Blob([jpegBytes], ...)` calls inside
+`_scrubFrame()` run completely unmodified — only the outer `Blob` and
+`createImageBitmap` globals are stubbed, and they just carry the frame
+number through (`blob.frame = parts[0][0]`) so the test's fake canvas
+`drawImage` can log which frame was actually painted.
+
+The test calls `player._scrubFrame(1)`, waits for its debounce timer to
+fire and its fetch to start (now pending on `gates[1]`), then calls
+`player._scrubFrame(2)` and waits for its debounce to fire too — both
+fetches now in flight, `_scrubSeq` at 2. It resolves the newer scrub's
+gate first (simulating scrub(2) finishing faster) and asserts frame 2
+draws immediately, then resolves the stale scrub's gate and asserts
+nothing further gets drawn — frame 2 must still be the only thing in
+`drawLog`.
+
+**Verification:** Pre-fix (temporarily reverted `_scrubFrame()` to the
+version with no `_scrubSeq` guard, via a backup restored afterward), the
+test failed exactly as predicted: `drawLog` ended up `[2, 1]` instead of
+`[2]` — the stale scrub(1) callback drew over the correct scrub(2) frame
+after it had already been resolved and painted, confirming the race is
+real. Post-fix (restored from `/tmp` backup, confirmed via `git diff
+--stat` that the change is exactly the intended `_scrubSeq` field, the
+comment, and the two guard checks — 7 insertions), all 4 assertions pass.
+Full regression suite re-run and matched baseline: `test:js` — every
+file 0 failed (this new test file included; `selfContained.test.mjs`
+flags it as untracked until staged/committed, matching the pattern for
+every prior iteration's new test file); `test:node` — 72 passed, 0
+failed, 1 skipped; `test:py` — 315 passed, 7 skipped, 0 failed.
+
+**Still open:** The IPC fallback path's `img.onload` handler is now
+guarded, but the fallback branch's early `return` (when `!r.ok ||
+!r.imageDataUrl`) happens before any `seq` check is needed there since
+nothing is drawn on that path. Not otherwise exercised further by this
+iteration's test — no other stale-draw paths were found in this file
+during this pass.
+
+Commits: `TBD`.

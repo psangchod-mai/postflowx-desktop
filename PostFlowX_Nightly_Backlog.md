@@ -6493,3 +6493,22 @@ auto-advance index followed by the seek's correct one); post-fix, only
 all `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
 
 Commits: `4519da8`.
+
+## Iteration 117 — IMFPlayer._scrubFrame() stale-draw race
+
+`imf_player_engine.js`'s `_scrubFrame()` (scrubber-drag single-frame
+preview, called from `seek()`/`stepForward()`/`stepBack()`) debounces
+rapid calls with a 30ms `setTimeout`, but that only defers scheduling —
+once a timeout callback starts its `await fetch(...)`/`await
+createImageBitmap(...)` chain, a later scrub's callback can finish first,
+and the earlier (now-stale) callback's `drawImage()` call could land
+after it and paint an old frame over the canvas. Fixed with a
+`_scrubSeq` generation-token guard (same pattern as `_loadSeq` in
+Iteration 116), checked immediately before both `drawImage` call sites.
+Verified with a new test (`tests-js/imfPlayerScrubStaleRace.test.mjs`)
+using real 30ms timers plus per-frame deferred fetch gates: pre-fix,
+`drawLog` ended up `[2, 1]` (stale frame painted last); post-fix, only
+`[2]` lands. Full regression suite re-run and matched baseline: all
+`test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
+
+Commits: `TBD`.

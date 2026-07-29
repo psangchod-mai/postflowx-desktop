@@ -72,6 +72,7 @@ class IMFPlayer {
     this._lastRafTime   = 0;
     this._pendingFrames = [];       // queue of decoded ImageBitmaps
     this._scrubTimer    = null;
+    this._scrubSeq      = 0;
 
     this._handlers = new Map();
   }
@@ -428,6 +429,10 @@ class IMFPlayer {
     clearTimeout(this._scrubTimer);
     if (!this._packageId || !this._cplId) return;
 
+    // The 30ms debounce only defers scheduling — once this callback starts,
+    // its awaits (fetch/getFrame/createImageBitmap) can outrun a later scrub's,
+    // so a stale draw could land last. _scrubSeq detects that and bails.
+    const seq = ++this._scrubSeq;
     this._scrubTimer = setTimeout(async () => {
       try {
         const url = this._frameUrl
@@ -449,6 +454,7 @@ class IMFPlayer {
           if (!r.ok || !r.imageDataUrl) return;
           const img = new Image();
           img.onload = () => {
+            if (seq !== this._scrubSeq) return;
             this._ctx.drawImage(img, 0, 0, this._canvas.width, this._canvas.height);
           };
           img.src = r.imageDataUrl;
@@ -457,6 +463,7 @@ class IMFPlayer {
 
         const blob = new Blob([jpegBuf], { type: 'image/jpeg' });
         const bm   = await createImageBitmap(blob);
+        if (seq !== this._scrubSeq) { bm.close(); return; }
         this._ctx.drawImage(bm, 0, 0, this._canvas.width, this._canvas.height);
         bm.close();
       } catch (e) {
