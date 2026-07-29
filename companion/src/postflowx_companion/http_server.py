@@ -759,8 +759,14 @@ class CompanionHttpHandler(BaseHTTPRequestHandler):
         try:
             if range_hdr.startswith("bytes="):
                 start_s, _, end_s = range_hdr[6:].partition("-")
-                start = int(start_s) if start_s else 0
-                end = int(end_s) if end_s else size - 1
+                if not start_s and end_s:
+                    # Suffix range "bytes=-N": the last N bytes of the resource,
+                    # per RFC 7233 §2.1 — not "start omitted, so start at 0".
+                    start = max(0, size - int(end_s))
+                    end = size - 1
+                else:
+                    start = int(start_s) if start_s else 0
+                    end = int(end_s) if end_s else size - 1
                 end = min(end, size - 1)
                 # Reject unsatisfiable/inverted ranges — otherwise length goes
                 # negative and we'd send a bogus negative Content-Length.

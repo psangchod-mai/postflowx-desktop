@@ -229,6 +229,29 @@ class TestServeFileRange:
                    if c.args and c.args[0] == "Content-Length"]
         assert lengths == [4]  # bytes 2..5 inclusive
 
+    def test_suffix_range_serves_last_n_bytes(self, tmp_path):
+        """"bytes=-N" is a suffix range (RFC 7233 §2.1): the last N bytes.
+
+        It used to be parsed as start=0 (since the text before "-" is empty),
+        which served the FIRST N bytes with a Content-Range header that
+        mislabeled them as the requested suffix — wrong data, reported success.
+        """
+        f = tmp_path / "clip.mp4"
+        f.write_bytes(b"0123456789")  # 10 bytes; last 4 are "6789"
+        h = _make_handler("/stream/x")
+        h.headers = {"Range": "bytes=-4"}
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = MagicMock()
+        h._serve_file(str(f))
+        h.send_response.assert_called_once_with(206)
+        content_range = [c.args[1] for c in h.send_header.call_args_list
+                          if c.args and c.args[0] == "Content-Range"]
+        assert content_range == ["bytes 6-9/10"]
+        sent = b"".join(c.args[0] for c in h.wfile.write.call_args_list)
+        assert sent == b"6789"
+
 
 class TestStreamTraversalGuard:
     def test_stream_rejects_path_traversal(self):
