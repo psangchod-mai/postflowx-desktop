@@ -129,19 +129,25 @@ def parse_edl(text: str, fps: float = 24.0) -> list[ConformEvent]:
     while i < len(lines):
         line = lines[i].strip()
         # Event line: "001  REEL  V  C  <src_in> <src_out> <rec_in> <rec_out>"
+        # Matches ANY edit-type letter (C/D/W/K/…) and consumes the optional
+        # dissolve/wipe duration token that follows it, so dissolve and wipe
+        # events are not silently dropped from the parsed event list.
         m = re.match(
-            r"^(\d{3,4})\s+(\S+)\s+\S+\s+C\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)",
+            r"^(\d{3,4})\s+(\S+)\s+\S+\s+([A-Z])\s*(?:\d+)?\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)",
             line,
         )
         if m:
             idx = int(m.group(1))
             reel = m.group(2)
-            src_in = m.group(3)
-            src_out = m.group(4)
-            rec_in = m.group(5)
-            rec_out = m.group(6)
-            fi = _tc_to_frames(src_in, fps)
-            fo = _tc_to_frames(src_out, fps)
+            src_in = m.group(4)
+            src_out = m.group(5)
+            rec_in = m.group(6)
+            rec_out = m.group(7)
+            # Timeline duration comes from the RECORD TCs (authoritative), not
+            # the source TCs — source points at WIP masters and is re-resolved
+            # by matching. Mirrors edlParser.js's parseEdl().
+            fi = _tc_to_frames(rec_in, fps)
+            fo = _tc_to_frames(rec_out, fps)
             # Look ahead for * FROM CLIP NAME: ...
             clip_name = reel
             j = i + 1
