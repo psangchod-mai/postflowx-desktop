@@ -7087,4 +7087,4 @@ baseline (`test:js` all green across every suite including the
 `selfContained.test.mjs` git-tracking gate once the new test file was
 staged; `test:node` 72 pass/1 skip/0 fail).
 
-Commits: `TBD`.
+Commits: `fa232ae`.
