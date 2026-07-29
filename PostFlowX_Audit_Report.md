@@ -9479,4 +9479,4 @@ should either do one more sweep for remaining cache-writing paths (e.g.
 thumbnail/waveform caches, still unconfirmed either way) or pivot toward
 other bug species/files given how saturated #7 now is here.
 
-Commits: `TBD`.
+Commits: `c915b4e`.

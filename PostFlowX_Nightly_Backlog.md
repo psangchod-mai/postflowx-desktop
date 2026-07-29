@@ -5755,4 +5755,4 @@ species #7 — the proxy-writing subsystem is now well-covered; a follow-up
 should either sweep remaining cache paths (thumbnail/waveform, still
 unconfirmed) or pivot to other species/files.
 
-Commits: `TBD`.
+Commits: `c915b4e`.
