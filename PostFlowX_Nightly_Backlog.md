@@ -6828,3 +6828,35 @@ Still open: none for this fix; other engine-status panels may still
 warrant a scout pass.
 
 Commits: `8a8d24e`.
+
+## Iteration 130 — IMF package UI wrapper spurious error banner on stale open
+
+`_openPackage()` in `imf_package_ui.js` (Open button, dropzone click,
+and drag-drop all funnel into it) awaited `player.openPackage()` then
+unconditionally showed an error banner on any `!r.ok` result —
+including `{ error: 'superseded' }`, which the player's own already-
+existing `_loadSeq` guard returns for a call that lost a race to a
+newer one. A double-click on Open would let the newer call render
+correctly, then the older call's late "superseded" result would paint
+a false error banner over it — a UI-wrapper bug distinct from (and not
+covered by) the existing data-layer race test. Fixed with a local
+`_openSeq` counter guarding the post-await `_hideSpinner()`/
+`_showErrors()` calls. New test
+`tests-js/imfPackageUiOpenPackageStaleRace.test.mjs` (3 assertions,
+patches `window.HTMLCanvasElement.prototype.getContext` globally since
+`mountIMFPackageUI()` builds its own canvas internally) drives two
+overlapping `ui.openPackage()` calls and confirms the stale
+"superseded" result never shows a false error banner. Before/after
+verified via `git stash`: reverted code failed 1/3 as predicted (the
+false banner appeared), restored fix re-passed 3/3, byte-diff
+confirmed the restore was exact. Pre-existing mode-bit drift
+(`100644`→`755`) resolved via `chmod` before editing, zero content
+diff otherwise. Full regression matched baseline.
+
+Still open: `_refreshStatus()` in `homeScreen.js:668` (stale-status
+race, but WIP sits inside the function body — needs hunk-selective
+staging or should be deferred) and `openProjectSetup()` in
+`project_setup.js:1873` (WIP present but not inside this function,
+more feasible for a future iteration).
+
+Commits: `TBD`.

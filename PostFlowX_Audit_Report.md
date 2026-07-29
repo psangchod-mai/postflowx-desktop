@@ -13074,3 +13074,97 @@ pattern may still exist in other engine-status/media-check panels not
 yet scouted.
 
 Commits: `8a8d24e`.
+
+## Iteration 130 — IMF package UI wrapper paints a spurious error banner over an already-open package
+
+**Why this file:** `src/scripts/modules/imf/imf_package_ui.js`'s
+`_openPackage()` is reachable from three independent UI triggers (the
+Open button, clicking the dropzone, and dropping a file/folder onto
+the dropzone). A background scouting pass flagged it as a strong
+candidate for the same stale-async-race family already fixed in seven
+prior iterations, and specifically noted that `IMFPlayer.openPackage()`
+in `imf_player_engine.js` (the function this UI code calls) already
+has its own internal `_loadSeq` guard — raising the question of
+whether that guard actually covers the UI layer too. Independent
+reading confirmed it does not: `_loadSeq` protects only the player's
+own instance fields (`_packageId`, `_packageData`, `_cplId`); it has no
+visibility into the UI module's spinner/error-banner state.
+
+**The bug:** `_openPackage(inputPath)` awaits
+`player.openPackage(inputPath)`, then unconditionally calls
+`_hideSpinner()` and, if `!r.ok`, unconditionally calls
+`_showErrors([r.error || 'Failed to open IMF package'], [])` — with no
+check for whether this specific UI-layer call has since been
+superseded by a newer one. Because `IMFPlayer.openPackage()`'s own
+`_loadSeq` guard already makes a superseded call resolve with
+`{ ok: false, error: 'superseded' }` instead of clobbering the newer
+package's data, a double-click on Open (or a click landing on the
+dropzone right after the Open button) triggers this exact path: the
+newer call wins at the data layer and renders its CPL selector
+correctly, then the older call's late resolution comes back as
+`{ ok: false, error: 'superseded' }` and the UI wrapper — blind to the
+fact that it lost the race — paints a false "Failed to open IMF
+package" banner directly over the package that just opened
+successfully. This is a distinct bug from the one the existing test
+`imfPlayerOpenPackageStaleRace.test.mjs` already covers: that test
+proves the *data* layer is protected; this bug lives entirely in the
+*UI wrapper* that calls it.
+
+**The fix:** Added an `_openSeq` monotonic counter local to
+`imf_package_ui.js`. `_openPackage()` captures
+`const seq = ++_openSeq;` right after resolving `inputPath` (from
+either the argument or the file/folder picker) and before showing the
+spinner. After `await player.openPackage(inputPath)` resolves, a guard
+`if (seq !== _openSeq) return;` runs before `_hideSpinner()` or
+`_showErrors()` — so a superseded call's late arrival is silently
+discarded instead of overwriting the newer call's already-correct UI
+state.
+
+**Test approach:** New test
+`tests-js/imfPackageUiOpenPackageStaleRace.test.mjs` (linkedom).
+Since `mountIMFPackageUI()` builds its own `<canvas>` internally via an
+HTML template and calls `createIMFPlayer(canvas, opts)` synchronously
+inside itself, the test cannot grab a reference to patch `.getContext`
+on that specific canvas before player creation — instead it patches
+`window.HTMLCanvasElement.prototype.getContext` globally right after
+`parseHTML()`, before calling `mountIMFPackageUI()`, so any
+canvas created afterward (including one built via `innerHTML`) already
+has a working `getContext`. The test stubs
+`window.pfxPlatform.imfEngine.openPackage()` (and `.validatePackage()`,
+since the success path chains into `_doValidate()`) with
+deferred/resolvable promises, calls `ui.openPackage('/path/A.imf')`
+then, before it resolves, `ui.openPackage('/path/B.imf')` — mirroring
+a double-click — resolves B's probe first with a successful package,
+confirms no error banner appears, then resolves A's probe late with
+`{ ok: false, error: 'superseded' }` (exactly what the already-guarded
+data layer would return) and confirms the error banner still does not
+appear.
+
+**Verification:** Confirmed the pre-fix file had zero content diff
+against HEAD (only a mode-bit drift, `100644` vs. working-tree `755`,
+resolved via `chmod 644` before editing — `git ls-files -s` and `git
+diff --stat` both confirmed clean before the edit). Applied the fix;
+`git diff --stat` showed exactly 5 insertions, 0 deletions. Ran the new
+test against the fix: 3 of 3 assertions passed. Used `git stash push --
+<file>` to temporarily revert to the pre-fix content and re-ran the
+test: 2 of 3 passed, with the predicted assertion failing exactly as
+expected (the stale, superseded open painted a false error banner over
+the live package). `git stash pop` restored the fix; a byte-for-byte
+diff against a pre-stash backup copy of the fixed file confirmed the
+restore was exact. Re-ran the test against the restored fix: 3 of 3
+passed again. Full `npm run test:js` regression is green (self-
+containment gate flagged the new test file as untracked until `git
+add`ed, matching the same pattern as prior iterations — not a real
+failure). `npm run test:node` also green, matching baseline (72 pass,
+1 pre-existing skip).
+
+**Still open:** Two runner-up candidates from this iteration's
+scouting remain unfixed, both requiring hunk-selective staging because
+of pre-existing, unrelated WIP in the same files: `_refreshStatus()` in
+`homeScreen.js:668` (a classic stale-status-chip race, but WIP sits
+directly inside the function body — do not attempt without careful
+hunk-selective staging, or defer entirely) and `openProjectSetup()` in
+`project_setup.js:1873` (real WIP exists in the file but not directly
+inside this function, making it more feasible for a future iteration).
+
+Commits: `TBD`.

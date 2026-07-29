@@ -346,6 +346,8 @@ export function mountIMFPackageUI(container, opts = {}) {
 
   // ── Open package ──────────────────────────────────────────────────────────
 
+  let _openSeq = 0;
+
   async function _openPackage(inputPath) {
     if (!inputPath) {
       // Show file/folder picker
@@ -371,11 +373,14 @@ export function mountIMFPackageUI(container, opts = {}) {
       inputPath = picked;
     }
 
+    const seq = ++_openSeq;
+
     _showSpinner('Opening package…');
     _clearErrors();
     _hideFallback();
 
     const r = await player.openPackage(inputPath);
+    if (seq !== _openSeq) return; // superseded by a newer open — don't clobber its UI
     _hideSpinner();
 
     if (!r.ok) {
