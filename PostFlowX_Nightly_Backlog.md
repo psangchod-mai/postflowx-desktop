@@ -6600,4 +6600,4 @@ baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped Node,
 Still open: `openPackage()` in the same file has a weaker,
 single-await instance of the same shape — left for a future pass.
 
-Commits: `TBD`.
+Commits: `4d08985`.
