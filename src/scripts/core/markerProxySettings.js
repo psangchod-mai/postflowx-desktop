@@ -26,6 +26,12 @@
     const rootsList      = document.getElementById('pfxOcfRootsList');
     const indexStatus    = document.getElementById('pfxOcfIndexStatus');
 
+    // Shared between the "Add OCF Folder" (scan) and "Rebuild Index" buttons:
+    // both write to the same indexStatus/rootsList DOM, so whichever click's
+    // await resolves last must not be allowed to overwrite the other's
+    // (possibly newer) result.
+    let _ocfIdxSeq = 0;
+
     function _refreshRootsList() {
       if (!rootsList || !window.PFX_OCF_INDEX) return;
       const roots = window.PFX_OCF_INDEX.getRoots();
@@ -53,15 +59,18 @@
     if (addRootBtn) {
       addRootBtn.addEventListener('click', async () => {
         if (!window.PFX_OCF_INDEX) return;
+        const seq = ++_ocfIdxSeq;
         addRootBtn.disabled = true;
         addRootBtn.textContent = 'Scanning…';
         try {
           const r = await window.PFX_OCF_INDEX.scanNewRoot();
-          if (r.ok) {
-            _refreshRootsList();
-            if (indexStatus) indexStatus.textContent = `${r.count} files indexed`;
-          } else {
-            console.warn('[Settings] scanNewRoot:', r.error);
+          if (seq === _ocfIdxSeq) {
+            if (r.ok) {
+              _refreshRootsList();
+              if (indexStatus) indexStatus.textContent = `${r.count} files indexed`;
+            } else {
+              console.warn('[Settings] scanNewRoot:', r.error);
+            }
           }
         } catch (e) {
           console.warn('[Settings] addRoot error', e);
@@ -75,12 +84,15 @@
     if (rebuildIdxBtn) {
       rebuildIdxBtn.addEventListener('click', async () => {
         if (!window.PFX_OCF_INDEX) return;
+        const seq = ++_ocfIdxSeq;
         rebuildIdxBtn.disabled = true;
         rebuildIdxBtn.textContent = '↻ Rebuilding…';
         try {
           const r = await window.PFX_OCF_INDEX.rebuildIndex();
-          if (indexStatus) indexStatus.textContent = `${r.count} files indexed`;
-          _refreshRootsList();
+          if (seq === _ocfIdxSeq) {
+            if (indexStatus) indexStatus.textContent = `${r.count} files indexed`;
+            _refreshRootsList();
+          }
         } catch (e) {
           console.warn('[Settings] rebuildIndex error', e);
         } finally {

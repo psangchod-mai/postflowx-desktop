@@ -13369,3 +13369,95 @@ developer's WIP is committed or its footprint shrinks enough for a
 hunk to isolate cleanly.
 
 Commits: `c31479c`.
+
+## Iteration 133 — Marker Proxy Settings: "Add OCF Folder" / "Rebuild Index" cross-handler stale race
+
+**Why this file:** an Explore agent scouted `markerProxySettings.js`'s
+`_wire()` function as a candidate, flagging the `addRootBtn` and
+`rebuildIdxBtn` click handlers as racing on shared DOM state with no
+cross-handler guard. Independently read the full 170-line file (an
+IIFE-wrapped vanilla-JS wiring module — a different shape from the
+ES-module/class files fixed in Iterations 130-132, since it exports
+nothing and relies entirely on global `document`/`window.PFX_OCF_INDEX`
+/`localStorage`) before trusting the report. Confirmed the file was on
+the clean-file whitelist (zero pre-existing diff) before touching it.
+
+The bug: `addRootBtn`'s click handler awaits
+`window.PFX_OCF_INDEX.scanNewRoot()` and `rebuildIdxBtn`'s awaits
+`window.PFX_OCF_INDEX.rebuildIndex()`. Each handler only disables and
+re-labels its *own* button while its own call is pending — neither
+knows about the other. Both handlers, on resolution, write to the same
+`indexStatus.textContent` (once directly with their own `r.count`, and
+a second time indirectly through the shared `_refreshRootsList()`
+helper, which re-derives the same text from `localStorage`). If a user
+clicks "Rebuild Index" then quickly "Add OCF Folder" before the rebuild
+resolves, and the scan (started second) happens to resolve first, the
+scan's correct/newer count briefly appears — but when the slower
+rebuild call finally resolves afterward, it unconditionally overwrites
+`indexStatus` with its own, now-stale count, with no indication to the
+user that the displayed number is wrong or out of date.
+
+**The fix:** added a single `let _ocfIdxSeq = 0;` declared once inside
+`_wire()`, shared between both handlers (a cross-handler guard, unlike
+prior iterations' single-function `_seq`/`_testSeq` guards, since the
+race here spans two distinct click handlers competing over the same
+DOM rather than one function being re-entered). Each handler now
+captures `const seq = ++_ocfIdxSeq;` immediately before its `await`,
+then wraps its post-await status/list writes in `if (seq ===
+_ocfIdxSeq) { ... }` — so a handler whose call resolves after a newer
+click (on either button) has already bumped the counter silently
+discards its now-stale write instead of clobbering the newer one. Each
+button's own `finally` block (re-enabling/relabeling itself) is left
+unguarded, since that's per-button state, not shared.
+
+**Test:** `tests-js/markerProxySettingsOcfIndexStaleRace.test.mjs`
+(linkedom). Builds a minimal DOM with the four element IDs the module
+looks up (`pfxOcfAddRootBtn`, `pfxOcfRebuildIndexBtn`,
+`pfxOcfRootsList`, `pfxOcfIndexStatus`), a fake `localStorage`
+(`Map`-backed), and a fake `window.PFX_OCF_INDEX` whose `scanNewRoot()`
+/`rebuildIndex()` return promises that stay pending until the test
+explicitly resolves them (mirroring the fake-IPC pattern from
+Iteration 132's test, applied here to a different global surface).
+Since the module runs `_wire()` via `setTimeout(_wire, 300)` when
+`document.readyState` isn't `'loading'` (linkedom's default
+`readyState` is `undefined`, not `'loading'`, confirmed by direct
+`node -e` check), the test temporarily stubs the global `setTimeout` to
+invoke its callback synchronously for the duration of the dynamic
+`import()`, avoiding a real 300ms wait. Dispatches a `click` Event on
+the rebuild button, flushes microtasks, dispatches `click` on the add
+button, flushes again, confirms both async calls were issued
+independently, resolves the newer (scan) call first and confirms
+`indexStatus.textContent` reflects it, then resolves the older
+(rebuild) call and confirms its stale count does NOT overwrite the
+live status. 3 assertions total.
+
+**Verification:** ran the test against the fix first — 3 of 3 passed.
+Backed up the fixed file via `cp` to
+`/tmp/markerProxySettings_fixed.js`, then temporarily reverted both
+`if (seq === _ocfIdxSeq) { ... }` guards back to their original
+unconditional bodies and re-ran: 2 of 3 passed, with exactly the
+predicted assertion failing (`the stale, superseded rebuild must not
+clobber the live status with an older count`) — confirming the bug
+reproduces precisely as expected once the guards are absent. Restored
+the exact fixed file via `cp` from the backup and re-ran: 3 of 3 passed
+again, confirming the restoration was exact (also cross-checked against
+the file-change notification shown after the restore, which echoed the
+identical guarded code). This file had zero pre-existing WIP — `git
+diff --stat` showed exactly "0 insertions(+), 0 deletions(-)" before
+this change (per the regenerated clean-file whitelist) — so the fix
+and test were staged as whole files with no `git add -p` hunk-splitting
+required; `git diff --stat` on the file after the fix showed a clean
+"19 insertions(+), 7 deletions(-)" matching only the intended change.
+Full `npm run test:js` regression is green across every suite (all
+listed pass counts, 0 failures anywhere in the run). `npm run
+test:node` also green, matching baseline (72 pass, 1 pre-existing
+skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-132 — its pre-existing
+WIP is too tightly interleaved (a fix-line hunk shares boundaries with
+an unrelated `_updateFixButton()` feature) to isolate safely; do not
+re-attempt until the developer's WIP in that file is committed or
+shrinks.
+
+Commits: `TBD`.

@@ -6939,3 +6939,39 @@ committed or shrinks; this supersedes the more optimistic "needs
 hunk-selective staging" note carried over from Iteration 130.
 
 Commits: `c31479c`.
+
+## Iteration 133 — Marker Proxy Settings: "Add OCF Folder" and "Rebuild Index" race on the same status DOM
+
+`markerProxySettings.js`'s `_wire()` sets up two independent click
+handlers — `addRootBtn` ("+ Add OCF Folder") and `rebuildIdxBtn` ("↻
+Rebuild Index") — that each `await` an async `window.PFX_OCF_INDEX`
+call (`scanNewRoot()` / `rebuildIndex()`) and then write the same
+`indexStatus.textContent` (both directly with their own `r.count`, and
+indirectly via the shared `_refreshRootsList()` helper). Neither
+handler had any guard against the other: only its own button is
+disabled during its own async call, so clicking one button then the
+other while the first is still pending let whichever call resolved
+*last* unconditionally overwrite the DOM with its own (possibly
+stale) count, even if the other click was the more recent, user-
+intended action. Fixed with a shared `_ocfIdxSeq` counter declared once
+inside `_wire()`: each handler captures `const seq = ++_ocfIdxSeq`
+before its `await` and checks `seq === _ocfIdxSeq` before writing
+`indexStatus`/calling `_refreshRootsList()` — a cross-handler guard
+(the counter is shared between two different functions), distinct from
+prior iterations' single-function `_seq` guards. New test
+`tests-js/markerProxySettingsOcfIndexStaleRace.test.mjs` (3 assertions,
+linkedom with a fake `window.PFX_OCF_INDEX` whose `scanNewRoot()`/
+`rebuildIndex()` stay pending until explicitly resolved, plus a fake
+`localStorage`) dispatches a "Rebuild Index" click, then an "Add OCF
+Folder" click while the rebuild is still pending, resolves the newer
+scan first, then the older rebuild, and confirms the older result never
+overwrites the newer one. Before/after verified by temporarily
+reverting both `seq === _ocfIdxSeq` guards: 2/3 passed with the exact
+predicted failure (stale rebuild clobbered the live scan count),
+restored fix re-passed 3/3. This file had zero pre-existing WIP
+(confirmed via the clean-file whitelist), so the fix was staged as a
+whole file with no hunk-splitting needed. Full regression matched
+baseline (`test:js` all green across every suite; `test:node` 72
+pass/1 skip/0 fail).
+
+Commits: `TBD`.
