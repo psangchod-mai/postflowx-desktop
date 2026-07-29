@@ -12750,3 +12750,89 @@ async-seek/render call sites outside the already-covered
 `nativeAVPlayer.js`, and `mpvPlayer.js`) before choosing its target.
 
 Commits: `5c4956e`.
+
+## Iteration 126 — VFX Pull OCF relink/rescan stale-race
+
+**Why this file:** `src/scripts/features/vfxPull/vfxPullPanel.js`
+drives the VFX Pull panel's OCF folder relink workflow — drag-drop a
+folder onto the panel, the Rescan button, and the folder-picker button
+(`_chooseAndRelinkOcf`) can each independently kick off a scan chain
+through `_scanOcfFolder(folder)`. This is the same "await an IPC
+round-trip, then unconditionally overwrite shared state" shape already
+fixed in `nativeAVPlayer.js`, `player.js`, `imf_player_engine.js`, and
+`mpvPlayer.js`'s `seekTime()` — a natural next backup candidate.
+
+**The bug:** `_scanOcfFolder(folder)` calls
+`await nativeProbeOcfFolder(folder)` (an IPC round-trip to the native
+companion) before writing `_state.ocfFiles`, `_ocfProbeCache.path`,
+`_ocfProbeCache.result`, and the status text — with no staleness
+check. Three independent call sites (the Rescan button handler,
+`_chooseAndRelinkOcf()`, and `_relinkOcfFromPath(folderPath)`) can each
+start their own chain. Rapid drag-drop of a new OCF folder, a
+double-clicked Rescan button, or an overlapping folder-picker
+invocation can start a second chain while the first one's probe is
+still in flight. If the earlier chain's probe resolves after the later
+one already settled (out-of-order IPC resolution), the stale chain
+overwrites the newer scan's OCF index and status text with old data —
+a real, user-visible "my folder change didn't stick" bug.
+
+**The fix:** Added a module-level `_ocfRelinkSeq` monotonic counter.
+`_scanOcfFolder()` captures `const seq = ++_ocfRelinkSeq` before its
+first `await`, and checks `seq !== _ocfRelinkSeq` immediately after
+each of its two `await` points (`nativeProbeOcfFolder()` and
+`_enrichOcfFromResolve()`), bailing out (returning `false`) without
+touching `_state.ocfFiles`/`_ocfProbeCache`/status if superseded.
+`_scanOcfFolder()` now returns `true`/`false` to indicate whether it
+completed or was superseded; its three call sites (Rescan handler,
+`_chooseAndRelinkOcf()`, `_relinkOcfFromPath()`) were updated to
+`if (!await _scanOcfFolder(...)) return;` so they skip the
+now-redundant `_matchOcfToCurrentEvents()` / artifact-rebuild /
+persist steps when superseded. Two other pre-existing call sites to
+`_scanOcfFolder()` (a smart-link/visual-relink flow and a
+project-reopen restore flow) were deliberately left unguarded — the
+correctness guarantee lives inside `_scanOcfFolder()` itself
+regardless of caller, so those sites merely skip a redundant-work
+optimization, not a correctness fix.
+
+**Test approach:** New linkedom test
+(`tests-js/vfxPullOcfRelinkStaleRace.test.mjs`) stubs `window`/
+`document` (linkedom), `localStorage`, and `chrome.runtime.sendMessage`,
+then imports `vfxPullPanel.js` and drives its exposed
+`window._pmRelinkOcfFromPath(folder)` entry point. It fakes
+`window.pfxPlatform.sendNativeCommand` with independently-resolvable
+deferred promises, relinks to `/A`, then relinks to `/B` while `/A`'s
+probe is still in flight, resolves `/B` first (2 files → status "2 OCF
+files indexed"), then resolves the stale `/A` probe late (1 file) and
+confirms the status still reads "2 OCF files indexed" and never
+regresses to "1 OCF files indexed".
+
+**Verification:** Backed up the fixed file, reverted the
+`_ocfRelinkSeq` counter and the seq-check/return-value plumbing in
+`_scanOcfFolder()` back to the original unguarded code via a Python
+script with `assert`-guarded exact-string matches, then ran the test
+against the reverted code: 2 of 5 assertions failed exactly as
+predicted (status overwritten back to the stale `/A` result instead of
+staying on the settled `/B` result). Restored the fixed file from the
+backup; `git diff --stat` showed exactly 16 insertions / 3 deletions
+matching the intended fix scope; re-ran the test — 5 of 5 passed.
+Because this file also carries substantial pre-existing uncommitted
+work-in-progress unrelated to this fix (spanning many other functions,
+not part of this iteration and not part of the standing do-not-touch
+list), the fix was isolated for commit by reconstructing a clean
+HEAD-plus-fix version of the file, confirming via `git diff` that it
+contained exactly the 5 intended hunks, staging only that, then
+restoring the full WIP content back into the working tree so it
+remains present but uncommitted, exactly as found. Full regression
+suite matched baseline: `test:js` — every file 0 failed except the
+expected `selfContained.test.mjs` untracked-new-test-file flag;
+`test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 313 passed,
+7 skipped, 2 failed, the same pre-existing, unrelated
+`bit_count()`/Python-3.9.6 failures in `conform_engine.py` documented
+in prior iterations.
+
+**Still open:** No further backup candidate was identified by this
+iteration's scout beyond the two informational (non-bug) unguarded
+`_scanOcfFolder()` call sites noted above. A future iteration should
+scout fresh before choosing its target.
+
+Commits: `TBD`.

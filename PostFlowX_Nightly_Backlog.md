@@ -6720,3 +6720,31 @@ Still open: no further backup candidate identified this iteration — a
 future iteration should scout fresh for the next stale-race target.
 
 Commits: `5c4956e`.
+
+## Iteration 126 — VFX Pull OCF relink/rescan stale-race
+
+`_scanOcfFolder()` in `src/scripts/features/vfxPull/vfxPullPanel.js`
+awaited an IPC probe with no staleness check, so an overlapping
+drag-drop/Rescan/folder-picker relink chain resolving out of order
+could overwrite a newer scan's OCF index and status with stale data.
+Added an `_ocfRelinkSeq` monotonic counter (same pattern as prior
+iterations), checked after each `await` inside `_scanOcfFolder()`;
+callers now skip redundant follow-up work when superseded. New test
+`tests-js/vfxPullOcfRelinkStaleRace.test.mjs` (5 assertions) drives two
+concurrent relinks via a mocked `sendNativeCommand` and confirms the
+stale one never wins. Before/after verified: reverted code failed 2/5
+as predicted, restored fix diffed to exactly 16 insertions / 3
+deletions, re-passed 5/5. The file also carries unrelated pre-existing
+uncommitted WIP (not part of this fix, not committed); the fix was
+isolated by reconstructing a clean HEAD-plus-fix copy for staging, then
+restoring the WIP into the working tree afterward. Full regression
+matched baseline (`test:js` all-green except expected
+self-containment-gate noise; `test:node` 72/0/1-skipped; `test:py`
+313/7-skipped/2-pre-existing-unrelated-failures).
+
+Still open: no further backup candidate identified this iteration
+beyond two informational (non-bug) unguarded `_scanOcfFolder()` call
+sites noted in the audit report — a future iteration should scout
+fresh for the next target.
+
+Commits: `TBD`.

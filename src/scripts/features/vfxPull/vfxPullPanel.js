@@ -211,6 +211,13 @@ let _settings = {
 // invalidated automatically when the folder path changes.
 const _ocfProbeCache = { path: null, result: null };
 
+// Monotonic token guarding the OCF scan/relink chain (drag-drop, Rescan, and
+// the folder-picker button can all kick off an overlapping chain). Bumped at
+// the start of every _scanOcfFolder() call; a chain whose token is no longer
+// current after an await bails out instead of overwriting a newer scan's
+// _state/_ocfProbeCache with stale data.
+let _ocfRelinkSeq = 0;
+
 // Read the current project's naming template chip values from localStorage.
 // These are injected into buildAllExrJobs so that plate names follow the
 // Netflix VFX plate naming spec: SHOW_EP_SCENE_SHOT_PLATEID_VERSION.
@@ -1857,7 +1864,7 @@ function _wireListeners() {
     if (!_state.ocfFolder) { _chooseAndRelinkOcf(); return; }
     _ocfProbeCache.result = null;
     try {
-      await _scanOcfFolder(_state.ocfFolder);
+      if (!await _scanOcfFolder(_state.ocfFolder)) return; // superseded by a newer relink
       await _matchOcfToCurrentEvents();
       await _rebuildVfxPullArtifactsFromMatches();
       _persistState();
@@ -2442,18 +2449,24 @@ async function _rebuildVfxPullArtifactsFromMatches() {
 // OCF relink workflow helpers
 // ---------------------------------------------------------------------------
 
+// Returns false (without touching _state/_ocfProbeCache) if a newer scan
+// started before this one's probe resolved.
 async function _scanOcfFolder(folder) {
   if (!folder) throw new Error('No OCF folder selected.');
+  const seq = ++_ocfRelinkSeq;
   _state.ocfFromLibrary = false;   // a real folder scan carries authoritative timecode
   _setStatus('Scanning OCF folder…');
   const probeResult   = await nativeProbeOcfFolder(folder);
+  if (seq !== _ocfRelinkSeq) return false; // superseded by a newer scan
   _state.ocfFiles     = _extractOcfFiles(probeResult);
   _ocfProbeCache.path   = folder;
   _ocfProbeCache.result = probeResult;
   await _enrichOcfFromResolve();
+  if (seq !== _ocfRelinkSeq) return false; // superseded while enriching
   _setStatus(_state.ocfFiles.length
     ? `${_state.ocfFiles.length} OCF files indexed`
     : 'No OCF files found');
+  return true;
 }
 
 // Gap 2: for camera RAW whose container timecode/reel ffprobe couldn't read,
@@ -2540,7 +2553,7 @@ async function _chooseAndRelinkOcf() {
   if (!folder) return;
   _state.ocfFolder = folder;
   try {
-    await _scanOcfFolder(folder);
+    if (!await _scanOcfFolder(folder)) return; // superseded by a newer relink
     await _matchOcfToCurrentEvents();
     await _rebuildVfxPullArtifactsFromMatches();
     _persistState();
@@ -2610,7 +2623,7 @@ async function _relinkOcfFromPath(folderPath) {
   if (!folderPath) return _chooseAndRelinkOcf();
   _state.ocfFolder = folderPath;
   try {
-    await _scanOcfFolder(folderPath);
+    if (!await _scanOcfFolder(folderPath)) return; // superseded by a newer relink
     await _matchOcfToCurrentEvents();
     await _rebuildVfxPullArtifactsFromMatches();
     _persistState();
