@@ -12,7 +12,6 @@
   "src/scripts/features/trlconf/index.js -> src/scripts/modules/conform/shotDetect.js",
   "src/scripts/features/vfxPull/vfxPullPanel.js -> src/scripts/features/vfxPull/dbLibrarySource.js",
   "src/scripts/features/vfxPull/vfxPullPanel.js -> src/scripts/features/vfxPull/idtBadge.js",
-  "src/scripts/modules/imf/imf_player.js -> src/scripts/modules/imf/imf_gl_present.js",
   "src/scripts/prep_mark.js -> src/scripts/features/vfxPull/backendStatusBadge.js",
   "src/scripts/prep_mark.js -> src/scripts/modules/conform/pictureMatcher.js"
 ]
