@@ -5539,4 +5539,4 @@ pattern); confirmed the 3 fractional-rate cases fail pre-fix and pass
 post-fix via a stash/pop round-trip. Full suite: 281 passed/7 skipped
 (same 2 pre-existing Iteration-76 failures, unrelated).
 
-Commits: `TBD`.
+Commits: `8378d50`.

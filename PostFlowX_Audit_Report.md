@@ -8705,4 +8705,4 @@ companion codebase were not exhaustively re-audited this iteration;
 `_tc_source`/`_fps_info` in `ocf_probe.py` itself were read and are
 unaffected by this fix.
 
-Commits: `TBD`.
+Commits: `8378d50`.
