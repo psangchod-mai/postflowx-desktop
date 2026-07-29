@@ -128,6 +128,14 @@ function _setStatusText(el, text) {
 
 // ── Decode Test Frame ─────────────────────────────────────────────────────────
 
+// Decode Test Frame, IMF Decode Test and Generate Test Proxy all write their
+// outcome into the same smartEngineDecodeResult/Label/Img elements. Each is
+// its own async round trip kicked off by its own button, so clicking a second
+// one before the first's file/folder picker + backend call resolves is not
+// prevented — without a guard, whichever call's await resolves last wins the
+// shared panel even if it started first and is now stale.
+let _decodeResultSeq = 0;
+
 async function decodeTestFrame() {
   const btn = _q('smartEngineDecodeTestBtn');
   if (!_isElectron()) {
@@ -135,6 +143,7 @@ async function decodeTestFrame() {
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Picking…'; }
+  const seq = ++_decodeResultSeq;
 
   try {
     const filePath = await window.pfxPlatform.pickFile({
@@ -152,6 +161,8 @@ async function decodeTestFrame() {
     } else {
       throw new Error('pfxPlatform.smartMedia unavailable');
     }
+
+    if (seq !== _decodeResultSeq) return; // superseded by a newer decode/proxy/IMF call
 
     const resultEl = _q('smartEngineDecodeResult');
     const labelEl  = _q('smartEngineDecodeLabel');
@@ -173,6 +184,7 @@ async function decodeTestFrame() {
       resultEl.style.display = '';
     }
   } catch (err) {
+    if (seq !== _decodeResultSeq) return;
     const labelEl = _q('smartEngineDecodeLabel');
     _setStatusText(labelEl, friendlyStatus(`${translate('Decode test failed')}: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
@@ -191,6 +203,7 @@ async function imfDecodeTest() {
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Picking IMF…'; }
+  const seq = ++_decodeResultSeq;
 
   try {
     const folderPath = await window.pfxPlatform.pickFolder({ title: 'Select IMF Package Folder' });
@@ -216,6 +229,8 @@ async function imfDecodeTest() {
     if (btn) btn.textContent = 'Decoding…';
     const decodeResult = await api.imfDecodeTestFrame({ cplPath, assetMapPaths: assetMaps, frameNumber: 0 });
 
+    if (seq !== _decodeResultSeq) return; // superseded by a newer decode/proxy/IMF call
+
     const resultEl = _q('smartEngineDecodeResult');
     const labelEl  = _q('smartEngineDecodeLabel');
     const imgEl    = _q('smartEngineDecodeImg');
@@ -232,6 +247,7 @@ async function imfDecodeTest() {
       resultEl.style.display = '';
     }
   } catch (err) {
+    if (seq !== _decodeResultSeq) return;
     const labelEl = _q('smartEngineDecodeLabel');
     _setStatusText(labelEl, friendlyStatus(`${translate('IMF decode test failed')}: ${err.message}`));
     const resultEl = _q('smartEngineDecodeResult');
@@ -250,6 +266,7 @@ async function generateTestProxy() {
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Picking…'; }
+  const seq = ++_decodeResultSeq;
 
   try {
     const filePath = await window.pfxPlatform.pickFile({
@@ -273,6 +290,8 @@ async function generateTestProxy() {
       codec: 'h264',
       scale: 1920,
     });
+
+    if (seq !== _decodeResultSeq) return; // superseded by a newer decode/proxy/IMF call
 
     const labelEl = _q('smartEngineDecodeLabel');
     const resultEl = _q('smartEngineDecodeResult');

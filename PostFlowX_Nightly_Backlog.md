@@ -7048,3 +7048,43 @@ regression matched baseline (`test:js` all green across every suite;
 `test:node` 72 pass/1 skip/0 fail).
 
 Commits: `be90f55`.
+
+## Iteration 136 — Smart Engine Settings: Decode Test Frame / IMF Decode Test / Generate Test Proxy race on the shared decode-result panel
+
+`decodeTestFrame()`, `imfDecodeTest()`, and `generateTestProxy()` in
+`src/scripts/modules/smart_engine_settings.js` each have their own
+button and their own async round trip (file/folder picker, then a
+backend call), but all three write their outcome into the same
+`smartEngineDecodeResult`/`Label`/`Img` elements with no coordination —
+the same shape that has already produced real bugs in
+`ocfSettings.js`, `markerProxySettings.js`, `proResProxy.js`, and
+`smartRun.js`. This file's own `checkEngines()` function already
+guards its own shared target (`smartEngineStatusList`) with a
+`_checkEnginesSeq` counter, proving the convention was established in
+this file but never extended to the three decode-panel functions.
+Clicking Decode Test Frame, then clicking IMF Decode Test before the
+first call's backend round trip resolved, let whichever call's `await`
+resolved last win the shared panel even if it started first and its
+answer is now stale — e.g. clobbering a just-finished IMF decode result
+with a slow, superseded Decode Test Frame result. Fixed with a
+`_decodeResultSeq` counter shared across all three functions: each
+captures `const seq = ++_decodeResultSeq` on entry and guards every
+write to the shared elements (both the success path and the `catch`
+block, except `generateTestProxy()`'s catch, which only shows a modal
+via `friendlyAlert` and never touches the shared panel). New test
+`tests-js/smartEngineSettingsDecodeResultStaleRace.test.mjs` (4
+assertions, linkedom) drives an older Decode Test Frame call onto a
+test-controlled pending `decodeFrame()` promise, starts a newer IMF
+Decode Test call that resolves immediately, then resolves the older
+call's stale result late and confirms it does not clobber the panel.
+Before/after verified by stripping the three guard lines: 2 of 4 failed
+with exactly the predicted assertions, restored fix re-passed 4/4,
+confirmed via `git diff --stat` showing the restored file matches the
+original 19-line diff exactly. This file had zero pre-existing WIP
+(confirmed via the clean-file whitelist), so the fix was staged as a
+whole file with no hunk-splitting needed. Full regression matched
+baseline (`test:js` all green across every suite including the
+`selfContained.test.mjs` git-tracking gate once the new test file was
+staged; `test:node` 72 pass/1 skip/0 fail).
+
+Commits: `TBD`.

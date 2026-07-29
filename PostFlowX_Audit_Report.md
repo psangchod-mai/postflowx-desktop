@@ -13633,3 +13633,86 @@ re-attempt until the developer's WIP in that file is committed or
 shrinks.
 
 Commits: `be90f55`.
+
+## Iteration 136 — Smart Engine Settings: Decode Test Frame / IMF Decode Test / Generate Test Proxy race on the shared decode-result panel
+
+**Why this file:** `src/scripts/modules/smart_engine_settings.js` was
+on the clean-file whitelist (no pre-existing uncommitted diff). It
+contains four independent async operations — `checkEngines()`,
+`decodeTestFrame()`, `imfDecodeTest()`, and `generateTestProxy()` —
+each kicked off by its own button. `checkEngines()` already carries a
+`_checkEnginesSeq` guard on its own shared target
+(`smartEngineStatusList`), which was the decisive signal: the
+stale-race convention was established in this very file but never
+extended to the other three functions, which all write into a
+different shared target (`smartEngineDecodeResult`/`Label`/`Img`).
+That asymmetry — not a scouting agent's say-so — is what made this
+worth independently verifying and fixing.
+
+**The bug:** `decodeTestFrame()` picks a file, then awaits
+`api.decodeFrame(...)`; `imfDecodeTest()` picks a folder, then awaits
+`api.imfOpen(...)` and `api.imfDecodeTestFrame(...)`;
+`generateTestProxy()` picks a file, then awaits
+`api.transcodeProxy(...)`. All three, on success, write their result
+into the same `smartEngineDecodeResult`/`Label`/`Img` elements with no
+coordination between them. Nothing stopped a user from clicking Decode
+Test Frame, then clicking IMF Decode Test before the first call's
+backend round trip resolved. Whichever call's `await` resolved *last*
+won the shared panel, even if it started first and its answer is now
+stale — e.g. a fast IMF decode result gets silently clobbered moments
+later by a slow, now-superseded Decode Test Frame result finally
+resolving, showing the user a decode outcome that doesn't match what
+they just asked for.
+
+**The fix:** added `let _decodeResultSeq = 0;` above `decodeTestFrame()`,
+shared across all three functions since they all write the same
+target. Each function now captures `const seq = ++_decodeResultSeq;`
+immediately after its own picker resolves (right where it flips its
+own button to a busy state), and guards every write to the shared
+elements with `if (seq !== _decodeResultSeq) return;` — placed
+immediately after each function's backend-call `await` resolves, and
+again as the first line of each function's `catch` block. The one
+exception is `generateTestProxy()`'s `catch`, which only shows a modal
+via `friendlyAlert` and never touches the shared panel, so no guard was
+needed there.
+
+**Test:** `tests-js/smartEngineSettingsDecodeResultStaleRace.test.mjs`
+(linkedom, since the module touches `document`/`window` at load time).
+Mocks `window.pfxPlatform.smartMedia.decodeFrame` to return a promise
+that only resolves when the test explicitly triggers it (identical in
+spirit to Iterations 134/135's `pendingPing`/`pendingGetAll` pattern),
+while `imfDecodeTestFrame` resolves immediately. Clicks Decode Test
+Frame (suspends on the pending `decodeFrame()`), then clicks IMF
+Decode Test (resolves immediately and writes "IMF · Engine:
+imf-engine" to the panel), then resolves the older call's stale
+"stale-engine" result and confirms the panel still shows the IMF
+result and never displays the word "stale-engine" anywhere. 4
+assertions total.
+
+**Verification:** ran the test against the fix first — 4 of 4 passed.
+Backed up the fixed file via `cp` to `/tmp/smart_engine_settings.js.bak`,
+then temporarily stripped the three success-path
+`if (seq !== _decodeResultSeq) return;` guards, and re-ran: 2 of 4
+passed, with exactly the predicted assertions failing ("the stale,
+superseded older decode result must not clobber the shared panel" and
+"the stale decode result text must not appear in the panel at all") —
+confirming the bug reproduces precisely as expected once the guards
+are absent. Restored the exact fixed file via `cp` from the backup and
+re-ran: 4 of 4 passed again; `git diff --stat` on the file after
+restoring showed "19 insertions(+)", matching the pre-strip diff
+exactly. This file had zero pre-existing WIP (per the clean-file
+whitelist), so the fix was staged as a whole file with no `git add -p`
+hunk-splitting required. Full `npm run test:js` regression is green
+across every suite (0 failures anywhere in the run, including the
+`selfContained.test.mjs` git-tracking gate once the new test file was
+staged). `npm run test:node` also green, matching baseline (72 pass, 1
+pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-135 — its pre-existing
+WIP is too tightly interleaved (a fix-line hunk shares boundaries with
+an unrelated `_updateFixButton()` feature) to isolate safely; do not
+re-attempt until the developer's WIP in that file is committed or
+shrinks.
+
+Commits: `TBD`.
