@@ -4956,4 +4956,41 @@ importing it). Removed those 2 lines; reran gate clean.
 
 **Still open.** None.
 
+## Iteration 63 — GPU SDR-passthrough shader clips negative signed samples instead of wrapping them
+
+**Found.** `src/scripts/modules/imf/imf_gl_present.js`'s WebGL2
+SDR-passthrough branch (`u_colorMode == 0`) ports the CPU reference's
+`px(v) = (v >> shift) & 0xff` from `imf_render_worker.js` into GLSL as
+`clamp(floor(s / u_sdrDiv), 0.0, 255.0)`. `floor()` correctly replicates
+the `>>` shift, but `clamp()` clips out-of-range values instead of wrapping
+them the way `& 0xff` does — so any negative signed sample (e.g. a 12-bit
+signed IMF source) gets clipped to black instead of the correct low-byte
+value. Concrete failure: 12-bit signed `v = -100` — CPU gives 249, GPU gave
+0.
+
+**Done.** Replaced `clamp(...,0.0,255.0)` with `mod(...,256.0)`. GLSL's
+`mod` is floor-based, so it reproduces two's-complement truncation for any
+sign and is a no-op for the already-valid unsigned case.
+
+**Tests.** New `tests-js/imfGlPresentSdrPassthrough.test.mjs` — no WebGL
+harness exists in this repo, so the test extracts the real shipped GLSL
+expression via regex and evaluates it numerically in JS with a small
+GLSL-to-JS arithmetic translator, then compares against the CPU reference
+for 8-bit/16-bit unsigned and 12-bit/16-bit negative-signed cases.
+
+**Verification.** File is untracked — used plain file-copy backup/restore
+for mutation testing. Reverting `mod` back to the buggy `clamp`: 2 passed /
+2 failed (both negative-signed cases). With the fix: 4 passed / 0 failed.
+
+**Gate.** `npm run build-verify` failed twice first: once because the new
+test file wasn't staged ("no new test file is left out of git" check), and
+once because tracking `imf_gl_present.js` retired a stale
+`untracked-imports.json` entry (`imf_player.js -> imf_gl_present.js`).
+Fixed both; reran gate clean (Python suite 261 passed / 7 skipped,
+XSS/XXE/fail-open gates clean).
+
+**Still open.** None.
+
+Commits: `50e0be7`.
+
 Commits: `7be729e`.

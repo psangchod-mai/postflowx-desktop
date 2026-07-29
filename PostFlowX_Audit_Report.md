@@ -6973,3 +6973,112 @@ gates clean).
 **Still open.** None for this fix.
 
 Commits: `7be729e`.
+
+## Iteration 63 — GPU SDR-passthrough shader clips negative signed samples instead of wrapping them — new species
+
+**Why this file.** `src/scripts/modules/imf/imf_gl_present.js` implements
+"Path B" of the IMF viewer's frame present pipeline — a WebGL2 fragment
+shader that ports the CPU reference color pipeline in
+`imf_render_worker.js` to the GPU for faster playback. Confirmed
+**untracked** (`git status --porcelain` showed `??`, no `HEAD` entry to diff
+against).
+
+**The bug.** The CPU reference's SDR-passthrough path (`px()`,
+`imf_render_worker.js:237-242`) is:
+```js
+const shift = bitsPerSample > 8 ? Math.max(0, bitsPerSample - 8) : 0;
+const px = (v) => {
+  const n = bitsPerSample > 8 ? (v >> shift) : v;
+  return Math.max(0, Math.min(255, n & 0xff));
+};
+```
+`n & 0xff` performs two's-complement modulo-256 wraparound — it is defined
+for negative `n` (JS's `>>` and `&` operate on 32-bit two's-complement
+integers, so this correctly extracts the low byte regardless of sign). The
+GPU port (`u_colorMode == 0` branch) re-implemented this in GLSL floating-
+point arithmetic as:
+```glsl
+vec3 c = clamp(floor(s / u_sdrDiv), 0.0, 255.0) / 255.0;
+```
+`floor(s / u_sdrDiv)` correctly replicates `v >> shift` (both are
+sign-preserving floor-division by a power of two), but `clamp(...,
+0.0, 255.0)` does **not** replicate `& 0xff`: clamp *clips* out-of-range
+values to the nearest bound, while `& 0xff` *wraps* them modulo 256. For
+any negative shifted sample, `clamp` collapses it to 0 instead of wrapping
+it into the correct low byte.
+
+This is reachable in practice: `_colorMode(colorInfo)`
+(`imf_gl_present.js:99-105`) selects mode 0 purely from
+`!_isPQTransfer(colorInfo.transfer)`, independent of whether the source
+samples are signed. A 12-bit signed (`i16`/`isampler2D`) IMF source with
+`transfer` not PQ reaches mode 0 with genuinely negative sample values.
+Concrete failure: 12-bit signed sample `v = -100` — CPU `px(-100)` = 249
+(correct low-byte wraparound); GPU `clamp(floor(-100/16), 0, 255) =
+clamp(-7, 0, 255) = 0` (wrong — clipped to black instead of the correct
+byte value).
+
+**Why this is a genuine correctness bug, and a new species.** None of
+Iterations 48-62 involve integer bit-pattern/two's-complement semantics
+being lost when a CPU integer routine is re-implemented in floating-point
+GPU shader math. The closest prior bugs — 53 (fps-fractional-as-frame-base)
+and 59 (wrong branch-dependent formula selection) — are arithmetic-formula
+bugs, not a representation-semantics mismatch between an integer bitwise
+operation and its floating-point shader analog. This is a
+CPU-integer-op-ported-to-float-shader-op species: clamp used where wrapping
+(mod) was required.
+
+**The fix.** Replaced `clamp(...,0.0,255.0)` with `mod(...,256.0)`. GLSL's
+`mod(x,y)` is floor-based (`mod(x,y) = x - y*floor(x/y)`), which reproduces
+two's-complement truncation (`& 0xff`) for any integer, positive or
+negative, and is a no-op for the already-valid unsigned case (no regression
+risk):
+```glsl
+if (u_colorMode == 0) {
+  // SDR passthrough — matches px(): (v >> (bits-8)) & 0xff, then /255.
+  // clamp() would clip negative signed samples to 0 instead of wrapping
+  // them into the low byte the way & 0xff does, so use mod() (GLSL's
+  // mod is floor-based, so it matches two's-complement truncation for
+  // any integer, positive or negative).
+  vec3 c = mod(floor(s / u_sdrDiv), 256.0) / 255.0;
+  fragColor = vec4(c, 1.0);
+  return;
+}
+```
+
+**Test approach.** This repo has no WebGL/`headless-gl` test harness, so
+following the established source-string-content test pattern (as in
+`authConfigInherit.test.mjs`, `domContract.test.mjs`, etc.), the new
+`tests-js/imfGlPresentSdrPassthrough.test.mjs` extracts the actual shipped
+GLSL expression from the fragment shader source string via regex, then
+evaluates it numerically in JS using a tiny GLSL-arithmetic-to-JS
+translator (`floor`, `clamp`, `mod` — with `glslMod` implementing GLSL's
+floor-based `mod`), and compares the result against the CPU reference
+(`px()`, reimplemented directly with `>>`/`&`) for representative inputs:
+8-bit unsigned, 16-bit unsigned byte-aligned, and two negative signed cases
+(12-bit and 16-bit). Because the test parses the real shipped GLSL string
+rather than a hand-duplicated formula, it can't drift from what actually
+ships.
+
+**Verification (mutation testing).** File is untracked, so used the plain
+file-copy backup/restore technique (git stash pathspec doesn't apply to
+untracked files): backed up the fixed file, scripted-reverted the `mod`
+line back to the buggy `clamp` line in place, ran the test — 2 passed / 2
+failed (exactly the two negative-signed-sample cases, `got 0` instead of
+249/138), exit code 1. Restored the fix, reran — 4 passed / 0 failed.
+
+**Gate.** `npm run build-verify` failed twice before passing clean:
+1. `tests-js/selfContained.test.mjs`'s "no new test file is left out of
+   git" check — the new test file was untracked/unstaged. Fixed by staging
+   both the source and test file by explicit name.
+2. `tests-js/selfContained.test.mjs`'s baseline-shrink check — tracking
+   `imf_gl_present.js` for the first time retired 1 stale
+   `tests-js/fixtures/untracked-imports.json` entry
+   (`imf_player.js -> imf_gl_present.js`). Removed exactly that line
+   (diffed against `HEAD` to confirm nothing else changed).
+
+Reran: clean pass (Python suite 261 passed / 7 skipped, XSS/XXE/fail-open
+gates clean).
+
+**Still open.** None for this fix.
+
+Commits: `50e0be7`.
