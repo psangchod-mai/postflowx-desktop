@@ -8393,3 +8393,87 @@ doesn't have would be worse than using a lightweight placeholder
 descriptor that NLEs can still relink by reel/timecode/path.
 
 Commits: `0f67670`.
+
+## Iteration 77 — `check_all()`'s Photon detection silently reported an installed, on-PATH Photon binary as "not found"
+
+**Why this file.** `check_all()` in
+`companion/src/postflowx_companion/media_engine/engine_status.py`
+populates the Engine Status panel shown in the app UI (via
+`engine_status_for_ui()` → `/api/media/status`), reporting whether
+optional/required media tools (ffmpeg, mpv, Grok, Photon, Resolve, etc.)
+are installed and runnable.
+
+**The bug.** The Photon lookup was meant to be a 3-way fallback chain —
+check `PATH` for `photon`, then `pfx-photon`, then a hardcoded
+`~/bin/photon` — written as:
+
+```python
+photon_bin = (shutil.which("photon") or
+              shutil.which("pfx-photon") or
+              str(Path.home() / "bin" / "photon") if (Path.home() / "bin" / "photon").exists() else None)
+```
+
+Python's conditional expression (`X if C else Y`) binds *looser* than
+`or`, so this doesn't parse as `A or B or (C if exists else None)` — it
+parses as `(A or B or C) if exists else None`. The `~/bin/photon`
+`.exists()` check therefore gates the *entire* expression, including the
+two `shutil.which()` calls that have nothing to do with that path.
+
+**Concrete failure example.** A user with Photon installed via Homebrew
+(so `shutil.which("photon")` returns e.g. `/usr/local/bin/photon`, the
+normal, documented install path) but with no file at `~/bin/photon` (the
+common case — `~/bin/photon` is a last-resort fallback location, not
+where anyone is expected to put it) gets `photon_bin = None`, and the
+Engine Status panel wrongly shows "Photon (IMF reference validator):
+Not found (optional)" even though Photon is fully installed and
+runnable.
+
+**Why genuine and new.** Confirmed via `ast.parse` that the expression's
+actual parse tree is `IfExp(test=.exists(), body=Or[...], orelse=None)`,
+and reproduced live with `shutil.which` mocked to return a path for
+`"photon"` while `~/bin/photon` doesn't exist — `photon_bin` came back
+`None`. Every other tool-detection block in this same file (ffmpeg, mpv,
+ojph via `_which_first`; Grok via a flat `or` chain) uses a correctly
+short-circuiting `or` chain with no such precedence trap, confirming
+this was a one-off authoring slip in the Photon block specifically, not
+an intentional gate.
+
+**The fix.** Parenthesized the fallback so the existence check only
+gates its own literal branch:
+
+```python
+home_photon = Path.home() / "bin" / "photon"
+photon_bin = (
+    shutil.which("photon")
+    or shutil.which("pfx-photon")
+    or (str(home_photon) if home_photon.exists() else None)
+)
+```
+
+**Test approach.** New file `companion/tests/test_engine_status_photon.py`
+with two cases: (1) `shutil.which` mocked to resolve `"photon"` to a
+fake path while `Path.home()` points at a tmp dir with no `bin/photon`
+— asserts `results["Photon"]["available"] is True` and the path matches
+the mocked `which` result; (2) `shutil.which` mocked to return nothing
+for anything, `Path.home()` pointed at a tmp dir where `bin/photon` does
+exist — asserts the legitimate fallback still resolves. Confirmed case
+(1) fails against the pre-fix code (`assert False is True`) via a
+`git stash`/re-run/`git stash pop` round-trip, and both pass post-fix.
+
+**Verification.** `python3 -m pytest tests/test_engine_status_photon.py -v`
+— 2/2 pass. Full companion suite: `python3 -m pytest -q` — 276 passed, 7
+skipped, and the same 2 pre-existing `test_conform_engine.py` failures
+noted in Iteration 76 (`int.bit_count()` requires Python 3.10+; this
+environment runs 3.9.6) — unrelated, untouched, out of scope.
+
+**Gate.** Full companion pytest suite — passes except the 2 pre-existing,
+unrelated Python-version failures already documented in Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (flagged in Iteration 76, still out
+of scope — it's an environment/version issue, not a logic bug). The
+scouting agent found no other `aaf2`-touching call sites with the same
+wrong-property/wrong-class pattern as Iteration 76; this iteration's bug
+is unrelated to AAF, found via a broader sweep of `media_engine/`.
+
+Commits: `TBD`.

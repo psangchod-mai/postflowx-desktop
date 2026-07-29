@@ -203,9 +203,12 @@ def check_all() -> dict:
     }
 
     # Photon
-    photon_bin = (shutil.which("photon") or
-                  shutil.which("pfx-photon") or
-                  str(Path.home() / "bin" / "photon") if (Path.home() / "bin" / "photon").exists() else None)
+    home_photon = Path.home() / "bin" / "photon"
+    photon_bin = (
+        shutil.which("photon")
+        or shutil.which("pfx-photon")
+        or (str(home_photon) if home_photon.exists() else None)
+    )
     results["Photon"] = {
         "name": "Photon",
         "label": "Photon (IMF reference validator)",

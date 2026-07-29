@@ -5471,3 +5471,20 @@ available and NLE relink behavior needs it — not fixed now since
 inventing fake dimensions would be worse than a lightweight placeholder.
 
 Commits: `0f67670`.
+
+## Iteration 77 — Photon detection reported "not found" for an on-PATH binary
+
+`engine_status.py`'s Photon lookup was written as
+`shutil.which("photon") or shutil.which("pfx-photon") or str(p) if p.exists() else None`.
+Python's `if/else` binds looser than `or`, so this parses as
+`(A or B or C) if p.exists() else None` — the `~/bin/photon` existence
+check gated the whole chain, so a Photon binary properly installed on
+`PATH` was reported missing whenever `~/bin/photon` didn't exist.
+Fixed by parenthesizing the fallback:
+`shutil.which("photon") or shutil.which("pfx-photon") or (str(p) if p.exists() else None)`.
+Added `test_engine_status_photon.py` (2 tests: PATH-only, home-bin-only);
+confirmed the PATH-only case fails pre-fix via a stash/pop round-trip.
+Full suite: 276 passed, 7 skipped, same 2 pre-existing Python-3.9
+`bit_count()` failures from Iteration 76 (unrelated, out of scope).
+
+Commits: `TBD`.
