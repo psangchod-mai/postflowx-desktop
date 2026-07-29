@@ -7081,4 +7081,132 @@ gates clean).
 
 **Still open.** None for this fix.
 
+## Iteration 64 — XMEML normalize step silently deleted legitimate frame-0 clips — new species
+
+**Why this file.** `src/scripts/parsers/xml.js` (the XMEML/FCP7 parser) surfaced
+from a scouting pass over the parser layer. Unlike Iterations 61-63's
+targets, it was already tracked and clean before this iteration
+(`git status --porcelain` and `git diff --stat` both empty for it), so this
+is the first of the last four iterations where the fix did not touch a
+brand-new file.
+
+**The bug.** After building `events` from the XML, `parseXMEML()` runs a
+post-parse "normalize" pass (comment, in Thai, translates to "trim events
+where srcIn == 00:00:00:00 if the same srcFile has both 00:00:00:00 and a
+non-zero value"). It grouped events by `srcFile`/`reel`/`clipName`, and if a
+group contained ANY event with a non-zero `srcIn`, it dropped every event in
+that group whose `srcIn` was literally `"00:00:00:00"` — treating a zero
+in-point as a placeholder/stub left behind by some other bug, rather than
+what it actually is: a completely ordinary edit that happens to cut in from
+the very first frame of its source media.
+
+Concrete failure: two clips on the timeline both reference the same camera
+master `A001C001.mov` (a common real-world pattern — reusing one take across
+multiple cuts). The first clip cuts in from frame 0 of the media
+(`srcIn = "00:00:00:00"`); the second cuts in later
+(`srcIn = "00:00:09:15"`). Because the second clip's non-zero `srcIn` shares
+the group key with the first, the normalize step silently deleted the
+first clip from the parser's output entirely — no error, no warning, and
+since `id` is re-assigned after this step, not even detectable as a gap in
+the numbering.
+
+**Why this is a genuine, new species.** Traced history with
+`git log -p --follow -- src/scripts/parsers/xml.js | grep <the Thai comment
+text>` — the block predates every diff-visible commit, meaning it has been
+present since the very first commit in the repo's history with no
+recoverable rationale for why a zero srcIn was ever treated as suspect. No
+test in `test/parsers/xml.test.mjs` covered this path before this fix. It
+is structurally distinct from every one of species 48-63: not a
+rounding/rate bug (48-50, 53), not drop-frame misclassification (51), not a
+windowed-scan tracking bug (52), not an identity-collision or race (54, 55,
+62), not a normalization/match-key gap of the kind fixed in 56 (that one was
+about failing to normalize equivalent keys; this one over-normalizes,
+conflating two semantically different values — a real zero and an assumed
+stub — that happen to share a string representation), not an early-return
+(57), not partial-propagation (58), not wrong-branch-selection (59), not a
+substring/URL-equality issue (60), not an array short-circuit (61), not a
+CPU-vs-shader representation mismatch (63). The failure mode here is a
+dedup/normalize heuristic that conflates a legitimate zero-value field with
+a placeholder sentinel, silently discarding a real, distinct timeline event
+purely because an unrelated sibling event in the same grouping key has a
+non-zero value in that field.
+
+**The fix.** A scouting pass had proposed either adding a positive
+"resolver-fallback" flag to mark genuinely-unresolved rows (would require
+new plumbing through the whole parse path with no existing signal to hang
+it on) or removing the dedup step outright (would also drop whatever
+legitimate duplicate-artifact protection it may have offered). Chose a
+third, more conservative fix: restrict the drop to true literal duplicates
+— an event is only dropped for having `srcIn === "00:00:00:00"` if another
+event in the exact same group also matches its `recIn`, `recOut`, and
+`srcOut`. That is the only condition under which two rows in the same group
+could actually be redundant parses of the same edit; a zero srcIn is never
+by itself evidence of anything.
+
+```js
+// normalize: drop literal duplicate rows within the same source — same
+// record range AND same source out, differing only by a stray zero srcIn.
+// srcIn == "00:00:00:00" is NOT itself a signal of a bogus/unresolved row:
+// it is a perfectly ordinary in-point for a clip cut in from the first
+// frame of its media, so it must never be dropped just for being zero.
+const ZERO_TC = "00:00:00:00";
+const bySrc = new Map();
+
+for (const ev of events) {
+  const key = ev.srcFile || ev.reel || ev.clipName || "";
+  if (!bySrc.has(key)) bySrc.set(key, []);
+  bySrc.get(key).push(ev);
+}
+
+const normalizedEvents = [];
+for (const [, group] of bySrc.entries()) {
+  for (const ev of group) {
+    const isDuplicateStub = ev.srcIn === ZERO_TC && group.some(other =>
+      other !== ev && other.srcIn !== ZERO_TC &&
+      other.recIn === ev.recIn && other.recOut === ev.recOut && other.srcOut === ev.srcOut
+    );
+    if (!isDuplicateStub) normalizedEvents.push(ev);
+  }
+}
+```
+
+Confirmed by reading the surrounding code (lines ~1248-1293) that
+`normalizedEvents` is subsequently sorted, re-indexed, and returned directly
+as `result.events` — nothing else consumes the pre-normalize `events`
+array, so this in-place block replacement is complete and safe.
+
+**Test approach.** The existing `xmeml_basic.xml` fixture could not
+reproduce the bug: its two clips reference different `srcFile` names, and
+its file-level `<timecode><frame>90000</frame>` means `srcIn` is never
+literally `"00:00:00:00"` even for a clip with `<in>0</in>` (the computed
+`srcInTC` folds in the file-level timecode start). So, following the
+precedent of the "every broadcast rate splits into a whole base and an
+exact rate" test (which also builds XML programmatically), added a new test
+to `test/parsers/xml.test.mjs` with an inline XML string using
+`<timecode><frame>0</frame>` at the file level and two clips sharing one
+`srcFile`, one with `<in>0</in>` and one with `<in>240</in>`, and asserted
+both clips survive with the correct `srcIn` values.
+
+**Verification (mutation testing).** File was tracked-and-clean before this
+edit; used the plain file-copy backup/restore technique (kept for
+consistency with prior iterations, though `git stash` on this pathspec
+would also have worked since nothing was untracked here). Reverted the fix
+back to the original grouped-drop logic via a guarded string replacement:
+new test failed as expected (`AssertionError: both clips survive (was 1:
+the frame-0 clip vanished)`, `1 !== 2`). Restored the fix: full suite green,
+6/6 in `test/parsers/xml.test.mjs`.
+
+**Gate.** `npm run build-verify` passed clean (exit 0) on the first
+attempt — no `untracked-imports.json` baseline issue this time, because
+both `src/scripts/parsers/xml.js` and `test/parsers/xml.test.mjs` were
+already tracked files before this iteration began, unlike Iterations
+61-63's untracked targets. Grepped the full log for failure markers
+(`FAIL -|Error:|not ok|AssertionError|Cannot find module|SyntaxError|TypeError`)
+and confirmed the few hits were false positives inside passing tests'
+names/messages, not genuine failures.
+
+**Still open.** None for this fix.
+
+Commits: `325445a`.
+
 Commits: `50e0be7`.

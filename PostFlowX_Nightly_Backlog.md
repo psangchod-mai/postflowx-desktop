@@ -4993,4 +4993,40 @@ XSS/XXE/fail-open gates clean).
 
 Commits: `50e0be7`.
 
+## Iteration 64 — XMEML normalize step silently deleted legitimate frame-0 clips
+
+**Found.** `src/scripts/parsers/xml.js`'s post-parse "normalize" step
+dropped any event whose `srcIn` was literally `"00:00:00:00"` as soon as
+its source group (by `srcFile`/`reel`/`clipName`) contained another event
+with a non-zero `srcIn` — treating a genuine zero in-point as a stub
+sentinel. Two clips reusing the same camera master (one cut in from frame
+0, one cut in later) silently lost the frame-0 clip from the parser's
+output, with no error and no detectable gap (IDs are reassigned after
+normalize).
+
+**Done.** Restricted the drop to true literal duplicates: an event is only
+dropped for `srcIn === "00:00:00:00"` if another event in the same group
+also matches its `recIn`, `recOut`, and `srcOut` — the only condition under
+which two rows could actually be redundant parses of the same edit.
+
+**Tests.** New test in `test/parsers/xml.test.mjs` — the existing
+`xmeml_basic.xml` fixture couldn't reproduce the bug (different `srcFile`
+per clip, non-zero file-level timecode), so built an inline XML string with
+`<timecode><frame>0</frame>` and two clips sharing one `srcFile` (one
+`<in>0</in>`, one `<in>240</in>`), asserting both survive with correct
+`srcIn` values.
+
+**Verification.** File was tracked-and-clean — used plain file-copy
+backup/restore for mutation testing. Reverting to the original grouped-drop
+logic: new test failed (`1 !== 2`, frame-0 clip vanished). With the fix:
+6/6 passing.
+
+**Gate.** `npm run build-verify` passed clean on the first attempt — no
+`untracked-imports.json` baseline issue this time, since both files were
+already tracked before this iteration.
+
+**Still open.** None.
+
+Commits: `325445a`.
+
 Commits: `7be729e`.
