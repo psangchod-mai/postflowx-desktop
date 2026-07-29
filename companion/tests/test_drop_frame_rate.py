@@ -30,3 +30,25 @@ def test_seconds_to_timecode_uses_colon_separator_at_23976():
     tc = _seconds_to_timecode(3604.4166, 23.976, _is_drop_frame_rate(23.976))
     assert ';' not in tc
     assert tc.count(':') == 3
+
+
+def test_2997_drop_frame_skips_two_labels_at_one_minute():
+    """29.97 DF must skip frame labels 00 and 01 at each non-tenth minute.
+
+    The separator alone used to be the only DF-aware behavior -- the frame-count
+    arithmetic ran straight non-drop math, so frame 1800 (~60.06s at 29.97fps)
+    was mislabeled "00:01:00;00" instead of the correct "00:01:00;02".
+    """
+    tc = _seconds_to_timecode(60.06, 29.97, True)
+    assert tc == "00:01:00;02"
+
+
+def test_2997_drop_frame_no_skip_at_ten_minute_boundary():
+    """Every 10th minute is exempt from the drop-frame skip."""
+    tc = _seconds_to_timecode(600.0, 29.97, True)
+    assert tc == "00:10:00;00"
+
+
+def test_5994_drop_frame_skips_four_labels_at_one_minute():
+    tc = _seconds_to_timecode(60.06, 59.94, True)
+    assert tc == "00:01:00;04"

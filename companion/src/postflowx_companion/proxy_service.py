@@ -2424,6 +2424,18 @@ def _seconds_to_timecode(seconds: float, fps: float, drop_frame: bool = False) -
     if fps_base <= 0:
         fps_base = 24
     total_frames = int(round(max(0.0, seconds) * fps))
+    if drop_frame and fps_base in (30, 60):
+        # SMPTE drop-frame: 29.97/59.94 skip frame *labels* (not real frames) so
+        # the displayed TC tracks wall-clock time. Convert the real elapsed frame
+        # count into the equivalent nominal-fps labeled count before dividing.
+        drop_count = 2 if fps_base == 30 else 4
+        frames_per_min = fps_base * 60 - drop_count
+        frames_per_10min = frames_per_min * 10 + drop_count
+        d, m = divmod(total_frames, frames_per_10min)
+        if m >= drop_count:
+            total_frames += drop_count * (9 * d + (m - drop_count) // frames_per_min)
+        else:
+            total_frames += drop_count * 9 * d
     h = total_frames // (fps_base * 3600)
     remaining = total_frames - h * fps_base * 3600
     m = remaining // (fps_base * 60)
