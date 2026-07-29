@@ -4923,3 +4923,37 @@ exhibit it.
   baselines-only-shrink check.
 
 Commits: `26f460d`.
+
+## Iteration 62 — mediaSearchBox debounce race: a slower earlier search can clobber a faster later one
+
+**Found.** `src/scripts/features/mediaSearch/mediaSearchBox.js`'s debounced
+search (`clearTimeout` + `setTimeout`) only cancels timers that haven't
+fired yet — it does nothing once a `_search()` IPC call is already in
+flight. Two searches fired from consecutive keystrokes can resolve
+out-of-order; `render()` always applies whichever response arrives last,
+so a slower earlier search can overwrite the dropdown (and `lastRows`,
+used by click-to-pick) with stale results for a term the input no longer
+shows — risking the wrong media file being linked via `onPick`.
+
+**Done.** Added a monotonic sequence counter; each debounced search captures
+its sequence number at schedule time and skips `render()` if a newer
+keystroke has superseded it by the time the response arrives.
+
+**Tests.** New `tests-js/mediaSearchBoxRace.test.mjs` (linkedom DOM harness):
+mocks the native-engine `db.search` command with controllable resolution
+order, resolves a faster "cats" search before a slower "cat" search, and
+asserts the dropdown reflects "cats" — not the stale "cat" response.
+
+**Verification.** File is untracked (no `HEAD` version) — used plain
+file-copy backup/restore for mutation testing (git stash pathspec doesn't
+apply to untracked files). Without the sequence guard: 0 passed / 1 failed.
+With the fix: 1 passed / 0 failed.
+
+**Gate.** `npm run build-verify` first failed on the same
+`untracked-imports.json` baseline-shrink check as Iteration 61 — tracking
+`mediaSearchBox.js` retired 2 stale entries (`vfxPullPanel.js`, `imf_ui.js`
+importing it). Removed those 2 lines; reran gate clean.
+
+**Still open.** None.
+
+Commits: `7be729e`.

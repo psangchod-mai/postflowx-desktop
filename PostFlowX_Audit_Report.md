@@ -6877,3 +6877,99 @@ name in at least one entry's match array), but none of those currently sit
 further fix was made this iteration.
 
 Commits: `26f460d`.
+
+## Iteration 62 — mediaSearchBox debounce race lets a slower earlier search clobber a faster later one — new species
+
+**Why this file.** `src/scripts/features/mediaSearch/mediaSearchBox.js` mounts
+a debounced media-library search box (query via `db.search` over the native
+engine IPC bridge) used from the VFX Pull panel and IMF UI. Confirmed
+**untracked** (`git status --porcelain` showed `??`, no `HEAD` entry to diff
+against), matching the same "brand-new file, no HEAD entanglement" category
+as Iteration 61's target.
+
+**The bug.** The input handler debounced searches with `clearTimeout` +
+`setTimeout`:
+```js
+let timer = null;
+input.addEventListener('input', () => {
+  const term = input.value.trim();
+  clearTimeout(timer);
+  if (!term) { render({ rows: [] }, ''); return; }
+  timer = setTimeout(async () => { render(await _search(term), term); }, 200);
+});
+```
+`clearTimeout(timer)` only cancels a timer that has not fired yet. Once the
+200ms debounce elapses and `_search(term)` starts (an async IPC round-trip
+with variable, unbounded latency), a later keystroke's debounce firing
+starts a *second*, independent `_search()` call — there is no cancellation
+or sequencing between the two in-flight calls. `render()` unconditionally
+overwrites `results.innerHTML` and the closure variable `lastRows` with
+whatever response arrives, regardless of arrival order.
+
+Concrete failure: type "cat" and pause — debounce fires, `_search("cat")`
+starts against a slow query. Before it resolves, type "s" (→ "cats") and
+pause again — a second debounce fires, `_search("cats")` starts and resolves
+quickly, correctly rendering the "cats" results. Then the earlier, slower
+"cat" response arrives and its `render(catState, "cat")` call silently
+overwrites the dropdown and `lastRows` with the "cat" result set, even
+though the input box still shows "cats". If the user then clicks the top
+visible row, `results.addEventListener('mousedown', ...)` reads
+`lastRows[Number(item.dataset.i)]` — now indexing into the stale "cat"
+array — so `onPick(rec)` fires with a media record that does not match what
+was visually selected. In VFX Pull this means the wrong media file can be
+silently linked to a shot.
+
+**Why this is a genuine correctness bug, and a new species.** None of
+Iterations 48-61 involve out-of-order resolution of two independently-fired
+async operations racing to write shared UI state ("last write wins" on a
+stale response). The closest prior bugs — 55 (cross-tab leader-election
+TOCTOU) and 52 (windowed-scan position tracking) — are structurally
+different: 55 is a race over which of several *tabs* claims leadership, not
+over which of several *sequential requests from the same UI element*
+resolves last; 52 is a scan-position bookkeeping bug, not an async
+supersession bug. This is a debounced-UI-search race, a new species.
+
+**The fix.** Added a monotonic sequence counter incremented on every input
+event; captured the counter's value (`mySeq`) at debounce-schedule time and
+compared it against the live counter (`seq`) after the search resolves,
+skipping `render()` if a newer keystroke has since superseded it:
+```js
+let seq = 0;
+input.addEventListener('input', () => {
+  const term = input.value.trim();
+  const mySeq = ++seq;
+  clearTimeout(timer);
+  if (!term) { render({ rows: [] }, ''); return; }
+  timer = setTimeout(async () => {
+    const state = await _search(term);
+    if (mySeq !== seq) return;
+    render(state, term);
+  }, 200);
+});
+```
+
+**Test approach.** `tests-js/mediaSearchBoxRace.test.mjs` — linkedom DOM
+harness (mirroring `pfxTransportDom.test.mjs`'s pattern). Mocks
+`window.pfxPlatform.nativeEngine.command` with a controllable-resolution
+fake so the test can deterministically resolve a slower "cat" search after
+a faster "cats" search, then asserts the dropdown reflects "cats", not the
+stale "cat" response.
+
+**Verification (mutation testing).** File is untracked, so used the same
+plain file-copy backup/restore technique as Iteration 61 (git stash pathspec
+doesn't apply to untracked files): saved the fixed file, reintroduced the
+un-sequenced debounce logic via a scripted edit, ran the test (1 of 1
+failed, exactly reproducing the race), restored the fix, reran (1 of 1
+passed).
+
+**Gate.** `npm run build-verify` first failed on
+`tests-js/selfContained.test.mjs`'s baseline-shrink check again — tracking
+`mediaSearchBox.js` retired 2 stale `tests-js/fixtures/untracked-imports.json`
+entries (`vfxPullPanel.js` and `imf_ui.js` importing it). Removed exactly
+those 2 lines (diffed against `HEAD` to confirm nothing else changed) and
+reran: clean pass (Python suite 261 passed / 7 skipped, XSS/XXE/fail-open
+gates clean).
+
+**Still open.** None for this fix.
+
+Commits: `7be729e`.
