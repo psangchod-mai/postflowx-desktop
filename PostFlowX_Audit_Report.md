@@ -10175,4 +10175,4 @@ existing `test/`/`tests-js/` harnesses. The Iteration 93 "Still open"
 follow-up (`_persistFrameToCache()`'s renderer-side scale-unaware cache
 writes) remains open and untouched by this change.
 
-Commits: `TBD`.
+Commits: `2cd24af`.
