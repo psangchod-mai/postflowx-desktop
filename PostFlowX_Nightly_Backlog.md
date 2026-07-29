@@ -7203,4 +7203,4 @@ values. Verified RED without the fix via `git stash`/`git stash pop`
 `selfContained.test.mjs` git-tracking gate once the new test file was
 staged); `test:node` matches baseline (72 pass, 1 skip, 0 fail).
 
-Commits: `TBD`.
+Commits: `fbdf74a`.
