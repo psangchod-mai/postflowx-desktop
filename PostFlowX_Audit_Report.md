@@ -10488,4 +10488,4 @@ of caching by content+mtime) and not part of this bug. Not investigated this
 iteration: whether other standalone-file transcode paths in this module
 (beyond `build_preview_proxy`) have similar un-scoped temp-file patterns.
 
-Commits: `TBD`.
+Commits: `b9729bf`.
