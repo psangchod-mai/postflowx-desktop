@@ -6034,3 +6034,27 @@ two intended hunks via `git add -p`. `npm run test:node` (72/1/73) and
 `npm run test:js` (25 passed) both match baseline.
 
 Commits: `527a6b8`.
+
+## Iteration 98: `build_preview_proxy()` temp-file collision (species #7)
+
+`proxy_service.py`'s `build_preview_proxy()` built its in-progress `.part`
+temp file from only `cache_path.with_suffix('.part')` — no `session_id` — at
+both line 2572 (main ffmpeg path) and line 2680 (`_try_ffmpeg_direct()`
+fallback). Two concurrent preview builds for the same source file (same
+`media_path`+`mtime`, hence same `cache_path`) raced on the identical `.part`
+path via interleaved `ffmpeg -y` writes and racing `os.replace()` finalizes.
+The sibling worker `_transcode_worker_inner()` in the same file already
+avoided this exact bug via `cache_path.with_name(f".{cache_path.name}.{session_id}.part")`
+(line 3507) — `build_preview_proxy()`'s standalone-preview path just never
+got the same treatment. Reachable from `api.py`'s `_build_media_proxy()`
+(line 1661), which mints a fresh `session_id` per call with no in-flight
+dedup and spawns a new daemon thread every call.
+
+Fix: applied the identical `session_id`-scoped `.part` naming already used
+by `_transcode_worker_inner()` to both call sites (lines 2572, 2680).
+`session_id` was already in scope at both sites — no signature change.
+Standalone repro script confirmed collision pre-fix, distinct paths
+post-fix. `python3 -m pytest -q` in `companion/`: 313 passed/7 skipped/2
+pre-existing unrelated failures — matches baseline.
+
+Commits: `TBD`.

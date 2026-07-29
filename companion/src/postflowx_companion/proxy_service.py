@@ -2569,7 +2569,7 @@ def build_preview_proxy(session_id: str, media_path: str, ffmpeg_path: str,
         except Exception:
             pass
 
-    tmp_path = cache_path.with_suffix('.part')
+    tmp_path = cache_path.with_name(f".{cache_path.name}.{session_id}.part")
 
     # ── Pre-probe: verify a decodable video stream exists ─────────────────────
     _has_decodable_video = False
@@ -2677,7 +2677,7 @@ def build_preview_proxy(session_id: str, media_path: str, ffmpeg_path: str,
             XAVC variants). Cheap to try; bails on first error."""
             _cam_status(f'Trying ffmpeg direct for {label}…', 25)
             _vf = "scale='min(1280,iw)':-2:flags=lanczos,format=yuv420p"
-            _tmp = cache_path.with_suffix('.part')
+            _tmp = cache_path.with_name(f".{cache_path.name}.{session_id}.part")
             _cmd = [
                 ffmpeg_path, '-y',
                 '-i', str(path),

@@ -10381,3 +10381,111 @@ whether other IMF/OCF debug-test IPC handlers in `electron/ipc.js` share
 this static-filename pattern.
 
 Commits: `527a6b8`.
+
+## Iteration 98: `build_preview_proxy()`'s standalone-media `.part` temp file collided across concurrent sessions of the same source file
+
+**Why this file:** `companion/src/postflowx_companion/proxy_service.py` is the
+companion's transcode/proxy engine. It already has one correctly-fixed
+instance of the "temp-file collision" species in `_transcode_worker_inner()`
+(the CPL/IMF conform-proxy path), which made it worth checking whether the
+sibling standalone-media preview path (`build_preview_proxy()`) got the same
+treatment.
+
+**The bug:** `build_preview_proxy(session_id, media_path, ffmpeg_path, ...)`
+(line 2481) computes a cache key from only the file's path and mtime:
+
+```python
+preview_cache_key = hashlib.sha256(f"preview_proxy:{media_path}:{mtime}".encode()).hexdigest()[:20]
+cache_path = cache_dir / f"pfx_prev_{preview_cache_key}.mp4"
+...
+tmp_path = cache_path.with_suffix('.part')          # line 2572
+```
+
+and the codec-fallback path inside the same function, `_try_ffmpeg_direct()`,
+duplicates the identical pattern:
+
+```python
+_tmp = cache_path.with_suffix('.part')              # line 2680
+```
+
+Neither `tmp_path` nor `_tmp` includes `session_id` — so two concurrent
+`build_preview_proxy` calls for the *same* `media_path` (same mtime) resolve
+to the exact same `cache_path` and the exact same `.part` temp file. Both
+ffmpeg subprocesses write to that one path with `-y` (overwrite), and both
+finalize via `os.replace(tmp_path, cache_path)` — an interleaved-write/racing-
+rename that can leave `cache_path` truncated, corrupted, or momentarily
+missing while the loser's `os.replace` races the winner's.
+
+This is species #7 (a discriminating identity/cache/path key silently dropped
+or inconsistent across call sites of "the same resource") — the sibling
+worker in the very same file, `_transcode_worker_inner()` (line 3507), already
+avoids this exact bug:
+
+```python
+out_path = cache_path.with_name(f".{cache_path.name}.{session_id}.part")
+```
+
+`build_preview_proxy()`'s standalone-preview path was simply never given the
+same treatment.
+
+**Independent verification:** Read `proxy_service.py` lines 2481-2710 directly.
+Confirmed the cache-key/cache-path construction at lines 2496-2502, the
+un-scoped `tmp_path` at line 2572, and the duplicate un-scoped `_tmp` at line
+2680 inside `_try_ffmpeg_direct()`. Confirmed the finalize step at line 2880
+(`os.replace(str(tmp_path), str(cache_path))`) and the equivalent in
+`_try_ffmpeg_direct()` at line 2699. Confirmed the already-fixed sibling
+pattern in `_transcode_worker_inner()` at line 3507. Traced reachability: the
+only production caller is `api.py`'s `_build_media_proxy()` (line 1661),
+which mints a fresh `session_id = uuid.uuid4().hex[:16]` per call (line 1686)
+with **no de-duplication check** against an in-flight build for the same
+`assetId`/`media_path`, and spawns `build_preview_proxy` on a brand-new daemon
+thread every call (line 1697) — so nothing in this call path prevents two
+overlapping calls (e.g. a UI double-click, or a rapid "Force ffmpeg" retry
+while the first build is still running) for the same source file from racing
+on the identical temp path.
+
+**The fix:** Applied the same `session_id`-scoped naming already used by
+`_transcode_worker_inner()` to both call sites in `build_preview_proxy()`:
+
+```python
+tmp_path = cache_path.with_name(f".{cache_path.name}.{session_id}.part")   # line 2572
+...
+_tmp = cache_path.with_name(f".{cache_path.name}.{session_id}.part")      # line 2680
+```
+
+`session_id` is already an in-scope parameter of `build_preview_proxy()` (and
+therefore of the nested `_try_ffmpeg_direct()` closure), so no signature
+change was needed. `cache_path` itself (the final, non-temp destination) is
+left untouched — the cache-hit/cache-reuse semantics on `media_path`+`mtime`
+are intentional and correct; only the *in-progress* temp file needed the
+per-session widening, matching the pattern this file already established
+elsewhere.
+
+**Test approach:** Standalone reproduction script simulating the pre-fix and
+post-fix path construction for two distinct `session_id`s against the same
+`media_path`/`mtime`: pre-fix, `cache_path.with_suffix('.part')` produced the
+identical path for both sessions (collision confirmed); post-fix, the
+session-scoped name produced two distinct paths. `python3 -m pytest -q` in
+`companion/` run before and after the edit.
+
+**Verification:** `git diff -- proxy_service.py` showed exactly the two
+intended one-line hunks (lines 2572, 2680), no pre-existing unrelated WIP and
+no mode-bit drift on this file. `python3 -c "ast.parse(...)"` confirmed valid
+syntax. `python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, 2
+pre-existing failures in `test_conform_engine.py`
+(`test_regional_distance_discards_six_worst_cells`,
+`test_regional_hash_identical_frames_distance_zero`, both
+`AttributeError: 'int' object has no attribute 'bit_count'`) — matching the
+confirmed baseline exactly, unrelated to this change.
+
+**Gate:** Fix is minimal, matches an existing in-file precedent exactly, and
+regression suite is unaffected. Landing.
+
+**Still open:** The cache-hit path (line 2551) reuses any existing
+`cache_path` file if it already has a video stream, regardless of which
+session originally produced it — this is intentional (that's the whole point
+of caching by content+mtime) and not part of this bug. Not investigated this
+iteration: whether other standalone-file transcode paths in this module
+(beyond `build_preview_proxy`) have similar un-scoped temp-file patterns.
+
+Commits: `TBD`.
