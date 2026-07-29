@@ -5505,4 +5505,4 @@ faked transcode mid-flight and asserts the session store actually shows
 stash/pop round-trip. Full suite: 277 passed, 7 skipped, same 2
 pre-existing Python-3.9 `bit_count()` failures (unrelated, out of scope).
 
-Commits: `TBD`.
+Commits: `177def9`.

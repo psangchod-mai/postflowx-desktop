@@ -8558,4 +8558,4 @@ logic bug, out of scope). Other async job runners in this codebase
 `update_session()` for progress — `proxy_engine.py`'s `generate_proxy_async`
 was the one outlier using this pattern.
 
-Commits: `TBD`.
+Commits: `177def9`.
