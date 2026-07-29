@@ -5487,4 +5487,4 @@ confirmed the PATH-only case fails pre-fix via a stash/pop round-trip.
 Full suite: 276 passed, 7 skipped, same 2 pre-existing Python-3.9
 `bit_count()` failures from Iteration 76 (unrelated, out of scope).
 
-Commits: `TBD`.
+Commits: `8cec8cc`.
