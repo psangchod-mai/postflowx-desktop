@@ -914,7 +914,7 @@ async function decodeFrame(args = {}) {
   }
 
   // ── Step 2: Extract frame ─────────────────────────────────────────────────
-  const outPath = path.join(os.tmpdir(), `pfx_imf_${packageHash}_fr${frameNumber}.png`);
+  const outPath = path.join(os.tmpdir(), `pfx_imf_${packageHash}_fr${frameNumber}_${require('crypto').randomUUID()}.png`);
   const decodeCmd = [
     'ffmpeg -hide_banner -y -f imf',
     assetMapsStr ? `-assetmaps "${assetMapsStr}"` : '',

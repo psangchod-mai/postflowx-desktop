@@ -10072,3 +10072,107 @@ the full list of `PFXNativeMediaEngine` files flagged in Iteration 92's
 and is a candidate for a future iteration.
 
 Commits: `1fd7c04`.
+
+## Iteration 95 — `imf_frame_provider.js`'s `decodeFrame()` built its own ffmpeg scratch-file path from only `packageHash`+`frameNumber`, letting two concurrent requests for the same frame clobber or delete each other's temp file
+
+**Why this file.** Iteration 94 fixed the same defect shape
+(`packageId`+`frame`-only temp-file naming, no request-identity
+discriminator) in `IMFEngine.swift`'s pfx-helper scratch-file paths, and
+flagged that the codebase's other frame-extraction paths were worth a
+second pass. `imf_frame_provider.js`'s `decodeFrame()` is the sibling
+ffmpeg-based decode path in the same feature area (distinct from the
+Swift/pfx-helper path fixed in Iteration 94, and distinct from the
+in-memory/on-disk preview cache fixed in Iteration 93) — a natural place
+to check for the identical mistake made independently in a different
+language and subsystem.
+
+**The bug.** `decodeFrame()` computes `cmode = _cacheMode(displayMode,
+lowres)` early and uses it correctly for both the cache read and the
+cache write (the Iteration 93 fix). But its own temp ffmpeg output path —
+`outPath`, the file ffmpeg is told to write to and that is later copied
+into the cache and deleted — was built as `pfx_imf_${packageHash}_fr
+${frameNumber}.png`, using neither `cmode` nor any other per-request
+discriminator. Two concurrent `decodeFrame()` calls for the same
+`packageHash`+`frameNumber` (e.g. a full-res preview request and a
+low-res scrub request racing each other, or simply two overlapping
+requests for the same frame from different UI triggers) resolve to the
+identical `outPath` on disk. Whichever ffmpeg process finishes writing
+last wins: the other request's `fs.copyFileSync(outPath, cachePath)` then
+reads back the winner's data instead of its own, silently caching the
+wrong resolution/mode under its own cache key. Worse, both requests race
+to `fs.unlinkSync(outPath)` in their own cleanup — the first to run
+deletes the file out from under the second, which then throws (swallowed
+by the surrounding `try {} catch {}`) or, in the narrower timing window,
+deletes the file the *other* request has not yet copied from, causing
+that request to persist nothing into cache and fall back to reporting a
+decode as if it succeeded with stale/no image data.
+
+**Independent verification.** Read `imf_frame_provider.js` lines
+955-1010 directly: confirmed `cmode` is computed once, used at the two
+cache call sites (`cache.get(...)`, `cache.framePath(...)`), and never
+referenced by `outPath`'s construction. Confirmed production-reachability
+via the documented IPC call chain: `electron/preload.js` exposes the IMF
+decode IPC, `electron/ipc.js` routes it to this module's `decodeFrame()`,
+and `src/scripts/modules/imf/imf_player.js`'s `_tryElectronImfDecode()`
+is the renderer-side caller that can issue overlapping requests for the
+same frame during scrub/playback-mode transitions — the same call
+pattern that made Iteration 93's cache-key bug user-visible.
+
+**The fix.** Suffixed `outPath` with a per-call
+`require('crypto').randomUUID()` — mirroring Iteration 94's Swift
+`UUID().uuidString` fix exactly, and matching the established
+`crypto.randomUUID()` idiom already used elsewhere in this codebase
+(`src/scripts/prep_mark.js`, `src/scripts/features/vfxPull/
+fdlGenerator.js`, `src/scripts/core/shotWorkItems.js`). This guarantees
+every concurrent `decodeFrame()` call gets its own scratch file
+regardless of `packageHash`/`frameNumber`/`cmode` collisions, so no two
+requests can read back or delete each other's data. A one-line change;
+the cache-key logic (`cmode`) is untouched since it was already correct.
+
+**Test approach.** Same constraint as Iteration 93/94: no test harness
+can exercise `decodeFrame()` end-to-end without a real ffmpeg IMF
+demuxer and real IMF/MXF package fixtures, and reproducing the actual
+race window through the real ffmpeg child-process path is not
+deterministic. Extracted the exact vulnerable path-construction and
+read-back/cleanup logic verbatim (pre-fix and post-fix forms) into a
+standalone Node script that simulates two concurrent "requests" for the
+same frame each writing distinct content to what the pre-fix code would
+compute as an identical `outPath`, copying it to their own distinct
+per-request cache slot, then deleting it — mirroring the real function's
+copy-then-unlink sequence exactly.
+
+**Verification.** Pre-fix (`old` mode, shared path): request A's copy
+silently reads back request B's content instead of its own, and request
+B's copy fails with the file already deleted by A's cleanup race — exit
+code 1, both failure modes reproduced in one deterministic run. Post-fix
+(`new` mode, UUID-suffixed path): request A and request B each read back
+only their own content, no cross-contamination or missing-file error —
+exit code 0. Full regression suite confirmed unaffected: `npm run
+test:node` — 72 passed, 1 skipped (pre-existing), 0 failed; `npm run
+test:js` — all `tests-js/*.test.mjs` suites passed, 0 failed; `python3 -m
+pytest -q` in `companion/` — 313 passed, 7 skipped, the same 2
+pre-existing `test_conform_engine.py` `int.bit_count()` failures from
+Iterations 76-83 (unrelated Python-version issue, out of scope) — all
+confirming this one-line JS-only change perturbs nothing else.
+
+**Gate.** Extracted-logic standalone-script verification (pre-fix
+reproduction of both described failure modes + post-fix confirmation),
+since no real IMF/ffmpeg fixture exists to exercise `decodeFrame()`
+end-to-end and the actual race window is not deterministically
+reproducible through the real child-process path; full Node/JS/Python
+regression suites unaffected.
+
+**Still open.** Third confirmed instance of species #7 (a discriminating
+identity/cache/path key silently dropped or inconsistent across call
+sites of "the same resource") — now spanning three independent
+subsystems in the same feature area: Iteration 93's in-memory/on-disk
+cache key, Iteration 94's Swift pfx-helper temp-file path, and this
+iteration's ffmpeg temp-file path, all in the IMF frame-decode pipeline.
+No automated regression test was added to the repo, for the same reason
+as Iterations 93/94: the vulnerable code path requires infrastructure
+(Electron's `app`, a real ffmpeg IMF demuxer) not available to the
+existing `test/`/`tests-js/` harnesses. The Iteration 93 "Still open"
+follow-up (`_persistFrameToCache()`'s renderer-side scale-unaware cache
+writes) remains open and untouched by this change.
+
+Commits: `TBD`.

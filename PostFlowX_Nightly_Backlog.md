@@ -5955,3 +5955,45 @@ follow-up (raw `displayMode` cache key, no `decodeScale` discriminator)
 remains open for a future iteration.
 
 Commits: `1fd7c04`.
+
+## Iteration 95 — `imf_frame_provider.js`'s `decodeFrame()` built its own ffmpeg scratch-file path from only `packageHash`+`frameNumber`, letting two concurrent requests for the same frame clobber or delete each other's temp file
+
+Following up on Iteration 94's fix (same defect shape, different
+subsystem), found `decodeFrame()`'s own ffmpeg output path — `outPath`,
+used for the ffmpeg write, the cache-copy read, and the cleanup
+unlink — built from only `packageHash`+`frameNumber`
+(`pfx_imf_${packageHash}_fr${frameNumber}.png`), even though the same
+function already computes a proper `cmode = _cacheMode(displayMode,
+lowres)` for its cache read/write (Iteration 93's fix). Two concurrent
+decode requests for the same frame at different resolutions/modes
+collide on this shared temp path: the loser's `copyFileSync` can read
+back the winner's data, and both requests race to `unlinkSync` it,
+so the loser can find its own file already deleted.
+
+Fixed by suffixing `outPath` with `require('crypto').randomUUID()`,
+mirroring Iteration 94's Swift `UUID().uuidString` fix and the
+established `crypto.randomUUID()` idiom already used elsewhere in this
+codebase (`prep_mark.js`, `fdlGenerator.js`, `shotWorkItems.js`).
+One-line change; `cmode`'s cache-key logic was already correct and
+untouched.
+
+No real ffmpeg/IMF fixture exists to drive `decodeFrame()` end-to-end,
+so verified by extracting the exact pre-fix/post-fix path-construction
+and copy-then-unlink logic into a standalone Node script simulating two
+concurrent requests. Pre-fix: request A read back request B's data,
+request B's own file was missing after the cleanup race — exit 1, both
+failure modes reproduced. Post-fix: both requests read back only their
+own data — exit 0. Fix isolated via `git add -p` from an unrelated
+pre-existing uncommitted Metal HTJ2K WIP block already present in the
+same file — left completely untouched. Full regression clean: `npm run
+test:node` 72/73 (1 pre-existing skip), `npm run test:js` all suites
+passed, `python3 -m pytest -q` 313 passed/7 skipped (same 2
+pre-existing Iteration-76 failures).
+
+Still open: third instance of the same identity/cache-key-drop species,
+now confirmed across three subsystems of the IMF frame pipeline
+(Iteration 93's cache key, Iteration 94's Swift temp path, this
+iteration's JS temp path). Iteration 93's `_persistFrameToCache()`
+follow-up remains open.
+
+Commits: `TBD`.
