@@ -6827,4 +6827,4 @@ Full regression matched baseline.
 Still open: none for this fix; other engine-status panels may still
 warrant a scout pass.
 
-Commits: `TBD`.
+Commits: `8a8d24e`.
