@@ -9237,3 +9237,86 @@ V-Log) remain unaudited against their respective vendor specs — a
 follow-up iteration should check each the same way.
 
 Commits: `3093eab`.
+
+## Iteration 87 — `color_lut.py`'s `_clog2_to_lin()` dropped Canon C-Log2's 0.9 scale factor and used a wrong branch-cutoff constant
+
+**Why this file.** Iteration 86's "Still open" note flagged `_clog2_to_lin()`
+(Canon C-Log2) as unaudited against its vendor spec, alongside LogC3,
+S-Log3, and V-Log. A scouting agent (background, non-user input) was
+launched to check all four and reported a bug in `_clog2_to_lin()`;
+it reported LogC3, S-Log3, and V-Log as clean, which was **not**
+independently re-verified this iteration — only the C-Log2 finding was.
+
+**The bug.** The old code implemented the decode as `(10^((e −
+0.092864125)/0.24136) − 1) / 87.099375` (positive branch) with a
+branch cutoff at `_CLOG2_CUT_DEC = -0.00218`. Canon's spec has a
+leading `0.9` scene-reflectance scale factor applied outside the log
+term in both branches, which the old code omitted entirely — making
+every decoded value ~11% too bright. The cutoff constant was also
+wrong: `-0.00218` is not the code value where `L = 0`; the correct
+cutoff is `0.092864125` (the same constant already used inside the log
+term). Since virtually all real-world code values are well above
+`-0.00218`, the code always took the "positive" branch regardless of
+whether the true encoded value was above or below middle grey.
+
+**Independent verification.** Canon's official "Canon Log Gamma
+Curves" white paper (checked via both `usa.canon.com` and
+`downloads.canon.com` mirrors, and a locally downloaded copy run
+through `pdftotext`) states its equations as images — the appendix
+section headings for Canon Log 2 extract as plain text but the actual
+formulas do not, so the PDF is not usable as a machine-checkable
+source. Fell back to the widely-used open-source `colour-science`
+library's `log_encoding_CanonLog2`/`log_decoding_CanonLog2` reference
+implementation as the authoritative cross-check, converting its
+full-range-domain constants into the legal-range domain used by this
+codebase (via the 10-bit SMPTE `full = (legal·1024 − 64)/876`
+transform). This confirmed the codebase's existing constants
+(`0.24136`, `0.092864125`, `87.099375`) were already correct and the
+only bugs were the missing `0.9` factor and the wrong cutoff constant.
+
+**The fix.**
+
+```python
+_CLOG2_CUT_DEC = 0.092864125
+
+def _clog2_to_lin(e: float) -> float:
+    if e > _CLOG2_CUT_DEC:
+        return 0.9 * (10.0 ** ((e - 0.092864125) / 0.24136) - 1.0) / 87.099375
+    return -0.9 * (10.0 ** ((-e + 0.092864125) / 0.24136) - 1.0) / 87.099375
+```
+
+**Test approach.** Added `test_color_lut_clog2_decode.py` (3 tests):
+18%-grey's encoded value (`0.39786577438259785`) decodes to the
+spec-derived linear value (`0.17929687995696894`, within ~0.4% of
+exact `0.18` — attributable to `colour-science`'s independently
+curve-fit constants differing slightly from Canon's own rounded
+published ones, consistent with the residual precision noise accepted
+in Iterations 85/86); the decode is continuous across the branch cut;
+and `L = 0` exactly at the cutoff code value.
+
+**Verification.** `python3 -m pytest tests/test_color_lut_clog2_decode.py -v`
+— 3/3 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`color_lut.py`: reverting to pre-fix code fails
+`test_clog2_eighteen_percent_grey` with the old formula's exact output
+(`0.19921875550774326` instead of `0.17929687995696894`); the other
+two tests pass even against old code, as expected, since the old
+cutoff constant (`-0.00218`) is far from the region they probe.
+Restored the fix, reran — 3/3 green. Full companion suite: `python3 -m
+pytest -q` — 303 passed (up from 300), 7 skipped, same 2 pre-existing
+`test_conform_engine.py` failures from Iterations 76-83 (unrelated,
+out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented since
+Iteration 76.
+
+**Still open.** This is the third consecutive iteration to find a
+spec-mismatch bug in `color_lut.py` (10th bug species, established
+Iteration 85). `_logc3_to_lin()`, `_slog3_to_lin()` (Sony S-Log3), and
+`_vlog_to_lin()` (Panasonic V-Log) were reported clean by this
+iteration's scouting agent but have not been independently
+re-verified — a follow-up iteration should either independently verify
+those three or pivot to sweeping a different file/bug species, since
+`color_lut.py` may now be largely exhausted for this species.
+
+Commits: `TBD`.

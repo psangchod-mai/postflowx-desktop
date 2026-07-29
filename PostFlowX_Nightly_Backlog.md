@@ -5672,3 +5672,28 @@ spec-mismatch bug in `color_lut.py` — LogC3, S-Log3, C-Log2, and V-Log
 remain unaudited.
 
 Commits: `3093eab`.
+
+`_clog2_to_lin()` dropped Canon C-Log2's documented `0.9`
+scene-reflectance scale factor entirely (making every decoded value
+~11% too bright) and used a wrong branch-cutoff constant (`-0.00218`
+instead of `0.092864125`, the code value where `L=0`), so real-world
+code values almost never hit the intended negative branch. Canon's
+white paper's formulas are embedded as un-extractable images (confirmed
+via `pdftotext`), so independently verified instead against the
+open-source `colour-science` library's `log_decoding_CanonLog2`
+reference implementation, converted from its full-range domain into
+this codebase's legal-range domain — confirmed the existing constants
+(`0.24136`, `0.092864125`, `87.099375`) were already correct and only
+the `0.9` factor and cutoff were wrong. Added
+`test_color_lut_clog2_decode.py` (3 tests: 18%-grey value, continuity
+at the cutoff, zero-linear at the cutoff); confirmed the 18%-grey test
+fails against pre-fix code with the exact old-formula value
+(`0.19921875550774326` instead of `0.17929687995696894`) via a
+stash/pop round-trip, other 2 tests pass either way (old cutoff is far
+from the region they probe). Full suite: 303 passed/7 skipped (same 2
+pre-existing Iteration-76 failures, unrelated). Third consecutive
+iteration finding a spec-mismatch bug in `color_lut.py` — LogC3,
+S-Log3, and V-Log were reported clean by this iteration's scouting
+agent but not independently re-verified.
+
+Commits: `TBD`.

@@ -151,13 +151,17 @@ def _slog3_rgb_to_aces(er: float, eg: float, eb: float) -> tuple[float, float, f
 
 # ── Canon C-Log2 / C-Gamut → scene linear → ACES2065-1 ──────────────────────
 # From Canon C-Log2 Conversion Characteristics white paper.
+#
+# The decode has a scene-reflectance scale factor of 0.9 applied outside the
+# log term, and branches at the code value where L = 0 (0.092864125), not at
+# an arbitrary near-zero cutoff.
 
-_CLOG2_CUT_DEC = -0.00218
+_CLOG2_CUT_DEC = 0.092864125
 
 def _clog2_to_lin(e: float) -> float:
     if e > _CLOG2_CUT_DEC:
-        return (10.0 ** ((e - 0.092864125) / 0.24136) - 1.0) / 87.099375
-    return -(10.0 ** ((-e + 0.092864125) / 0.24136) - 1.0) / 87.099375
+        return 0.9 * (10.0 ** ((e - 0.092864125) / 0.24136) - 1.0) / 87.099375
+    return -0.9 * (10.0 ** ((-e + 0.092864125) / 0.24136) - 1.0) / 87.099375
 
 # C-Gamut → ACES AP0 matrix (Academy ACES CLF IDT.Canon.CLog2.CGamut).
 _CGAMUT_TO_AP0 = [
