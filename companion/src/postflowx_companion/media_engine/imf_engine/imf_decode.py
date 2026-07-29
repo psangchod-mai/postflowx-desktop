@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -31,7 +32,8 @@ def decode_test_frame(
     scale: int = 960,
 ) -> dict:
     frame_dir = _ensure_frame_dir()
-    out_file = frame_dir / f"imf_frame_{frame_number:07d}.png"
+    cpl_hash = hashlib.sha1(cpl_path.encode("utf-8")).hexdigest()[:12]
+    out_file = frame_dir / f"imf_frame_{cpl_hash}_{frame_number:07d}_s{scale}.png"
 
     ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:

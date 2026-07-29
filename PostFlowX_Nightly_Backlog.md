@@ -6088,3 +6088,30 @@ pytest -q` in `companion/`: 313 passed/7 skipped/2 pre-existing unrelated
 failures — matches baseline.
 
 Commits: `d9feb82`.
+
+## Iteration 100: `decode_test_frame()` scratch-PNG path collision across IMF packages/scales
+
+`imf_decode.py`'s `decode_test_frame()` built its scratch output filename
+from `frame_number` alone (`imf_frame_{frame_number:07d}.png`), ignoring
+both `cpl_path` and `scale`. Any two decode requests for the same frame
+number — different IMF packages, or the same package at different preview
+scales — collided on the identical path in the shared temp directory.
+Reachable via `http_server.py:621`'s `/api/imf/decode-test-frame` handler,
+served by a `ThreadingHTTPServer` with no lock around the call, so
+concurrent requests could interleave writes and each return the wrong
+(or torn) image. This is the seventh confirmed instance of the
+discriminator-drop species, after `imf_frame_provider.js`,
+`IMFEngine.swift`, `ocf_decode.py` (×3), `ocf_resolve_bridge.py`, and
+`electron/ipc.js`.
+
+Independently verified the call-site and `ThreadingHTTPServer`-concurrency
+claims via a dedicated Explore sub-agent quoting exact line numbers before
+fixing. Fix: hash `cpl_path` into the filename and append `scale`:
+`imf_frame_{cpl_hash}_{frame_number:07d}_s{scale}.png`. An incidental
+mode-bit change from the edit was caught and reverted via `chmod 644`
+before staging. Standalone script confirmed pre-fix path collision across
+two different `cpl_path` values requesting the same frame, vs. post-fix
+distinct paths. `python3 -m pytest -q` in `companion/`: 313 passed/7
+skipped/2 pre-existing unrelated failures — matches baseline.
+
+Commits: `TBD`.

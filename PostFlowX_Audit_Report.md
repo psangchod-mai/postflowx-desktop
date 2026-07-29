@@ -10626,3 +10626,92 @@ unnecessary given the PID-liveness signal is already reliable per the
 sidecar-write-site audit above.
 
 Commits: `d9feb82`.
+
+## Iteration 100: `decode_test_frame()` in `imf_decode.py` collided scratch-PNG paths across different IMF packages and preview scales
+
+**Why this file:** `companion/src/postflowx_companion/media_engine/imf_engine/imf_decode.py`
+implements the IMF (Interoperable Master Format) still-frame decode used by
+the companion's `/api/imf/decode-test-frame` endpoint — the same species of
+discriminator-drop bug already found and fixed six times previously across
+`imf_frame_provider.js`, `IMFEngine.swift`, `ocf_decode.py`,
+`ocf_resolve_bridge.py`, and `electron/ipc.js` made this file worth
+re-auditing directly.
+
+**The bug:** `decode_test_frame(cpl_path, assetmap_paths, frame_number,
+scale)` computed its scratch output path as:
+```python
+out_file = frame_dir / f"imf_frame_{frame_number:07d}.png"
+```
+This key is keyed on `frame_number` alone — it ignores both `cpl_path` (which
+IMF package/CPL the frame is being decoded from) and `scale` (the requested
+preview resolution). `_ensure_frame_dir()` returns a single shared
+`tempfile.gettempdir() / "postflowx_imf_frames"` directory, so any two
+decode requests for the same frame number — from two different IMF
+packages, or the same package at two different preview scales — write to
+the identical `out_file` path. Since the endpoint is served by a
+`ThreadingHTTPServer` with true per-request concurrency and no lock around
+this call, two concurrent requests (e.g. a user scrubbing frame 0 across two
+open IMF package tabs, or a scale-change re-request racing the prior
+in-flight one) could interleave `subprocess.run` writes to the same file,
+each returning the other's (or a torn) image as its own result.
+
+**Independent verification:** Read the full 209-line `imf_decode.py` source
+directly and confirmed line 34 matched the reported code exactly. Spawned a
+dedicated Explore agent to independently confirm, with exact line-number
+quotes, that (a) `decode_test_frame` has exactly one call site,
+`http_server.py:621`, inside the `/api/imf/decode-test-frame` handler, and
+(b) the server is constructed via `ThreadingHTTPServer` (`http_server.py:3`,
+`818`, `831`) with no `threading.Lock` wrapping this code path — the
+existing `_server_lock` and `_file_registry_lock` cover unrelated code.
+Both claims confirmed independently.
+
+**The fix:** Hash `cpl_path` into the filename and append `scale`, closing
+both missing discriminators in one edit:
+```python
+cpl_hash = hashlib.sha1(cpl_path.encode("utf-8")).hexdigest()[:12]
+out_file = frame_dir / f"imf_frame_{cpl_hash}_{frame_number:07d}_s{scale}.png"
+```
+(plus the corresponding `import hashlib`). An incidental `100644` →
+`100755` mode-bit change introduced by the edit tool was caught via `git
+diff` and reverted with `chmod 644` before staging, keeping the commit
+scoped to the intended content change only.
+
+**Test approach:** A full end-to-end repro would require real IMF package
+assets and a working `ffmpeg`/`ojph_expand` toolchain, so — consistent with
+the standalone-path-construction repro style used in Iterations 96-98 — a
+standalone script (`/tmp/verify_iter100.py`) directly exercises the pre-fix
+and post-fix path-construction logic for two different `cpl_path` values
+requesting the same `frame_number`/`scale`.
+
+**Verification:**
+- Pre-fix: both packages produced the identical path
+  `imf_frame_0000000.png` — confirmed collision.
+- Post-fix: the two packages produced distinct paths
+  (`imf_frame_578cc5a03acb_0000000_s960.png` vs.
+  `imf_frame_f58317bb0efa_0000000_s960.png`) — confirmed distinct.
+- `git diff -- imf_decode.py` showed exactly the two intended hunks (the
+  `import hashlib` addition and the `out_file`/`cpl_hash` computation), file
+  mode preserved at `100644`, no unrelated changes.
+- `python3 -m py_compile` confirmed valid syntax.
+- `python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, 2
+  pre-existing failures in `test_conform_engine.py`
+  (`test_regional_distance_discards_six_worst_cells`,
+  `test_regional_hash_identical_frames_distance_zero`, both
+  `AttributeError: 'int' object has no attribute 'bit_count'`) — matching
+  the confirmed baseline exactly, unrelated to this change.
+
+**Gate:** Fix directly closes both missing discriminators with a minimal,
+additive change (no behavior change for the already-unique case), and the
+regression suite is unaffected. Landing.
+
+**Still open:** The three fallback decoders (`_try_ffmpeg_imf_demuxer`,
+`_try_direct_mxf`, `_try_ojph`) still overwrite the same `out_file` in
+sequence within a single call — this is intentional (only one fallback's
+output should survive per call) and unaffected by this fix. Not
+investigated this iteration: whether `_FRAME_DIR`'s scratch PNGs are ever
+garbage-collected — the directory can accumulate one file per unique
+`(cpl_path, frame_number, scale)` combination indefinitely, which was true
+before this fix too (just under a collision-prone key) and is a separate,
+pre-existing concern from the correctness bug fixed here.
+
+Commits: `TBD`.
