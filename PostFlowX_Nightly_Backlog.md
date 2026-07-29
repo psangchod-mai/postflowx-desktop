@@ -6379,3 +6379,25 @@ Full regression suite re-run and matched baseline exactly:
 313/7/2(pre-existing) Python, all Node/JS suites passing.
 
 Commits: `d938f46`.
+
+## Iteration 112 — proxyJobPoller.js cancellation race commits stale SWI state
+
+`watchJob()`'s per-tick `setInterval` callback in `proxyJobPoller.js`
+never re-checked whether its watcher was still live after an `await`,
+so a synchronous `cancelWatch(jobId)` call landing mid-tick (e.g. a
+retry-render flow cancelling the old job) had no effect — the
+in-flight tick would still commit stale SWI state and dispatch
+`pfx_proxy_committed` for the already-cancelled job if its poll
+resolved to a terminal status. Fixed with a per-tick `isLive()`
+liveness check placed before every side-effecting write, sequenced so
+async pre-work happens first and the check runs before (not after)
+the tick's own `_stopWatcher()` cleanup call — checking after would
+always read as "not live" and break the legitimate self-stop case.
+Also added an `_ticking` re-entrancy guard. Verified with a new
+`vm`-sandboxed harness (`tests-js/proxyJobPollerCancelRace.test.mjs`)
+driving the real, unmodified source: pre-fix, a cancelled tick still
+produced 1 stale SWI write; post-fix, 0. Full regression suite re-run
+and matched baseline exactly: all `test:js` files 0 failed, 72/1/0
+Node, 315/7/0 Python.
+
+Commits: `TBD`.

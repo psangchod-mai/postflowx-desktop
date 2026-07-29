@@ -154,14 +154,24 @@
       _ticking = true;
       try {
       w.count++;
+      // cancelWatch() is synchronous and may land during any await below —
+      // re-check that this tick's watcher is still the live one immediately
+      // before each side-effecting write, so a stale tick never persists SWI
+      // state or fires events for a job that's already been cancelled.
+      const isLive = () => _watchers[jobId] === w;
 
       if (w.count > MAX_POLLS) {
-        _stopWatcher(jobId);
+        let proxyPatch = null;
         if (window.PFX_SWI?.update) {
+          proxyPatch = { ...(await _getSwiProxy(shotWorkId)), status: 'failed', error: 'poll_timeout' };
+        }
+        if (!isLive()) return;
+        _stopWatcher(jobId);
+        if (proxyPatch) {
           await window.PFX_SWI.update(shotWorkId, {
             proxyStatus: 'failed',
             state: 'proxy_failed',
-            proxy: { ...(await _getSwiProxy(shotWorkId)), status: 'failed', error: 'poll_timeout' },
+            proxy: proxyPatch,
           });
         }
         if (window.PFX_RQ_updateJob) window.PFX_RQ_updateJob(jobId, { status: 'error', error: 'Poll timeout' });
@@ -176,11 +186,13 @@
         return;
       }
       if (!status) return;
+      if (!isLive()) return;
 
       // Progress update
       const progress = typeof status.progress === 'number' ? status.progress : null;
       if (progress !== null && window.PFX_SWI?.update) {
         await window.PFX_SWI.update(shotWorkId, { proxyProgress: progress });
+        if (!isLive()) return;
       }
       if (progress !== null && window.PFX_RQ_updateJob) {
         window.PFX_RQ_updateJob(jobId, { progress });
@@ -192,12 +204,17 @@
         if (window.PFX_RQ_updateJob) window.PFX_RQ_updateJob(jobId, { status: 'done', progress: 1 });
 
       } else if (status.status === 'failed' || status.status === 'error' || status.status === 'cancelled') {
-        _stopWatcher(jobId);
+        let proxyPatch = null;
         if (window.PFX_SWI?.update) {
+          proxyPatch = { ...(await _getSwiProxy(shotWorkId)), status: 'failed', error: status.error || status.status };
+        }
+        if (!isLive()) return;
+        _stopWatcher(jobId);
+        if (proxyPatch) {
           await window.PFX_SWI.update(shotWorkId, {
             proxyStatus: 'failed',
             state: 'proxy_failed',
-            proxy: { ...(await _getSwiProxy(shotWorkId)), status: 'failed', error: status.error || status.status },
+            proxy: proxyPatch,
           });
         }
         if (window.PFX_RQ_updateJob) window.PFX_RQ_updateJob(jobId, { status: 'failed', error: status.error });

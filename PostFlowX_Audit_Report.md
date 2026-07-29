@@ -11639,3 +11639,80 @@ unfixed, for the reasons documented in prior iterations — none is
 touched by this change.
 
 Commits: `d938f46`.
+
+## Iteration 112 — proxyJobPoller.js cancellation race commits stale SWI state
+
+**Why this file:** `src/scripts/core/proxyJobPoller.js` runs a
+`setInterval`-driven `async` tick per active proxy render job, polling
+`PFX_RENDER_WORKER.getJobStatus()` and writing terminal-state results
+(done/failed/error/cancelled) to SWI via `PFX_SWI.update()`. The public
+`cancelWatch(jobId)` API is synchronous and can be called at any time —
+e.g. when a user closes a shot or triggers a retry render for the same
+shot — while a tick for that same `jobId` is already suspended mid-flight
+on one of several `await` points.
+
+**The bug:** Each tick captured `_watchers[jobId]` at the top of the
+callback but never re-checked it after any subsequent `await`. A
+`cancelWatch()` call landing during an in-flight tick's `await
+getJobStatus()` (or any later `await`) had no effect on that tick — it
+ran to completion regardless, and if the poll happened to resolve to a
+terminal status (`done`/`failed`/`error`/`cancelled`), the tick would
+still call `_stopWatcher(jobId)` and unconditionally write SWI state and
+dispatch `pfx_proxy_committed` for a job the caller had already
+cancelled. In the retry-render case this meant a superseded job's stale
+result could clobber SWI state written by (or intended for) the new
+retry.
+
+**The fix:** Added a per-tick `isLive = () => _watchers[jobId] === w`
+liveness check (capturing the watcher entry `w` at tick start) and
+inserted a check immediately before every side-effecting action that
+follows an `await` — the progress-update write, and each terminal-state
+branch's `_stopWatcher` + SWI write. The check had to be placed
+carefully: any async pre-work (e.g. `_getSwiProxy()` calls building
+`proxyPatch`) happens first, then `isLive()` is checked, and only if
+still live does the code call its own `_stopWatcher(jobId)` — checking
+liveness *after* `_stopWatcher` would always read as "not live" (since
+`_stopWatcher` itself deletes the entry), incorrectly suppressing the
+legitimate self-initiated-stop case. Also added an `_ticking` re-entrancy
+guard so overlapping ticks (a slow poll response outliving the next
+`POLL_INTERVAL_MS` tick) can't race each other independently of
+cancellation.
+
+**Test approach:** `tests-js/proxyJobPollerCancelRace.test.mjs`, built on
+the existing `vm.createContext`/`vm.runInContext` sandbox pattern
+(established by `crossTabQueueLeaseRace.test.mjs`): the real, unmodified
+`proxyJobPoller.js` source is loaded into a sandboxed context with a
+manually-controlled `setInterval` (captured, not real-timer-driven) and a
+`deferred()` promise gating `getJobStatus()`'s resolution. The test fires
+one tick, calls the real `cancelWatch()` while the tick is suspended
+mid-`await`, then resolves the gate to `done` and asserts zero SWI writes
+and zero dispatched events. A second test confirms the non-cancelled
+happy path still commits exactly once.
+
+**Verification:** Pre-fix (via `git stash push -- src/scripts/core/proxyJobPoller.js`,
+confirmed reverted via `grep -c isLive` returning 0), the cancellation
+test failed exactly as predicted: `swiUpdateCalls.length` was 1 instead
+of 0, with the actual patch showing the stale `proxyStatus: 'failed'`
+write going through for the cancelled job. Post-fix (after `git stash
+pop`, confirmed restored via `grep`/`git diff --stat`), both tests pass
+(2/2). Full regression suite re-run and matched baseline exactly:
+`test:js` — every file in `tests-js/*.test.mjs` reports 0 failed (this
+new test file included); `test:node` — 72 passed, 0 failed, 1 skipped;
+`test:py` — 315 passed, 7 skipped, 0 failed (via `npm run test:py`'s
+Python interpreter).
+
+**Still open:** `_commitProxy()` writes to `shotWorkId`'s SWI record
+unconditionally, without checking whether a newer `jobId` watcher has
+since been registered for the same `shotWorkId` (e.g. via a retry flow
+started after the original job already reached a terminal state but
+before `_commitProxy`'s own `await`s resolved). The `isLive()` guard
+added this iteration correctly prevents a *cancelled* job's tick from
+committing, but does not protect against two *concurrently live*
+watchers for the same `shotWorkId` racing each other — a distinct,
+deeper concern left undocumented-but-unfixed pending a clearer picture
+of whether that scenario is actually reachable from the UI (retry flows
+may already call `cancelWatch()` on the old job before starting a new
+one, which would make this unreachable in practice, but that call site
+wasn't audited this iteration).
+
+Commits: `TBD`.
