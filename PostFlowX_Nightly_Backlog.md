@@ -6450,3 +6450,24 @@ matched baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped
 Node, 315/7/0 Python.
 
 Commits: `654a53c`.
+
+## Iteration 115 — smartExrExportQueue.js lost-cancellation race overwrites CANCELLED with a stale QC result
+
+`_runJob` never re-checked `state.cancelRequested` after resuming from
+`await this._nativeDispatch(...)` or the QC `await this._yield()`, so
+cancelling a job while its native export dispatch was still in flight
+got silently overwritten once that stale promise resolved — the job
+would land on a real `QC_PASSED`/`QC_WARNING`/`QC_FAILED` (or `FAILED`)
+instead of staying `CANCELLED`, the same stale-callback bug class as
+the already-fixed Iteration 112 `proxyJobPoller.js` cancellation race.
+Fixed by adding `cancelRequested` guards immediately after each
+`await` and at the top of the `catch` block, short-circuiting before
+any further status/result mutation. Verified with a new test
+(`tests-js/smartExrExportQueueCancelRace.test.mjs`) using a
+manually-controlled deferred dispatch promise: pre-fix, cancelling
+mid-export and then resolving the stale dispatch flipped the job to
+`QC Failed`; post-fix, it correctly stays `Cancelled` with no result
+picked up. Full regression suite re-run and matched baseline exactly:
+all `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
+
+Commits: `TBD`.

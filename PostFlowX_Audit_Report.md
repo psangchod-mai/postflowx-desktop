@@ -11894,3 +11894,92 @@ iteration targets a different `shotWorkId`, but wasn't specifically
 confirmed.
 
 Commits: `5052324`.
+
+## Iteration 115 — smartExrExportQueue.js lost-cancellation race silently overwrites CANCELLED with a stale QC result
+
+**Why this file:** `src/scripts/smart/smartExrExportQueue.js` implements
+`ExrExportQueue`, the async job queue that drives the Smart EXR pull's
+per-shot export/QC pipeline. `_runJob(state)` is the per-job worker:
+it calls the native dispatch to actually export the EXR sequence,
+awaits that promise, then runs QC validation and lands the job on one
+of `QC_PASSED`/`QC_WARNING`/`QC_FAILED`. `cancel(jobId)` is the only
+way a user can abort an in-flight export from the queue UI, and it is
+synchronous — it must take effect immediately regardless of what
+`_runJob` happens to be awaiting at that moment, since native EXR
+dispatch calls can run for many seconds.
+
+**The bug:** `cancel(jobId)` sets `state.cancelRequested = true` and
+`state.status = JOB_STATUS.CANCELLED` synchronously, but `_runJob`
+never re-checked `cancelRequested` after resuming from an `await`. If
+a user cancelled a job while `await this._nativeDispatch(...)` was
+still in flight, the status flip to `CANCELLED` was silently
+overwritten the moment that stale promise resolved: `_runJob` would
+plow ahead into `state.result = result`, `state.status =
+JOB_STATUS.QC_RUNNING`, and eventually a real
+`QC_PASSED`/`QC_WARNING`/`QC_FAILED` (or `FAILED`, if the stale promise
+instead rejected in the `catch` block) — clobbering the cancellation
+with a result the user had explicitly told the queue to discard. This
+is the same bug class as the already-fixed Iteration 112
+`proxyJobPoller.js` cancellation race: a stale-callback pattern where
+liveness/cancellation state must be re-checked after every `await`,
+not just captured once at the start.
+
+**The fix:** Added `if (state.cancelRequested) { ...; return; }` guards
+at every point `_runJob` resumes after an `await` or lands in the
+`catch` block — immediately after `await this._nativeDispatch(...)`
+resolves, immediately after the QC `await this._yield()`, and at the
+top of the `catch` block — so a cancellation that arrived mid-flight
+short-circuits before any further status/result mutation, leaving
+`state.status` at `CANCELLED` and `state.result` untouched:
+
+```js
+if (state.cancelRequested) {
+  this._log(state.id, 'Export finished after cancel — result discarded');
+  this._notify(state.id);
+  return;
+}
+```
+
+(and the equivalent guard after the QC yield and in the `catch`
+block).
+
+**Test approach:** `tests-js/smartExrExportQueueCancelRace.test.mjs`,
+a new test that `import`s `ExrExportQueue`/`JOB_STATUS` directly —
+unlike `smartRun.js` (Iteration 114), `smartExrExportQueue.js` is
+already an ES module with named exports, so no vm-sandbox or linkedom
+hybrid harness is needed. The test installs a native dispatch backed
+by a manually-controlled deferred promise (`gate`), starts the queue,
+waits one tick to confirm the job has reached `EXPORTING` (i.e.
+`_runJob` is suspended on `await this._nativeDispatch(...)`), calls
+`cancel()` and confirms the status is immediately `CANCELLED`, then
+resolves the stale dispatch promise and awaits the queue's `start()`
+to finish. It asserts the job's final status is still `CANCELLED` (not
+overwritten by whatever QC status the stale result would have
+produced) and that `state.result` was never populated with the
+discarded export result.
+
+**Verification:** Pre-fix (temporarily reverted all three
+`cancelRequested` guards back to the original code via `git diff`
+against a backed-up fixed copy), the test failed exactly as predicted:
+`AssertionError [ERR_ASSERTION]: cancelled job status must survive a
+late dispatch resolution, got QC Failed` (`actual: 'QC Failed'`,
+`expected: 'Cancelled'`). Post-fix (restored from the backup, confirmed
+via diff), the test passes in ~2.6ms. Full regression suite re-run and
+matched baseline exactly: `test:js` — every file in
+`tests-js/*.test.mjs` reports 0 failed (this new test file included;
+`selfContained.test.mjs` flags it as untracked until staged/committed,
+matching the established pattern for every prior iteration's new test
+file); `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 315
+passed, 7 skipped, 0 failed.
+
+**Still open:** `cancelAll()` funnels through the same `cancel()` path
+per job, so it inherits the same fix automatically — not separately
+tested this iteration. `retry(jobId)` resets `cancelRequested = false`
+before restarting a job, which is correct for a fresh attempt, but
+relies on the previous `_runJob` invocation for that same state object
+having already returned (via one of the new guards) before `retry()`
+mutates `cancelRequested` again; no interleaving where `retry()` fires
+while the old `_runJob` call is still mid-flight was found, but this
+wasn't exhaustively audited.
+
+Commits: `TBD`.

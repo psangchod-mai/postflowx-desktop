@@ -156,6 +156,14 @@ export class ExrExportQueue extends EventTarget {
         state.progress = Math.round(pct);
         this._notifyProgress();
       });
+      // cancel() may have fired while we were awaiting dispatch — a cancelled
+      // job must stay CANCELLED, not get silently overwritten by whatever the
+      // in-flight export happened to resolve with.
+      if (state.cancelRequested) {
+        this._log(state.id, 'Export finished after cancel — result discarded');
+        this._notify(state.id);
+        return;
+      }
       state.result = result;
       this._log(state.id, `Export complete: ${result.framesExported || 0} frames`);
 
@@ -163,6 +171,11 @@ export class ExrExportQueue extends EventTarget {
       state.status = JOB_STATUS.QC_RUNNING;
       this._notify(state.id);
       await this._yield();
+      if (state.cancelRequested) {
+        this._log(state.id, 'Cancelled during QC — result discarded');
+        this._notify(state.id);
+        return;
+      }
       const qc = validateExrResult(state.job, result);
       state.qc = qc;
       state.status = qc.qcStatus === 'QC_PASSED' ? JOB_STATUS.QC_PASSED
@@ -170,6 +183,10 @@ export class ExrExportQueue extends EventTarget {
                    : JOB_STATUS.QC_FAILED;
       this._log(state.id, `QC: ${state.status} — ${qc.issues.length} issue(s)`);
     } catch (err) {
+      if (state.cancelRequested) {
+        this._notify(state.id);
+        return;
+      }
       state.status = JOB_STATUS.FAILED;
       state.result = { status: 'error', error: String(err?.message || err) };
       this._log(state.id, `FAILED: ${err?.message || err}`);
