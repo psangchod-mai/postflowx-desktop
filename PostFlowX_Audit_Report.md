@@ -10288,3 +10288,96 @@ a stub that always falls through to ffmpeg, so it was not in scope for
 this key-collision species.
 
 Commits: `8846ceb`.
+
+## Iteration 97 — `pfx:imf:decodeTestFrame`'s ffmpeg output PNG used a
+static, non-request-scoped filename, letting concurrent decode-test
+calls clobber or misread each other's frame
+
+### Why this file
+Continuing the sweep for species #7 instances outside the areas already
+covered (Iterations 93-96 were the IMF frame-provider pipeline and the
+OCF decode pipeline), a background scouting pass was pointed at
+`electron/ipc.js` and other untouched IPC handlers/engines. It found a
+sixth, more severe instance of the same species: the discriminator here
+wasn't just dropped, it was entirely absent — the filename never varied
+at all, regardless of caller-supplied `frameNumber` or `cplPath`.
+
+### The bug
+`electron/ipc.js`'s `pfx:imf:decodeTestFrame` handler (registered at
+line 854) accepts a per-call `cplPath`, `assetMaps`, `frameNumber`, and
+`scale`, but both branches that write the debug decode's ffmpeg output
+wrote to a single hardcoded path:
+
+```js
+// MXF fallback branch (line 931)
+const outputPng = path.join(require('os').tmpdir(), 'postflowx_imf_frame_000000.png');
+
+// Primary IMF-demuxer branch (line 978)
+const outputPng = path.join(os.tmpdir(), 'postflowx_imf_frame_000000.png');
+```
+
+The `000000` suffix is static text, not a formatted frame number — every
+invocation of this handler, for any CPL, any frame, from any window,
+races on the exact same file. Two concurrent invocations (a user
+double-clicking the "Decode Test Frame" button, or two renderer windows
+both exercising the IMF debug tool) can have one call's `ffmpeg -y`
+overwrite the PNG while the other is mid-`fs.readFileSync()` on it
+(line 941/985), producing a truncated read, or — more insidiously — a
+completed read that silently returns the *other* call's frame image
+labeled as this call's result.
+
+### Independent verification
+Read `electron/ipc.js` lines 851-990 directly to confirm both branches
+construct and then read back the identical static path. Traced
+reachability: `electron/preload.js:628-629` exposes
+`window.pfxPlatform.imf.decodeTestFrame(args)` over IPC channel
+`pfx:imf:decodeTestFrame`; it is invoked from the "Decode Test Frame"
+button handler in `src/scripts/modules/imf/imf_ui.js:968` and again from
+`src/scripts/modules/smart_engine_settings.js:125,444`
+(`decodeTestFrame()` wired to a `click` listener on `decodeBtn`) — both
+ordinary, user-clickable buttons in the IMF debug/settings UI, not
+test-only code.
+
+### The fix
+Widened the filename with `process.pid`, the request's own
+`frameNumber`, and a timestamp in both branches:
+```js
+path.join(os.tmpdir(), `postflowx_imf_frame_${process.pid}_${frameNumber}_${Date.now()}.png`)
+```
+This is a pure debug scratch file (read once immediately after writing,
+then discarded — never re-looked-up by a later call the way the OCF
+proxy cache is), so — like Iterations 94/95's fix, and unlike Iteration
+96's — a call-scoped unique name is the right fix rather than widening a
+cache key with a missing dimension.
+
+### Test approach
+Reproduced the filename-construction logic from both branches in a
+standalone Node snippet, since the vulnerable path requires Electron's
+`ipcMain`/a real ffmpeg IMF demuxer build not available to `test/`/
+`tests-js/`.
+
+### Verification
+```
+PRE-FIX collision (two concurrent calls, different frames): true -> .../postflowx_imf_frame_000000.png
+POST-FIX distinct: true -> .../postflowx_imf_frame_25388_5_1785312873501.png vs .../postflowx_imf_frame_25388_42_1785312873501.png
+```
+
+### Gate
+`npm run test:node`: 72 passed/1 skipped/73 total, 0 failed — matches
+baseline. `npm run test:js`: 25 passed, 0 failed — matches baseline
+(exit code 0). `electron/ipc.js` contains substantial pre-existing
+uncommitted WIP unrelated to this fix (an `_activeWindow`/
+`_ipcRegistered` re-registration guard, a Meechum OAuth flow, a
+clipboard import, and other hunks); isolated the two intended hunks via
+`git add -p`, verified via `git diff --cached` showing exactly the two
+`outputPng` lines changed before committing. Python suite not re-run —
+this is a pure Electron/JS change.
+
+### Still open
+`imfFfmpegBackend.extractFrame()`/`extractImfFrame()` themselves were
+not audited for other static-path assumptions beyond the `outputPng`
+argument passed in by this handler; a future iteration should check
+whether other IMF/OCF debug-test IPC handlers in `electron/ipc.js` share
+this static-filename pattern.
+
+Commits: `TBD`.

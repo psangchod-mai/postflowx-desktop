@@ -914,7 +914,7 @@ function register(mainWindow, appRoot) {
 
       if (fallbackMxfPath) {
         log.push(`[DecodeTest] Found MXF fallback: ${fallbackMxfPath}`);
-        const outputPng = path.join(require('os').tmpdir(), 'postflowx_imf_frame_000000.png');
+        const outputPng = path.join(require('os').tmpdir(), `postflowx_imf_frame_${process.pid}_${frameNumber}_${Date.now()}.png`);
         const mxfProbe = await imfFfmpegBackend.probeStream(fallbackMxfPath);
         log.push(`[DecodeTest] MXF probe ok=${mxfProbe.ok} codec=${mxfProbe.codec || '?'}`);
         const mxfResult = await imfFfmpegBackend.extractFrame(fallbackMxfPath, frameNumber, outputPng, mxfProbe, 'SDR');
@@ -961,7 +961,7 @@ function register(mainWindow, appRoot) {
     }
 
     // ── Step 2: extract frame 0 ────────────────────────────────────────────
-    const outputPng = path.join(os.tmpdir(), 'postflowx_imf_frame_000000.png');
+    const outputPng = path.join(os.tmpdir(), `postflowx_imf_frame_${process.pid}_${frameNumber}_${Date.now()}.png`);
     log.push(`[DecodeTest] Step 2: ffmpeg -f imf … -frames:v 1 → ${outputPng}`);
 
     const r = await imfFfmpegBackend.extractImfFrame(cplPath, assetMaps, frameNumber, outputPng, scale, probe);

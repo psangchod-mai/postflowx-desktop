@@ -6016,3 +6016,21 @@ fallback (which has no `scale` param at all) is a distinct bug, left open.
 as baseline.
 
 Commits: `8846ceb`.
+
+## Iteration 97 — decodeTestFrame's ffmpeg output PNG used a static filename
+
+`electron/ipc.js`'s `pfx:imf:decodeTestFrame` handler (both the MXF-fallback
+and primary IMF-demuxer branches) wrote its debug decode output to a
+hardcoded `postflowx_imf_frame_000000.png` — no `frameNumber`, `cplPath`, or
+call-scoping at all, unlike prior instances that at least dropped one
+dimension of the key. Concurrent clicks of the "Decode Test Frame" button
+(or two windows both exercising it) race on the same file: one call's
+`ffmpeg -y` overwrite can clobber another's in-flight read, or silently hand
+back the wrong call's frame image. Sixth confirmed instance of species #7,
+first found outside the IMF-frame-provider/OCF pipelines. Fixed by keying
+the filename on `process.pid`+`frameNumber`+timestamp in both branches.
+`electron/ipc.js` had substantial unrelated pre-existing WIP; isolated the
+two intended hunks via `git add -p`. `npm run test:node` (72/1/73) and
+`npm run test:js` (25 passed) both match baseline.
+
+Commits: `TBD`.
