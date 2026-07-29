@@ -39,18 +39,16 @@ async function _companionPost(endpoint, body) {
   return resp.json();
 }
 
-let _companionCfgCache = null;
 async function _companionConfig() {
-  if (_companionCfgCache) return _companionCfgCache;
-  // Try storage for companion URL + token
+  // Read fresh every call: the companion can mint a new token on restart, or
+  // the user can repoint the URL in Settings, while this module stays loaded.
   const stored = (typeof pfxStorage !== 'undefined' && pfxStorage?.get)
     ? await pfxStorage.get(['companionUrl', 'companionToken'])
     : {};
-  _companionCfgCache = {
+  return {
     getCompanionUrl:   stored.companionUrl   || 'http://127.0.0.1:47125',
     getCompanionToken: stored.companionToken || '',
   };
-  return _companionCfgCache;
 }
 
 // ── Unified dispatch ──────────────────────────────────────────────────────────

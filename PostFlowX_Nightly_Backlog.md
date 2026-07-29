@@ -7178,3 +7178,29 @@ git-tracking gate once the new test file was staged); `test:node`
 matches baseline (72 pass, 1 skip, 0 fail).
 
 Commits: `f40d8bf`.
+
+## Iteration 140 — Smart Playback Engine: companion URL/token cached forever, never picks up a restart or Settings change
+
+`smart_playback_engine.js`'s `_companionConfig()` (Chrome-extension
+companion-HTTP path, used by `probe`/`decodeFrame`/`transcodeProxy`/etc.)
+memoized its `pfxStorage` read into a module-level cache the first
+time any companion call was made, and never invalidated it. Since the
+companion server mints a new auth token on every restart, and a user
+can repoint the companion URL from Settings, every later call kept
+sending the stale URL/token for the rest of the page's lifetime — even
+though the sibling module `smart_engine_settings.js` implements the
+identical helper without caching, so its own "Check Engines" button
+correctly picked up the change. Fixed by dropping the memoization so
+every call reads `pfxStorage` fresh, matching the sibling module
+(10-line diff). New test
+`tests-js/smartPlaybackEngineCompanionConfigStale.test.mjs` imports
+the real module directly with a mutable fake `pfxStorage` and a
+`fetch` stub, calls `probe()`, changes the stored token/URL, calls
+`probe()` again, and asserts the second request uses the updated
+values. Verified RED without the fix via `git stash`/`git stash pop`
+(`got "token-A"` instead of `"token-B"`) and GREEN with it. Full
+`test:js` regression green across every suite (including the
+`selfContained.test.mjs` git-tracking gate once the new test file was
+staged); `test:node` matches baseline (72 pass, 1 skip, 0 fail).
+
+Commits: `TBD`.

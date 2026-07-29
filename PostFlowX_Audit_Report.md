@@ -13915,3 +13915,49 @@ WIP diff discovered this iteration, ruling the file out entirely for
 any near-term iteration.
 
 Commits: `f40d8bf`.
+
+## Iteration 140 — Smart Playback Engine: companion URL/token cached forever, never picks up a restart or Settings change
+
+**Why this file:** `src/scripts/modules/smart_playback_engine.js` is the
+Chrome-extension-path client for the companion HTTP API, used by
+`probe`, `decodeFrame`, `getEngineStatus`, `transcodeProxy`, `imfOpen`,
+`imfDecodeTestFrame`, `resolveStatus`, and `showLogs`.
+
+**The bug:** `_companionConfig()` memoized its `pfxStorage` read into a
+module-level `_companionCfgCache` the first time any companion call
+was made, and never invalidated it. The companion server mints a new
+auth token on every restart, and a user can repoint the companion URL
+from Settings — but once `_companionCfgCache` was populated, every
+later call in this module kept sending the stale URL/token for the
+rest of the page's lifetime. The sibling module
+`smart_engine_settings.js` implements the identical helper *without*
+caching (it re-reads `pfxStorage` on every call) for exactly this
+reason, so its own "Check Engines" button correctly picked up a
+change while this module's calls silently kept failing (401 /
+connection-refused) against the old companion instance.
+
+**The fix:** dropped the memoization — `_companionConfig()` now reads
+`pfxStorage` fresh on every call, matching `smart_engine_settings.js`.
+10-line diff, fully isolated to this one helper.
+
+**Test:** `tests-js/smartPlaybackEngineCompanionConfigStale.test.mjs`
+(new). Imports the real module directly (no DOM dependency), with a
+mutable fake `pfxStorage.get()` and a `fetch` stub that records the
+`X-PFX-Token` header and URL of each request. Calls `probe()` once,
+then changes the stored `companionToken`/`companionUrl` and calls
+`probe()` again, asserting the second request uses the updated
+token/URL rather than the first call's cached values.
+
+**Verification:** confirmed the test fails RED without the fix
+(`git stash`/`git stash pop` on the isolated source change — got
+`AssertionError: second call must use the updated token (got
+"token-A")`) and passes GREEN with it. Full `npm run test:js` is green
+across every suite including the `selfContained.test.mjs`
+git-tracking gate once the new test file was staged. `npm run
+test:node` matches baseline (72 pass, 1 pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-139 for the same reason
+(pre-existing WIP too tightly interleaved to isolate safely).
+
+Commits: `TBD`.
