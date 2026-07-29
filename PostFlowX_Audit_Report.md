@@ -7209,4 +7209,113 @@ names/messages, not genuine failures.
 
 Commits: `325445a`.
 
+## Iteration 65 — companion HTTP server mis-served suffix byte-ranges — new species
+
+**Why this file.** `companion/src/postflowx_companion/http_server.py` is the
+Python companion's request handler for `/stream/`, `/file/`, and `/wav/`
+asset serving. It surfaced from a scouting pass explicitly directed away
+from the timecode/editorial parser layer (all of species 48-64) toward
+other mechanisms — HTTP request handling in the companion server. Before
+this fix, `git status --porcelain` showed the file as modified, but
+`git diff` showed the change was a bare file-mode flip (`100644 → 100755`,
+0 content lines) — the range-parsing code itself was unmodified from the
+repo's sole initial commit.
+
+**The bug.** `_serve_file()`'s `Range` header parsing (lines 758-764,
+before this fix):
+
+```python
+range_hdr = self.headers.get("Range", "")
+if range_hdr.startswith("bytes="):
+    start_s, _, end_s = range_hdr[6:].partition("-")
+    start = int(start_s) if start_s else 0
+    end = int(end_s) if end_s else size - 1
+    end = min(end, size - 1)
+```
+
+Per RFC 7233 §2.1, `Range: bytes=-N` is a *suffix* range meaning "the last N
+bytes of the resource" — there is no start value at all, not an omitted end
+value. But `"-500".partition("-")` (splitting on the first `-`, which is
+the very first character) yields `("", "-", "500")`: `start_s` is empty, so
+the `else 0` branch fires and `start` becomes `0` instead of `size - 500`.
+
+Concrete failure: a 50,000,000-byte file, request `Range: bytes=-500`.
+`start_s = ""`, `end_s = "500"` → `start = 0`, `end = 500`. The
+inverted/unsatisfiable-range guard (`start < 0 or start > end or start >=
+size`) passes cleanly (0 ≤ 500 < size), so the server responds `206
+Partial Content` with `Content-Range: bytes 0-500/50000000` and streams the
+**first** 501 bytes — not the requested last 500. This is exactly the
+pattern used by media tooling/clients to fetch a trailing chunk to locate a
+non-fast-start MP4/MOV's trailing `moov` atom (common for ffmpeg output not
+remuxed with `-movflags +faststart`), so any such client talking to this
+companion's streaming endpoints gets silently wrong bytes back with a
+success status and a `Content-Range` header that mislabels them.
+
+**Why this is a genuine, new species.** None of species 48-64 touch HTTP
+request/response handling at all — they are timecode/fps arithmetic,
+parser data-model bugs, cache/identity/race conditions, or a GLSL/CPU
+integer-representation mismatch. This is a string-parsing bug in an
+RFC 7233 header parser: `str.partition("-")` on a leading-hyphen string
+silently produces an empty "before" component that gets treated as "value
+omitted" rather than "this is the suffix form," a failure mode with no
+resemblance to any of 48-64 (not a rounding error, not an identity
+collision, not a race, not a normalize/dedup conflation, not an
+integer-representation mismatch — it's a header-grammar
+under-specification: two structurally different range forms that happen to
+produce the same `partition()` shape when the omitted piece is the start
+rather than the end).
+
+**The fix.** Added a branch that explicitly detects the suffix-range form
+(`start_s` empty AND `end_s` non-empty) and computes `start = size -
+suffix_length` (clamped to 0), leaving the ordinary `bytes=N-`, `bytes=N-M`,
+and malformed-header paths untouched:
+
+```python
+if range_hdr.startswith("bytes="):
+    start_s, _, end_s = range_hdr[6:].partition("-")
+    if not start_s and end_s:
+        # Suffix range "bytes=-N": the last N bytes of the resource,
+        # per RFC 7233 §2.1 — not "start omitted, so start at 0".
+        start = max(0, size - int(end_s))
+        end = size - 1
+    else:
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else size - 1
+    end = min(end, size - 1)
+```
+
+Safe because `_serve_file()` is the only place in the companion that reads
+or interprets the `Range` header, and every other branch (full requests,
+`bytes=N-`, `bytes=N-M`, unsatisfiable ranges → 416) is untouched by this
+change.
+
+**Test approach.** Added `test_suffix_range_serves_last_n_bytes` to the
+existing `TestServeFileRange` class in `companion/tests/test_http_server.py`
+(following its established `_make_handler` + mocked
+`send_response`/`send_header`/`wfile` pattern), asserting on a 10-byte file
+with `Range: bytes=-4` that the response is `206`, `Content-Range: bytes
+6-9/10`, and the actual bytes written to `wfile` are `b"6789"` — not just
+the header, so a fix that gets the header right but the seek/read wrong
+would still fail.
+
+**Verification (mutation testing).** File was tracked; used the plain
+file-copy backup/restore technique. Reverted the fix back to the original
+unconditional `start = int(start_s) if start_s else 0` via a guarded Python
+string-replacement script and reran: new test failed
+(`AssertionError: assert ['bytes 0-4/10'] == ['bytes 6-9/10']`), the other
+22 pre-existing tests in the file still passed. Restored the fix: all 23
+tests in `companion/tests/test_http_server.py` passed.
+
+**Gate.** `npm run build-verify` passed clean (exit 0) on the first
+attempt — both target files were already tracked, so no
+`untracked-imports.json` baseline issue. Full Python suite: 262 passed, 7
+skipped. Grepped the full log for failure markers and confirmed all hits
+were false positives inside passing tests' names/messages (e.g. a test
+asserting an error-classifier's output for a message containing the
+literal string "SyntaxError").
+
+**Still open.** None for this fix.
+
+Commits: `621a708`.
+
 Commits: `50e0be7`.

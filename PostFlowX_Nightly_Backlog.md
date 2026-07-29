@@ -5029,4 +5029,37 @@ already tracked before this iteration.
 
 Commits: `325445a`.
 
+## Iteration 65 — companion HTTP server mis-served suffix byte-ranges
+
+**Found.** `companion/src/postflowx_companion/http_server.py`'s
+`_serve_file()` parsed `Range: bytes=-N` (an RFC 7233 suffix range meaning
+"the last N bytes") as `start=0` because `"-N".partition("-")` yields an
+empty "before" component, which the code treated as "start omitted" rather
+than "this is the suffix form." Silently served the first N bytes of the
+file with a `Content-Range` header claiming otherwise — a `206` success
+status carrying wrong data. This is exactly the request shape media
+clients use to fetch a trailing chunk (e.g. locating a `moov` atom in a
+non-fast-start MP4).
+
+**Done.** Added a branch that detects the suffix form (empty start, non-empty
+end) and computes `start = max(0, size - N)`, `end = size - 1`; every other
+range form is untouched.
+
+**Tests.** New `test_suffix_range_serves_last_n_bytes` in
+`companion/tests/test_http_server.py`'s `TestServeFileRange` class —
+asserts on a 10-byte file that `Range: bytes=-4` returns `206`,
+`Content-Range: bytes 6-9/10`, and the actual bytes written are `b"6789"`.
+
+**Verification.** File was tracked — used plain file-copy backup/restore.
+Reverting to the unconditional `start=0` path: new test failed
+(`['bytes 0-4/10'] != ['bytes 6-9/10']`). With the fix: 23/23 passing.
+
+**Gate.** `npm run build-verify` passed clean on the first attempt — both
+files were already tracked, no `untracked-imports.json` baseline issue.
+Python suite: 262 passed, 7 skipped.
+
+**Still open.** None.
+
+Commits: `621a708`.
+
 Commits: `7be729e`.
