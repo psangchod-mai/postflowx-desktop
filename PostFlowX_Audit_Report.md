@@ -11366,4 +11366,4 @@ facto engine for raw formats even when a vendor SDK path is intended)
 is also unaddressed — fixing it is a larger SDK-integration task
 outside this iteration's scope.
 
-Commits: `TBD`.
+Commits: `57ac6af`.
