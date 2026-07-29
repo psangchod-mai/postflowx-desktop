@@ -1804,10 +1804,18 @@ const __pfxTryRestoreNotesOnly = async () => {
   //  - 'ref'   => V1 (Ref) bin
   //  - 'shots' => V2 (Shots) bin
   let importTarget = 'shots';
+  // Bin for the shared `fileInput`'s own pending native-dialog request, captured
+  // separately from `importTarget` — the ref-video picker (__pfxOpenRefPicker)
+  // also mutates `importTarget` while its own dialog is open, and since native
+  // file dialogs resolve asynchronously (arbitrarily long user think-time), that
+  // write could otherwise stomp the target of a still-open `fileInput` dialog by
+  // the time its 'change' handler runs.
+  let _fileInputTarget = 'shots';
   const __pfxOpenMediaPickerForBin = async (target) => {
     const t = String(target || '').toLowerCase();
     const targetBin = (t === 'ref' || t === 'v1') ? 'ref' : 'shots';
     importTarget = targetBin;
+    _fileInputTarget = targetBin;
     const canUseSystemPicker = (typeof window.showOpenFilePicker === 'function');
     if (canUseSystemPicker) {
       try {
@@ -9234,7 +9242,7 @@ const __rvCtxTargetOk = (target) => {
   fileInput.addEventListener('change', async () => {
     const files = fileInput.files;
     fileInput.value = '';
-    const added = await store.addClips(files, { bin: importTarget });
+    const added = await store.addClips(files, { bin: _fileInputTarget });
 
     // Persist immediately so a quick refresh doesn't lose the Bin/Timeline.
     // (Media URLs are blob: and won't survive refresh, but clip metadata will.)
@@ -9253,7 +9261,7 @@ const __rvCtxTargetOk = (target) => {
       loadSourceClip({ clipId: first.id, name: first.name, url: first.url, startTC: first.startTC || '00:00:00:00' }, 0, { pin: true });
     }
 
-    const label = (importTarget === 'ref') ? 'V1 (Ref)' : 'V2 (Shots)';
+    const label = (_fileInputTarget === 'ref') ? 'V1 (Ref)' : 'V2 (Shots)';
     status.textContent = `Added ${Array.isArray(added) ? added.length : 0} clip(s) to ${label}`;
   });
 

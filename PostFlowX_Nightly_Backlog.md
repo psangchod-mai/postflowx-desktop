@@ -7150,3 +7150,31 @@ new files were staged); `test:node` matches baseline (72 pass, 1 skip,
 0 fail).
 
 Commits: `b842a31`.
+
+## Iteration 139 — Reviews bin import: shared `importTarget` clobbered by a concurrent, unrelated picker
+
+`reviews/index.js`'s bin-import flow stashes which bin ("shots" or
+"ref") a native `<input type="file">` dialog was opened for in a
+single shared `importTarget` variable — also written by the unrelated
+ref-video picker (`__pfxOpenRefPicker`) when it opens its own dialog.
+Since native file dialogs resolve on arbitrary user think-time, a user
+opening the Shots ("Add Clips") dialog and then, before picking files,
+also triggering the Ref video picker would leave `importTarget` stuck
+on `'ref'` — so finishing the original Shots dialog silently added the
+picked files to the wrong bin, with a mislabeled status toast to
+match. Fixed with a dedicated `_fileInputTarget` variable that only
+`__pfxOpenMediaPickerForBin` writes, captured at open-time; the
+`fileInput` `'change'` handler now reads it instead of the shared
+`importTarget` for both the bin assignment and the status label (14
+line diff, fully isolated). New test
+`tests-js/reviewsFileInputTargetStaleRace.test.mjs` source-slices the
+real declarations/handler out of the 10k-line module, opens the Shots
+picker, clobbers the shared `importTarget` to `'ref'` mid-flight to
+mirror the race, then fires the `'change'` event and asserts the files
+land in `'shots'`. Verified RED without the fix via `git
+stash`/`git stash pop` and GREEN with it. Full `test:js` regression
+green across every suite (including the `selfContained.test.mjs`
+git-tracking gate once the new test file was staged); `test:node`
+matches baseline (72 pass, 1 skip, 0 fail).
+
+Commits: `TBD`.

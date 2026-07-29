@@ -13856,3 +13856,62 @@ unaddressed, carried over from Iterations 130-137 for the same reason
 (pre-existing WIP too tightly interleaved to isolate safely).
 
 Commits: `b842a31`.
+
+## Iteration 139 — Reviews bin import: shared `importTarget` clobbered by a concurrent, unrelated picker
+
+**Why this file:** `src/scripts/features/reviews/index.js`'s bin-import
+flow (`__pfxOpenMediaPickerForBin`) falls back to a single shared
+`fileInput` native `<input type="file">` element when the File System
+Access API isn't available, stashing which bin ("shots" or "ref") the
+dialog was opened for in a module-level `importTarget` variable that
+is also written by the unrelated ref-video picker
+(`__pfxOpenRefPicker`).
+
+**The bug:** native OS file dialogs resolve asynchronously, on
+arbitrary user think-time. If a user opened the Shots ("Add Clips")
+dialog, then — before picking any files — also triggered the Ref
+video picker (which writes `importTarget = 'ref'` when it opens its
+own dialog), `importTarget` was left holding `'ref'`. When the user
+went back and finished the original Shots dialog, `fileInput`'s
+`'change'` handler read the now-stale `importTarget` and silently
+added the picked files to the wrong bin, with a mislabeled status
+toast to match.
+
+**The fix:** added a dedicated `_fileInputTarget` variable that only
+`__pfxOpenMediaPickerForBin` writes, captured at the moment `fileInput`
+is opened. The `fileInput` `'change'` handler now reads
+`_fileInputTarget` instead of the shared `importTarget` for both
+`store.addClips(files, { bin: ... })` and the status label, so it can
+no longer be clobbered by the independent ref-picker flow. 14-line
+diff, fully isolated to this one closure.
+
+**Test:** `tests-js/reviewsFileInputTargetStaleRace.test.mjs` (new).
+Extracts the real `importTarget`/`_fileInputTarget` declarations,
+`__pfxOpenMediaPickerForBin`, and the `fileInput` `'change'` handler
+body out of the 10k-line monolithic module via source-slicing (mounting
+the whole reviews tab isn't required to exercise this closure logic),
+then builds a harness via `new Function(...)` with a fake
+`EventTarget`-like `fileInput` and a fake `store.addClips` that records
+`(files, bin)` calls. Simulates the race: opens the Shots picker
+(forcing the native-dialog fallback path), clobbers the shared
+`importTarget` to `'ref'` mid-flight (mirroring the unrelated ref
+picker), then fires `fileInput`'s `'change'` event and asserts the
+files land in `'shots'`, not `'ref'`.
+
+**Verification:** confirmed the test fails RED without the fix (via
+`git stash`/`git stash pop` on the isolated source change — the
+untracked new test file survives a plain `git stash` since it only
+stashes tracked modifications) and passes GREEN with it. Full `npm run
+test:js` is green across every suite including the
+`selfContained.test.mjs` git-tracking gate once the new test file was
+staged. `npm run test:node` matches baseline (72 pass, 1 pre-existing
+skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-138 for the same reason
+(pre-existing WIP too tightly interleaved to isolate safely) — and is
+now further compounded by a newer, unrelated 173-line setup-wizard/app-tour
+WIP diff discovered this iteration, ruling the file out entirely for
+any near-term iteration.
+
+Commits: `TBD`.
