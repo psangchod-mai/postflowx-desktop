@@ -5525,3 +5525,18 @@ passed/7 skipped (same 2 pre-existing Iteration-76 failures,
 unrelated), JS 0 failures.
 
 Commits: `060024c`.
+
+## Iteration 80 — OCF probe floored NTSC-pulldown fps instead of rounding
+
+`ocf_probe.py`'s `probe_ocf_clip()` computed
+`tc_base = fps["num"] // fps["den"]` — floor division instead of
+rounding — so 23.976/29.97/59.94 fps clips got `timecodeBase` 23/29/59
+instead of the correct nominal 24/30/60. `media_probe.py`'s sibling
+code already used `round(fps_val)`, confirming this was a genuine
+divergence, not a design choice. Fixed by rounding instead of
+flooring. Added `test_ocf_probe_tc_base.py` (4 tests, fake-ffprobe
+pattern); confirmed the 3 fractional-rate cases fail pre-fix and pass
+post-fix via a stash/pop round-trip. Full suite: 281 passed/7 skipped
+(same 2 pre-existing Iteration-76 failures, unrelated).
+
+Commits: `TBD`.

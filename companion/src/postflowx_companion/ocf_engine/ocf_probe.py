@@ -187,7 +187,7 @@ def probe_ocf_clip(
     # ── Timecode ──────────────────────────────────────────────────────────────
     tc_val, tc_source = _tc_source(all_tags)
     drop_frame = ";" in tc_val
-    tc_base    = fps["num"] // fps["den"] if fps["den"] else 24
+    tc_base    = round(fps["num"] / fps["den"]) if fps["den"] else 24
     timecode   = {
         "start":         tc_val or "00:00:00:00",
         "source":        tc_source,

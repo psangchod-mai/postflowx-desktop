@@ -8639,3 +8639,70 @@ test — none found beyond the intentional `geometryFile`/`resizeFile`
 alias.
 
 Commits: `060024c`.
+
+## Iteration 80 — OCF probe's `timecodeBase` floored NTSC-pulldown frame rates instead of rounding
+
+**Why this file.** `ocf_probe.py`'s `probe_ocf_clip()` is the OCF-probe
+entry point for camera-original media, wired into the companion
+command dispatch (`api.py` registers `"ocfEngineProbe"`), and its
+output feeds the OCF ingest / VFX Pull / ACES-look probe results used
+by router, decode, and UI badge logic.
+
+**The bug.** Line 190 computed
+`tc_base = fps["num"] // fps["den"] if fps["den"] else 24` — integer
+floor division instead of rounding to derive the nominal timecode base
+from an exact (rational) frame rate. For the most common professional
+cinema NTSC-pulldown rates this floors one frame low:
+`24000/1001` (23.976 fps) → `23` instead of `24`; `30000/1001`
+(29.97 fps) → `29` instead of `30`; `60000/1001` (59.94 fps) → `59`
+instead of `60`.
+
+**Concrete failure example.** Probing an ARRI/RED/Sony/Canon clip shot
+at 23.976 fps returns `timecode.timecodeBase: 23`. Any downstream
+timecode-frame-count arithmetic or UI display trusting this field is
+off by one frame at every second boundary.
+
+**Why genuine and new.** A sibling module in the same codebase,
+`media_engine/media_probe.py` (line 310), computes the equivalent
+value correctly via `round(fps_val)`, confirming the intended
+convention and that `ocf_probe.py` diverged from it — not an
+alternate deliberate design. `probe_ocf_clip()` is reachable via the
+normal `ocfEngineProbe` dispatch path, not dead code. Distinct from
+the wrong-API-name, operator-precedence, `get_session()`-copy-mutation,
+and sidecar-path-collision species already swept for in Iterations
+74-79.
+
+**The fix.** Changed line 190 to
+`tc_base = round(fps["num"] / fps["den"]) if fps["den"] else 24`,
+mirroring `media_probe.py`'s convention.
+
+**Test approach.** New file `companion/tests/test_ocf_probe_tc_base.py`
+(4 tests), following the same fake-ffprobe pattern as
+`test_probe_ocf_tc_out.py`: monkeypatches `subprocess.run` to return a
+fake ffprobe JSON payload with a given `r_frame_rate`, calls
+`probe_ocf_clip()` against a real (empty) temp file, and asserts
+`timecode.timecodeBase` for 23.976/29.97/59.94 fps (expect
+24/30/60) plus an integer-rate case (25/1 → 25) to confirm no
+regression. Confirmed all 3 fractional-rate cases fail pre-fix
+(23/29/59) and pass post-fix via a `git stash`/re-run/`git stash pop`
+round-trip on `ocf_probe.py`.
+
+**Verification.**
+`python3 -m pytest tests/test_ocf_probe_tc_base.py -v` — 4/4 pass.
+Full companion suite: `python3 -m pytest -q` — 281 passed, 7 skipped,
+same 2 pre-existing `test_conform_engine.py` failures from Iterations
+76-79 (`int.bit_count()` needs Python 3.10+; this environment runs
+3.9.6) — unrelated, untouched, out of scope.
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented in
+Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (environment/version issue, not a
+logic bug, out of scope). Other timecode/frame-rate math sites in the
+companion codebase were not exhaustively re-audited this iteration;
+`_tc_source`/`_fps_info` in `ocf_probe.py` itself were read and are
+unaffected by this fix.
+
+Commits: `TBD`.
