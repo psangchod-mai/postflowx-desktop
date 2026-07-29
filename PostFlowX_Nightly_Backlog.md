@@ -5563,3 +5563,23 @@ round-trip. Full suite: 285 passed/7 skipped (same 2 pre-existing
 Iteration-76 failures, unrelated).
 
 Commits: `dd8c190`.
+
+## Iteration 82 — FFmpeg frame server's cache filename ignored the source clip
+
+`ffmpeg_frame_server.py`'s `decode_frame()` built its output cache
+path from only `frame_number` and `output_format`, never from the
+source clip `path`. Since the companion HTTP server runs as a
+`ThreadingHTTPServer`, two different clips being previewed
+concurrently and requesting the same frame number/format computed the
+identical output path and raced to write it — one caller could
+silently get a frame decoded from the wrong clip. Every sibling cache
+in the codebase (`frame_cache.py`'s `make_key()`, the per-backend
+cache-key builders) already keys on source path/session; this file was
+the outlier. Fixed by adding `_frame_cache_key()`, a SHA256 hash over
+`path:frame_number:scale:output_format`, and using it in the output
+filename. Added `test_ffmpeg_frame_server_cache_key.py` (4 tests);
+confirmed it fails to even collect (`ImportError`) pre-fix and passes
+4/4 post-fix via a stash/pop round-trip. Full suite: 289 passed/7
+skipped (same 2 pre-existing Iteration-76 failures, unrelated).
+
+Commits: `TBD`.

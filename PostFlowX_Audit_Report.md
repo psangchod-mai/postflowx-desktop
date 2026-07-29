@@ -8799,3 +8799,85 @@ incompatibility in `conform_engine.py` remains unfixed (environment
 issue, out of scope).
 
 Commits: `dd8c190`.
+
+## Iteration 82 — FFmpeg frame server's cache filename ignored the source clip, so concurrent decode requests for different clips could collide
+
+**Why this file.**
+`companion/src/postflowx_companion/media_engine/ffmpeg_frame_server.py`
+implements `FFmpegFrameServerEngine`, the fallback/primary frame decode
+path for image sequences, MXF J2K/HTJ2K, and the MPV-unsupported
+fallback route, invoked via `POST /api/media/decode-frame` in
+`http_server.py`.
+
+**The bug.** `decode_frame()`'s output path (line 56, pre-fix) was
+`frame_dir / f"frame_{frame_number:07d}.{output_format}"` — built only
+from `frame_number` and `output_format`, never from `path` (the source
+clip) or any session/request identifier. Every sibling cache in this
+codebase keys on source identity: `frame_cache.py`'s `make_key()`
+hashes `session_id:frame_index:...`; the other backend modules hash
+`path:frame_index:...`. This file was the sole outlier.
+
+**Concrete failure example.** The companion HTTP server runs as a
+`ThreadingHTTPServer` (`http_server.py:813`), so each request handles
+in its own thread. Two different clips being scrubbed/previewed
+concurrently (e.g. two panels open at once) both requesting
+`frame_number=100` at the default scale/format compute the identical
+path `<tmpdir>/postflowx_frames/frame_0000100.png`. Their `ffmpeg -y`
+subprocess calls race to write that same file; the
+`out_file.is_file() and out_file.stat().st_size > 0` check can pass on
+a file mid-overwrite by the other request, so one caller's returned
+`imagePath` can silently show a frame decoded from the wrong clip.
+
+**Why genuine and new.** Confirmed reachable: `media_router.py`
+selects `FFmpegFrameServerEngine` as primary for image sequences (line
+38) and MXF J2K/HTJ2K (line 60), and as a listed fallback for MOV/MXF
+DNx/ProRes, browser-unsafe media, and the MPV-fallback route — not a
+rare path. Confirmed `ThreadingHTTPServer` (not a single-threaded
+server) via `http_server.py:813/826`. Confirmed zero prior mentions of
+`ffmpeg_frame_server`/`FFmpegFrameServerEngine` across all 81 prior
+iteration entries. A new instance of an established species (see
+Iteration 79's sidecar-path-collision), here manifesting as a
+cross-clip cache-key collision rather than a same-clip sidecar
+collision.
+
+**The fix.** Added `_frame_cache_key(path, frame_number, scale,
+output_format)`, hashing all four inputs via SHA256 — matching the
+convention already used by `frame_cache.py`'s `make_key()` and the
+per-backend cache-key builders. `decode_frame()`'s `out_file` now uses
+`frame_{cache_key}.{output_format}` instead of the frame-number-only
+name.
+
+**Test approach.** New file
+`companion/tests/test_ffmpeg_frame_server_cache_key.py` (4 tests):
+the pure `_frame_cache_key()` helper (different paths → different
+keys; same inputs → same key; varying frame_number/scale/format →
+different keys), plus an end-to-end test that stubs `subprocess.run`
+and confirms `decode_frame()` for two different clip paths (same
+frame_number/format) produces two distinct output file paths.
+Confirmed the test file fails to even collect
+(`ImportError: cannot import name '_frame_cache_key'`) against pre-fix
+code, and passes 4/4 post-fix, via a stash/pop round-trip on
+`ffmpeg_frame_server.py`.
+
+**Verification.**
+`python3 -m pytest tests/test_ffmpeg_frame_server_cache_key.py -v` —
+4/4 pass. Full companion suite: `python3 -m pytest -q` — 289 passed, 7
+skipped, same 2 pre-existing `test_conform_engine.py` failures from
+Iterations 76-81 (`int.bit_count()` needs Python 3.10+; unrelated, out
+of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented in
+Iteration 76.
+
+**Still open.** The fix resolves the cross-clip collision but does not
+add an atomic temp-file + `os.replace()` write for the case where two
+requests target the *same* clip/frame/scale/format concurrently (e.g.
+two panels previewing the identical frame of the same clip at once) —
+left as-is since that case is idempotent (both writers produce
+byte-identical output for the same inputs), unlike the cross-clip case
+this iteration fixes. The `int.bit_count()` / Python 3.9
+incompatibility in `conform_engine.py` remains unfixed (environment
+issue, out of scope).
+
+Commits: `TBD`.

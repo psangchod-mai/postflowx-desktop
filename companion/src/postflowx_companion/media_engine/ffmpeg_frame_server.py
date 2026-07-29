@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -15,6 +16,13 @@ _FRAME_DIR = Path(tempfile.gettempdir()) / "postflowx_frames"
 def _ensure_frame_dir() -> Path:
     _FRAME_DIR.mkdir(parents=True, exist_ok=True)
     return _FRAME_DIR
+
+
+def _frame_cache_key(path: str, frame_number: int, scale: int, output_format: str) -> str:
+    """Content-derived cache key so concurrent requests for different clips
+    (server runs on ThreadingHTTPServer) never collide on the same filename."""
+    raw = f"{path}:{frame_number}:{scale}:{output_format}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _tc_to_seconds(tc: str, fps: float) -> float:
@@ -53,7 +61,8 @@ def decode_frame(
                 "error": "ffmpeg not found", "stderr": ""}
 
     frame_dir = _ensure_frame_dir()
-    out_file = frame_dir / f"frame_{frame_number:07d}.{output_format}"
+    cache_key = _frame_cache_key(path, frame_number, scale, output_format)
+    out_file = frame_dir / f"frame_{cache_key}.{output_format}"
 
     cmd = _build_decode_command(
         ffmpeg_bin=ffmpeg_bin,
