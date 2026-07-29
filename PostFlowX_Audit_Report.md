@@ -11983,3 +11983,107 @@ while the old `_runJob` call is still mid-flight was found, but this
 wasn't exhaustively audited.
 
 Commits: `c6bf912`.
+
+## Iteration 116 — ReviewPlayer._switchToNextIfNeeded() auto-advance race clobbers a concurrent manual seek
+
+**Why this file:** `src/scripts/features/reviews/player.js` implements
+`ReviewPlayer`, the VFX Reviews virtual-timeline player. It drives two
+`<video>` elements (`active`/`standby`) and swaps which is which as
+playback crosses clip boundaries, so the next clip can be preloaded into
+`standby` while `active` is still playing. Two independent code paths can
+each decide to reload the shared `standby` element and await that load:
+`loadAtGlobalTime()` (any manual seek — scrubbing, prev/next-clip, J/L
+shuttle landing on a new clip) and `_switchToNextIfNeeded()` (the
+per-frame tick loop's auto-advance check, fired every animation frame
+once the active clip is within 0.35s of its end). Both are async and can
+be in flight at the same time against the same `standby` element.
+
+**The bug:** `loadAtGlobalTime()` already guards against this shared-state
+race with a generation-token pattern: it captures `const seq =
+++this._loadSeq` before `await this._loadVideo(this.standby, ...)`, then
+checks `if (seq !== this._loadSeq) return;` after resuming, so a stale
+load that got superseded by a newer one bails out instead of acting on
+outdated data. `_switchToNextIfNeeded()` reloads the exact same shared
+`standby` element the exact same way but had no such guard — its
+`this._switching` flag only prevented *re-entering* itself, not
+interference from a concurrent `loadAtGlobalTime()` call. Sequence: the
+tick loop detects the active clip is about to end and starts loading the
+next clip into `standby`; before that resolves, the user manually seeks
+(e.g. clicks "next clip" or scrubs) to a different clip, which reloads
+the *same* `standby` element with different content and bumps
+`_loadSeq`. When the auto-advance's stale `_loadVideo` promise then
+resolves, `_switchToNextIfNeeded()` had no way to know it was superseded
+— it swapped in the stale clip and called
+`this.store.setActiveIndex(nextIndex)` with the auto-advance's target
+index, momentarily (or, depending on scheduling, permanently)
+overwriting the manual seek's own already-correct `setActiveIndex` call
+and video assignment with stale data.
+
+**The fix:** Added the identical `_loadSeq` generation-token guard already
+proven in `loadAtGlobalTime()` to `_switchToNextIfNeeded()`'s reload
+branch:
+
+```js
+if (needReload) {
+  const seq = ++this._loadSeq;
+  const ok = await this._loadVideo(this.standby, nextSeg.url, nextIn);
+  if (seq !== this._loadSeq) return;
+  if (!ok) {
+    ...
+```
+
+Any concurrent call that also bumps `_loadSeq` (whether another
+`_switchToNextIfNeeded()` invocation or a `loadAtGlobalTime()` manual
+seek) now causes the stale auto-advance to bail out immediately after its
+load resolves, before touching `store.setActiveIndex`, `_swapVideos`, or
+any playback state.
+
+**Test approach:** `tests-js/reviewPlayerSwitchLoadRace.test.mjs`, a new
+linkedom-based test following the existing
+`reviewPlayerSameSource.test.mjs` harness pattern (parseHTML
+window/document, `document.baseURI` override, real `<video>` elements via
+`document.createElement('video')`, dynamic import of `ReviewPlayer`). The
+video elements are stubbed with no-op `load`/`play`/`pause` since
+linkedom doesn't implement `HTMLMediaElement` behavior, and
+`requestAnimationFrame`/`cancelAnimationFrame` are stubbed globally since
+`pause()` calls `cancelAnimationFrame`. A minimal fake `store` tracks
+every `setActiveIndex` call in an array. The test sets up 3 segments from
+distinct source URLs, positions the active video 0.3s from its end (so
+`_switchToNextIfNeeded()` fires the auto-advance path targeting clip1),
+kicks it off without awaiting (so it suspends mid-`_loadVideo` on the
+shared standby element), then calls `loadAtGlobalTime()` targeting clip2
+— which reloads the same standby element and bumps `_loadSeq` again
+while the switch is still pending. Dispatching `loadedmetadata` +
+`loadeddata` on the shared standby element resolves both in-flight
+`_loadVideo` calls at once, in listener-attachment order (stale switch
+first, then the seek). The test asserts exactly one `setActiveIndex` call
+landed (the seek's, targeting clip2) and that `_switching` was correctly
+reset.
+
+**Verification:** Pre-fix (temporarily removed the `seq`/`_loadSeq` guard
+from `_switchToNextIfNeeded()`, restoring the exact single-line
+`_loadVideo` call), the test failed exactly as predicted:
+`setActiveIndexLog` recorded `[1, 2]` instead of `[2]` — the stale
+auto-advance's `setActiveIndex(1)` landed before being overwritten by the
+seek's own `setActiveIndex(2)`, confirming the race is real and would (in
+a scenario with different scheduling, or a third overlapping call) leave
+the player showing the wrong clip. Post-fix (restored from a backup,
+confirmed via `git diff --stat`), all 7 assertions pass. Full regression
+suite re-run and matched baseline exactly: `test:js` — every file in
+`tests-js/*.test.mjs` reports 0 failed (this new test file included;
+`selfContained.test.mjs` flags it as untracked until staged/committed,
+matching the established pattern for every prior iteration's new test
+file); `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 315
+passed, 7 skipped, 0 failed.
+
+**Still open:** `preloadNext()` (called fire-and-forget, not awaited,
+from both `loadAtGlobalTime()` and `_switchToNextIfNeeded()` after a
+successful swap) reloads the *new* `standby` element with no `_loadSeq`
+guard of its own. It's a lower-severity case since it's not awaited by
+its caller and only affects a future preload rather than the currently
+visible clip, but a rapid sequence of seeks could in principle still
+leave the wrong content sitting in `standby` when the next auto-advance
+or seek checks `standbyReady`/`needReload` — not exercised by this
+iteration's test.
+
+Commits: `TBD`.

@@ -459,7 +459,12 @@ export class ReviewPlayer {
         || (this.standby.readyState || 0) < 2
         || Math.abs((Number(this.standby.currentTime) || 0) - nextIn) > 0.25;
       if (needReload) {
+        // A concurrent manual seek (loadAtGlobalTime) may load a different URL
+        // into this same standby element while we await here — _loadSeq lets us
+        // detect that and bail instead of swapping in the wrong clip.
+        const seq = ++this._loadSeq;
         const ok = await this._loadVideo(this.standby, nextSeg.url, nextIn);
+        if (seq !== this._loadSeq) return;
         if (!ok) {
           this.store.updateClip(nextSeg.clipId, { canPlay: false });
           this.pause();

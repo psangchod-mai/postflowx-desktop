@@ -6471,3 +6471,25 @@ picked up. Full regression suite re-run and matched baseline exactly:
 all `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
 
 Commits: `c6bf912`.
+
+## Iteration 116 — ReviewPlayer._switchToNextIfNeeded() auto-advance race clobbers a concurrent manual seek
+
+`player.js`'s auto-advance tick-loop check (`_switchToNextIfNeeded()`)
+and manual-seek path (`loadAtGlobalTime()`) both reload the same shared
+`standby` `<video>` element with `await this._loadVideo(...)`.
+`loadAtGlobalTime()` already guards against a stale/superseded load with
+a `_loadSeq` generation-token check, but `_switchToNextIfNeeded()` was
+missing it — its `_switching` flag only prevented re-entering itself, not
+interference from a concurrent seek. If the tick loop started
+auto-advancing to the next clip and, before that load resolved, the user
+manually seeked elsewhere (also reloading `standby`), the auto-advance's
+stale resolution would swap in the wrong clip and overwrite the seek's
+own `setActiveIndex` call with stale data. Fixed by adding the identical
+`seq`/`_loadSeq` guard already used in `loadAtGlobalTime()`. Verified
+with a new test (`tests-js/reviewPlayerSwitchLoadRace.test.mjs`) using
+linkedom: pre-fix, `setActiveIndex` was called with `[1, 2]` (stale
+auto-advance index followed by the seek's correct one); post-fix, only
+`[2]` lands. Full regression suite re-run and matched baseline exactly:
+all `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
+
+Commits: `TBD`.
