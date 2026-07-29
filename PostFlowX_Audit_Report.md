@@ -11367,3 +11367,69 @@ is also unaddressed — fixing it is a larger SDK-integration task
 outside this iteration's scope.
 
 Commits: `57ac6af`.
+
+## Iteration 108
+
+**Why this file:** `companion/src/postflowx_companion/ocf_engine/ocf_proxy.py`
+backs the OCF viewer's "Generate Proxy" button. A different bug class
+than the last two iterations (torn writes, main-loop starvation): this
+one is an unbounded in-memory leak in a long-lived server process.
+
+**The bug:** `generate_proxy_async()` (line 140) inserts one entry per
+call into the module-level `_jobs: dict[str, dict] = {}` (line 156),
+keyed by a fresh UUID. `proxy_job_status()` (line 159) only ever reads
+`_jobs`; nothing in the module pops, expires, or caps it once a job
+reaches `"state": "done"`. Every proxy generated during a companion
+server's uptime — which spans many sessions/projects in normal use —
+leaves one entry (including its full result payload: proxy path,
+codec, frame count, errors) permanently resident. By contrast, the
+sibling job registry in `api.py` (`self._ocf_jobs`, used for OCF
+exports) already has an eviction cap (`_OCF_JOBS_MAX = 64`, lines
+2767/2781-2785) — this proxy-job registry was simply never given the
+same treatment.
+
+**Independent verification:** Read the full producer/consumer path:
+`_jobs[job_id] = {"state": "running", ...}` (line 144),
+`_jobs[job_id]["pct"] = pct` (line 148) and
+`_jobs[job_id] = {"state": "done", ...}` (line 150) in
+`generate_proxy_async`, and the sole read in `proxy_job_status` (line
+160) — no eviction anywhere. Confirmed production reachability:
+`src/scripts/features/ocf_engine/ocfViewer.js` `_startProxy()` (line
+333) → `ocfGenerateProxy` IPC → `api.py:6811` →
+`ocf_engine.ocf_proxy.generate_proxy_async()`; the viewer's
+`_pollProxy()` (line 352) polls `ocfProxyJobStatus` → `api.py:6823`
+`_ocf_proxy_job_status` → `proxy_job_status()`, stopping once it sees
+`state === 'done'` (line 355) — it never signals the server to forget
+the job. `git diff --stat` and `git log --oneline -5` on
+`ocf_proxy.py` showed no uncommitted changes and no WIP overlap before
+this fix.
+
+**The fix:** Added `_JOBS_MAX = 64` and an eviction step inside
+`proxy_job_status()`, mirroring the existing `_ocf_jobs` pattern in
+`api.py`: once `_jobs` exceeds the cap, the oldest `"done"` entries
+(excluding the one just queried) are dropped down to half the cap.
+
+**Test approach:** Built a standalone before/after harness
+(`/tmp/verify_ocf_proxy_jobs_bounded.py`) that imports `ocf_proxy`
+directly, inserts 500 synthetic `"done"` jobs, and calls
+`proxy_job_status()` on each exactly once (mirroring the real JS
+poller, which polls until `done` then stops) — then asserts the
+registry size stays at or below `_JOBS_MAX` and that the most recently
+polled job is still resolvable (proving eviction doesn't blow away a
+job the caller just asked about).
+
+**Verification:** Pre-fix (via `git stash push -- ocf_proxy.py`), all
+500 synthetic jobs remained in `_jobs` after polling — confirming the
+unbounded leak is real. Post-fix, re-run after `git stash pop` restored
+the fix correctly (`git diff` confirmed): `_jobs` settled at 52 entries
+(≤ 64 cap) after the same 500 jobs, and the most recent job (`job0499`)
+was still queryable. Full regression suite re-run and matched baseline
+exactly: 313/7/2(pre-existing) Python, 72/1/0 Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, the Metal HTJ2K WIP
+block, and the `ocf_decode.py` `_decode_sdk()` stub all remain open,
+unfixed, for the reasons documented in prior iterations — none is
+touched by this change.
+
+Commits: `TBD`.

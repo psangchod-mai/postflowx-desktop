@@ -6301,3 +6301,24 @@ re-run and matched baseline exactly: 313/7/2(pre-existing) Python,
 72/1/0 Node, 22/0 JS.
 
 Commits: `57ac6af`.
+
+## Iteration 108
+
+`ocf_engine/ocf_proxy.py`'s module-level `_jobs` dict (backing the OCF
+viewer's "Generate Proxy" button) grew without bound — every proxy
+generation added one entry via `generate_proxy_async()` and nothing
+ever removed it, even after the JS poller saw `state === 'done'` and
+stopped polling. Its sibling registry (`self._ocf_jobs` in `api.py`,
+used for OCF exports) already had a `_OCF_JOBS_MAX = 64` eviction cap —
+this one never got the same treatment, so a long-lived companion
+server generating many proxies over its uptime leaks one dict entry
+(with full result payload) per proxy, unbounded. Fixed by adding the
+same `_JOBS_MAX = 64` oldest-terminal-eviction pattern to
+`proxy_job_status()`. Verified with a standalone before/after harness:
+pre-fix, 500 synthetic completed jobs all remained after polling each
+once; post-fix, the registry settled at 52 entries (≤ 64) with the most
+recently polled job still resolvable. Full regression suite re-run and
+matched baseline exactly: 313/7/2(pre-existing) Python, 72/1/0 Node,
+22/0 JS.
+
+Commits: `TBD`.

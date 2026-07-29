@@ -154,13 +154,22 @@ def generate_proxy_async(clip_path: str, **kwargs) -> dict[str, Any]:
 
 
 _jobs: dict[str, dict] = {}
+_JOBS_MAX = 64  # evict oldest terminal jobs beyond this cap
 
 
 def proxy_job_status(job_id: str) -> dict[str, Any]:
     job = _jobs.get(job_id)
     if not job:
         return {"ok": False, "errors": [f"Unknown job: {job_id}"]}
-    return {"ok": True, **job}
+    resp = {"ok": True, **job}
+    # Evict oldest terminal jobs to keep the registry bounded — nothing else
+    # prunes _jobs, and every "Generate Proxy" call adds one entry.
+    if len(_jobs) > _JOBS_MAX:
+        terminal = [jid for jid, s in _jobs.items()
+                    if s.get("state") == "done" and jid != job_id]
+        for jid in terminal[:max(1, len(terminal) - _JOBS_MAX // 2)]:
+            del _jobs[jid]
+    return resp
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
