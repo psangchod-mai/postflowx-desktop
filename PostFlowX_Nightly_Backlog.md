@@ -5954,4 +5954,4 @@ Still open: this closes out Iteration 92's flagged list of unexamined
 follow-up (raw `displayMode` cache key, no `decodeScale` discriminator)
 remains open for a future iteration.
 
-Commits: `TBD`.
+Commits: `1fd7c04`.
