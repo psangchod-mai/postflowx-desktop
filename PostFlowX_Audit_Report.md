@@ -13792,3 +13792,67 @@ re-attempt until the developer's WIP in that file is committed or
 shrinks.
 
 Commits: `e709c73`.
+
+## Iteration 138 — CutDiff2 video compare: silent-restore / auto-relink / manual-browse race can stomp a fresh pick with a stale one
+
+**Why this file:** `src/scripts/features/cutdiff2/index.js`'s OLD/NEW
+video-compare panel restores previously-linked proxy videos from
+IndexedDB on multiple, independent, asynchronous code paths that can
+all be in flight at once against the same on-screen filename/video
+elements.
+
+**The bug:** `applySnapshot()` fires an unawaited `_vcRestoreSilent()`
+the moment a saved session is restored. If the user interacts with the
+panel (e.g. clicks the legacy hidden browse button) before that
+silent restore's `getFile()` resolves, a capture-phase auto-relink
+listener (`_vcRestoreFromIDB()`) and the click's own handler
+(`_vcBrowse()`) both start racing against the same stored file handle
+— three concurrent chains reading and eventually writing to the same
+`cd2x-vc-<which>-name`/video elements via `_vcLoad()`. Before the fix,
+whichever chain's `getFile()` promise happened to settle *last*, won —
+even if it was the stalest, oldest-intent request — silently
+overwriting a video the user had just picked with a stale relink
+result from a request they'd already superseded.
+
+**The fix:** (pre-existing, already implemented prior to this
+iteration, previously uncommitted) a `_vcLoadGen = { old: 0, new: 0 }`
+generation counter. Each of `_vcBrowse()`, `_vcRestoreSilent()`, and
+`_vcRestoreFromIDB()` synchronously claims
+`const myGen = ++_vcLoadGen[which]` before its first `await`, then
+checks `if (_vcLoadGen[which] > myGen) return/continue;` immediately
+before calling `_vcLoad()` — so the highest-generation (most recent)
+caller's write always wins, regardless of which `getFile()` promise
+physically resolves first.
+
+**Test:** `tests-js/cutdiff2VideoCompareLoadRace.test.mjs` (new,
+linkedom, fixture `tests-js/fixtures/cd2_panel.html`). Mounts the
+panel, calls `applySnapshot()` to start generation #1
+(`_vcRestoreSilent`), then dispatches a single `click` on the hidden
+`cd2x-vc-old-browse` button — whose capture-phase auto-relink listener
+fires generation #2 (`_vcRestoreFromIDB`) before the button's own
+bubble-phase handler fires generation #3 (`_vcBrowse`). A fake
+IndexedDB backs one shared file handle whose `getFile()` is
+manually resolved in *reverse* generation order (#3 first, #1 last),
+proving the outcome is decided by generation, not resolution order.
+Asserts all three `getFile()` calls are in flight, then that the
+displayed filename ends up as the highest-generation result
+(`browse-FRESH.mp4`) despite settling first. 2 assertions.
+
+**Verification:** proved this is a genuine regression test, not a
+tautology — backed up the source file, replaced all four
+`_vcLoadGen[which] > myGen` guard conditions with `false`, re-ran the
+test and confirmed it fails RED exactly as predicted (displayed name
+becomes the oldest, stalest result, `silent-OLDEST.mp4`, instead of
+the fresh pick). Restored the original file from the backup and
+confirmed via `diff` it is byte-identical to the pre-mutation source,
+then re-ran the test to confirm it passes GREEN again (2 of 2). Full
+`npm run test:js` regression is green across every suite, including
+the `selfContained.test.mjs` git-tracking gate once the two new files
+were staged. `npm run test:node` matches baseline (72 pass, 1
+pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-137 for the same reason
+(pre-existing WIP too tightly interleaved to isolate safely).
+
+Commits: `TBD`.

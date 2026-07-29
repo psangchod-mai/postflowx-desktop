@@ -7118,3 +7118,35 @@ baseline (`test:js` all green across every suite; `test:node` 72
 pass/1 skip/0 fail).
 
 Commits: `e709c73`.
+
+## Iteration 138 — CutDiff2: video-compare silent-restore / auto-relink / manual-browse race can stomp a fresh pick with a stale one
+
+`cutdiff2/index.js`'s OLD/NEW video-compare panel starts an unawaited
+silent IndexedDB restore (`_vcRestoreSilent()`) the moment a saved
+session snapshot is applied. If the user interacts with the panel
+before that resolves, a capture-phase auto-relink listener
+(`_vcRestoreFromIDB()`) and the click's own browse handler
+(`_vcBrowse()`) both start racing against the same stored file handle
+— three concurrent chains that can each write the on-screen
+filename/video. Before the fix, whichever `getFile()` promise happened
+to resolve *last* won, even if it was the stalest request, silently
+overwriting a fresher pick. Fixed (already implemented prior to this
+iteration, previously uncommitted) via a `_vcLoadGen` generation
+counter: each chain claims a generation number synchronously before
+its first `await` and bails if a newer generation has since started,
+so the highest-generation caller's write always wins regardless of
+physical resolution order. New test
+`tests-js/cutdiff2VideoCompareLoadRace.test.mjs` (linkedom, new
+fixture `tests-js/fixtures/cd2_panel.html`) drives all three chains
+from one click, resolves their shared fake-IndexedDB `getFile()` calls
+in reverse generation order, and asserts the displayed filename is the
+highest-generation result despite settling first. Verified as a
+genuine regression test by disabling the four generation guards and
+confirming the test fails exactly as predicted, then restoring the
+source file (confirmed byte-identical via `diff`) and confirming the
+test passes again. Full `test:js` regression green across every suite
+(including the `selfContained.test.mjs` git-tracking gate once the two
+new files were staged); `test:node` matches baseline (72 pass, 1 skip,
+0 fail).
+
+Commits: `TBD`.

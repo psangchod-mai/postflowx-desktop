@@ -1,0 +1,353 @@
+  <div id="main-cutdiff2" class="main-pane cd2x-pane" style="display:none;">
+
+    <!-- LEFT COLUMN: event table -->
+    <div class="cd2x-left-col">
+      <div class="cd2x-body cd2x-left-body">
+        <div class="cd2x-table-wrap">
+          <table class="cd2x-table">
+            <thead>
+              <tr>
+                <th class="cd2x-th-risk" title="Risk level"></th>
+                <th class="cd2x-th-type">Type</th>
+                <th class="cd2x-th-reel">Reel</th>
+                <th class="cd2x-th-clip">Clip</th>
+                <th class="cd2x-th-src">Src In</th>
+                <th class="cd2x-th-dur">Dur</th>
+                <th class="cd2x-th-conf" title="Match confidence">Conf</th>
+                <th class="cd2x-th-status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="cd2x-tbody"></tbody>
+          </table>
+          <div id="cd2x-table-empty" class="cd2x-empty-state">Load OLD + NEW timelines then click Analyze.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: header, viewer, kpi, timeline, table -->
+    <div class="cd2x-main-col">
+
+    <!-- Combined header: EDL slots + video slots + actions (single line) -->
+    <div class="cd2x-hdr" id="cd2x-hdr">
+      <!-- Smart Import: one button for all 4 slots -->
+      <button class="cd2x-smart-btn" id="cd2x-smart-btn" type="button" title="Drop or pick any combination of timeline (EDL/FCPXML) and video files — auto-assigned to OLD / NEW slots">&#9889; Smart Import</button>
+      <input type="file" id="cd2x-smart-file" style="display:none" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.aaf,.ale,video/*,.mxf,.mov,.mp4,.mts,.m2ts" multiple />
+
+      <!-- OLD EDL slot — click to browse manually -->
+      <div class="cd2x-slot cd2x-slot-old" id="cd2x-old-drop" title="Click to browse OLD timeline, or drag a file here">
+        <span class="cd2x-slot-tag">OLD</span>
+        <span class="cd2x-slot-label" id="cd2x-old-label">—</span>
+        <input type="file" id="cd2x-old-file" style="display:none" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.aaf,.ale" multiple />
+      </div>
+
+      <div class="cd2x-hdr-vs">VS</div>
+
+      <!-- NEW EDL slot — click to browse manually -->
+      <div class="cd2x-slot cd2x-slot-new" id="cd2x-new-drop" title="Click to browse NEW timeline, or drag a file here">
+        <span class="cd2x-slot-tag">NEW</span>
+        <span class="cd2x-slot-label" id="cd2x-new-label">—</span>
+        <input type="file" id="cd2x-new-file" style="display:none" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.aaf,.ale" multiple />
+      </div>
+
+      <!-- Divider -->
+      <div class="cd2x-hdr-divider"></div>
+
+      <!-- OLD video slot — click to browse manually -->
+      <div class="cd2x-vc-slot cd2x-vc-slot-clickable" id="cd2x-vc-old-slot" title="Click to browse OLD proxy video">
+        <span class="cd2x-vc-slot-tag">VID OLD</span>
+        <span class="cd2x-vc-slot-name" id="cd2x-vc-old-name">—</span>
+        <input id="cd2x-vc-tc-old" class="cd2x-vc-tc-input mono" value="00:00:00:00" placeholder="00:00:00:00" title="OLD start TC" />
+        <input id="cd2x-vc-old-file" type="file" style="display:none" accept="video/*,.mxf,.mov,.mp4,.mts,.m2ts" />
+      </div>
+
+      <!-- NEW video slot — click to browse manually -->
+      <div class="cd2x-vc-slot cd2x-vc-slot-clickable" id="cd2x-vc-new-slot" title="Click to browse NEW proxy video">
+        <span class="cd2x-vc-slot-tag cd2x-vc-slot-new">VID NEW</span>
+        <span class="cd2x-vc-slot-name" id="cd2x-vc-new-name">—</span>
+        <input id="cd2x-vc-tc-new" class="cd2x-vc-tc-input mono" value="00:00:00:00" placeholder="00:00:00:00" title="NEW start TC" />
+        <input id="cd2x-vc-new-file" type="file" style="display:none" accept="video/*,.mxf,.mov,.mp4,.mts,.m2ts" />
+      </div>
+
+      <!-- Keep legacy browse buttons as hidden elements so existing _vcBrowse() still works -->
+      <button id="cd2x-vc-old-browse" style="display:none"></button>
+      <button id="cd2x-vc-new-browse" style="display:none"></button>
+      <button id="cd2x-old-browse"    style="display:none"></button>
+      <button id="cd2x-new-browse"    style="display:none"></button>
+
+      <div class="cd2x-hdr-actions">
+        <button class="btn tiny theme-cd2x" id="cd2x-analyze-btn" type="button"><span class="bar"></span>Analyze</button>
+        <div class="cd2x-export-wrap">
+          <button class="btn tiny ghost cd2x-export-trigger" id="cd2x-export-btn" type="button">Export &#9660;</button>
+          <div id="cd2x-export-menu" class="cd2x-export-menu" style="display:none">
+            <button data-act="pulledl">&#9654; Pull EDL</button>
+            <button data-act="pdf">&#128462; PDF Report</button>
+            <button data-act="xls">&#128202; XLS Change List</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KPI bar -->
+    <div class="cd2x-kpi-bar">
+      <span class="cd2x-kpi-chip cd2x-kpi-new" title="Brand new clips — appear in the NEW cut but were not in the OLD cut at all">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-new">—</span>
+        <span class="cd2x-kpi-desc">Clips Added</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-ext" title="Extended clips — same shot but runs longer in the NEW cut">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-ext">—</span>
+        <span class="cd2x-kpi-desc">Extended</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-chg" title="Changed clips — different source footage or retimed take in the NEW cut">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-chg">—</span>
+        <span class="cd2x-kpi-desc">Changed</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-rem" title="Shortened clips — same shot but trimmed down in the NEW cut">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-rem">—</span>
+        <span class="cd2x-kpi-desc">Shortened</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-risk" title="High-risk changes — likely affect VFX shots, titles, or complex composites that need VFX team review">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-risk">—</span>
+        <span class="cd2x-kpi-desc">⚠ Needs VFX Review</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-dur" title="Duration impact vs the old cut — how much footage was added (New + Extended clips) and how much was removed (Shortened clips)">
+        <span class="cd2x-kpi-count cd2x-kpi-dur-vals"><span id="cd2x-kpi-dur-add">—</span><span class="cd2x-kpi-dur-sep"> / </span><span id="cd2x-kpi-dur-rem">—</span></span>
+        <span class="cd2x-kpi-desc">Duration Impact</span>
+      </span>
+      <span class="cd2x-kpi-chip cd2x-kpi-pct" title="What percentage of the total timeline has changed — how different the new cut is from the old one overall">
+        <span class="cd2x-kpi-count" id="cd2x-kpi-pct-changed">—</span>
+        <span class="cd2x-kpi-desc">% of Cut Changed</span>
+      </span>
+      <span class="cd2x-kpi-sep"></span>
+      <span class="cd2x-kpi-total" id="cd2x-kpi-total"></span>
+      <span class="cd2x-kpi-divider"></span>
+      <span class="cd2x-filter-label">TYPE</span>
+      <button class="cd2x-filter-btn cd2x-filter-active" data-type="ALL">All</button>
+      <button class="cd2x-filter-btn" data-type="NEW">NEW</button>
+      <button class="cd2x-filter-btn" data-type="EXTENDED">EXT</button>
+      <button class="cd2x-filter-btn" data-type="CHANGED">CHG</button>
+      <button class="cd2x-filter-btn" data-type="TRIMMED">TRIM</button>
+      <span class="cd2x-kpi-divider"></span>
+      <span class="cd2x-filter-label">RISK</span>
+      <button class="cd2x-risk-btn cd2x-risk-active" data-risk="all">All</button>
+      <button class="cd2x-risk-btn" data-risk="high" style="color:#e06c75">High</button>
+      <button class="cd2x-risk-btn" data-risk="med"  style="color:#e5c07b">Med</button>
+      <button class="cd2x-risk-btn" data-risk="low"  style="color:#4caf80">Low</button>
+      <span class="cd2x-kpi-divider"></span>
+      <span class="cd2x-kpi-progress-wrap" title="How many changes have been marked as Approved out of total">
+        <span class="cd2x-kpi-progress-label">Approved</span>
+        <span class="cd2x-kpi-progress-track"><span id="cd2x-kpi-progress-bar" class="cd2x-kpi-progress-fill" style="width:0%"></span></span>
+        <span id="cd2x-kpi-progress" class="cd2x-kpi-progress-pct">0%</span>
+      </span>
+    </div>
+
+    <!-- Dual-track canvas timeline -->
+    <div class="cd2x-tl-strip">
+      <div class="cd2x-tl-modebar">
+        <button id="cd2x-tl-fit-btn" class="cd2x-tl-fit-btn" title="Fit all — show full timeline (0 / dbl-click)">↔</button>
+        <button id="cd2x-tl-mode-btn" class="cd2x-tl-mode-btn is-smart" title="Smart: slot-aligned compare  /  Sequence: timeline position view"><svg width="9" height="13" viewBox="0 0 9 13" fill="none" style="flex-shrink:0"><polygon points="5.5,0 0,7.5 4,7.5 3.5,13 9,5.5 5,5.5" fill="white"/></svg> Smart</button>
+      </div>
+      <canvas id="cd2x-tl-canvas" class="cd2x-tl-canvas"></canvas>
+      <canvas id="cd2x-tl-overlay" class="cd2x-tl-overlay"></canvas>
+    </div>
+
+    <!-- Video Compare Panel -->
+    <div id="cd2x-vc-panel" class="cd2x-vc-panel">
+      <div id="cd2x-vc-body" class="cd2x-vc-body">
+        <!-- Viewer (canvas only — probar is a sibling below) -->
+        <div class="cd2x-vc-view-wrap" id="cd2x-vc-view">
+          <video id="cd2x-vc-vid-old" playsinline muted style="display:none"></video>
+          <video id="cd2x-vc-vid-new" playsinline muted style="display:none"></video>
+          <canvas id="cd2x-vc-canvas" class="cd2x-vc-canvas"></canvas>
+          <input  id="cd2x-vc-wipe"   class="cd-vcmp-wipe" type="range" min="0" max="100" value="50" aria-label="Wipe position" />
+          <div    id="cd2x-vc-hud"    class="cd-vcmp-hud" aria-live="polite"></div>
+          <!-- Proxy preparation overlay — shown while OLD / NEW videos are proxying -->
+          <div id="cd2x-proxy-ov" class="cd2x-proxy-ov" style="display:none" aria-live="polite">
+            <div class="cd2x-proxy-row" id="cd2x-proxy-row-old" style="display:none">
+              <span class="cd2x-proxy-tag cd2x-proxy-tag-old">OLD</span>
+              <div class="cd2x-proxy-info">
+                <span class="cd2x-proxy-fname" id="cd2x-proxy-fname-old"></span>
+                <span class="cd2x-proxy-msg"   id="cd2x-proxy-msg-old">Preparing proxy…</span>
+                <div class="cd2x-proxy-bar-wrap"><div class="cd2x-proxy-shimmer" id="cd2x-proxy-bar-old"></div></div>
+                <span class="cd2x-proxy-eta"   id="cd2x-proxy-eta-old"></span>
+                <label id="cd2x-proxy-manual-old" class="cd2x-proxy-manual" style="display:none">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2.5" width="12" height="9" rx="1.5"/><polygon points="5.5,5 9,7 5.5,9" fill="currentColor" stroke="none"/></svg>
+                  Load Proxy Manually
+                  <input type="file" accept="video/quicktime,video/mp4,.mov,.mp4,.m4v" style="display:none">
+                </label>
+              </div>
+            </div>
+            <div class="cd2x-proxy-row" id="cd2x-proxy-row-new" style="display:none">
+              <span class="cd2x-proxy-tag cd2x-proxy-tag-new">NEW</span>
+              <div class="cd2x-proxy-info">
+                <span class="cd2x-proxy-fname" id="cd2x-proxy-fname-new"></span>
+                <span class="cd2x-proxy-msg"   id="cd2x-proxy-msg-new">Preparing proxy…</span>
+                <div class="cd2x-proxy-bar-wrap"><div class="cd2x-proxy-shimmer" id="cd2x-proxy-bar-new"></div></div>
+                <span class="cd2x-proxy-eta"   id="cd2x-proxy-eta-new"></span>
+                <label id="cd2x-proxy-manual-new" class="cd2x-proxy-manual" style="display:none">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2.5" width="12" height="9" rx="1.5"/><polygon points="5.5,5 9,7 5.5,9" fill="currentColor" stroke="none"/></svg>
+                  Load Proxy Manually
+                  <input type="file" accept="video/quicktime,video/mp4,.mov,.mp4,.m4v" style="display:none">
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Pro bar (sibling, not inside view-wrap) -->
+          <div class="cd-vcmp-probar">
+            <input id="cd2x-vc-scrub" class="cd-vcmp-scrub" type="range" min="0" max="100" value="0" step="0.001" aria-label="Scrub" />
+            <div class="cd-vcmp-prorow">
+              <!-- Mode pills -->
+              <div class="cd-vcmp-tools cd-vcmp-modes" id="cd2x-vc-modes" aria-label="Compare modes">
+                <button type="button" class="cd-vcmp-mode pfx-lblbtn" data-pfx-variant="chip" data-pfx-size="sm" data-mode="wipe" title="Wipe">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="6" width="14" height="12" rx="2"></rect><line x1="12" y1="6" x2="12" y2="18"></line><path d="M9 9h2"></path><path d="M13 15h2"></path></svg></span>
+                  <span class="pfx-lbl-txt">Wipe</span>
+                </button>
+                <button type="button" class="cd-vcmp-mode cd-vcmp-modeicon pfx-lblbtn is-active" data-pfx-variant="chip" data-pfx-size="sm" data-mode="sbs" title="Side by side">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="7.5" height="12" rx="1.5"></rect><rect x="12.5" y="6" width="7.5" height="12" rx="1.5"></rect></svg></span>
+                  <span class="pfx-lbl-txt">SBS</span>
+                </button>
+                <button type="button" class="cd-vcmp-mode pfx-lblbtn" data-pfx-variant="chip" data-pfx-size="sm" data-mode="split" title="Split">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="2"></rect><line x1="12" y1="6" x2="12" y2="18"></line></svg></span>
+                  <span class="pfx-lbl-txt">Split</span>
+                </button>
+                <button type="button" class="cd-vcmp-mode pfx-lblbtn" data-pfx-variant="chip" data-pfx-size="sm" data-mode="ab" title="A/B">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="7 7 3 11 7 15"></polyline><line x1="3" y1="11" x2="21" y2="11"></line><polyline points="17 7 21 11 17 15"></polyline></svg></span>
+                  <span class="pfx-lbl-txt">A/B</span>
+                </button>
+                <button type="button" class="cd-vcmp-mode pfx-lblbtn" data-pfx-variant="chip" data-pfx-size="sm" data-mode="diff" title="Diff">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="2"></rect><line x1="9" y1="12" x2="15" y2="12"></line><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg></span>
+                  <span class="pfx-lbl-txt">Diff</span>
+                </button>
+                <button type="button" class="cd-vcmp-mode pfx-lblbtn" data-pfx-variant="chip" data-pfx-size="sm" data-mode="heat" title="Heat">
+                  <span class="pfx-lbl-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5c1.5 1.8 3 3.7 3 6a3 3 0 1 1-6 0c0-1.7.7-3.3 3-6Z"></path></svg></span>
+                  <span class="pfx-lbl-txt">Heat</span>
+                </button>
+              </div>
+              <!-- Transport -->
+              <div class="cd-vcmp-proctrl" aria-label="Transport">
+                <div class="cd-vcmp-transport5">
+                  <!-- Icons match the shared Resolve transport set (resolveTransportIcons.js `I`) for pixel parity across tabs -->
+                  <button id="cd2x-vc-home"   class="cd-vcmp-tbtn" type="button" title="To selection start"><svg viewBox="0 0 24 24"><rect x="5.4" y="5.5" width="2.2" height="13" rx="1"></rect><path d="M19 5.5v13L9 12z"></path></svg></button>
+                  <button id="cd2x-vc-prev-f" class="cd-vcmp-tbtn" type="button" title="Prev frame"><svg viewBox="0 0 24 24"><rect x="6" y="5.5" width="2.2" height="13" rx="1"></rect><path d="M19 6.5v11L10.5 12z"></path></svg></button>
+                  <button id="cd2x-vc-play"   class="cd-vcmp-tbtn cd-vcmp-playbtn" type="button" title="Play / Pause" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" class="cd-icon-play"><path d="M8 5.5v13l10-6.5z"></path></svg>
+                    <svg viewBox="0 0 24 24" class="cd-icon-pause"><path d="M7.5 5h3v14h-3zM13.5 5h3v14h-3z"></path></svg>
+                  </button>
+                  <button id="cd2x-vc-next-f" class="cd-vcmp-tbtn" type="button" title="Next frame"><svg viewBox="0 0 24 24"><path d="M5 6.5v11L13.5 12z"></path><rect x="15.8" y="5.5" width="2.2" height="13" rx="1"></rect></svg></button>
+                  <button id="cd2x-vc-end"    class="cd-vcmp-tbtn" type="button" title="To selection end"><svg viewBox="0 0 24 24"><path d="M5 5.5v13L15 12z"></path><rect x="16.4" y="5.5" width="2.2" height="13" rx="1"></rect></svg></button>
+                </div>
+                <select id="cd2x-vc-rate" class="cd-vcmp-rate mono" title="Playback rate">
+                  <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+                </select>
+                <div class="cd-vcmp-tcwrap" title="Go to REC timecode">
+                  <span class="cd-vcmp-tclabel mono">TC</span>
+                  <input id="cd2x-vc-tc" aria-label="Go to REC timecode" class="cd-vcmp-tc mono" value="00:00:00:00" inputmode="numeric" spellcheck="false" />
+                </div>
+              </div>
+              <!-- Icon buttons -->
+              <div class="cd-vcmp-transport2">
+                <!-- Chain: link icon — auto-align OLD to NEW position -->
+                <button id="cd2x-vc-chain" class="btn tiny ghost cd-vcmp-iconbtn is-active" type="button" title="Chain OLD to match (auto-align)" aria-pressed="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+                <!-- Loop: circular arrows -->
+                <button id="cd2x-vc-loop"  class="btn tiny ghost cd-vcmp-iconbtn" type="button" title="Loop selected event" aria-pressed="false"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>
+                <!-- Audio: speaker with waves -->
+                <button id="cd2x-vc-audio" class="btn tiny ghost cd-vcmp-iconbtn" type="button" title="Audio on/off"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
+                <!-- Fit/Fill: expand arrows -->
+                <button id="cd2x-vc-fit"   class="btn tiny ghost cd-vcmp-iconbtn" type="button" title="Fit / Fill"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
+                <!-- Fullscreen: corner brackets -->
+                <button id="cd2x-vc-full"  class="btn tiny ghost cd-vcmp-iconbtn" type="button" title="Fullscreen"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 3 3 3 3 8"/><polyline points="21 8 21 3 16 3"/><polyline points="3 16 3 21 8 21"/><polyline points="16 21 21 21 21 16"/></svg></button>
+              </div>
+            </div>
+          </div>
+        <!-- Metadata bar: filename · STC · FRAME for each side -->
+        <div class="cd2x-meta-bar">
+          <div class="cd2x-meta-side">
+            <span class="cd2x-meta-name" id="cd2x-meta-old-name">—</span>
+            <span class="cd2x-meta-sep">·</span>
+            <span class="cd2x-meta-lbl">STC</span>
+            <span class="cd2x-meta-val" id="cd2x-meta-old-tc">——:——:——:——</span>
+            <span class="cd2x-meta-sep">·</span>
+            <span class="cd2x-meta-lbl">FRAME</span>
+            <span class="cd2x-meta-val" id="cd2x-meta-old-frame">——</span>
+          </div>
+          <div class="cd2x-meta-center">Frames Difference</div>
+          <div class="cd2x-meta-side cd2x-meta-side-r">
+            <span class="cd2x-meta-val" id="cd2x-meta-new-frame">——</span>
+            <span class="cd2x-meta-lbl">FRAME</span>
+            <span class="cd2x-meta-sep">·</span>
+            <span class="cd2x-meta-val" id="cd2x-meta-new-tc">——:——:——:——</span>
+            <span class="cd2x-meta-lbl">STC</span>
+            <span class="cd2x-meta-sep">·</span>
+            <span class="cd2x-meta-name" id="cd2x-meta-new-name">—</span>
+          </div>
+        </div>
+      </div>
+      <!-- The inspector lives once, at the bottom of the right column (#cd2x-inspector).
+           A hidden duplicate used to sit here, left behind by the move and kept "for
+           legacy DOM refs". getElementById resolves first-in-document-order, so the
+           duplicate did not act as a fallback — it captured all 18 body-field lookups
+           and the real, visible panel never received a value. Do not re-add it; the
+           duplicate-id gate in tests-js/duplicateIds.test.mjs now fails the build. -->
+    </div><!-- /cd2x-vc-panel -->
+
+    <!-- Inspector at bottom of right column -->
+    <div id="cd2x-inspector" class="cd2x-inspector">
+      <div class="cd2x-insp-hint">&#8592; Click any row to inspect</div>
+      <div class="cd2x-insp-hdr">
+        <span class="cd2x-insp-title">
+          <span id="cd2x-insp-type" class="cd2x-insp-type-badge">—</span>
+          <span id="cd2x-insp-event" class="cd2x-insp-event-num">—</span>
+        </span>
+        <button id="cd2x-insp-close" class="cd2x-insp-close" title="Close inspector">&#10005;</button>
+      </div>
+      <div class="cd2x-insp-body">
+        <div class="cd2x-insp-section cd2x-insp-section-new">
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Reel</span><span id="cd2x-insp-reel" class="cd2x-insp-val">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Clip</span><span id="cd2x-insp-clip" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src In</span><span id="cd2x-insp-src-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src Out</span><span id="cd2x-insp-src-out" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec In</span><span id="cd2x-insp-rec-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec Out</span><span id="cd2x-insp-rec-out" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Duration</span><span id="cd2x-insp-duration" class="cd2x-insp-val">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">FPS</span><span id="cd2x-insp-fps" class="cd2x-insp-val">—</span></div>
+        </div>
+        <div class="cd2x-insp-divider">Match Analysis</div>
+        <div class="cd2x-insp-section">
+          <div class="cd2x-insp-conf-row">
+            <span class="cd2x-insp-lbl">Confidence</span>
+            <div class="cd2x-insp-conf-track"><div id="cd2x-insp-score-bar" class="cd2x-insp-conf-fill" style="width:0%"></div></div>
+            <span id="cd2x-insp-score-pct" class="cd2x-insp-val">—</span>
+          </div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Reason</span><span id="cd2x-insp-reason" class="cd2x-insp-val">—</span></div>
+          <div class="cd2x-insp-divider">OLD Match</div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Clip</span><span id="cd2x-insp-old-clip" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Src In</span><span id="cd2x-insp-old-src-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+          <div class="cd2x-insp-row"><span class="cd2x-insp-lbl">Rec In</span><span id="cd2x-insp-old-rec-in" class="cd2x-insp-val cd2x-insp-val-mono">—</span></div>
+        </div>
+        <div class="cd2x-insp-divider">Workflow</div>
+        <div class="cd2x-insp-section">
+          <div class="cd2x-insp-row">
+            <span class="cd2x-insp-lbl">Status</span>
+            <select id="cd2x-insp-status" aria-label="Status" class="cd2x-insp-select">
+              <option value="none">— Unset</option>
+              <option value="ok">&#10003; Approved</option>
+              <option value="skip">&#8856; Skip</option>
+              <option value="query">? Query</option>
+            </select>
+          </div>
+          <div class="cd2x-insp-note-row">
+            <span class="cd2x-insp-lbl">Note</span>
+            <textarea id="cd2x-insp-note" class="cd2x-insp-note" rows="3" placeholder="Add a note…"></textarea>
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button id="cd2x-insp-note-save" class="btn tiny ghost cd2x-insp-save-btn" type="button">Save Note</button>
+            <button id="cd2x-insp-seek-btn"  class="btn tiny theme-cd2x cd2x-insp-save-btn" type="button" title="Seek video compare to this event"><span class="bar"></span>&#9654; Seek VC</button>
+          </div>
+        </div>
+      </div>
+    </div><!-- /cd2x-inspector -->
+
+    </div><!-- /cd2x-main-col -->
+
+  </div><!-- /main-cutdiff2 -->

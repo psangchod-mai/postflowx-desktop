@@ -137,6 +137,10 @@ export function createCutDiff2Feature(deps = {}) {
   // ── Media management state ────────────────────────────────────────────────
   let _autoRelinkFn = null;   // module-level ref so applySnapshot() can remove old listener
   let _vcRestoring  = false;  // concurrency guard for _vcRestoreFromIDB()
+  // Generation token per side, guards against _vcBrowse()/_vcRestoreSilent()/_vcRestoreFromIDB()
+  // racing each other via independent async IDB/permission chains that can resolve in any order —
+  // the highest-generation caller to reach _vcLoad() wins; stale callers bail without touching state.
+  const _vcLoadGen = { old: 0, new: 0 };
 
   // ── Video handle persistence (IDB) ───────────────────────────────────────
   // IMPORTANT: must be declared before the return statement to avoid TDZ errors
@@ -426,6 +430,11 @@ export function createCutDiff2Feature(deps = {}) {
     // Browse wiring — prefer showOpenFilePicker() so we get a FileSystemFileHandle
     // that can be saved to IDB and re-opened on next project load.
     async function _vcBrowse(which) {
+      // Claim this side's generation before any await — any restore chain
+      // (_vcRestoreSilent/_vcRestoreFromIDB) still in flight for `which` is now stale
+      // and must lose to whichever attempt reaches _vcLoad() last, in generation order.
+      const myGen = ++_vcLoadGen[which];
+
       // If a name is saved but video isn't loaded yet (project restore), try IDB handle first.
       // This click IS a user gesture so requestPermission() will work.
       const savedName     = which === 'old' ? _vc.oldName : _vc.newName;
@@ -443,6 +452,8 @@ export function createCutDiff2Feature(deps = {}) {
               if (perm === 'granted') file = await handle.getFile();
             }
             if (file) {
+              if (_vcLoadGen[which] > myGen) return; // superseded while we awaited
+              _vcLoadGen[which] = myGen;
               _vcLoad(which, file);
               return; // restored from IDB — no file picker needed
             }
@@ -1497,7 +1508,7 @@ export function createCutDiff2Feature(deps = {}) {
   }
 
   function _analyze() {
-    if (!_s.oldEvents.length && !_s.newEvents.length) {
+    if (!_s.oldEvents.length || !_s.newEvents.length) {
       showError?.('Load an OLD and NEW timeline first.'); return;
     }
     try {
@@ -4154,6 +4165,7 @@ ${mediaOvr}
       const savedName     = which === 'old' ? _vc.oldName : _vc.newName;
       const alreadyLoaded = which === 'old' ? !!_vc.oldUrl : !!_vc.newUrl;
       if (!savedName || alreadyLoaded) continue;
+      const myGen = ++_vcLoadGen[which];
       try {
         const handle = await _vcLoadHandle(which);
         if (!handle) continue;
@@ -4161,6 +4173,8 @@ ${mediaOvr}
         // getFile() works silently if permission is active; throws if not.
         const file = await handle.getFile();
         console.info(`[CD2-MEDIA] _vcRestoreSilent: silent getFile() OK for ${which}`);
+        if (_vcLoadGen[which] > myGen) continue; // a fresher browse/restore already won this side
+        _vcLoadGen[which] = myGen;
         _vcLoad(which, file);
         loaded = true;
       } catch(e) {
@@ -4184,6 +4198,7 @@ ${mediaOvr}
         const savedName     = which === 'old' ? _vc.oldName : _vc.newName;
         const alreadyLoaded = which === 'old' ? !!_vc.oldUrl : !!_vc.newUrl;
         if (!savedName || alreadyLoaded) continue;
+        const myGen = ++_vcLoadGen[which];
         try {
           const handle = await _vcLoadHandle(which);
           if (!handle) { console.warn(`[CD2-MEDIA] ${which}: no handle in IDB — user must browse manually`); continue; }
@@ -4195,7 +4210,12 @@ ${mediaOvr}
             console.info(`[CD2-MEDIA] ${which}: requestPermission → ${perm}`);
             if (perm === 'granted') file = await handle.getFile();
           }
-          if (file) { console.info(`[CD2-MEDIA] ${which}: loading file "${file.name}"`); _vcLoad(which, file); }
+          if (file) {
+            if (_vcLoadGen[which] > myGen) { console.info(`[CD2-MEDIA] ${which}: superseded by a fresher browse/restore, discarding`); continue; }
+            _vcLoadGen[which] = myGen;
+            console.info(`[CD2-MEDIA] ${which}: loading file "${file.name}"`);
+            _vcLoad(which, file);
+          }
           else { console.warn(`[CD2-MEDIA] ${which}: could not get file — permission denied?`); }
         } catch(e) { console.warn(`[CD2-MEDIA] ${which}: restore error`, e); }
       }
