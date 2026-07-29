@@ -9,6 +9,21 @@ from .ffmpeg_frame_server import transcode_proxy
 from .logs import write as _log
 
 
+def _source_identity_key(source_path: str) -> str:
+    """Disambiguates same-stem source clips (e.g. reused camera reel names)
+    sharing an outputDir, so proxy filenames never collide. Mirrors
+    ocf_engine.ocf_proxy._source_identity_key / proxy_service's
+    _stable_proxy_cache_key folder+size+mtime approach."""
+    import hashlib
+    try:
+        resolved = os.path.realpath(source_path)
+        st = os.stat(resolved)
+        payload = f"{resolved}|{st.st_size}|{getattr(st, 'st_mtime_ns', int(st.st_mtime * 1_000_000_000))}"
+    except OSError:
+        payload = os.path.realpath(source_path) if source_path else source_path
+    return hashlib.sha1(payload.encode("utf-8", "replace")).hexdigest()[:12]
+
+
 def generate_proxy(
     source_path: str,
     output_dir: str,
@@ -29,7 +44,8 @@ def generate_proxy(
 
     stem = src.stem
     ext = ".mp4" if codec == "h264" else ".mov"
-    out_file = out_dir / f"{stem}_proxy{ext}"
+    ident = _source_identity_key(source_path)
+    out_file = out_dir / f"{stem}_{ident}_proxy{ext}"
 
     _log("proxy", {
         "Probe": {

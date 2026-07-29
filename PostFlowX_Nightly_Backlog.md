@@ -5727,3 +5727,32 @@ iteration should check other proxy/cache-writing code paths (e.g.
 thumbnail/waveform caches) for the same gap.
 
 Commits: `1b0ce99`.
+
+## Iteration 89 — `media_engine/proxy_engine.py`'s `generate_proxy()` also keyed its output filename only on the source stem, colliding on the network-exposed transcode-proxy endpoint
+
+`generate_proxy()` built its output path as `f"{stem}_proxy{ext}"` with no
+folder/size/mtime/content-identity signal, where `stem` is just the source
+file's basename stem. This module accepted a `source_hash` param that was
+stored into sidecar JSON but never used to disambiguate the path, and
+`generate_proxy_async()` — the only caller actually reachable from
+`http_server.py`'s `/api/media/transcode-proxy` endpoint — doesn't even
+forward `source_hash`, making it dead in the real call chain. That HTTP
+endpoint reads `sourcePath`/`outputDir` directly from the untrusted request
+body with no uniqueness guard, so two source clips sharing a filename stem
+(e.g. a reused camera reel name) transcoded to the same `outputDir` collide
+and silently overwrite each other's proxy + JSON sidecar. The one existing
+related test (`test_proxy_engine_async_progress.py`, Iteration 78) mocks
+out `generate_proxy` entirely and doesn't cover this at all. Fix: added
+`_source_identity_key()` (12-hex SHA1 of resolved path+size+mtime, mirroring
+`ocf_proxy.py`'s Iteration 88 fix and `proxy_service.py`'s original
+precedent) and mixed it into the output filename. Added
+`test_proxy_engine_filename_identity.py` (4 tests, including a direct
+collision regression test that mocks `transcode_proxy` to capture output
+paths); confirmed genuine via stash/pop — pre-fix code fails test
+collection outright (`ImportError`). Full suite: 310 passed/7 skipped (same
+2 pre-existing Iteration-76 failures, unrelated). Third instance of bug
+species #7 — the proxy-writing subsystem is now well-covered; a follow-up
+should either sweep remaining cache paths (thumbnail/waveform, still
+unconfirmed) or pivot to other species/files.
+
+Commits: `TBD`.

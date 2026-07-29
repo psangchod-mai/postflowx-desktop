@@ -9397,3 +9397,86 @@ paths in the codebase (e.g. thumbnail or waveform caches) have the same
 basename-only-keying gap.
 
 Commits: `1b0ce99`.
+
+## Iteration 89 — `media_engine/proxy_engine.py`'s `generate_proxy()` also keyed its output filename only on the source stem, colliding on the network-exposed transcode-proxy endpoint
+
+**Why this file.** Iteration 88 fixed the first sibling instance of bug
+species #7 in `ocf_engine/ocf_proxy.py`. A scouting agent (background,
+non-user input) was seeded with the ten established bug species and
+explicitly steered to check other proxy/cache/thumbnail/waveform-writing
+code paths, since this species had now been found twice. It reported a
+second, architecturally distinct instance in `media_engine/proxy_engine.py`.
+
+**The bug.** `generate_proxy()` built its output path as
+`out_dir / f"{stem}_proxy{ext}"`, where `stem = Path(source_path).stem` —
+no folder, size, mtime, or content-identity signal. Unlike the OCF case,
+this module accepted a `source_hash: str = ""` parameter that was stored
+into the sidecar JSON metadata (`meta["sourceHash"]`) but never used to
+disambiguate `out_file` — and `generate_proxy_async()`, the only caller
+actually reachable from the HTTP API, doesn't even forward `source_hash`
+(its own signature doesn't accept it either), making the parameter fully
+dead in the real call chain.
+
+**Independent verification.** Read `proxy_engine.py` in full and confirmed
+the filename construction and the dead `source_hash` parameter. Grepped
+`http_server.py` (lines 568-583) and confirmed the `/api/media/transcode-proxy`
+endpoint reads `sourcePath` and `outputDir` directly from the untrusted
+JSON request body, with zero uniqueness guard, and calls
+`generate_proxy_async()` — confirming this is a real, network-exposed path,
+not a rare edge case. Grepped `media_engine/__init__.py` and confirmed this
+module's `generate_proxy_async` (distinct from `ocf_engine/ocf_proxy.py`'s
+same-named function, which is wired separately via `api.py`) is the one
+actually exported and used by `http_server.py`. Read the one existing
+related test, `test_proxy_engine_async_progress.py` (an Iteration 78
+regression test for an unrelated session-write-through bug), and confirmed
+it monkeypatches `generate_proxy` entirely — it never exercises the
+filename-construction logic, leaving this bug with zero test coverage.
+Concrete failure scenario: two source clips sharing a filename stem (e.g. a
+reused camera reel name across folders/reels) transcoded to the same
+`outputDir` via `POST /api/media/transcode-proxy` collide at
+`out_dir/proxies/{stem}_proxy.{mp4|mov}` — the second transcode silently
+overwrites the first's proxy file and JSON sidecar, and any consumer
+holding the first job's `proxyPath` is served the second source's content.
+
+**The fix.** Added `_source_identity_key(source_path)` — the same
+12-hex-char SHA1-of-resolved-path/size/mtime approach used in
+`ocf_proxy.py` and originally established by `proxy_service.py`'s
+`_stable_proxy_cache_key` — and mixed it into the output filename:
+
+```python
+stem = src.stem
+ext = ".mp4" if codec == "h264" else ".mov"
+ident = _source_identity_key(source_path)
+out_file = out_dir / f"{stem}_{ident}_proxy{ext}"
+```
+
+**Test approach.** Added `test_proxy_engine_filename_identity.py` (4
+tests): two different source files sharing a stem get different identity
+keys; the same file gets a stable key across calls; a missing file doesn't
+raise; and — mocking `transcode_proxy` to capture the constructed output
+path — two different sources sharing a stem transcoded to the same
+`outputDir` via `generate_proxy()` produce different output paths (the
+direct regression case for the reported collision).
+
+**Verification.** `python3 -m pytest tests/test_proxy_engine_filename_identity.py -v`
+— 4/4 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`proxy_engine.py`: reverting to pre-fix code fails test collection outright
+with `ImportError: cannot import name '_source_identity_key'` (the helper
+doesn't exist pre-fix). Restored the fix, reran — 4/4 green, and confirmed
+via `git diff --stat` that only the intended 17-insertion/1-deletion fix
+diff was restored. Full companion suite: `python3 -m pytest -q` — 310
+passed (up from 306), 7 skipped, same 2 pre-existing `test_conform_engine.py`
+failures from Iterations 76-83 (unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2 pre-existing,
+unrelated Python-version failures already documented since Iteration 76.
+
+**Still open.** This is the third instance of bug species #7 (cache/output
+filename omitting resource identity) — after `proxy_service.py`'s IMF
+proxy cache and `ocf_proxy.py`'s OCF clip proxy cache. The species is now
+well-covered across the proxy-writing subsystem; a follow-up scouting pass
+should either do one more sweep for remaining cache-writing paths (e.g.
+thumbnail/waveform caches, still unconfirmed either way) or pivot toward
+other bug species/files given how saturated #7 now is here.
+
+Commits: `TBD`.
