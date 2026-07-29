@@ -11716,3 +11716,105 @@ one, which would make this unreachable in practice, but that call site
 wasn't audited this iteration).
 
 Commits: `f937a99`.
+
+## Iteration 113 — shotWorkItems.js `update()` lost-update race across two IDB transactions
+
+**Why this file:** `src/scripts/core/shotWorkItems.js` implements
+`PFX_SWI`, the IndexedDB-backed data model every VFX marker's
+ShotWorkItem lives in. `update(shotWorkId, patch)` is the single
+read-modify-write entry point every other module uses to mutate a
+ShotWorkItem — `proxyJobPoller.js` calls it on every 2-second poll tick
+(progress updates, terminal-state commits), `colorRecipe.js` calls it
+when a color recipe resolves, `proxyFingerprint.js` calls it to mark
+proxies rendered/stale, and `smartRun.js`'s cut-diff reaction calls it
+to patch a marker's TC range after an edit. These call sites are
+independently triggered by unrelated async flows (a network poll vs. a
+user's timeline edit vs. a color-recipe resolution) with no
+coordination between them, and can legitimately target the same
+`shotWorkId` around the same time — e.g. a proxy render's progress tick
+and a mid-render cut-diff TC change on the same shot.
+
+**The bug:** `update()` was implemented as:
+
+```js
+async function update(shotWorkId, patch) {
+  const existing = await getById(shotWorkId);
+  if (!existing) return null;
+  const updated = { ...existing, ...patch, shotWorkId, updatedAt: _now() };
+  return save(updated);
+}
+```
+
+`getById()` runs in its own `readonly` IDB transaction; `save()` runs in
+its own separate `readwrite` transaction. Because these are two
+independent transactions with an `await` between them and no per-key
+locking, two concurrent `update()` calls for the same `shotWorkId` can
+both have their `getById()` resolve against the same pre-write record
+before either call's `save()` has landed. Whichever `save()` completes
+second wins, silently discarding the first call's patch — a classic
+lost-update race. The same shape (separate read-transaction +
+write-transaction with no lock) was already identified and fixed once
+before in this codebase, in `crossTabQueueLease.js`'s
+`acquireLease()`/`releaseLease()`, which now read-then-write inside a
+single transaction specifically to close this class of race — but the
+fix was never applied to `shotWorkItems.js`'s `update()`, which has the
+identical shape. A secondary consequence of the two-transaction split:
+calling `update()` on a nonexistent `shotWorkId` could still result in
+`save()` writing a phantom record if a concurrent `create` landed
+between the `getById` miss and... in practice the more directly
+observable secondary bug is that the naive two-transaction shape gives
+no atomicity guarantee at all for the existence check either.
+
+**The fix:** Collapsed `update()`'s get + merge + put into a single IDB
+`readwrite` transaction (`db.transaction(DB_STORE, 'readwrite')`, one
+`store.get()` whose `onsuccess` handler calls `store.put()` on the same
+transaction), matching the exact pattern already established in
+`crossTabQueueLease.js`. IndexedDB serializes readwrite transactions
+that touch the same object store, so a second `update()` call's `get()`
+is guaranteed to only run after the first call's `put()` has fully
+committed (or vice versa) — never interleaved. `_broadcast()` now fires
+only when a record actually existed and was written.
+
+**Test approach:** New `tests-js/shotWorkItemsUpdateRace.test.mjs`,
+using the same `vm.createContext`/`vm.runInContext` sandbox pattern as
+`crossTabQueueLeaseRace.test.mjs`, with a transaction-order-gated fake
+IndexedDB (`createGatedFakeIndexedDB`) adapted from that same test file
+(generalized for `shotWorkItems.js`'s keyPath-based store). The store is
+paused so both of two concurrent `update()` calls' work queues before
+either drains, then the test drives the queued transactions to
+completion one at a time via `runPendingAt(i)` and asserts both
+patches' fields survive in the final record. A second test asserts
+`update()` on an unknown `shotWorkId` returns `null` and writes nothing.
+
+**Verification:** Pre-fix (temporarily restored the original
+two-transaction `update()` body, confirmed via `grep -n "async function
+update"`), the concurrent-update test hung/timed out — with two fully
+separate `readonly`+`readwrite` transaction pairs per call, the fake
+IndexedDB's gated queue never reached the state the test's fixed
+two-step drive sequence expected, and the unknown-id test failed outright:
+it asserted `update('does-not-exist', ...)` returns `null`, but the
+two-transaction version wrote a phantom record (`{ shotWorkId:
+'does-not-exist', proxyProgress: 1, ... }`) instead of correctly
+returning `null`. Post-fix (restored the single-transaction version),
+both tests pass (2/2), confirmed by direct `node --test` runs before
+folding into the full suite. Full regression suite re-run and matched
+baseline exactly: `test:js` — every file in `tests-js/*.test.mjs`
+reports 0 failed (the one exception, `selfContained.test.mjs`'s
+git-tracking gate flagging the new untracked test file, resolves once
+the file is staged and committed, matching the pattern for every prior
+iteration's new test file); `test:node` — 72 passed, 0 failed, 1
+skipped; `test:py` — 315 passed, 7 skipped, 0 failed.
+
+**Still open:** `save()` itself (used directly by `createFromMarker`'s
+initial write, `importState`, and now internally unused by `update()`)
+is unaffected by this fix and remains a single-transaction `put()`,
+which is fine since each `createFromMarker` call generates a fresh
+unique `shotWorkId` with no cross-call contention. Not audited this
+iteration: whether `renameByMarkerIds()`'s per-marker loop (which
+serially `await`s `update()` for each marker) could still race against
+one of `update()`'s other external callers landing between two of its
+own iterations — this seems unlikely to matter in practice since each
+iteration targets a different `shotWorkId`, but wasn't specifically
+confirmed.
+
+Commits: `TBD`.

@@ -6401,3 +6401,28 @@ and matched baseline exactly: all `test:js` files 0 failed, 72/1/0
 Node, 315/7/0 Python.
 
 Commits: `f937a99`.
+
+## Iteration 113 — shotWorkItems.js `update()` lost-update race
+
+`PFX_SWI.update()` read via a separate readonly transaction
+(`getById`) then wrote via a separate readwrite transaction (`save`),
+with no lock between them, so two independently-triggered `update()`
+calls for the same `shotWorkId` (e.g. a proxy-poll progress tick and a
+cut-diff TC-range update landing around the same time) could both read
+the same stale record before either write landed — whichever write
+lands second silently drops the other call's patch. It also let
+`save()` create a phantom record for a nonexistent `shotWorkId` rather
+than returning `null`. This is the same shape of bug already fixed in
+`crossTabQueueLease.js`'s `acquireLease()`/`releaseLease()`. Fixed by
+collapsing `update()`'s get+patch+put into a single IDB `readwrite`
+transaction, relying on IndexedDB's own serialization of readwrite
+transactions on the same store. Verified with a new `vm`-sandboxed
+harness (`tests-js/shotWorkItemsUpdateRace.test.mjs`) using a
+transaction-order-gated fake IndexedDB: pre-fix, one of two concurrent
+patches was lost (and the unknown-id case wrote a phantom record);
+post-fix, both patches survive and the unknown-id case correctly
+returns `null` with no write. Full regression suite re-run and matched
+baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped Node,
+315/7/0 Python.
+
+Commits: `TBD`.

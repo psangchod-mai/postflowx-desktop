@@ -173,11 +173,31 @@
     _broadcast({ type: 'swi_removed', shotWorkId });
   }
 
+  // update() reads-then-writes inside a *single* IDB transaction (not via
+  // getById()+save(), which are two separate transactions with no lock
+  // between them). IndexedDB serializes readwrite transactions on the same
+  // store, so this closes the race where two independently-triggered update()
+  // calls for the same shotWorkId (e.g. a proxy-poll progress tick and a cut
+  // diff's TC-range update) both read the same stale record before either
+  // write lands, silently dropping one call's patch.
   async function update(shotWorkId, patch) {
-    const existing = await getById(shotWorkId);
-    if (!existing) return null;
-    const updated = { ...existing, ...patch, shotWorkId, updatedAt: _now() };
-    return save(updated);
+    const db = await _openDB();
+    const updated = await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      const store = tx.objectStore(DB_STORE);
+      const req = store.get(shotWorkId);
+      let result = null;
+      req.onsuccess = () => {
+        const existing = req.result;
+        if (!existing) return;
+        result = { ...existing, ...patch, shotWorkId, updatedAt: _now() };
+        store.put(result);
+      };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror    = () => reject(tx.error);
+    });
+    if (updated) _broadcast({ type: 'swi_updated', shotWorkId });
+    return updated;
   }
 
   async function renameByMarkerIds(markerIds, shotName, meta = {}) {
