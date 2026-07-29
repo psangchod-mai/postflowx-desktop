@@ -6773,4 +6773,4 @@ failures).
 Still open: no further backup candidate identified this iteration — a
 future iteration should scout fresh for the next stale-race target.
 
-Commits: `TBD`.
+Commits: `289941f`.
