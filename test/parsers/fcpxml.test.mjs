@@ -188,3 +188,35 @@ test('flat-sequence-scan fallback reads the real source-in trim, not frame 0', (
   assert.equal(evs[0].srcIn, '00:00:20:00', 'start=480/24s (20s in) must not be flattened to frame 0');
   assert.equal(evs[0].srcOut, '00:00:25:00', 'srcOut = srcIn + duration (5s)');
 });
+
+// ── animated-transform keyframe times ────────────────────────────────────────
+// <adjust-transform><param><keyframe time="..."/> times are FCPXML rational
+// values, same as offset/duration/start elsewhere in the file — a keyframe at
+// a non-integer-second position is written as "N/Ds" (e.g. "12345/24000s").
+// The keyframe reader used plain parseFloat on the raw string, which stops at
+// the first non-numeric character: parseFloat("12345/24000s") is 12345, not
+// 12345/24000 = 0.514375. Every fractional-second keyframe time was silently
+// corrupted by a factor of ~24000.
+test('animated transform keyframe times parse rational seconds, not the bare numerator', () => {
+  const res = parseFCPXML(`<?xml version="1.0"?><fcpxml version="1.9"><resources>
+    <format id="r1" frameDuration="1/24s"/>
+    <asset id="a1" name="A001" format="r1" start="0s" duration="10s">
+      <media-rep src="file:///a.mov"/></asset></resources>
+    <library><event><project name="P">
+    <sequence format="r1" tcStart="0s" duration="4s"><spine>
+      <asset-clip name="c1" ref="a1" offset="0s" start="0s" duration="4s">
+        <adjust-transform>
+          <param key="position">
+            <keyframe time="12345/24000s" value="0 0"/>
+            <keyframe time="24690/24000s" value="10 10"/>
+          </param>
+        </adjust-transform>
+      </asset-clip>
+    </spine></sequence></project></event></library></fcpxml>`);
+  const evs = assertParseResult(res, { sourceType: 'fcpxml' });
+
+  const keys = evs[0].transform?.keys?.position;
+  assert.ok(Array.isArray(keys) && keys.length === 2, 'both keyframes captured');
+  assert.equal(keys[0].time, 12345 / 24000, 'time="12345/24000s" is 0.514375s, not the bare numerator 12345');
+  assert.equal(keys[1].time, 24690 / 24000, 'second keyframe likewise resolved as a true fraction');
+});

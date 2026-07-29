@@ -399,6 +399,23 @@ function ratToFrames(val, fps) {
   if (!isFinite(n)) return 0;
   return Math.round(isSeconds ? (n * fps) : n);
 }
+// Like ratToFrames, but returns exact (unrounded) real seconds — for values
+// that aren't being snapped to a frame grid, e.g. animated-transform keyframe times.
+function ratToSeconds(val) {
+  if (val == null) return 0;
+  let s = String(val).trim();
+  if (!s) return 0;
+  if (s.endsWith('s')) s = s.slice(0, -1);
+  if (s.includes('/')) {
+    const [a, b] = s.split('/');
+    const num = parseFloat(a);
+    const den = parseFloat(b);
+    if (!isFinite(num) || !isFinite(den) || den === 0) return 0;
+    return num / den;
+  }
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
 function firstChild(el, sel) { return el?.querySelector(`:scope > ${sel}`) || null; }
 
 function readTimeMapPoints(el, fps) {
@@ -1146,7 +1163,7 @@ function readFCPTransform(node){
       for (const kf of kfEls) {
         const t = kf.getAttribute('time') || '';
         const v = kf.getAttribute('value') || '';
-        const tSec = t.endsWith('s') ? parseFloat(t) : (parseFloat(t) || 0);
+        const tSec = ratToSeconds(t);
         kfArr.push({ time: tSec, value: v });
       }
       if (kfArr.length >= 2) keys[field] = kfArr;
