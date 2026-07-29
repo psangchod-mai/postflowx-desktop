@@ -8881,3 +8881,92 @@ incompatibility in `conform_engine.py` remains unfixed (environment
 issue, out of scope).
 
 Commits: `21910a5`.
+
+## Iteration 83 — `standard_media_backend.py`'s `_frames_to_tc()` truncated fractional fps instead of rounding, drifting NTSC-rate timecodes
+
+**Why this file.** `companion/src/postflowx_companion/media/backends/standard_media_backend.py`
+is the default ffprobe+ffmpeg backend for still-frame preview/thumbnail/scrub
+requests on the most common delivery formats (MP4, MOV/ProRes, MXF, WebM,
+MKV) — any codec not requiring a native SDK backend routes through here.
+
+**The bug.** `_frames_to_tc()` converted a frame index to a timecode using
+`int(fps)` as the frame-counting divisor:
+
+```python
+def _frames_to_tc(frames: int, fps: float) -> str:
+    fps = max(1.0, fps)
+    ff  = frames % int(fps)
+    s   = (frames // int(fps)) % 60
+    m   = (frames // int(fps) // 60) % 60
+    h   = frames // int(fps) // 3600
+    return f"{h:02d}:{m:02d}:{s:02d}:{ff:02d}"
+```
+
+`fps` comes straight from ffprobe's `r_frame_rate` (`get_frame()` at line
+139), so for any NTSC-derived rate — 23.976, 29.97, 47.952, 59.94, 119.88,
+near-universal in professional cinema/broadcast delivery — `int(fps)`
+truncates to the rate one below the nominal rate (`int(23.976) == 23`,
+not `24`), dropping a frame's worth of count every second of footage.
+
+**Concrete failure example.** For a 23.976fps clip at `frame_index=100`,
+the correct nominal-24fps timecode is `00:00:04:04`. The buggy code computes
+`100 % 23 = 8`, `100 // 23 = 4`, yielding `00:00:04:08` — wrong, and the
+drift compounds roughly every 24 frames as the frame index grows (at
+`frame_index=10000` the two disagree by whole seconds, not just a frame or
+two). This surfaces directly in the API response's `"timecode"` field
+(`get_frame()` line 204) for every still-frame preview/thumbnail/scrub
+request routed through this backend.
+
+**Why genuine and new.** Every other frames↔timecode conversion in this
+codebase deliberately rounds fps to its nominal whole-frame rate first —
+`aaf_export.py` (`fps_int = max(1, round(fps))`), `api.py`
+(`int(round(fps))`), `conform_engine.py` (`int(round(fps))`), and the
+module-level `_tc_to_frames`/`_frames_to_tc` functions fixed into
+`_probe_ocf_file` back in Iteration 49. In fact, Iteration 49's own
+"Still open" note explicitly flagged this exact file as a known,
+deferred instance of the bug ("Iteration 48's `int(fps)` grep sweep
+across the rest of `companion/src/postflowx_companion/` remains pending
+(its two known instances in `standard_media_backend.py`/`aaf_export.py`
+are still dirty files, off-limits)") — `aaf_export.py`'s instance was
+fixed by Iteration 76's broader AAF rewrite, but `standard_media_backend.py`'s
+was never actually revisited until now.
+
+**The fix.** Round `fps` to its nearest whole-frame rate once, then use
+that for all four divisions:
+
+```python
+def _frames_to_tc(frames: int, fps: float) -> str:
+    fps_int = max(1, round(max(1.0, fps)))
+    ff  = frames % fps_int
+    s   = (frames // fps_int) % 60
+    m   = (frames // fps_int // 60) % 60
+    h   = frames // fps_int // 3600
+    return f"{h:02d}:{m:02d}:{s:02d}:{ff:02d}"
+```
+
+**Test approach.** Added `test_standard_media_backend_ntsc_tc.py` (4
+tests): 23.976fps and 29.97fps cases asserting the correct nominal-rate
+timecode (not the truncated one), a whole-number-fps control case
+confirming the fix doesn't disturb the already-correct integer-fps path,
+and a large-frame-index case (`frame_index=10000`) confirming the drift
+would compound to whole seconds if the bug were reintroduced.
+
+**Verification.** `python3 -m pytest tests/test_standard_media_backend_ntsc_tc.py -v`
+— 4/4 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`standard_media_backend.py`: reverting to pre-fix code fails 3/4 tests
+exactly as predicted (`00:00:04:08` instead of `00:00:04:04`,
+`00:00:10:10` instead of `00:00:10:00`), the whole-number-fps control
+case still passes (unaffected by the bug). Restored the fix, reran —
+4/4 green. Full companion suite: `python3 -m pytest -q` — 293 passed (up
+from 289), 7 skipped, same 2 pre-existing `test_conform_engine.py`
+failures from Iterations 76-82 (`int.bit_count()` needs Python 3.10+;
+unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented since
+Iteration 76.
+
+**Still open.** The `int.bit_count()` / Python 3.9 incompatibility in
+`conform_engine.py` remains unfixed (environment issue, out of scope).
+
+Commits: `TBD`.

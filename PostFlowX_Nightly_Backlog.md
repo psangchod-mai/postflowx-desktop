@@ -5583,3 +5583,25 @@ confirmed it fails to even collect (`ImportError`) pre-fix and passes
 skipped (same 2 pre-existing Iteration-76 failures, unrelated).
 
 Commits: `21910a5`.
+
+## Iteration 83 — `standard_media_backend.py`'s `_frames_to_tc()` used `int(fps)` (truncation) instead of rounding to the nominal whole-frame rate
+
+`get_frame()`'s `"timecode"` field, computed via `_frames_to_tc()`, used
+`int(fps)` as the frame-counting divisor. For NTSC-derived rates
+(23.976, 29.97, etc. — near-universal in pro delivery), `int(23.976) ==
+23` truncates instead of rounding to the nominal `24`, so every still-
+frame preview/thumbnail/scrub request through this backend returned a
+timecode that drifts further wrong as the frame index grows (whole
+seconds off by `frame_index=10000`). This was explicitly flagged as a
+known, deferred instance of the bug back in Iteration 49's "Still open"
+note, but never revisited — `aaf_export.py`'s sibling instance got fixed
+along the way (Iteration 76), this one didn't. Fixed by rounding fps to
+its nominal whole-frame rate once (`fps_int = max(1, round(fps))`)
+before using it in all four divisions, matching the convention already
+used by `aaf_export.py`/`api.py`/`conform_engine.py`. Added
+`test_standard_media_backend_ntsc_tc.py` (4 tests); confirmed 3/4 fail
+against pre-fix code (whole-fps control case correctly unaffected) and
+4/4 pass post-fix via a stash/pop round-trip. Full suite: 293 passed/7
+skipped (same 2 pre-existing Iteration-76 failures, unrelated).
+
+Commits: `TBD`.

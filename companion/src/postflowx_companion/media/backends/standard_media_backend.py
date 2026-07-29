@@ -305,9 +305,13 @@ class StandardMediaBackend(BaseMediaBackend):
 
 
 def _frames_to_tc(frames: int, fps: float) -> str:
-    fps = max(1.0, fps)
-    ff  = frames % int(fps)
-    s   = (frames // int(fps)) % 60
-    m   = (frames // int(fps) // 60) % 60
-    h   = frames // int(fps) // 3600
+    # Round to the nominal whole-frame rate (e.g. 23.976 -> 24) rather than
+    # truncating, matching the convention used everywhere else in the
+    # codebase (aaf_export.py, api.py, conform_engine.py) — truncating would
+    # make this drift out of sync with the actual frame count over time.
+    fps_int = max(1, round(max(1.0, fps)))
+    ff  = frames % fps_int
+    s   = (frames // fps_int) % 60
+    m   = (frames // fps_int // 60) % 60
+    h   = frames // fps_int // 3600
     return f"{h:02d}:{m:02d}:{s:02d}:{ff:02d}"
