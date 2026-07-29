@@ -6655,3 +6655,41 @@ methods now share the `_loadSeq` guard. Broader codebase sweep found
 no comparably strong remaining candidate for this bug shape.
 
 Commits: `da3564c`.
+
+## Iteration 124 — NativeAVPlayerEngine.seekFrame()/_renderFrame() stale-race
+
+Widened scout search beyond `IMFPlayer` found the same bug shape in
+`src/scripts/core/nativeAVPlayer.js`'s `NativeAVPlayerEngine`, the
+canvas-based ProRes player: `seekFrame()` sets `this._frame`
+synchronously then awaits `_renderFrame()`, which paints and fires
+`onTimeUpdate(frame, fps)` on resolution with no staleness check.
+Dragging the scrub bar (`_pmSeekVideoAbsFrame()` in
+`src/scripts/prep_mark.js`, no debounce) fires overlapping
+`seekFrame()` calls; a pre-existing `_busy` boolean synchronously
+drops a second overlapping call before any async work starts, but by
+then `this._frame` has already moved to the new target — so the
+first, now-stale call's slow extraction can still resolve later and
+paint/report the old frame, contradicting the playhead. Fixed with a
+`_loadSeq` counter bumped by `seekFrame()`/`_tick()` before the
+extraction await, checked by `_renderFrame()` after it, before
+painting or emitting `onTimeUpdate` — `open()`'s and `repaint()`'s
+`_renderFrame()` calls intentionally skip the guard since they must
+always render. Verified with a new test
+(`tests-js/nativeAVPlayerSeekFrameStaleRace.test.mjs`, linkedom + a
+fake `window.pfxPlatform.nativeEngine`): pre-fix, a stale frame-5
+extraction fired `onTimeUpdate(5, ...)` after frame 10 had already
+superseded it; post-fix, it's a no-op, and a fresh post-drag
+`seekFrame(10)` still renders and reports correctly once the busy lock
+clears. Full regression suite re-run: `test:js` all files 0 failed
+(except expected self-containment-gate noise for the still-uncommitted
+test file); `test:node` 72/0/1-skipped; `test:py`
+313/2-failed/7-skipped, both failures pre-existing/unrelated (Python
+3.9.6 lacks `int.bit_count()`, used in the do-not-touch
+`conform_engine.py`).
+
+Still open: `MPVPlayerEngine.seekTime()` in
+`src/scripts/core/mpvPlayer.js` flagged as a similarly-shaped backup
+candidate by this iteration's scout — not yet independently verified
+or fixed.
+
+Commits: `TBD`.

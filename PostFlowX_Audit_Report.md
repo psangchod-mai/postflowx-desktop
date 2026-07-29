@@ -12580,3 +12580,100 @@ other classes checked have only stateless async functions, not
 instance-state races of this kind.
 
 Commits: `da3564c`.
+
+## Iteration 124 — NativeAVPlayerEngine.seekFrame()/_renderFrame() stale-race
+
+**Why this file:** With `IMFPlayer`'s three package-lifecycle methods
+now fully covered, this iteration's scout widened the search beyond
+`imf_player_engine.js` for the same `_loadSeq` bug shape elsewhere in
+the codebase. `src/scripts/core/nativeAVPlayer.js`'s
+`NativeAVPlayerEngine` — the canvas-based ProRes player — was
+confirmed via a repo-wide `_loadSeq` grep to have no staleness guard
+at all, unlike `ocfViewer.js`, `reviews/player.js`, and
+`imf_player_engine.js`, which are all already covered.
+
+**The bug:** `seekFrame(frame)` sets `this._frame` synchronously, then
+awaits `_renderFrame(frame)`, which extracts the frame (real I/O — a
+native-engine IPC call or an `avf_bridge` process spawn) and, once
+resolved, paints it to the canvas and fires
+`onTimeUpdate(frame, this._fps)`, with no check that `frame` still
+matches `this._frame`. `_pmSeekVideoAbsFrame()` in
+`src/scripts/prep_mark.js:247` calls `seekFrame()` fire-and-forget on
+every scrub-bar drag event with no debounce, so a fast drag fires many
+overlapping `seekFrame()` calls before the first's extraction
+resolves. `_renderFrame()` has a pre-existing `_busy` boolean that
+synchronously blocks a second overlapping call before it starts any
+async work — so unlike the `IMFPlayer` methods (which have no
+re-entrancy guard and can have several calls genuinely in flight at
+once), only one extraction is ever in flight here. But that guard
+doesn't help: the first call's extraction is already in progress when
+the second, busy-dropped call updates `this._frame` to the new target
+and returns immediately. When the first call's stale extraction later
+resolves, it still paints itself onto the canvas and fires
+`onTimeUpdate` with the old frame number — visibly contradicting
+`this._frame` and the playhead position the user has already dragged
+to.
+
+**The fix:** Added a `_loadSeq` counter (initialized in the
+constructor). `seekFrame()` and the playback branch of `_tick()` each
+do `const seq = ++this._loadSeq;` right before calling
+`_renderFrame(frame, seq)`. Inside `_renderFrame()`, after the frame
+extraction await (and after the self-healing native→avf_bridge
+fallback retry, which must still be allowed to run its own await), a
+guard `if (seq !== undefined && seq !== this._loadSeq) return false;`
+bails before painting/reporting if a newer seek/tick superseded this
+call. `open()`'s two initial `_renderFrame(0)` calls and `repaint()`'s
+resize-triggered `_renderFrame(this._frame)` call intentionally pass
+no `seq` argument (`seq === undefined` skips the guard), since those
+are not part of the overlapping-seek race and must always render.
+This is a narrower fix than a full "coalesce to the latest pending
+frame" redesign — it only prevents a stale call from painting over a
+newer one; a busy-dropped call's own target frame is expected to (and
+does) render correctly once a fresh call is made after the busy lock
+clears, e.g. the drag-release seek.
+
+**Test approach:** `tests-js/nativeAVPlayerSeekFrameStaleRace.test.mjs`,
+a new plain-Node test using linkedom, with a fake
+`window.pfxPlatform.nativeEngine.frameExtract()` returning an
+independently-resolvable deferred promise per call, and a fake
+`Image` class so `_drawDataUrl()` resolves synchronously instead of
+hitting its 4s watchdog. Unlike the `IMFPlayer` tests, the first draft
+assumed two concurrent extractions could be in flight (copying the
+`IMFPlayer` test pattern) and failed with a `TypeError` reading
+`extractCalls[1]` — corrected once `_busy`'s synchronous drop behavior
+was understood: the test now starts `seekFrame(5)`, then
+`seekFrame(10)` (asserting it makes no new extraction call, since
+`_busy` drops it immediately), resolves frame 5's stale extraction
+late (asserting no `onTimeUpdate` fires), then issues a third,
+post-drag `seekFrame(10)` once the busy lock clears (simulating a
+drag-release seek) and asserts it renders and reports correctly.
+
+**Verification:** Pre-fix (temporarily reverted via a `/tmp` backup,
+restored afterward), 5 of 9 assertions failed exactly as predicted:
+`_loadSeq` wasn't bumped by either call, and critically the stale
+frame-5 extraction fired `onTimeUpdate(5, ...)` after frame 10 had
+already superseded it, and the settled post-drag `seekFrame(10)`'s
+`onTimeUpdate` assertions failed too since the stale call's spurious
+update was still counted. Post-fix (restored from backup, confirmed
+via `git diff --stat` — 17 insertions, 3 deletions, matching the
+intended scope), all 9 assertions pass. Full regression suite re-run
+and matched baseline: `test:js` — every file 0 failed except the
+expected, well-documented `selfContained.test.mjs` "no new test file
+is left out of git" flag for this iteration's still-untracked new test
+file; `test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 313
+passed, 7 skipped, 2 failed, both pre-existing and unrelated to this
+change (`bit_count()` AttributeError in `conform_engine.py`'s
+regional-hash distance helper — that file's WIP block is on the
+do-not-touch list, caused by this dev environment running Python
+3.9.6, which predates `int.bit_count()` added in Python 3.10 — not a
+regression from this iteration's fix).
+
+**Still open:** `MPVPlayerEngine.seekTime()` in
+`src/scripts/core/mpvPlayer.js` was flagged by this iteration's scout
+as a backup candidate with a similar shape (an async seek that paints
+and reports on resolution with no staleness guard) — not yet
+independently verified or fixed. A future iteration should confirm it
+via the same `_loadSeq` grep-and-read process before treating it as
+confirmed.
+
+Commits: `TBD`.

@@ -45,6 +45,12 @@ export class NativeAVPlayerEngine {
     // Native engine session — null means fall back to legacy avf_bridge getStill
     this._sessionId   = null;
     this._useNativeEngine = false;
+    // Bumped by seekFrame()/_tick() right before they request a frame render;
+    // _renderFrame() checks it after the extraction await to detect that a
+    // newer seek/tick superseded it, so a slow stale extraction can't paint
+    // the wrong frame or fire onTimeUpdate with a frame number that
+    // contradicts this._frame.
+    this._loadSeq     = 0;
   }
 
   get currentFrame()  { return this._frame; }
@@ -125,7 +131,8 @@ export class NativeAVPlayerEngine {
   async seekFrame(frame) {
     const f = Math.max(0, Math.min(Math.round(frame), this._totalFrames - 1));
     this._frame = f;
-    await this._renderFrame(f);
+    const seq = ++this._loadSeq;
+    await this._renderFrame(f, seq);
   }
 
   // Re-paint the current frame (used after a canvas resize wipes the bitmap).
@@ -171,7 +178,8 @@ export class NativeAVPlayerEngine {
         return;
       }
       this._frame++;
-      await this._renderFrame(this._frame);
+      const seq = ++this._loadSeq;
+      await this._renderFrame(this._frame, seq);
     }
 
     if (this._playing) {
@@ -197,7 +205,7 @@ export class NativeAVPlayerEngine {
   // drops to the avf_bridge spawn path and retries the SAME frame — previously a
   // failed fast-path frame was silently dropped, leaving the canvas black (and,
   // when paused, forever, since no later tick would repaint it).
-  async _renderFrame(frame) {
+  async _renderFrame(frame, seq) {
     if (!this._filePath || this._busy) return false;
     this._busy = true;
     let drawn = false;
@@ -216,6 +224,12 @@ export class NativeAVPlayerEngine {
         this._useNativeEngine = false; this._sessionId = null;
       }
       if (!url) url = await this._extractFrame(frame);
+
+      // A newer seekFrame()/_tick() call bumped _loadSeq while we were awaiting
+      // the frame extraction above — the user has already moved on to a
+      // different frame, so painting/reporting this one now would contradict
+      // this._frame and the caller that superseded us.
+      if (seq !== undefined && seq !== this._loadSeq) return false;
 
       if (url) drawn = await this._drawDataUrl(url);
       if (!drawn) this._opts.onError?.(`Frame ${frame}: decoder produced no renderable image`);
