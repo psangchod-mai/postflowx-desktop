@@ -6693,3 +6693,30 @@ candidate by this iteration's scout — not yet independently verified
 or fixed.
 
 Commits: `eb81906`.
+
+## Iteration 125 — MPVPlayerEngine.seekTime() stale-race
+
+Fixed the backup candidate flagged by Iteration 124: `seekTime()` in
+`src/scripts/core/mpvPlayer.js` awaits an IPC round-trip
+(`media.mpv.seek`) with no `_busy` guard and no staleness check, so an
+earlier scrub-drag seek resolving after a later one overwrites
+`_cachedTime` backwards and fires a stale `onTimeUpdate`. Same driver
+as the `NativeAVPlayerEngine` bug: `_pmSeekVideoAbsFrame()` in
+`prep_mark.js` calls `seekFrame()` on whichever engine backs
+`_pfxNativeEngine`. Added the same `_loadSeq` generation-counter
+pattern, bumped before the `await` and checked after, in `seekTime()`.
+New test `tests-js/mpvPlayerSeekTimeStaleRace.test.mjs` (8 assertions)
+fakes `window.pfxPlatform.media._call()` with independently-resolvable
+deferred promises, resolves a later seek before an earlier one, and
+confirms the earlier one is a no-op once superseded. Before/after
+verified: reverted code failed 4/8 as predicted (stale
+`_cachedTime`/`onTimeUpdate` clobber), restored fix diffed to exactly
+3 insertions, re-passed 8/8. Full regression matched baseline
+(`test:js` all-green except expected self-containment-gate noise;
+`test:node` 72/0/1-skipped; `test:py` 313/7-skipped/2-pre-existing-
+unrelated-failures).
+
+Still open: no further backup candidate identified this iteration — a
+future iteration should scout fresh for the next stale-race target.
+
+Commits: `TBD`.

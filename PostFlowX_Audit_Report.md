@@ -12677,3 +12677,76 @@ via the same `_loadSeq` grep-and-read process before treating it as
 confirmed.
 
 Commits: `eb81906`.
+
+## Iteration 125 — MPVPlayerEngine.seekTime() stale-race
+
+**Why this file:** Iteration 124 flagged `MPVPlayerEngine.seekTime()`
+in `src/scripts/core/mpvPlayer.js` as a backup candidate with the same
+shape. Read the file in full: it exposes the same
+open/play/pause/seek/step/close interface as `NativeAVPlayerEngine`
+(per its own file header) and is driven by the exact same caller,
+`_pmSeekVideoAbsFrame()` in `src/scripts/prep_mark.js:247`, via
+`pmVideo._pfxNativeEngine?.seekFrame?.()` — confirmed via grep that
+`playbackRouter.js` selects whichever engine (native, MPV, or proxy)
+backs `_pfxNativeEngine`, so the same scrub-bar rapid-fire path in
+`prep_mark.js` (e.g. `pmScrub` drag at line 15991) drives
+`MPVPlayerEngine.seekFrame()` too when MPV is the active engine.
+
+**The bug:** `seekFrame(frame, fps)` converts to seconds and calls
+`seekTime(seconds)`, which `await`s an IPC round-trip
+(`media.mpv.seek` via `pfx:media`) before unconditionally writing
+`this._cachedTime = seconds` and firing `onTimeUpdate`. Unlike
+`NativeAVPlayerEngine.seekFrame()`, there is no `_busy`-style
+re-entrancy guard at all — each call is an independent, concurrent IPC
+round-trip. If an earlier seek's IPC round-trip resolves after a later
+one (out-of-order resolution — plausible since IPC replies are not
+guaranteed to arrive in send order under any queuing/backpressure in
+the main-process mpv bridge), the stale call overwrites
+`_cachedTime` backwards and reports `onTimeUpdate` for the earlier,
+already-superseded position.
+
+**The fix:** Added a `_loadSeq` generation counter (constructor field,
+same pattern as `NativeAVPlayerEngine`, `ocfViewer.js`,
+`reviews/player.js`, and `imf_player_engine.js`). `seekTime()` bumps
+`_loadSeq` before its `await` and checks `seq !== this._loadSeq`
+immediately after — bailing out before writing `_cachedTime`,
+repainting the label, or firing `onTimeUpdate` if a later `seekTime()`
+call has since superseded it. `seekFrame()` needed no direct change
+since it always delegates to `seekTime()`, which now carries the
+guard.
+
+**Test approach:** New linkedom test
+(`tests-js/mpvPlayerSeekTimeStaleRace.test.mjs`) fakes
+`window.pfxPlatform.media._call()` to return controllable deferred
+promises per call (rather than a single shared extraction call as in
+the `NativeAVPlayerEngine` test, since here each `seekTime()` call
+makes its own independent IPC call with no busy-drop). It issues
+`seekTime(1)` then `seekTime(2)` while the first is still in flight,
+resolves the second (later) call first, confirms it settles correctly
+(`_cachedTime === 2`, `onTimeUpdate(48, 24)`), then resolves the first
+(stale) call late and confirms it is a no-op — no second
+`onTimeUpdate`, `_cachedTime` still `2`, not clobbered back to `1`.
+
+**Verification:** Backed up the fixed file, reverted the `_loadSeq`
+field and the bump/guard in `seekTime()` back to the original
+unguarded code via a Python script with `assert`-guarded exact-string
+matches, then ran the test against the reverted code: 4 of 8
+assertions failed exactly as predicted (`_loadSeq` not bumped on
+either call; the stale `seekTime(1)` resolution fired a second
+`onTimeUpdate` after `2` had already settled; `_cachedTime` was
+clobbered back to `1`). Restored the fixed file from the backup;
+`git diff --stat` showed exactly 3 insertions matching the intended
+fix scope; re-ran the test — 8 of 8 passed. Full regression suite
+matched baseline: `test:js` — every file 0 failed except the expected
+`selfContained.test.mjs` untracked-new-test-file flag; `test:node` —
+72 passed, 0 failed, 1 skipped; `test:py` — 313 passed, 7 skipped, 2
+failed, the same pre-existing, unrelated `bit_count()`/Python-3.9.6
+failures in `conform_engine.py` documented in prior iterations.
+
+**Still open:** No further backup candidate was identified by this
+iteration's scout. A future iteration should scout fresh (e.g. other
+async-seek/render call sites outside the already-covered
+`ocfViewer.js`, `reviews/player.js`, `imf_player_engine.js`,
+`nativeAVPlayer.js`, and `mpvPlayer.js`) before choosing its target.
+
+Commits: `TBD`.

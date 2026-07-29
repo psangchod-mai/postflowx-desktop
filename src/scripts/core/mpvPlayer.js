@@ -34,6 +34,7 @@ export class MPVPlayerEngine {
     this._cachedTime = 0;
     this._cachedDur  = 0;
     this._fps        = Number(opts.fps) > 0 ? Number(opts.fps) : 24;
+    this._loadSeq    = 0;
   }
 
   get currentFrame()  { return Math.round(this._cachedTime * this._fps); }
@@ -86,7 +87,9 @@ export class MPVPlayerEngine {
 
   async seekTime(seconds) {
     if (!this._sessionId) return;
+    const seq = ++this._loadSeq;
     await _call('media.mpv.seek', { sessionId: this._sessionId, position: seconds });
+    if (seq !== this._loadSeq) return; // superseded by a later seek
     this._cachedTime = seconds;
     _drawLabel(this._canvas, `▶  Playing in MPV window  ↗\n${seconds.toFixed(2)}s`);
     this._opts.onTimeUpdate?.(Math.round(seconds * this._fps), this._fps);
