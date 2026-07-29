@@ -11717,6 +11717,82 @@ wasn't audited this iteration).
 
 Commits: `f937a99`.
 
+## Iteration 114 — smartRun.js preflight-modal backdrop click never resolves `run()`, hanging Smart Run forever
+
+**Why this file:** `src/scripts/core/smartRun.js` implements the "⚡ Smart
+Run" pipeline: `run()` builds a preflight summary and then `await`s a
+`Promise` that only settles when the user either clicks "Run" or
+cancels the confirmation modal shown by `_showPreflightModal(onRun,
+onCancel)`. The `finally` block that follows that `await` is
+responsible for resetting the `_running` guard and re-enabling/relabeling
+the Smart Run button, so anything that leaves the modal open without
+ever calling `onRun` or `onCancel` freezes the whole feature.
+
+**The bug:** The preflight modal supports closing via backdrop click (as
+well as its explicit Cancel button), but the backdrop-click handler was
+wired up once in `_init()` via `modal.addEventListener('click', ...)`
+and only ever hid the modal (`modal.style.display = 'none'`) — it never
+invoked either the `onRun` or `onCancel` callback captured by the
+in-flight `_showPreflightModal` call. A user who dismissed the modal by
+clicking outside it (rather than pressing Cancel) therefore left `run()`
+awaiting a Promise that could never resolve: `_running` was never reset
+and the Smart Run button stayed disabled with its in-progress label
+permanently, requiring a full page reload to recover.
+
+**The fix:** Moved the backdrop-click binding out of `_init()` and into
+`_showPreflightModal` itself, rebinding it per call (mirroring how
+`cancelBtn.onclick` is already rebound per call) so it always closes
+over the *current* call's `onCancel`:
+```js
+const _close = () => { modal.style.display = 'none'; };
+modal.onclick = (e) => { if (e.target === modal) { _close(); onCancel?.(); } };
+if (cancelBtn) cancelBtn.onclick = () => { _close(); onCancel?.(); };
+```
+The old `_init()`-level `addEventListener` handler was removed entirely
+so there is no longer a stale, non-resolving listener left registered
+from module load.
+
+**Test approach:** `tests-js/smartRunPreflightBackdrop.test.mjs`, a new
+hybrid harness combining two already-established patterns: `linkedom`'s
+`parseHTML` (used elsewhere for `smart_engine_settings.js`'s ES-module
+tests) builds a real `window`/`document` pair with genuine
+`EventTarget`/`onclick` semantics, which is then fed into a
+`vm.createContext`/`vm.runInContext` sandbox (the pattern established by
+`shotWorkItemsUpdateRace.test.mjs`) to execute `smartRun.js`'s real,
+unmodified IIFE source — necessary because `smartRun.js` is a plain
+script, not an ES module, so it can't be `import()`ed directly like
+`smart_engine_settings.js`. The test calls `PFX_SMART_RUN.run()`, flushes
+microtasks until the modal is showing, dispatches a real `click` event
+directly on the modal element (`e.target === modal`, matching the
+backdrop-vs-content check), then races `run()`'s Promise against a
+500ms timeout so a regression fails the test instead of hanging the
+whole suite. It also asserts the modal actually closes and that the
+Smart Run button's `disabled` state and label are restored.
+
+**Verification:** Pre-fix (temporarily reverted `_showPreflightModal`'s
+`modal.onclick` binding and restored the old `_init()`-level
+`addEventListener` handler, confirmed via `git diff`), the test failed
+exactly as predicted: `AssertionError: run() never resolved after a
+backdrop click — the pipeline is hung`, at ~508ms (the timeout race
+losing). Post-fix (restored the real fix from a backup copy, confirmed
+via diff), the test passes in ~5.7ms. Full regression suite re-run and
+matched baseline exactly: `test:js` — every file in `tests-js/*.test.mjs`
+reports 0 failed (this new test file included; `selfContained.test.mjs`
+flags the new file as untracked until committed, matching the
+established pattern for every prior iteration's new test file);
+`test:node` — 72 passed, 0 failed, 1 skipped; `test:py` — 315 passed, 7
+skipped, 0 failed.
+
+**Still open:** No other callers of `_showPreflightModal` were found,
+but the same per-call-rebind pattern (rather than a one-time `_init()`
+listener) should be the default template for any future modal in this
+file that captures call-specific callbacks — a one-time listener bound
+in `_init()` is the recurring shape of this bug class and is easy to
+reintroduce by accident if a new modal is added without checking this
+precedent.
+
+Commits: `TBD`.
+
 ## Iteration 113 — shotWorkItems.js `update()` lost-update race across two IDB transactions
 
 **Why this file:** `src/scripts/core/shotWorkItems.js` implements

@@ -6426,3 +6426,27 @@ baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped Node,
 315/7/0 Python.
 
 Commits: `5052324`.
+
+## Iteration 114 — smartRun.js preflight backdrop click hangs Smart Run forever
+
+The Smart Run preflight modal's backdrop-click handler was bound once
+in `_init()` and only ever hid the modal — it never called the
+`onRun`/`onCancel` callback that `run()` was awaiting, so dismissing
+the modal by clicking outside it (instead of pressing Cancel) left
+`run()`'s Promise unresolved forever, permanently disabling the "⚡
+Smart Run" button with the finally block that resets `_running` never
+reached. Fixed by moving the backdrop-click binding into
+`_showPreflightModal` itself as a per-call `modal.onclick` assignment
+(mirroring the already-per-call `cancelBtn.onclick`), so it always
+resolves the current call's `onCancel`; removed the stale `_init()`
+listener entirely. Verified with a new hybrid harness
+(`tests-js/smartRunPreflightBackdrop.test.mjs`) combining `linkedom`'s
+real DOM with the existing `vm.createContext`/`vm.runInContext`
+sandbox pattern (needed since `smartRun.js` is a plain IIFE, not an ES
+module): pre-fix, a simulated backdrop click left `run()` hung past a
+500ms timeout race; post-fix, it resolves in ~6ms with the modal
+closed and the button re-enabled. Full regression suite re-run and
+matched baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped
+Node, 315/7/0 Python.
+
+Commits: `TBD`.

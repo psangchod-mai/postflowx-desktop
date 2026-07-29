@@ -182,6 +182,12 @@
 
     const _close = () => { modal.style.display = 'none'; };
 
+    // Backdrop click must resolve the same onCancel as the Cancel button, or a
+    // caller awaiting run()'s preflight Promise (see run()) hangs forever —
+    // rebind per call (like cancelBtn.onclick) so it always targets the
+    // current call's onCancel, not whichever call last ran _init().
+    modal.onclick = (e) => { if (e.target === modal) { _close(); onCancel?.(); } };
+
     if (cancelBtn) cancelBtn.onclick = () => { _close(); onCancel?.(); };
     if (runBtn) {
       runBtn.onclick = async () => {
@@ -379,15 +385,8 @@
       });
     }
 
-    // Preflight modal: click backdrop to close
-    const modal = document.getElementById('pfxSmartPreflightModal');
-    // Note: if _showPreflightModal is updated to accept an onCancel, this backdrop handler
-    // must also invoke it to avoid leaving callers in a pending state.
-    if (modal) {
-      modal.addEventListener('click', e => {
-        if (e.target === modal) modal.style.display = 'none';
-      });
-    }
+    // Preflight modal backdrop-click is bound per call inside _showPreflightModal
+    // (needs the current call's onCancel — see the race this fixed).
 
     // Proxy committed → refresh cache
     window.addEventListener('pfx_proxy_committed', () => refreshActionCache());
