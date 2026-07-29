@@ -106,7 +106,16 @@ export class ReviewPlayer {
     const cur = String(video?.currentSrc || video?.src || '');
     const want = String(url || '');
     if (!cur || !want) return false;
-    return cur === want || cur.includes(want) || want.includes(cur);
+    if (cur === want) return true;
+    // Substring containment (not used above) falsely matches distinct clips
+    // whenever one URL is a literal prefix of the other, e.g.
+    // "...?clip=clip1" vs "...?clip=clip10". Resolve both to absolute URLs
+    // and compare exactly instead.
+    try {
+      return new URL(cur, document.baseURI).href === new URL(want, document.baseURI).href;
+    } catch {
+      return false;
+    }
   }
 
   _setCurrentTimeSafe(video, startTime = 0) {
