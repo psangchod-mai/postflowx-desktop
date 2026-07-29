@@ -44,7 +44,8 @@ def generate_proxy(
     ffmpeg = sdk.ffmpeg_path
     out_dir = Path(output_dir) if output_dir else _ensure_proxy_dir()
     stem    = _safe_stem(clip_path)
-    out_path = str(out_dir / f"{stem}_proxy.mov")
+    ident   = _source_identity_key(clip_path)
+    out_path = str(out_dir / f"{stem}_{ident}_proxy.mov")
 
     # ── Probe frame count and TC ───────────────────────────────────────────────
     ffprobe = _find_ffprobe(ffmpeg)
@@ -154,6 +155,21 @@ def _safe_stem(path: str) -> str:
     import re
     s = os.path.splitext(os.path.basename(path))[0]
     return re.sub(r"[^A-Za-z0-9_\-]", "_", s)
+
+
+def _source_identity_key(clip_path: str) -> str:
+    """Disambiguates same-named clips from different sources (e.g. reused
+    camera reel/card names across projects) sharing the single global
+    proxy cache dir when no outputDir is given. Mirrors
+    proxy_service._stable_proxy_cache_key's folder+size+mtime approach."""
+    import hashlib
+    try:
+        resolved = os.path.realpath(clip_path)
+        st = os.stat(resolved)
+        payload = f"{resolved}|{st.st_size}|{getattr(st, 'st_mtime_ns', int(st.st_mtime * 1_000_000_000))}"
+    except OSError:
+        payload = os.path.realpath(clip_path) if clip_path else clip_path
+    return hashlib.sha1(payload.encode("utf-8", "replace")).hexdigest()[:12]
 
 
 def _find_ffprobe(ffmpeg_bin: str) -> str | None:

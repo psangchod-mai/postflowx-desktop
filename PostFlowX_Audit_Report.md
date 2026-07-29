@@ -9320,3 +9320,80 @@ those three or pivot to sweeping a different file/bug species, since
 `color_lut.py` may now be largely exhausted for this species.
 
 Commits: `317d358`.
+
+## Iteration 88 — `ocf_proxy.py`'s `generate_proxy()` keyed its output filename only on clip basename, causing cross-project proxy collisions
+
+**Why this file.** Iteration 87's "Still open" note suggested pivoting away
+from `color_lut.py` after three consecutive spec-mismatch findings there. A
+scouting agent (background, non-user input) was seeded with the ten
+established bug species and instructed to prioritize files outside
+`color_lut.py`. It reported a cache/output-filename-collision bug (species
+#7, first established by `proxy_service.py`'s `_stable_proxy_cache_key`
+fix) in `ocf_engine/ocf_proxy.py`.
+
+**The bug.** `generate_proxy()` writes to a single shared
+`_OCF_PROXY_DIR` (`~/Library/Application Support/PostFlowX/ocf_proxies`)
+whenever the caller doesn't supply `output_dir`, and constructed the output
+filename as `f"{_safe_stem(clip_path)}_proxy.mov"` — a sanitized basename
+with no folder path, size, mtime, or content-identity signal. Camera
+OCF reel/card names commonly reset per shoot day or card format (e.g.
+`A001_C001_01.mov`), so two different projects each containing a clip with
+that reel name silently overwrite each other's proxy in the shared cache
+dir — or, since generation runs on a background thread via
+`generate_proxy_async`, potentially corrupt each other's output via
+concurrent writes to the same path. The QC/review panel would then
+silently display the wrong project's footage.
+
+**Independent verification.** Read `ocf_proxy.py` in full to confirm the
+filename construction and shared-directory default. Grepped
+`proxy_service.py` and confirmed `_stable_proxy_cache_key()` /
+`_proxy_cache_path()` already document this exact bug class having been
+fixed there previously (SHA1 of folder+cpl_path+size+mtime), for IMF
+proxies — establishing the precedent pattern this fix follows. Grepped
+`api.py`'s `_ocf_engine_generate_proxy()` handler and confirmed
+`output_dir` defaults to `None` when the request doesn't include
+`outputDir` — not documented as a required caller param. Grepped/read the
+actual UI caller chain, `ocfViewer.js` (`_startProxy()`, line 339) →
+`ocfEngine.js`'s `ocfGenerateProxy()` (lines 96-97), and confirmed the
+real desktop-app call site never passes `outputDir` at all — so the
+shared-directory, basename-only-keyed path is not a rare edge case but
+the only path actually exercised in production.
+
+**The fix.** Added `_source_identity_key(clip_path)` — a 12-hex-char SHA1
+of the resolved path, size, and mtime (falling back to the resolved path
+alone if `os.stat` fails), mirroring `_stable_proxy_cache_key`'s
+approach — and mixed it into the output filename:
+
+```python
+out_dir = Path(output_dir) if output_dir else _ensure_proxy_dir()
+stem    = _safe_stem(clip_path)
+ident   = _source_identity_key(clip_path)
+out_path = str(out_dir / f"{stem}_{ident}_proxy.mov")
+```
+
+**Test approach.** Added `test_ocf_proxy_filename_identity.py` (3 tests):
+two different source files sharing a reel-style basename get different
+identity keys; the same file gets a stable key across calls; a missing
+file doesn't raise. No existing test file covered `ocf_proxy.py` at all
+prior to this iteration.
+
+**Verification.** `python3 -m pytest tests/test_ocf_proxy_filename_identity.py -v`
+— 3/3 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`ocf_proxy.py`: reverting to pre-fix code fails test collection outright
+with `ImportError: cannot import name '_source_identity_key'` (the helper
+doesn't exist pre-fix). Restored the fix, reran — 3/3 green. Full
+companion suite: `python3 -m pytest -q` — 306 passed (up from 303), 7
+skipped, same 2 pre-existing `test_conform_engine.py` failures from
+Iterations 76-83 (unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2 pre-existing,
+unrelated Python-version failures already documented since Iteration 76.
+
+**Still open.** This is the second instance of bug species #7 (cache/
+output filename omitting resource identity) — the first being
+`proxy_service.py`'s IMF proxy cache, fixed prior to this audit loop. A
+follow-up iteration should check whether other proxy/cache-writing code
+paths in the codebase (e.g. thumbnail or waveform caches) have the same
+basename-only-keying gap.
+
+Commits: `TBD`.

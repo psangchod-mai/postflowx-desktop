@@ -5697,3 +5697,33 @@ S-Log3, and V-Log were reported clean by this iteration's scouting
 agent but not independently re-verified.
 
 Commits: `317d358`.
+
+## Iteration 88 — `ocf_proxy.py`'s `generate_proxy()` keyed its output filename only on clip basename, causing cross-project proxy collisions
+
+`generate_proxy()` wrote to a single shared `_OCF_PROXY_DIR` whenever
+`output_dir` wasn't supplied — the always-taken path in practice, since
+the real desktop-app caller (`ocfViewer.js`'s `_startProxy()` →
+`ocfEngine.js`'s `ocfGenerateProxy()`) never passes `outputDir` — and
+keyed the output filename only on `_safe_stem(clip_path)`, the
+sanitized basename. Camera reel/card names commonly reset per shoot
+day (e.g. `A001_C001_01.mov`), so two different projects' clips with
+the same basename silently overwrite (or, since generation runs
+async on a background thread, potentially corrupt via concurrent
+writes) each other's proxy, with the QC panel then showing the wrong
+project's footage. `proxy_service.py`'s `_stable_proxy_cache_key()`
+already documents this exact bug class having been fixed there
+previously for IMF proxies (SHA1 of folder+cpl_path+size+mtime) —
+`ocf_proxy.py`'s parallel `generate_proxy()` never got the same
+treatment. Fix: added `_source_identity_key()` (12-hex SHA1 of
+resolved path+size+mtime, mirroring the established pattern) and
+mixed it into the output filename. Added
+`test_ocf_proxy_filename_identity.py` (3 tests, no prior test file
+existed for this module); confirmed genuine via stash/pop — pre-fix
+code fails test collection outright (`ImportError`, the helper doesn't
+exist). Full suite: 306 passed/7 skipped (same 2 pre-existing
+Iteration-76 failures, unrelated). Second instance of bug species #7
+(cache/output filename omitting resource identity) — a follow-up
+iteration should check other proxy/cache-writing code paths (e.g.
+thumbnail/waveform caches) for the same gap.
+
+Commits: `TBD`.
