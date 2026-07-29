@@ -6804,4 +6804,4 @@ Still open: the pre-existing PLUGFEST_TESTS/AUD004 WIP in this file is
 someone else's in-progress work and was left alone — a future
 iteration should scout a fresh file rather than return here.
 
-Commits: `TBD`.
+Commits: `2f529f2`.
