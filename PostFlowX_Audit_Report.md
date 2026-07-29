@@ -11791,7 +11791,7 @@ in `_init()` is the recurring shape of this bug class and is easy to
 reintroduce by accident if a new modal is added without checking this
 precedent.
 
-Commits: `TBD`.
+Commits: `654a53c`.
 
 ## Iteration 113 — shotWorkItems.js `update()` lost-update race across two IDB transactions
 
