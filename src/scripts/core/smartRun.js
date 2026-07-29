@@ -34,6 +34,14 @@
   // ── Synchronous next-action cache: markerId → actionString ───────────────
   const _cache = new Map();
 
+  // refreshActionCache() is triggered from many independent, uncoordinated
+  // sources (proxy-job completion, cross-tab SWI BroadcastChannel, cut-diff
+  // reactions, safe-fix actions, boot warm-up) that can overlap. Without a
+  // guard, an earlier call reading a stale SWI snapshot can resolve AFTER a
+  // later call reading a fresher one, and its clear()+repopulate would
+  // clobber the fresher cache with stale data.
+  let _cacheSeq = 0;
+
   function getNextAction(swi) {
     if (!swi || swi.enabled === false || swi.markerType !== 'VFX') return null;
     if (swi.ocfStatus === 'missing') return 'Relink OCF';
@@ -73,9 +81,11 @@
   // ── Cache refresh ─────────────────────────────────────────────────────────
   async function refreshActionCache() {
     if (!window.PFX_SWI) return;
+    const seq = ++_cacheSeq;
     try {
       const projectId = window.PFX_SWI.getProjectId ? window.PFX_SWI.getProjectId() : 'default';
       const all = await window.PFX_SWI.getAll(projectId);
+      if (seq !== _cacheSeq) return;
       _cache.clear();
       for (const swi of all) {
         const action = getNextAction(swi);

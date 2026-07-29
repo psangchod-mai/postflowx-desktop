@@ -7013,3 +7013,38 @@ hunk-splitting needed. Full regression matched baseline (`test:js` all
 green across every suite; `test:node` 72 pass/1 skip/0 fail).
 
 Commits: `e7b0894`.
+
+## Iteration 135 — smartRun: overlapping `refreshActionCache()` calls race on the shared next-action cache
+
+`refreshActionCache()` in `src/scripts/core/smartRun.js` is triggered
+from many independent, uncoordinated sources — proxy-job completion,
+the cross-tab `pfx_swi_updates` BroadcastChannel, the
+`pfx_proxy_committed` window event, and a boot warm-up call — each of
+which `await`s `window.PFX_SWI.getAll()` and then does
+`_cache.clear()` + repopulate with no guard against a newer overlapping
+call having already resolved with a fresher SWI snapshot. An older call
+started before a proxy finished rendering could resolve *after* a
+newer call already saw the finished proxy, clobbering the live cache
+back to a stale "Build Proxy" next-action for a shot that's actually
+ready for "Compare QC" — matching the same single-function reentrancy
+shape as `ocfSettings.js`'s `_testSeq` and `proResProxy.js`'s
+`_pingSeq` (Iteration 134). Fixed with a `_cacheSeq` counter: each call
+captures `const seq = ++_cacheSeq` on entry and guards the
+`_cache.clear()` + repopulate block with `seq === _cacheSeq`, leaving
+the function's own try/catch swallow behavior otherwise unchanged. New
+test `tests-js/smartRunActionCacheStaleRace.test.mjs` (5 assertions,
+linkedom, hand-rolled `window.PFX_SWI.getAll` mock returning
+test-controlled pending promises) drains the module's boot warm call,
+starts an older `refreshActionCache()` call reading a stale
+proxy-missing snapshot, starts a newer call reading a proxy-ready
+snapshot, resolves the newer call first and confirms the cache shows
+"Compare QC", then resolves the older call late and confirms it does
+not clobber the cache back to "Build Proxy". Before/after verified by
+temporarily stripping the guard: 1 of 5 failed with exactly the
+predicted assertion, restored fix re-passed 5/5. This file had zero
+pre-existing WIP (confirmed via the clean-file whitelist), so the fix
+was staged as a whole file with no hunk-splitting needed. Full
+regression matched baseline (`test:js` all green across every suite;
+`test:node` 72 pass/1 skip/0 fail).
+
+Commits: `TBD`.

@@ -13550,3 +13550,86 @@ re-attempt until the developer's WIP in that file is committed or
 shrinks.
 
 Commits: `e7b0894`.
+
+## Iteration 135 — smartRun: overlapping `refreshActionCache()` calls race on the shared next-action cache
+
+**Why this file:** `src/scripts/core/smartRun.js` was on the clean-file
+whitelist (no pre-existing uncommitted diff), and grepping its call
+sites showed `refreshActionCache()` wired to at least eight independent
+triggers: several internal `await`-chained calls, a
+`pfx_proxy_committed` window-event listener, a `BroadcastChannel`
+message handler for cross-tab SWI updates, and a boot warm-up call.
+That many uncoordinated callers of one async cache-writer is exactly
+the shape that has produced a real stale-race bug in this codebase
+three iterations running (`ocfSettings.js`'s `_testSeq`,
+`markerProxySettings.js`'s `_ocfIdxSeq`, `proResProxy.js`'s
+`_pingSeq`), so it was worth reading closely rather than trusting the
+scouting agent's report at face value.
+
+**The bug:** `refreshActionCache()` reads the module-level `_cache`
+(populated by `getNextAction()`/`getNextActionForMarkers()`, which the
+UI polls to show each shot's next recommended action — "Build Proxy",
+"Compare QC", etc.) and rebuilds it from scratch on every call:
+`await window.PFX_SWI.getAll(projectId)`, then unconditionally
+`_cache.clear()` and repopulate. Two overlapping calls — say, an older
+one fired from the boot warm-up or a cut-diff reaction, and a newer one
+fired moments later because a proxy job just finished and posted
+`pfx_proxy_committed` — each independently read the SWI table on their
+own timeline. If the older call's `getAll()` round trip happens to
+resolve *after* the newer call's, the older call's stale
+(pre-proxy-completion) snapshot clobbers the cache the newer call just
+correctly populated, showing the user "Build Proxy" for a shot whose
+proxy has already finished rendering and is actually ready for "Compare
+QC" — a misleading, actionable-looking next-step that doesn't reflect
+reality until some later refresh happens to fix it by chance.
+
+**The fix:** added `let _cacheSeq = 0;` next to the module-level
+`const _cache = new Map();`. `refreshActionCache()` now captures `const
+seq = ++_cacheSeq;` immediately on entry, and guards the
+`_cache.clear()` + repopulate block with `if (seq === _cacheSeq) {
+...
+}` — a superseded call's stale snapshot is silently dropped instead of
+overwriting the live cache. The `try { window._pmRenderEventTable?.()
+} catch {}` re-render call was moved inside the same guarded block so a
+stale call doesn't force a redundant (or misleading) UI repaint either.
+
+**Test:** `tests-js/smartRunActionCacheStaleRace.test.mjs` (linkedom,
+since `smartRun.js` touches `document`/`window` at module scope).
+Mocks `window.PFX_SWI.getAll` to return a promise that only resolves
+when the test explicitly triggers it, via a `pendingGetAll` array
+identical in spirit to Iteration 134's `pendingPing`/`pendingSendMessage`
+pattern. Drains the module's own boot warm-up call first, then starts
+an "older" `refreshActionCache()` call and a "newer" one while the
+older is still suspended, resolves the newer call's snapshot first
+(proxy ready, awaiting QC) and confirms `getNextActionForMarkers`
+reports "Compare QC", then resolves the older call's stale snapshot
+(proxy still missing) and confirms the cache still reports "Compare
+QC" rather than being clobbered back to "Build Proxy". 5 assertions
+total.
+
+**Verification:** ran the test against the fix first — 5 of 5 passed.
+Backed up the fixed file via `cp` to `/tmp/smartRun.js.bak`, then
+temporarily reverted the `if (seq === _cacheSeq)` guard back to an
+unconditional `_cache.clear()` + repopulate and re-ran: 4 of 5 passed,
+with exactly the predicted assertion failing ("the stale, superseded
+older snapshot must not clobber the live cache with a stale action") —
+confirming the bug reproduces precisely as expected once the guard is
+absent. Restored the exact fixed file via `cp` from the backup and
+re-ran: 5 of 5 passed again. This file had zero pre-existing WIP (per
+the clean-file whitelist regenerated after Iteration 134), so the fix
+was staged as a whole file with no `git add -p` hunk-splitting
+required; `git diff --stat` on the file after the fix showed "10
+insertions(+)" matching only the intended change. Full `npm run
+test:js` regression is green across every suite (0 failures anywhere
+in the run, including the `selfContained.test.mjs` git-tracking gate
+once the new test file was staged). `npm run test:node` also green,
+matching baseline (72 pass, 1 pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-134 — its pre-existing
+WIP is too tightly interleaved (a fix-line hunk shares boundaries with
+an unrelated `_updateFixButton()` feature) to isolate safely; do not
+re-attempt until the developer's WIP in that file is committed or
+shrinks.
+
+Commits: `TBD`.
