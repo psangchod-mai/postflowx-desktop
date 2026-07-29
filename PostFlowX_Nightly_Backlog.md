@@ -5651,3 +5651,24 @@ at `V=0`, max code value); confirmed 2/3 fail against pre-fix code and
 skipped (same 2 pre-existing Iteration-76 failures, unrelated).
 
 Commits: `a6f3afc`.
+
+`_log3g10_to_lin()` claimed to implement RED's "Log3G10 Technical
+Primer" but used a symmetric, mirrored-log formula with no
+black-point offset, instead of the spec's asymmetric decode. At `V=0`
+it decoded to `0.0` instead of the correct `-0.01`; at 18%-grey's
+encoded value (`1/3`) it decoded to `0.1900008...` instead of
+`0.1800008...` — wrong black level and midtone exposure in every RED
+Log3G10/IPP2 IDT LUT. Independently verified against RED's official
+white paper (915-0187 Rev-C) and a community C reference
+implementation before fixing (both confirm the same piecewise formula:
+`V<0: L=V/g-c`; `V>=0: L=(10^(V/a)-1)/b-c`, `a=0.224282`,
+`b=155.975327`, `c=0.01`, `g=15.1927`). Added
+`test_color_lut_log3g10_decode.py` (3 tests: black-point offset,
+18%-grey value, negative-branch linear extension); confirmed 3/3 fail
+against pre-fix code and 3/3 pass post-fix via a stash/pop round-trip.
+Full suite: 300 passed/7 skipped (same 2 pre-existing Iteration-76
+failures, unrelated). Second consecutive iteration finding a
+spec-mismatch bug in `color_lut.py` — LogC3, S-Log3, C-Log2, and V-Log
+remain unaudited.
+
+Commits: `TBD`.

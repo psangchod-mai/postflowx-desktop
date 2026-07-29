@@ -9167,3 +9167,73 @@ undetected because no test ever checked the transform's numeric output
 against a known reference value.
 
 Commits: `a6f3afc`.
+
+## Iteration 86 — `color_lut.py`'s `_log3g10_to_lin()` used a wrong RED Log3G10 decode formula, missing the documented black-point offset
+
+**Why this file.** Iteration 85's "Still open" note flagged `color_lut.py`'s
+other camera-family transforms — including RED Log3G10 — as unaudited
+against their cited specs. A scouting agent (background, non-user
+input) was launched to check them and reported `_log3g10_to_lin()`.
+
+**The bug.** The old code's comment cited "RED Log3G10 Technical
+Primer" but implemented `lin = sign(e) · (10^(|e|/0.224282) − 1) /
+155.975327` — a symmetric, mirrored-log formula with no black-point
+offset. RED's actual spec is asymmetric: a documented linear extension
+below `V = 0`, and a `- c` (black-point) term in the positive branch
+that the old code omitted entirely. At `V = 0` the old code decoded to
+`0.0` instead of the spec's `-0.01`; at 18%-grey's encoded value
+(`1/3`) it decoded to `0.1900008...` instead of the correct
+`0.1800008...` — wrong in both black level and midtone exposure for
+every RED Log3G10/IPP2 IDT LUT.
+
+**Independent verification.** Checked RED's official white paper
+(915-0187 Rev-C, "White Paper on REDWideGamutRGB and Log3G10") via
+WebSearch, which defines the decode as `V < 0: L = V/g − c`; `V ≥ 0:
+L = (10^(V/a) − 1)/b − c`, with `a=0.224282`, `b=155.975327`, `c=0.01`,
+`g=15.1927`. Cross-checked against a community C reference
+implementation of the same formula — both match. Grepped
+`PostFlowX_Audit_Report.md` for "Log3G10" beforehand — no prior entry,
+only flagged as unaudited in Iterations 84/85's "Still open" notes.
+
+**The fix.** Replaced the formula with the spec-verified piecewise
+decode:
+
+```python
+_L3G10_A = 0.224282
+_L3G10_B = 155.975327
+_L3G10_C = 0.01
+_L3G10_G = 15.1927
+
+def _log3g10_to_lin(e: float) -> float:
+    if e < 0.0:
+        return e / _L3G10_G - _L3G10_C
+    return (10.0 ** (e / _L3G10_A) - 1.0) / _L3G10_B - _L3G10_C
+```
+
+**Test approach.** Added `test_color_lut_log3g10_decode.py` (3 tests):
+`_log3g10_to_lin(0.0)` matches the spec's black-point offset (`-0.01`),
+`_log3g10_to_lin(1.0/3.0)` matches the spec-derived 18%-grey value to 9
+decimal places, and the negative branch matches the documented linear
+extension `V/g - c` directly.
+
+**Verification.** `python3 -m pytest tests/test_color_lut_log3g10_decode.py -v`
+— 3/3 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`color_lut.py`: reverting to pre-fix code fails all 3 tests with
+exactly the old broken-formula values (`0.0`, `0.1900008495474476`,
+`-0.004300906171734946`). Restored the fix, reran — 3/3 green. Full
+companion suite: `python3 -m pytest -q` — 300 passed (up from 297), 7
+skipped, same 2 pre-existing `test_conform_engine.py` failures from
+Iterations 76-83 (unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented since
+Iteration 76.
+
+**Still open.** This is the second consecutive iteration to find a
+spec-mismatch bug in `color_lut.py` (10th bug species, established
+Iteration 85). `_logc3_to_lin()`, `_slog3_to_lin()` (Sony S-Log3),
+`_clog2_to_lin()` (Canon C-Log2), and `_vlog_to_lin()` (Panasonic
+V-Log) remain unaudited against their respective vendor specs — a
+follow-up iteration should check each the same way.
+
+Commits: `TBD`.

@@ -100,15 +100,20 @@ def _logc4_rgb_to_aces(er: float, eg: float, eb: float) -> tuple[float, float, f
 
 
 # ── RED Log3G10 / IPP2 → scene linear → ACES2065-1 ──────────────────────────
-# From RED Log3G10 Technical Primer.
-# Decode: lin = sign(e) · (10^(|e| / 0.224282) − 1) / 155.975327
+# Formula and constants from RED's official white paper (915-0187 Rev-C,
+# "White Paper on REDWideGamutRGB and Log3G10"): a=0.224282, b=155.975327,
+# c=0.01, g=15.1927 (slope of the linear extension below V=0).
+# Decode: V < 0: L = V/g - c ; V >= 0: L = (10^(V/a) - 1)/b - c
 
-_L3G10_DIV = math.log10(155.975327 + 1.0)   # ≈ 2.193
+_L3G10_A = 0.224282
+_L3G10_B = 155.975327
+_L3G10_C = 0.01
+_L3G10_G = 15.1927
 
 def _log3g10_to_lin(e: float) -> float:
-    if e >= 0.0:
-        return (10.0 ** (e / 0.224282) - 1.0) / 155.975327
-    return -(10.0 ** (-e / 0.224282) - 1.0) / 155.975327
+    if e < 0.0:
+        return e / _L3G10_G - _L3G10_C
+    return (10.0 ** (e / _L3G10_A) - 1.0) / _L3G10_B - _L3G10_C
 
 # RWG → ACES AP0 matrix (Academy ACES CLF IDT for RED IPP2).
 _RWG_TO_AP0 = [
