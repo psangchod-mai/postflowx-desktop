@@ -12086,4 +12086,4 @@ leave the wrong content sitting in `standby` when the next auto-advance
 or seek checks `standbyReady`/`needReload` — not exercised by this
 iteration's test.
 
-Commits: `TBD`.
+Commits: `4519da8`.
