@@ -1225,6 +1225,7 @@ function buildTopLevelFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, 
     const offF = ratToFrames(node.getAttribute('offset'), fps);
     let durF = ratToFrames(node.getAttribute('duration'), fps);
     if (!Number.isFinite(offF) || !Number.isFinite(durF) || durF <= 0) return;
+    const srcF = ratToFrames(node.getAttribute('start'), fps);
 
     const recInF = seqStartF + (offF - (seqOriginF || 0));
     const recOutF = recInF + durF;
@@ -1277,8 +1278,8 @@ function buildTopLevelFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, 
       clipName: clipName || srcName,
       srcFile: srcName,
       reel,
-      srcIn: framesToTC(0, fps),
-      srcOut: framesToTC(durF, fps),
+      srcIn: framesToTC(srcF, fps),
+      srcOut: framesToTC(srcF + durF, fps),
       recIn: framesToTC(recInF, fps),
       recOut: framesToTC(recOutF, fps),
       fps: nominalBase(fps),
@@ -1347,6 +1348,7 @@ function buildFlatFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, effe
         const offF = ratToFrames(node.getAttribute('offset'), fps);
         const durF = ratToFrames(node.getAttribute('duration'), fps);
         if (!Number.isFinite(offF) || !Number.isFinite(durF) || durF <= 0) return;
+        const srcF = ratToFrames(node.getAttribute('start'), fps);
 
         // lane can live on the node or its nearest ancestor spine.
         let trackIndex = 0;
@@ -1377,8 +1379,8 @@ function buildFlatFCPXMLEvents(mainSeq, seqStartF, seqOriginF, fps, assets, effe
           clipName,
           srcFile: assetName || clipName,
           reel: normalizeOCFStem(assetName || clipName) || 'REEL',
-          srcIn: framesToTC(0, fps),
-          srcOut: framesToTC(durF, fps),
+          srcIn: framesToTC(srcF, fps),
+          srcOut: framesToTC(srcF + durF, fps),
           recIn: framesToTC(recInF, fps),
           recOut: framesToTC(recOutF, fps),
           fps: nominalBase(fps),

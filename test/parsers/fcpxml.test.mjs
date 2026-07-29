@@ -157,3 +157,34 @@ test('a marker on a <ref-clip> node itself is not dropped', () => {
   assert.ok(evs[0].markers?.some(m => m.name === 'REVIEW'),
     'marker dropped directly on the ref-clip node is attached to the first row from its resolved sequence');
 });
+
+// ── fallback-scan source-in trim ─────────────────────────────────────────────
+// When the sequence's <spine> sits two levels below <sequence> (some large
+// FCPXML exports nest it inside extra wrapper elements), the recursive
+// collector finds nothing: it only special-cases a `<spine>` that is a
+// DIRECT child of the node it is currently visiting (`:scope > spine`), and
+// its final catch-all recursion only descends into children that are
+// themselves asset-clip/clip/mc-clip/sync-clip/ref-clip/gap/title — an
+// unrecognized wrapper tag is none of those, so a spine nested two levels
+// down is never reached. parseFCPXML then falls back to a flat
+// querySelectorAll scan of the whole subtree. That fallback scanner used to
+// hardcode srcIn to frame 0 instead of reading the clip's own `start`
+// attribute, silently discarding the real source-in trim point.
+test('flat-sequence-scan fallback reads the real source-in trim, not frame 0', () => {
+  const res = parseFCPXML(`<?xml version="1.0"?><fcpxml version="1.9"><resources>
+    <format id="r1" frameDuration="1/24s"/>
+    <asset id="a1" name="A001" format="r1" start="0s" duration="3600s">
+      <media-rep src="file:///A001.mov"/></asset></resources>
+    <library><event><project name="P">
+    <sequence format="r1" tcStart="0s" duration="5/24s">
+      <outer><inner><spine>
+        <asset-clip name="c1" ref="a1" offset="0s" start="480/24s" duration="120/24s"/>
+      </spine></inner></outer>
+    </sequence></project></event></library></fcpxml>`);
+
+  assert.equal(res._fallback, 'flat-sequence-scan', 'spine nested in a wrapper defeats the recursive collector');
+  const evs = assertParseResult(res, { sourceType: 'fcpxml' });
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].srcIn, '00:00:20:00', 'start=480/24s (20s in) must not be flattened to frame 0');
+  assert.equal(evs[0].srcOut, '00:00:25:00', 'srcOut = srcIn + duration (5s)');
+});
