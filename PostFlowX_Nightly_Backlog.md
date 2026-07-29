@@ -5650,4 +5650,4 @@ at `V=0`, max code value); confirmed 2/3 fail against pre-fix code and
 3/3 pass post-fix via a stash/pop round-trip. Full suite: 297 passed/7
 skipped (same 2 pre-existing Iteration-76 failures, unrelated).
 
-Commits: `TBD`.
+Commits: `a6f3afc`.
