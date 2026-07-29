@@ -13461,3 +13461,92 @@ re-attempt until the developer's WIP in that file is committed or
 shrinks.
 
 Commits: `4ec2c99`.
+
+## Iteration 134 — ProRes Proxy: overlapping `_getPingPort()` calls race on the shared port cache
+
+**Why this file:** an Explore agent scouted `proResProxy.js` as a
+candidate, flagging `_getPingPort()` as writing module-level shared
+state (`_httpPortCached`/`_httpPortCachedAt`) from an async function
+with multiple concurrent call sites. Independently read the full
+function (and its callers — `warmProxyCacheFromStorage()`,
+`getProxyStreamUrl()`, and a `chrome.storage.onChanged` listener,
+confirmed via grep) before trusting the report. Confirmed the file was
+on the clean-file whitelist (zero pre-existing diff) before touching
+it.
+
+The bug: `_getPingPort()` has three paths, each ending in a write to
+the shared cache after an `await`: (1) TTL-cache revalidation via
+`_httpAlive(candidate)`, which also clears `_httpPortCached` on
+failure; (2) a fast path probing the well-known port 47125 directly;
+(3) a native-messaging fallback that asks the service worker to start
+the companion and returns whatever port it reports. None of the three
+guarded against a newer, overlapping call already having written a
+better answer. Concretely: an older call starts, its well-known-port
+probe hasn't succeeded yet (companion not up from its perspective), so
+it falls through to the slower native-messaging round trip and
+suspends. A newer call starts while the older one is still suspended,
+finds the well-known port alive immediately, and caches it. Later, the
+older call's native-messaging round trip finally resolves — with a
+port that used to be valid but has since been superseded (e.g. the
+companion process the older call originally reached hadn't fully
+exited) — and `_httpAlive` on that stale port still happens to
+succeed, so the older call unconditionally overwrites the cache with
+its now-wrong port, silently redirecting every subsequent proxy
+request to a stale/dead companion instance.
+
+**The fix:** added `let _pingSeq = 0;` to the module's existing
+cache-state block. `_getPingPort()` now captures `const seq =
+++_pingSeq;` on entry (a single-function reentrancy guard, matching
+`ocfSettings.js`'s `_testSeq` shape rather than Iteration 133's
+cross-handler `_ocfIdxSeq`, since all three paths live in one
+function). Every write to `_httpPortCached`/`_httpPortCachedAt` —
+the path-1 stale-cache clear, the path-2 fast-path success write, and
+the path-3 native-messaging success write — is now guarded with `if
+(seq === _pingSeq) { ... }`. Each path's own `return` statement is
+deliberately left unguarded: a stale call must still hand its own
+caller the port it actually found (that caller's request still needs
+to go somewhere), only the *shared cache* must not be clobbered by a
+superseded discovery.
+
+**Test:** `tests-js/proResProxyPingPortStaleRace.test.mjs` (Node only,
+no DOM). Mocks `fetch` with a `Map<port, resolve[]>` so `/ping` probes
+to any port stay pending until the test explicitly resolves them in a
+chosen order, and mocks `chrome.runtime.sendMessage` with a flat
+pending-callback array for the native-messaging fallback — extending
+the "pending-array, test-controlled resolution order" pattern already
+used in Iteration 133's test to a second mocked surface. Drives an
+older `warmProxyCacheFromStorage()` call whose well-known-port probe
+fails and falls through to native messaging (left pending), starts a
+newer call whose own well-known-port probe succeeds immediately, then
+resolves the older call's native-messaging port (a different, "stale"
+port) as alive — and confirms a third caller still finds the newer
+port cached, not the older one. 5 assertions total.
+
+**Verification:** ran the test against the fix first — 5 of 5 passed.
+Backed up the fixed file via `cp` to `/tmp/proResProxy.js.fixed`, then
+temporarily reverted the path-3 `if (seq === _pingSeq) { ... }` guard
+back to an unconditional write and re-ran: 4 of 5 passed, with exactly
+the predicted assertion failing (`the newer call's port (47125) must
+win the shared cache, not the older call's stale, later-resolving port
+(9050)`) — confirming the bug reproduces precisely as expected once
+the guard is absent. Restored the exact fixed file via `cp` from the
+backup and re-ran: 5 of 5 passed again. This file had zero
+pre-existing WIP — `git diff --stat` showed exactly "0 insertions(+),
+0 deletions(-)" before this change (per the regenerated clean-file
+whitelist) — so the fix and test were staged as whole files with no
+`git add -p` hunk-splitting required; `git diff --stat` on the file
+after the fix showed "20 insertions(+), 7 deletions(-)" matching only
+the intended change. Full `npm run test:js` regression is green across
+every suite (all listed pass counts, 0 failures anywhere in the run,
+including the new `selfContained.test.mjs` git-tracking gate once the
+new test file was staged). `npm run test:node` also green, matching
+baseline (72 pass, 1 pre-existing skip, 0 fail).
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-132 — its pre-existing
+WIP is too tightly interleaved (a fix-line hunk shares boundaries with
+an unrelated `_updateFixButton()` feature) to isolate safely; do not
+re-attempt until the developer's WIP in that file is committed or
+shrinks.
+
+Commits: `TBD`.

@@ -6975,3 +6975,41 @@ baseline (`test:js` all green across every suite; `test:node` 72
 pass/1 skip/0 fail).
 
 Commits: `4ec2c99`.
+
+## Iteration 134 — ProRes Proxy: overlapping `_getPingPort()` calls race on the shared port cache
+
+`proResProxy.js`'s `_getPingPort()` is called concurrently by
+`warmProxyCacheFromStorage()` on page load, `getProxyStreamUrl()` per
+file, and the module's `chrome.storage.onChanged` listener — all
+racing to populate the same module-level `_httpPortCached`/
+`_httpPortCachedAt`. Each of its three paths (TTL-cache revalidation,
+well-known-port fast path, native-messaging fallback) writes that
+shared cache after its own `await`, with no guard against a newer
+overlapping call having already resolved with a fresher answer. An
+older call that fell through to the slower native-messaging path could
+resolve *after* a newer call had already confirmed the well-known port
+directly, and unconditionally overwrite the cache with its own
+(possibly stale, e.g. a since-replaced companion process still
+answering pings during shutdown) port — matching the single-function
+reentrancy shape from `ocfSettings.js`'s `_testSeq` more than Iteration
+133's cross-handler variant. Fixed with a `_pingSeq` counter: each call
+captures `const seq = ++_pingSeq` on entry and guards every write to
+`_httpPortCached`/`_httpPortCachedAt` (and the stale-cache-clear branch)
+with `seq === _pingSeq`, while leaving each path's own `return` value
+unguarded so a stale call still returns its own correct discovery to
+its own caller. New test
+`tests-js/proResProxyPingPortStaleRace.test.mjs` (5 assertions, Node
+only, hand-rolled `fetch`/`chrome.runtime.sendMessage` mocks keyed by
+port with test-controlled resolution order) drives an older call onto
+the native-messaging fallback, starts a newer call that resolves the
+well-known port immediately, then resolves the older call's stale
+native-messaging port afterward, and confirms a third caller still
+finds the newer port cached, not the older/stale one. Before/after
+verified by temporarily stripping the path-3 write guard: 4/5 passed
+with exactly the predicted assertion failing, restored fix re-passed
+5/5. This file had zero pre-existing WIP (confirmed via the clean-file
+whitelist), so the fix was staged as a whole file with no
+hunk-splitting needed. Full regression matched baseline (`test:js` all
+green across every suite; `test:node` 72 pass/1 skip/0 fail).
+
+Commits: `TBD`.

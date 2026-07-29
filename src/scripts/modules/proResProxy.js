@@ -15,6 +15,11 @@ let _httpPortCached = null;
 let _httpTokenCached = null; // shared secret — included in every companion HTTP request
 const _HTTP_PORT_TTL = 30000; // ms — re-ping if host hasn't been reached in 30 s
 let _httpPortCachedAt = 0;
+// Bumped at the start of each _getPingPort() call; a call whose await resolves
+// after a newer call has already started must not clobber _httpPortCached with
+// whatever (possibly stale, e.g. a companion that has since restarted) port it
+// found — the newer call's discovery wins.
+let _pingSeq = 0;
 
 // Tracks whether the one-time startup cache migration has been triggered.
 let _migrationStarted = false;
@@ -163,25 +168,31 @@ async function _ensureToken() {
 }
 
 async function _getPingPort() {
+  const seq = ++_pingSeq;
   const now = Date.now();
 
   // 1. Validate cached port with a live HTTP check before trusting it.
   //    The companion can restart on a different port; stale caches cause upload 404s.
   if (_httpPortCached && (now - _httpPortCachedAt) < _HTTP_PORT_TTL) {
-    if (await _httpAlive(_httpPortCached)) {
+    const candidate = _httpPortCached;
+    if (await _httpAlive(candidate)) {
       // Token may be absent if companion was already running on page load (path 2
       // was taken on first call and never reached path 3 which sets the token).
       await _ensureToken();
-      return _httpPortCached;
+      return candidate;
     }
-    _httpPortCached = null; // stale — companion restarted on a different port
+    // stale — companion restarted on a different port. Only clear the cache if
+    // no newer concurrent call has already refreshed it in the meantime.
+    if (seq === _pingSeq) _httpPortCached = null;
   }
 
   // 2. Fast path: try the well-known fixed port directly from the page context.
   //    Avoids native messaging round-trip when a companion is already running.
   if (await _httpAlive(47125)) {
-    _httpPortCached = 47125;
-    _httpPortCachedAt = now;
+    if (seq === _pingSeq) {
+      _httpPortCached = 47125;
+      _httpPortCachedAt = now;
+    }
     if (!_migrationStarted) _runStartupMigration(47125);
     // Token is not fetched by this fast path — request it from the SW now so
     // subsequent authenticated requests (upload, register, cache lookup) don't 403.
@@ -203,8 +214,10 @@ async function _getPingPort() {
   });
   if (token) _httpTokenCached = token;
   if (port && await _httpAlive(port)) {
-    _httpPortCached = port;
-    _httpPortCachedAt = now;
+    if (seq === _pingSeq) {
+      _httpPortCached = port;
+      _httpPortCachedAt = now;
+    }
     if (!_migrationStarted) _runStartupMigration(port);
     return port;
   }
