@@ -9073,3 +9073,97 @@ iteration order was tested) — a follow-up could add an
 transforms too, mirroring `test_aces2_luts.py`'s coverage.
 
 Commits: `7b53433`.
+
+## Iteration 85 — `color_lut.py`'s `_logc4_to_lin()` used fabricated ARRI LogC4 decode constants, ~1500x off at 18% grey
+
+**Why this file.** Same file as Iteration 84, `companion/src/postflowx_
+companion/color_lut.py` — its `_logc4_to_lin()` linearizes ARRI LogC4
+(Alexa 35) code values before the AWG4→AP0 matrix, feeding every ARRI
+Alexa 35 IDT `.cube` LUT used by the VFX Pull / EXR render path via
+`api.py`'s `-vf lut3d=...` filter chain.
+
+**The bug.** The decode used a comment claiming "Formula from ARRI
+Alexa 35 LogC4 Specification" but the actual constants
+(`2.0 ** (e * 18.0 - 4.0)`, `2.0 ** -4`, `2.0 ** 14 - 2.0 ** -4`) do not
+appear anywhere in ARRI's real LogC4 spec — they don't match its
+documented piecewise formula or any of its named constants (`a`, `b`,
+`c`, `s`, `t`). At LogC4's own documented 18%-grey code value (0.28),
+the old formula decoded to `0.00012168794304251554` instead of the
+correct `~0.18361188651480678` scene-linear value — roughly **1500x**
+too dark. Every Alexa 35 shot run through this IDT path had its
+midtones (and the rest of the curve) catastrophically crushed.
+
+**Independent verification.** A background scouting agent flagged this
+with a proposed replacement formula and constants. Rather than trust
+the report at face value, fetched ARRI's official LogC4 Specification
+(1 May 2022, `arri.com/resource/blob/278790/...`) and cross-checked
+against OpenColorIO's `arri.generate` reference implementation
+(`opencolorio-config-aces`). Both independently confirm the exact same
+piecewise formula and constants the agent proposed:
+`a = (2^18-16)/117.45`, `b = (1023-95)/1023`, `c = 95/1023`,
+`s = (7·ln(2)·2^(7-14c/b)) / (a·b)`, `t = (2^(-14c/b+6) - 64) / a`, with
+decode `L = V·s + t` for `V < 0` (linear extension for post-production-
+introduced negative values ARRI cameras never emit) and
+`L = (2^(14·(V-c)/b + 6) - 64) / a` for `V ≥ 0`. Confirmed the two
+branches are continuous at `V = 0` (both evaluate to `t ≈ -0.01806`) —
+a mathematical sanity check independent of the source-matching. Grepped
+`PostFlowX_Audit_Report.md` for `LogC4`/`_logc4`/`Alexa 35` beforehand —
+no prior entry, not a duplicate of Iteration 84 (which only fixed the
+`.cube` lattice axis order in the same file, not any camera transform's
+math — its "Still open" note flagged exactly this class of gap).
+
+**The fix.** Replaced the fabricated constants and formula with the
+spec-verified piecewise decode:
+
+```python
+_LC4_A = (2.0 ** 18 - 16.0) / 117.45
+_LC4_B = (1023.0 - 95.0) / 1023.0
+_LC4_C = 95.0 / 1023.0
+_LC4_S = (7.0 * math.log(2.0) * 2.0 ** (7.0 - 14.0 * _LC4_C / _LC4_B)) / (_LC4_A * _LC4_B)
+_LC4_T = (2.0 ** (-14.0 * _LC4_C / _LC4_B + 6.0) - 64.0) / _LC4_A
+
+def _logc4_to_lin(e: float) -> float:
+    if e < 0.0:
+        return e * _LC4_S + _LC4_T
+    return (2.0 ** (14.0 * (e - _LC4_C) / _LC4_B + 6.0) - 64.0) / _LC4_A
+```
+
+Also removed the old `max(0.0, ...)` clamp — the spec's linear branch
+can legitimately produce slightly negative scene-linear values near
+code value 0 (matching `_logc3_to_lin()`'s existing unclamped
+convention elsewhere in this same file).
+
+**Test approach.** Added `test_color_lut_logc4_decode.py` (3 tests):
+`_logc4_to_lin(0.28)` matches the spec-derived 18%-grey value to 9
+decimal places, the two piecewise branches are continuous at `V = 0`,
+and `_logc4_to_lin(1.0)` matches the spec's documented max value
+(`469.8`).
+
+**Verification.** `python3 -m pytest tests/test_color_lut_logc4_decode.py -v`
+— 3/3 pass post-fix. Confirmed genuine via a stash/pop round-trip on
+`color_lut.py`: reverting to pre-fix code fails 2/3 tests exactly as
+predicted (`0.28` decodes to the old `0.0001217` value; `1.0` decodes to
+`1.0` instead of `469.8`; the continuity check still passes since both
+old-code branches trivially agree — there was only ever one branch).
+Restored the fix, reran — 3/3 green. Full companion suite:
+`python3 -m pytest -q` — 297 passed (up from 294), 7 skipped, same 2
+pre-existing `test_conform_engine.py` failures from Iterations 76-83
+(unrelated, out of scope).
+
+**Gate.** Full companion pytest suite — passes except the 2
+pre-existing, unrelated Python-version failures already documented since
+Iteration 76.
+
+**Still open.** `color_lut.py`'s other camera-family transforms
+(LogC3, RED Log3G10, Sony S-Log3, Canon C-Log2, Panasonic V-Log) were
+not re-verified against their respective vendor specs this iteration —
+only LogC4 was flagged and checked. A follow-up should audit each
+remaining transform's constants against its cited spec the same way,
+given this iteration proves the "formula cites a spec in a comment but
+the constants don't actually match it" bug species is real in this
+file. This is a new (10th) bug species for the seed list: constants/
+formula transcribed incorrectly from a cited external specification,
+undetected because no test ever checked the transform's numeric output
+against a known reference value.
+
+Commits: `TBD`.

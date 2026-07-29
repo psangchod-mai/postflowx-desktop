@@ -5628,3 +5628,26 @@ suite: 294 passed/7 skipped (same 2 pre-existing Iteration-76 failures,
 unrelated).
 
 Commits: `7b53433`.
+
+## Iteration 85 — `color_lut.py`'s `_logc4_to_lin()` used fabricated ARRI LogC4 decode constants, ~1500x off at 18% grey
+
+`_logc4_to_lin()` claimed to implement "ARRI Alexa 35 LogC4
+Specification" but used fabricated constants that don't match ARRI's
+real spec. At LogC4's documented 18%-grey code value (0.28), it decoded
+to `0.0001217` instead of the correct `~0.1836` — roughly 1500x too
+dark, crushing every Alexa 35 IDT LUT used by the VFX Pull/EXR render
+path. Independently verified against ARRI's official LogC4
+Specification PDF and OpenColorIO's `arri.generate` reference
+implementation before fixing (both confirm the same piecewise formula
+and constants). Fixed by replacing the constants/formula with the
+spec-verified piecewise decode (`a=(2^18-16)/117.45`,
+`b=(1023-95)/1023`, `c=95/1023`, plus derived `s`/`t`, branching at
+`V=0`) and removing an incorrect `max(0.0, ...)` clamp (the spec's
+linear branch can legitimately go slightly negative near code value 0,
+matching `_logc3_to_lin()`'s existing unclamped convention). Added
+`test_color_lut_logc4_decode.py` (3 tests: 18%-grey value, continuity
+at `V=0`, max code value); confirmed 2/3 fail against pre-fix code and
+3/3 pass post-fix via a stash/pop round-trip. Full suite: 297 passed/7
+skipped (same 2 pre-existing Iteration-76 failures, unrelated).
+
+Commits: `TBD`.

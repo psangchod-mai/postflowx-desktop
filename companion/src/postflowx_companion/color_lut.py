@@ -70,14 +70,22 @@ def _logc3_rgb_to_aces(er: float, eg: float, eb: float) -> tuple[float, float, f
 
 
 # ── ARRI LogC4 (Alexa 35) → scene linear → ACES2065-1 ───────────────────────
-# Formula from ARRI Alexa 35 LogC4 Specification.
-# Decode: x = (2^(e·18 − 4) − 2^−4) / (2^14 − 2^−4)
-
-_LC4_B   = 2.0 ** -4          # 0.0625
-_LC4_NUM = 2.0 ** 14 - _LC4_B  # ≈ 16383.9375
+# Formula and constants from the official ARRI LogC4 Specification (1 May
+# 2022), also matched by OpenColorIO's arri.generate reference implementation.
+# Decode (V = LogC4 code value, L = scene-linear output):
+#   V <  0: L = V*s + t   (linear extension; ARRI cameras never emit V<0, but
+#                          post-production processing can introduce it)
+#   V >= 0: L = (2^(14*(V-c)/b + 6) - 64) / a
+_LC4_A = (2.0 ** 18 - 16.0) / 117.45
+_LC4_B = (1023.0 - 95.0) / 1023.0
+_LC4_C = 95.0 / 1023.0
+_LC4_S = (7.0 * math.log(2.0) * 2.0 ** (7.0 - 14.0 * _LC4_C / _LC4_B)) / (_LC4_A * _LC4_B)
+_LC4_T = (2.0 ** (-14.0 * _LC4_C / _LC4_B + 6.0) - 64.0) / _LC4_A
 
 def _logc4_to_lin(e: float) -> float:
-    return max(0.0, (2.0 ** (e * 18.0 - 4.0) - _LC4_B) / _LC4_NUM)
+    if e < 0.0:
+        return e * _LC4_S + _LC4_T
+    return (2.0 ** (14.0 * (e - _LC4_C) / _LC4_B + 6.0) - 64.0) / _LC4_A
 
 # AWG4 → ACES AP0 matrix (from ARRI Alexa 35 documentation, rev. 2023).
 _AWG4_TO_AP0 = [
