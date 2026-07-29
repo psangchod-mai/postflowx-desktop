@@ -6897,4 +6897,4 @@ Still open: `_refreshStatus()` in `homeScreen.js:668` remains
 unaddressed (stale-status race, WIP sits inside the function body —
 still needs hunk-selective staging or deferral).
 
-Commits: `TBD`.
+Commits: `7191dd2`.
