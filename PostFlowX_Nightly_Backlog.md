@@ -6511,4 +6511,4 @@ using real 30ms timers plus per-frame deferred fetch gates: pre-fix,
 `[2]` lands. Full regression suite re-run and matched baseline: all
 `test:js` files 0 failed, 72/0/1-skipped Node, 315/7/0 Python.
 
-Commits: `TBD`.
+Commits: `01cfa7d`.
