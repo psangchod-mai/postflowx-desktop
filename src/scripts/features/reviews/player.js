@@ -232,8 +232,13 @@ export class ReviewPlayer {
       codecHint = c.codecHint || '';
     }
 
-    // Probe with standby video to read duration.
+    // Probe with standby video to read duration. A concurrent playback-driven
+    // load (_switchToNextIfNeeded / loadAtGlobalTime) may repoint this same
+    // standby element mid-await — _loadSeq lets us detect that and bail
+    // instead of reading/storing the other clip's duration/codec data.
+    const seq = ++this._loadSeq;
     const ok = await this._loadVideo(this.standby, url, 0);
+    if (seq !== this._loadSeq) return;
     // videoWidth === 0 after successful load means audio played but video codec failed
     // (classic ProRes on Chrome: MOV container demuxes fine, ProRes video black/silent).
     // Skip this check for already-proxied clips (codecHint set by _applyTranscoded).

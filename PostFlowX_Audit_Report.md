@@ -12235,3 +12235,64 @@ per-marker hydration loop body and the trim-memory logic inside
 iteration.
 
 Commits: `2f16416`.
+
+## Iteration 119 — ReviewPlayer.ensureClipMetadata() stale-probe race
+
+**Why this file:** `src/scripts/features/reviews/player.js`'s
+`ensureClipMetadata(indexOrClipId)` is a background best-effort
+duration/codec probe called from several relink/import flows in
+`reviews/index.js`. It shares the same `this.standby` `<video>` element
+that `loadAtGlobalTime()`, `preloadNext()`, and `_switchToNextIfNeeded()`
+(fixed in Iteration 116) all load real playback sources into.
+
+**The bug:** Those three playback functions guard their post-await reads
+of `this.standby` with the existing `_loadSeq` generation-token
+(`if (seq !== this._loadSeq) return;`), but `ensureClipMetadata()` never
+touched `_loadSeq` at all. If playback crossed a clip boundary (or a
+manual seek fired) while a metadata probe's `await this._loadVideo(this.
+standby, url, 0)` was still in flight, auto-advance/seek could repoint
+`this.standby.src` to a completely different clip before the probe's
+promise resolved. The probe would then read `this.standby.duration` /
+`this.standby.videoWidth` — now reflecting the *other* clip — and call
+`store.updateClip(clipId, {...})` using the original probe's `clipId`
+but the wrong clip's duration/codec data, silently corrupting a clip's
+stored metadata (e.g. marking a working clip `canPlay:false`/
+`'unsupported'`, or attaching the wrong duration) with no error or log.
+
+**The fix:** Added the same `_loadSeq` guard used by the other three
+functions: capture `const seq = ++this._loadSeq;` immediately before
+`await this._loadVideo(...)`, then `if (seq !== this._loadSeq) return;`
+immediately after, before any of the `this.standby` reads or the
+`store.updateClip` calls.
+
+**Test approach:** `tests-js/reviewPlayerMetadataProbeStaleRace.test.mjs`,
+a new plain-Node test using linkedom, following the same style as
+Iteration 116's `reviewPlayerSwitchLoadRace.test.mjs`. It starts an
+`ensureClipMetadata('cNew')` probe (suspending at its `_loadVideo` await
+with `newClip.mp4` loaded into the shared standby element), then starts
+`_switchToNextIfNeeded()` while the probe is still in flight (repointing
+the same standby element to `clip1.mp4`), then dispatches
+`loadedmetadata`/`loadeddata` once on the shared element so both
+in-flight loads resolve together — the stale probe's listeners fire
+first, then the switch's. It asserts the probe never calls
+`store.updateClip('cNew', ...)` with clip1's duration.
+
+**Verification:** Pre-fix (temporarily reverted to the version with no
+`_loadSeq` guard around `ensureClipMetadata`'s await, via a `/tmp` backup
+restored afterward), the test failed exactly as predicted:
+`store.updateClipLog` recorded `{clipId: 'cNew', patch: {durationSec: 7,
+canPlay: true}}` — clip1's duration (7) written against the probed
+clip's id. Post-fix (restored from backup, confirmed via `git diff`
+that the change is exactly the intended `_loadSeq` capture/check plus
+the comment — 6 insertions, 1 deletion), all 5 assertions pass. Full
+regression suite re-run and matched baseline: `test:js` — every file 0
+failed (this new test file included; `selfContained.test.mjs` flags it
+as untracked until staged/committed, matching the pattern for every
+prior iteration's new test file); `test:node` — 72 passed, 0 failed,
+1 skipped; `test:py` — 315 passed, 7 skipped, 0 failed.
+
+**Still open:** Only `ensureClipMetadata()`'s missing guard was
+addressed. No other callers of `this.standby`/`this.active` in this file
+were found missing the `_loadSeq` guard during this pass.
+
+Commits: `TBD`.

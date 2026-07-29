@@ -6533,3 +6533,24 @@ re-run and matched baseline exactly: all `test:js` files 0 failed,
 72/0/1-skipped Node, 315/7/0 Python.
 
 Commits: `2f16416`.
+
+## Iteration 119 — ReviewPlayer.ensureClipMetadata() stale-probe race
+
+`ensureClipMetadata()` probes a clip's duration/codec by loading it into
+the shared `this.standby` video element, the same element
+`_switchToNextIfNeeded()`/`loadAtGlobalTime()` use for real playback —
+but unlike those two (fixed in Iteration 116 with a `_loadSeq`
+generation-token), this probe never checked `_loadSeq` after its await.
+If playback crossed a clip boundary while a probe was in flight,
+auto-advance could repoint the shared element to a different clip before
+the probe's `await` resolved, and the probe would then store *that*
+clip's duration/codec data against the originally-probed clip's id.
+Fixed by adding the same `_loadSeq` guard already used elsewhere in this
+file. Verified with a new test
+(`tests-js/reviewPlayerMetadataProbeStaleRace.test.mjs`, linkedom):
+pre-fix, the stale probe wrote clip1's duration (7) against the probed
+clip's id; post-fix, it writes nothing. Full regression suite re-run and
+matched baseline exactly: all `test:js` files 0 failed, 72/0/1-skipped
+Node, 315/7/0 Python.
+
+Commits: `TBD`.
