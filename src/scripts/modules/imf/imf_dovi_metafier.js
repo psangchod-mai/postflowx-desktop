@@ -277,7 +277,10 @@ export function annotateShots(shots) {
     shot.index = i;
     shot.durationFrames = shot.end - shot.begin + 1;
     shot.gapBefore = prev != null ? Math.max(0, shot.begin - (prev.end + 1)) : 0;
-    shot.isCut = shot.gapBefore > 0;
+    // Every non-first Shot in the DoVi CM XML is a new shot boundary (an editorial
+    // cut), regardless of frame continuity. gapBefore separately flags a metadata
+    // anomaly (missing frames between shots) and is NOT itself a cut signal.
+    shot.isCut = prev != null;
 
     // Transition classification from L1
     const l1 = shot.l1;

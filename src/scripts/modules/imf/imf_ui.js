@@ -7080,7 +7080,6 @@ function _refreshDoviMetaRows() {
         // Shot boundary separators (thin vertical marks)
         for (let si = 1; si < _doviMetafierShots.length; si++) {
           const shot = _doviMetafierShots[si];
-          if (!shot.isCut && shot.gapBefore === 0) continue;
           const cutDiv = el('div', 'imf-tl-dv-shot-sep');
           cutDiv.style.left = (shot.begin / totalFrames * 100).toFixed(4) + '%';
           dvTrack.appendChild(cutDiv);
@@ -7344,7 +7343,7 @@ function _refreshDoviShotsTimeline({ updateViewport = true } = {}) {
     if (isBadUuid) seg.style.outline = '1px solid rgba(255,60,60,.7)';
 
     // Gap cut marker: thin red line at left edge of shot when there's a frame gap before it
-    if (shot.isCut && shot.gapBefore > 0) {
+    if (shot.gapBefore > 0) {
       const gap = el('div', 'imf-tl-dovi-gap');
       gap.style.left = leftPct + '%';
       gap.title = `Gap: ${shot.gapBefore} frame${shot.gapBefore !== 1 ? 's' : ''} before shot ${shot.index + 1}`;
@@ -7416,7 +7415,7 @@ function _refreshDoviShotsTimeline({ updateViewport = true } = {}) {
       `Duration: ${shot.durationFrames}f${nitsLine}`,
       ...(trimCount > 0 ? [`Trim passes: ${trimCount}`, ...l8Lines, ...trimPassLines] : []),
       shot.uuid ? `UUID: ${uuidShort}…` : 'UUID: –',
-      shot.isCut ? `⚠ Gap before: ${shot.gapBefore}f` : '',
+      shot.gapBefore > 0 ? `⚠ Gap before: ${shot.gapBefore}f` : '',
       isBadUuid ? '⚠ UUID / canvas mismatch' : '',
     ].filter(Boolean).join('\n');
     seg.addEventListener('click', (e) => { e.stopPropagation(); _selectDoviShot(shot.index); });
@@ -7746,7 +7745,7 @@ function _renderDoviMetafier(doviData) {
       const badge = ttype === 'black'    ? '<span class="imf-dovi-badge imf-dovi-badge-black">black</span>'
                   : ttype === 'fade'     ? '<span class="imf-dovi-badge imf-dovi-badge-fade">fade</span>'
                   : ttype === 'dissolve' ? '<span class="imf-dovi-badge imf-dovi-badge-dissolve">dissolve</span>'
-                  : shot.isCut           ? '<span class="imf-dovi-badge imf-dovi-badge-cut">gap</span>'
+                  : shot.gapBefore > 0   ? '<span class="imf-dovi-badge imf-dovi-badge-cut">gap</span>'
                   : '';
       const maxNits = shot.l1?.maxNits != null ? `${Math.round(shot.l1.maxNits)} nit` : '—';
       const canvas  = shot.l6?.maxMasteringLuminance != null ? `${shot.l6.maxMasteringLuminance} nit` : '—';
