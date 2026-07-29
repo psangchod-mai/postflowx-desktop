@@ -5392,3 +5392,37 @@ drift (session-store script tag, tab tooltips/group-labels) remain
 untouched and uncommitted (predate this session, out of scope).
 
 Commits: `7e905a6`.
+
+## Iteration 75 — IAB `isAtmos` ignored the name-matched bed fallback, misclassifying pure 5.1 tracks as Atmos
+
+**Found.** `extractAdmProgrammeTreeFromCompanion()` in
+`imf_iab_labels.js` derives bed counts two ways: the companion's
+`objectSummary.bedObjects`, or a name-match fallback (`bed|5.1|7.1|...`).
+`objectCount`/`bedCount`/`is51` all OR both signals, but `isAtmos` only
+checked `bedFromSummary` — a pure 5.1-bed track (6 bed-named objects, no
+`objectSummary.bedObjects`) was wrongly flagged as Atmos.
+
+**Fix.** `isAtmos` now uses the same
+`(bedFromSummary || bedObjects.length)` OR'd bed count as the other
+three fields.
+
+**Tests.** New file `tests-js/imfIabAtmosBedCount.test.mjs`: a pure
+5.1-bed case (asserts `isAtmos === false`) and a bed+dynamic-object mix
+case (asserts `isAtmos === true` still holds).
+
+**Verification.** `node tests-js/imfIabAtmosBedCount.test.mjs` — 6/6
+pass. Full `npm run test:js` — 0 failures.
+
+**Complication.** `imf_iab_labels.js` carries pre-existing drift (3
+unrelated `cat === 'object'` hunks + a mode-bit change). Isolated the
+1-line fix via a hand-crafted `git apply --cached` patch matched to its
+exact `@@` hunk header.
+
+**Gate.** `npm run test:js` — full suite passes, 0 failures.
+
+**Still open.** `imf_iab_labels.js`'s drift (`_fixForReject()`/
+`inspectIabAdm()`/`inspectIabAdmFromNames()` `object`-category
+additions) remains untouched and uncommitted (predates this session, out
+of scope).
+
+Commits: `5abf65a`.

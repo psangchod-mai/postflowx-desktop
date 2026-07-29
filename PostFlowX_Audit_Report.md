@@ -8195,3 +8195,84 @@ this session and are out of scope. The scouting agent's other flagged
 candidates from prior iterations not yet addressed remain open.
 
 Commits: `7e905a6`.
+
+## Iteration 75 — IAB `isAtmos` ignored the name-matched bed fallback, misclassifying pure 5.1 tracks as Atmos
+
+**Why this file.** `extractAdmProgrammeTreeFromCompanion()` in
+`src/scripts/modules/imf/imf_iab_labels.js` builds the ADM programme-tree
+summary (bed/object counts, Atmos/5.1/7.1 flags) from companion-supplied
+object names when raw ADM XML isn't available — feeding the IMF UI's IAB
+audio QC summary (`_admTree`, `imf_ui.js`).
+
+**The bug.** The function derives its bed count two ways: from the
+companion's `objectSummary.bedObjects` count, or — as a fallback — by
+regex-matching object *names* for `bed`/`5.1`/`7.1`/`surround` patterns
+(`bedObjects`, computed at the top of the function). `objectCount`,
+`bedCount`, and `is51` all correctly OR both signals together
+(`bedFromSummary || bedObjects.length`), but `isAtmos` only subtracted
+`bedFromSummary`, ignoring the name-matched fallback entirely:
+
+```js
+objectCount: totalObj - (bedFromSummary || bedObjects.length),
+bedCount: bedObjects.length || bedFromSummary,
+isAtmos: (totalObj - bedFromSummary) > 0,
+is51: bedFromSummary > 0 || bedObjects.length > 0,
+```
+
+**Concrete failure example.** A plain 5.1-bed-only track (no dynamic
+Atmos objects) with object names
+`['L_bed','R_bed','C_bed','LFE_bed','Ls_bed','Rs_bed']`, where the
+companion's `objectSummary.bedObjects` is `0`/absent (not populated) but
+`totalObjects` is `6`. `bedObjects.length` is `6` via the name-match
+fallback, so `objectCount` correctly comes out `0` and `is51` correctly
+`true` — but `isAtmos = (6 - 0) > 0 = true`, wrongly flagging a pure 5.1
+bed as an Atmos mix.
+
+**Why genuine and new.** A distinct arithmetic inconsistency inside
+`imf_iab_labels.js`'s companion-path programme-tree builder — a
+different file and function from every prior iteration's flagged
+species (DoVi shot metadata, EDL parsing, TC math, visual scoring,
+etc.), and unrelated to this file's own pre-existing drift (see below).
+
+**The fix.** Made `isAtmos` use the same OR'd bed count as the other
+three derived fields:
+
+```js
+isAtmos: (totalObj - (bedFromSummary || bedObjects.length)) > 0,
+```
+
+**A complication worth documenting.** `imf_iab_labels.js` carried
+pre-existing uncommitted drift unrelated to this fix: a new `cat ===
+'object'` branch in `_fixForReject()` (a QC-message helper) and two
+`cat === 'object'` additions to REJECT→WARN status downgrades in
+`inspectIabAdm()`/`inspectIabAdmFromNames()`, plus a file-mode bit change
+(100644→100755). The intended one-line fix (at what was originally line
+599) was isolated via a hand-crafted `git apply --cached` patch matched
+against its exact `@@ -593,7 +596,7 @@` hunk header, leaving the 3 drift
+hunks and mode-bit change unstaged.
+
+**Test approach.** New file `tests-js/imfIabAtmosBedCount.test.mjs`: one
+case builds a pure 5.1-bed track (bed-named objects, no
+`objectSummary.bedObjects`) and asserts `objectCount === 0`,
+`bedCount === 6`, `is51 === true`, and — the regression — `isAtmos ===
+false`; a second case confirms a genuine bed+dynamic-object mix still
+reports `isAtmos === true`. Confirmed the old logic would have produced
+`isAtmos === true` for the first case via a standalone arithmetic check
+before fixing.
+
+**Verification.** `node tests-js/imfIabAtmosBedCount.test.mjs` — 6/6
+assertions pass. Full `npm run test:js` suite exits cleanly (0
+failures). Verified the staged commit's `--cached --stat` showed exactly
+the intended `1 insertion(+)/1 deletion(-)` in `imf_iab_labels.js` (plus
+the new 37-line test file), with the remaining unstaged `git diff`
+matching only the file's pre-existing untouched drift.
+
+**Gate.** `npm run test:js` — full suite passes, 0 failures.
+
+**Still open.** `imf_iab_labels.js`'s pre-existing drift (the `object`
+category additions to `_fixForReject()` and the two REJECT→WARN
+downgrades) remains completely untouched and uncommitted, as it predates
+this session and is out of scope. The scouting agent's other flagged
+candidates from prior iterations not yet addressed remain open.
+
+Commits: `5abf65a`.
