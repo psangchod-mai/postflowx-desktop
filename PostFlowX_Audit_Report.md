@@ -11134,3 +11134,88 @@ unfixed, for the same WIP-overlap reason documented in prior iterations —
 neither is touched by this change.
 
 Commits: `bc4ec43`.
+
+## Iteration 105
+
+**Why this file:** A background scout agent flagged
+`companion/src/postflowx_companion/media/backends/braw_backend.py` as a
+candidate for a torn-write race in its ffmpeg fallback frame-save path.
+`git diff --stat` and `git log --oneline -5 -- <file>` confirmed no
+pre-existing uncommitted WIP touching this file (last two commits:
+`dd8c190` and `b173ee8`, both unrelated), so it was safe to fix.
+
+**The bug (primary, scout-reported):** `_save_frame_via_ffmpeg()` had
+ffmpeg write its JPEG/PNG output directly to `out_path` — the exact same
+path `get_frame()` checks with
+`out_path.is_file() and out_path.stat().st_size > 0` before
+unconditionally opening and base64-encoding it. Under concurrent
+`get_frame()` calls (main playback thread plus the `PrefetchScheduler`
+background thread), a reader could open `out_path` while ffmpeg was
+still writing it, reading a truncated/torn file. The sibling
+Pillow-based `_save_frame()` already avoided this by writing to a
+temp file and `os.replace()`-ing it into place atomically —
+`_save_frame_via_ffmpeg()` was the only frame-save path that didn't.
+
+**Independent verification:** Read the full body of both
+`_save_frame()` and `_save_frame_via_ffmpeg()`, and the `get_frame()`
+read path, confirming the described asymmetry directly in source
+rather than trusting the scout's summary.
+
+**Two more bugs found while testing the fix:** Building a standalone
+harness to exercise `_save_frame_via_ffmpeg()` directly surfaced two
+further, independent bugs in the same function's dependency chain —
+both were fixed in this iteration since they sat inside the exact
+function already being touched and directly blocked verifying the
+primary fix:
+- `_save_frame_via_ffmpeg()` imported
+  `from .standard_media_backend import _find_ffmpeg_cached` — but
+  `standard_media_backend.py` never defines that name (confirmed via a
+  direct Python import check). This raised `ImportError` on every call,
+  meaning the entire Pillow-unavailable fallback path was completely
+  broken before it could ever reach the race window above.
+- The module-level `_find_ffmpeg_cached()` (defined later in the same
+  file) used `from ..proxy_service import _find_ffmpeg as ff`. From
+  `postflowx_companion/media/backends/braw_backend.py`, `..` only
+  ascends to `postflowx_companion/media/`, not to
+  `postflowx_companion/` where `proxy_service.py` actually lives —
+  raising `ModuleNotFoundError`. Confirmed the real location with
+  `find companion/src -iname "*proxy_service*"` and cross-referenced
+  the correct three-dot usage already present in `api.py`/
+  `http_server.py`.
+
+**The fix:** `_save_frame_via_ffmpeg()` now writes ffmpeg's output to a
+`tempfile.mkstemp()`-created temp file in the same directory as
+`out_path`, then `os.replace()`s it into place only after ffmpeg exits
+successfully — mirroring `_save_frame()`'s existing atomic-write
+pattern exactly. The stray `standard_media_backend` import was removed
+(falling through to the already-in-scope module-level
+`_find_ffmpeg_cached()`), and its `..proxy_service` was corrected to
+`...proxy_service`.
+
+**Test approach:** A standalone harness
+(`be._save_frame_via_ffmpeg(...)` called directly against a real,
+unmodified `BrawBackend` instance) with a watcher thread polling the
+exact final `out_path` at ~1ms intervals, re-checking its size after a
+3ms settle window, to catch any torn/partial appearance of the file at
+its final path.
+
+**Verification:** Because the two self-discovered bugs raised an
+exception *before* the function ever reached the write, the pre-fix
+code never got far enough to reproduce the race empirically via
+black-box polling — this is reported honestly rather than claiming a
+reproduction that didn't happen. The structural guarantee (temp-file
+write + atomic rename vs. the old direct-write-to-final-path) stands
+on the code itself. Post-fix, the harness confirms: the function
+completes without exception, `out_path` ends up as a single stable
+206-byte JPEG, the watcher observed no size change or zero-size
+appearance across repeated polls, and no leftover `.raw`/temp files
+remain in the cache directory afterward. Full regression suite re-run
+and matched baseline exactly: 313/7/2(pre-existing) Python, 72/1/0
+Node, 22/0 JS.
+
+**Still open:** The `electron/ipc.js` `pfx:download` finding, the
+`conform_engine.py` `suggestedSourceOut` finding, and the Metal HTJ2K
+WIP block all remain open, unfixed, for the same WIP-overlap reason
+documented in prior iterations — none is touched by this change.
+
+Commits: `TBD`.

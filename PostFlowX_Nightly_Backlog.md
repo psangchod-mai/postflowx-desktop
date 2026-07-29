@@ -6234,3 +6234,25 @@ and matched baseline exactly: 313/7/2(pre-existing) Python,
 72/1/0 Node, 22/0 JS.
 
 Commits: `bc4ec43`.
+
+## Iteration 105 — braw_backend.py torn-write race + two broken imports
+
+`_save_frame_via_ffmpeg()` wrote ffmpeg's output directly to the final
+`out_path` that concurrent `get_frame()` calls read from, unlike its
+Pillow sibling `_save_frame()` which already wrote-then-atomically-
+replaced. Fixed to use `tempfile.mkstemp()` + `os.replace()`, matching
+`_save_frame()`. While building a test harness for this, found and
+fixed two more bugs blocking the same function: a broken
+`from .standard_media_backend import _find_ffmpeg_cached` import
+(that name doesn't exist there) and a wrong relative-import depth in
+`_find_ffmpeg_cached()` (`..proxy_service` → needed `...proxy_service`
+given the file's actual package depth). Verified with a standalone
+harness against the real `BrawBackend`: post-fix produces a stable
+206-byte JPEG with no torn/partial appearances and no leftover temp
+files; the race itself couldn't be reproduced pre-fix since the two
+import bugs raised before the write was ever reached — reported
+honestly rather than claiming a reproduction that didn't happen. Full
+regression suite re-run and matched baseline exactly:
+313/7/2(pre-existing) Python, 72/1/0 Node, 22/0 JS.
+
+Commits: `TBD`.

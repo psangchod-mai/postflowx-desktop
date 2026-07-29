@@ -520,13 +520,14 @@ class BrawBackend(BaseMediaBackend):
     def _save_frame_via_ffmpeg(self, w, h, bpr, data, resource_type, out_path, fmt, target_w, target_h):
         """Fallback: write raw pixels then convert with ffmpeg."""
         import subprocess
-        from .standard_media_backend import _find_ffmpeg_cached
         ffmpeg = _find_ffmpeg_cached()
         if not ffmpeg:
             raise RuntimeError("Neither Pillow nor ffmpeg available for frame save")
         raw_path = out_path.with_suffix(".raw")
         raw_path.write_bytes(data)
         pix_fmt = "bgra" if resource_type in _BGRA_RESOURCE_TYPES else "rgba"
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{fmt}", dir=str(out_path.parent))
+        os.close(tmp_fd)
         try:
             cmd = [
                 ffmpeg, "-y",
@@ -535,15 +536,18 @@ class BrawBackend(BaseMediaBackend):
                 "-i", str(raw_path),
                 "-vf", f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease",
                 "-frames:v", "1",
-                str(out_path),
+                tmp_path,
             ]
             subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+            os.replace(tmp_path, str(out_path))
         finally:
             try: raw_path.unlink(missing_ok=True)
+            except: pass
+            try: Path(tmp_path).unlink(missing_ok=True)
             except: pass
 
 
 def _find_ffmpeg_cached():
     """Try to find ffmpeg — used only as Pillow fallback."""
-    from ..proxy_service import _find_ffmpeg as ff
+    from ...proxy_service import _find_ffmpeg as ff
     return ff()
