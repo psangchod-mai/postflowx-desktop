@@ -6087,4 +6087,4 @@ stuck at `restored_running` after 1.5s) vs. post-fix immediate failure
 pytest -q` in `companion/`: 313 passed/7 skipped/2 pre-existing unrelated
 failures — matches baseline.
 
-Commits: `TBD`.
+Commits: `d9feb82`.

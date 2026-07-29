@@ -10625,4 +10625,4 @@ scouting agent's alternate, more conservative suggestion) — deferred as
 unnecessary given the PID-liveness signal is already reliable per the
 sidecar-write-site audit above.
 
-Commits: `TBD`.
+Commits: `d9feb82`.
