@@ -5096,4 +5096,41 @@ Python suite: 265 passed (262 + 3 new), 7 skipped.
 
 **Still open.** None.
 
+## Iteration 67 — MXF MIC verification aggregated the whole file instead of scoping per-partition
+
+**Found.** `companion/src/postflowx_companion/imf_mic.py`'s
+`verify_mxf_mic()` collected every essence element in the entire MXF file
+into one flat list and kept overwriting `integrity_value` on each
+`EssenceIntegrityPack` KLV found, so only the *last* pack ever got compared
+— against a whole-file digest. SMPTE ST 429-6 scopes each pack to its own
+partition's essence, so this produced false-positive "corrupt" reports on
+valid multi-partition files, and could miss real corruption in an earlier
+partition whose pack got silently discarded.
+
+**Done.** Bucket essence elements per integrity pack instead of file-wide —
+verify each pack against only the elements seen since the previous one,
+then reset the bucket. `result.ok` is now `True` only if every pack in the
+file matches.
+
+**Tests.** New `TestMultiPartitionMic` class in
+`companion/tests/test_imf_mic.py` with a `_build_multi_partition_mxf()`
+fixture (the existing `build_mxf_with_mic()` only ever built single-pack
+files — zero coverage for the multi-partition case). Covers: two valid
+partitions pass; corruption in the second partition is caught; corruption
+in the *first* partition is caught (the case the old whole-file/last-pack
+logic missed).
+
+**Verification.** Backed up the fix, reverted to the original whole-file
+logic, reran: the two-valid-partitions test failed (`ok=False` on a
+legitimately valid file). Restored the fix: all 36 tests in
+`test_imf_mic.py` passed, plus all 7 in `test_imf_qc_mic.py` (downstream
+consumer), confirming no shape regression for that caller.
+
+**Gate.** `npm run build-verify` passed clean (exit 0); log grepped for
+failure markers, all false positives.
+
+**Still open.** None.
+
+Commits: `8035764`.
+
 Commits: `2823c48`.

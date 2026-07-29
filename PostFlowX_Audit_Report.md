@@ -7444,3 +7444,115 @@ messages (error-classifier tests whose input literally contains
 Commits: `2823c48`.
 
 Commits: `50e0be7`.
+
+## Iteration 67 — MXF MIC verification aggregated the whole file instead of scoping per-partition — new species
+
+**Why this file.** `companion/src/postflowx_companion/imf_mic.py` implements
+`verify_mxf_mic()`, which recomputes an SMPTE ST 429-6 "message integrity
+code" (MIC) digest over an MXF track file's essence-container elements and
+compares it against the embedded `EssenceIntegrityPack` KLV. The module's own
+docstring describes this as a *per-partition* mechanism — SMPTE defines the
+integrity pack as covering the essence written in its own partition, and a
+real multi-partition MXF/IMF track file can carry one integrity pack per body
+partition.
+
+**The bug.** The KLV-walking loop in `verify_mxf_mic()` had no
+partition-boundary or per-pack scoping at all:
+
+```python
+essence_elements: list[KlvTriplet] = []
+integrity_value: bytes | None = None
+
+for kl in iter_klv(f):
+    if is_essence_element(kl.key):
+        essence_elements.append(kl)
+    elif is_integrity_pack(kl.key):
+        cur = f.tell()
+        f.seek(kl.value_offset)
+        integrity_value = f.read(kl.length)
+        f.seek(cur)
+```
+
+Every essence element in the entire file — across every partition — was
+appended to one flat list, and `integrity_value` was unconditionally
+overwritten on each `is_integrity_pack` match, so only the *last* pack found
+survived. The single whole-file digest was then compared only against that
+last pack, silently discarding every earlier one.
+
+**Concrete failure example.** For a two-partition file (partition A's
+essence + pack A, partition B's essence + pack B): a bit flip in partition
+A's essence does not change the digest checked (partition B's pack, computed
+over the aggregate of A+B), because pack A is discarded before any
+comparison happens — the file reads as clean corruption. Conversely, an
+untouched, perfectly valid two-pack file fails verification outright, because
+the aggregate digest over A+B never matches either individual pack's
+recorded value — a false-positive "corrupt" report on a legitimate file.
+
+**Why genuine and new.** This is not a classification bug (species 51) or an
+arithmetic-implementation gap (species 66) — the digest algorithm itself is
+correct. It's a scope mismatch: the code aggregates at file granularity while
+the on-disk data model (and the module's own docstring) specifies
+per-partition-run granularity. None of species 48–66 involve a
+verification-record's declared scope being silently widened past what it was
+written to cover.
+
+**The fix.** Bucket essence elements per integrity pack instead of
+accumulating file-wide — each `EssenceIntegrityPack` KLV is verified against
+only the essence elements seen since the previous pack (or file start), then
+the bucket resets:
+
+```python
+essence_elements: list[KlvTriplet] = []
+pack_count = 0
+...
+for kl in iter_klv(f):
+    if is_essence_element(kl.key):
+        essence_elements.append(kl)
+    elif is_integrity_pack(kl.key):
+        pack_count += 1
+        ...
+        computed, total = _digest_over_essence(f, essence_elements, pack.algorithm)
+        ...
+        essence_elements = []
+```
+
+`result.ok` is now `True` only if every pack in the file matches; the first
+failure's message is preserved in `result.error`. `essence_bytes` and
+`essence_element_count` are now sums across all packs rather than a single
+snapshot. This required no partition-pack-boundary detection — essence
+elements naturally arrive in file order between consecutive integrity packs,
+so resetting the bucket after each pack is verified is sufficient and matches
+how a real writer closes out each partition's MIC before starting the next.
+
+**Test approach.** Added a `TestMultiPartitionMic` class to
+`companion/tests/test_imf_mic.py` with a new `_build_multi_partition_mxf()`
+fixture helper (built from the module's own private `_klv`/
+`_partition_pack_key`/`_essence_element_key` helpers, since the existing
+`build_mxf_with_mic()` only ever produces a single essence run with a single
+pack — confirmed by reading the whole file first, which is exactly the
+zero-coverage gap the scouting agent flagged). Three tests: two valid
+partitions both pass; corrupting the *second* partition's essence is
+detected (true under both old and new logic, included for completeness);
+corrupting the *first* partition's essence is detected — this is the
+regression-distinguishing case, since the old whole-file/last-pack-only logic
+discards the first pack before ever comparing against it.
+
+**Verification (mutation testing).** Backed up the fixed file, reverted
+`verify_mxf_mic()` to the original whole-file/last-pack-only logic via a
+Python find-and-replace, reran: `test_two_valid_partitions_pass` failed
+(`ok=False` on a legitimately valid file — `assert False is True`), the other
+two multi-partition tests still incidentally passed under the old logic (as
+documented in their docstrings), and all 33 pre-existing tests in the file
+remained green. Restored the fix: all 36 tests in `test_imf_mic.py` passed,
+plus all 7 in `test_imf_qc_mic.py` (the downstream consumer via
+`verify_mic_for_assets`), confirming no `MicResult`/`to_dict()` shape
+regression for that caller.
+
+**Gate.** `npm run build-verify` passed clean (exit 0). Grepped the full log
+for failure markers; all hits confirmed false positives (error-classifier
+test names/messages, an OTIO-parse test asserting a literal `SyntaxError`
+message).
+
+**Still open.** None for this fix.
+
+Commits: `8035764`.
