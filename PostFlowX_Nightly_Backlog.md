@@ -6058,3 +6058,33 @@ post-fix. `python3 -m pytest -q` in `companion/`: 313 passed/7 skipped/2
 pre-existing unrelated failures — matches baseline.
 
 Commits: `b9729bf`.
+
+## Iteration 99: `_restore_running_proxy_session()` infinite reattach loop
+
+`proxy_service.py`'s session-restore path (used when the companion server
+restarts mid-transcode and the UI needs to reattach to a possibly-still-running
+ffmpeg job) treated "PID alive OR `.part` file exists" as evidence the job
+might still be running, at both the initial gate (line 478) and inside the
+`_watch()` polling loop (line 540). A `.part` file left behind by a dead/
+crashed ffmpeg process never disappears on its own, so once the PID died the
+`or part_path.exists()` term kept re-satisfying the "still running" check on
+every 0.5s poll — forever. The failure branch (`stage='failed',
+error='proxy_interrupted'`) could only fire if the `.part` file also happened
+to be absent, which it never was in the crash/leftover-file scenario. Result:
+UI stuck at "Reattaching proxy transcode… N%" indefinitely. Reachable via
+`api.py`'s sole call site (lines 1003-1015), hit whenever a proxy-status
+request finds the expected cache file missing.
+
+Confirmed every sidecar-write call site (`_write_proxy_sidecar` with
+`partPath=`) always writes `pid=process.pid` in the same call, so a
+confirmed-dead PID is trustworthy "not running" evidence. Fix: at both sites,
+`part_path.exists()` is now only consulted when `pid` itself is missing from
+the sidecar; whenever `pid` is present, a dead PID is authoritative and wins
+over a merely-existing `.part` file. Standalone repro
+(dead PID + real leftover `.part` file) confirmed pre-fix hang (`stage`
+stuck at `restored_running` after 1.5s) vs. post-fix immediate failure
+(`_restore_running_proxy_session` returns `False` right away). `python3 -m
+pytest -q` in `companion/`: 313 passed/7 skipped/2 pre-existing unrelated
+failures — matches baseline.
+
+Commits: `TBD`.

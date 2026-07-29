@@ -10489,3 +10489,140 @@ iteration: whether other standalone-file transcode paths in this module
 (beyond `build_preview_proxy`) have similar un-scoped temp-file patterns.
 
 Commits: `b9729bf`.
+
+## Iteration 99: `_restore_running_proxy_session()`'s reattach loop could spin forever when a dead PID left a stale `.part` file behind
+
+**Why this file:** `proxy_service.py` is the same file fixed in Iteration 98
+and has already yielded six species-#7 (missing discriminating key) bugs
+across the codebase this session. A background scouting agent, given the
+full bug catalog and told to avoid duplicates, was asked to find one more
+solid candidate; it flagged the sidecar-based session-restore path as an
+area not yet audited for liveness-detection correctness.
+
+**The bug:** `_restore_running_proxy_session()` reattaches the UI to a
+still-running (or possibly dead) ffmpeg transcode after the companion server
+restarts mid-job, using a JSON "sidecar" file written by the original worker
+to recover `pid`, `partPath`, progress, etc. Both the initial gate and the
+per-iteration loop check used the same fragile condition:
+
+```python
+# initial gate, line 478 (pre-fix)
+if not (_is_pid_alive(pid) or part_path.exists()):
+    return False
+...
+# _watch() loop check, line 540 (pre-fix)
+if not (_is_pid_alive((current.get('pid') if current else None) or pid) or part_path.exists()):
+    update_session(..., stage='failed', error='proxy_interrupted')
+    return
+```
+
+Both treat "PID alive OR `.part` file exists" as evidence the job might
+still be running. But a `.part` file surviving on disk is not evidence of
+anything once the PID is confirmed dead — ffmpeg does not clean up its own
+partial output file when it's killed, crashes, or is force-quit alongside
+the companion process. Once the PID is dead, the leftover `.part` file
+never disappears, `_is_pid_alive()` never becomes true again, and the `or
+part_path.exists()` term keeps re-satisfying the "still might be running"
+condition on every single iteration of the `while True:` polling loop
+(`_watch()`, `time.sleep(0.5)` per iteration) — forever. The failure branch
+that's supposed to declare `stage='failed', error='proxy_interrupted'` can
+only fire if the `.part` file is *also* absent, which it never will be for
+this scenario. The UI is left stuck at "Reattaching proxy transcode… N%"
+indefinitely, with a daemon thread polling every 0.5s until the process
+exits.
+
+**Independent verification:** Read `proxy_service.py` lines 460-560 directly
+and confirmed the scouting agent's quoted code matched the source
+byte-for-byte at the reported line. Confirmed there is no mtime/size-growth
+tracking anywhere in `_watch()` that could otherwise distinguish "a process
+is actively appending to this file" from "this file was abandoned by a dead
+process." Also identified that the same fragile pattern appears a second
+time, at the initial gate (line 478), which the scouting agent's report did
+not explicitly call out but which needed the identical fix to avoid leaving
+the bug half-fixed. Traced production reachability through `api.py` lines
+1003-1015: `_restore_running_proxy_session` has exactly one call site,
+invoked when a proxy-status/playback-start request finds the expected cache
+file missing — i.e. the realistic post-crash/post-force-quit-and-reopen
+scenario the agent described.
+
+Before deciding on a fix, checked whether `pid` is reliably populated in the
+sidecar alongside `partPath` at every write site (grepped all
+`_write_proxy_sidecar(...)` calls with `partPath=`): every one of them
+(the throttled per-progress-tick write around line 3549-3559, and the
+one-time post-spawn writes at lines 3719 and 3985) writes `pid=process.pid`
+in the same call as `partPath=str(out_path)`. This confirms `pid` is a
+reliable, co-written field whenever `partPath` is meaningfully populated —
+so a confirmed-dead `pid` is trustworthy evidence the job is not running,
+and `part_path.exists()` should never be allowed to override that.
+
+**The fix:** At both sites, stop treating a merely-existing `.part` file as
+proof of continued life when the PID is known and confirmed dead. The
+`part_path.exists()` fallback is now only consulted when `pid` itself is
+missing (an incomplete/older sidecar that never recorded a PID) — in every
+other case, `_is_pid_alive()` is authoritative:
+
+```python
+# initial gate (post-fix)
+if pid is not None and not _is_pid_alive(pid):
+    return False
+if pid is None and not part_path.exists():
+    return False
+```
+
+```python
+# _watch() loop check (post-fix)
+watch_pid = (current.get('pid') if current else None) or pid
+pid_confirmed_dead = watch_pid is not None and not _is_pid_alive(watch_pid)
+pid_unknown_and_no_part = watch_pid is None and not part_path.exists()
+if pid_confirmed_dead or pid_unknown_and_no_part:
+    update_session(..., stage='failed', error='proxy_interrupted')
+    _write_proxy_sidecar(..., state='failed', error='proxy_interrupted')
+    return
+```
+
+**Test approach:** Wrote a standalone script (`/tmp/verify_iter99.py`) that
+creates a sidecar file recording a guaranteed-nonexistent PID (`999999`)
+alongside a real leftover `.part` file on disk, then calls
+`_restore_running_proxy_session()` directly and inspects the resulting
+session state after giving the `_watch()` daemon thread time to run at least
+one poll iteration. Ran this against the pre-fix code (via `git stash` to
+temporarily revert just this file) and again against the post-fix code.
+
+**Verification:**
+- Pre-fix: `restore attempted: True`; after 1.5s the session was still
+  `stage='restored_running', done=False` — confirming the loop would spin
+  forever exactly as diagnosed.
+- Post-fix: `_restore_running_proxy_session()` now returns `False`
+  immediately (the initial gate correctly refuses to attempt reattachment
+  for a confirmed-dead PID), so `_watch()` never even starts — the caller in
+  `api.py` surfaces a single, immediate `NOT_FOUND` error instead of an
+  infinitely spinning "reattaching" state.
+- `git diff -- proxy_service.py` showed exactly the two intended hunks
+  (lines ~475-479 and ~539-548), no pre-existing unrelated WIP, no mode-bit
+  drift on this file.
+- `python3 -m py_compile` confirmed valid syntax.
+- `python3 -m pytest -q` in `companion/`: 313 passed, 7 skipped, 2
+  pre-existing failures in `test_conform_engine.py`
+  (`test_regional_distance_discards_six_worst_cells`,
+  `test_regional_hash_identical_frames_distance_zero`, both
+  `AttributeError: 'int' object has no attribute 'bit_count'`) — matching the
+  confirmed baseline exactly, unrelated to this change.
+
+**Gate:** Fix directly closes the diagnosed infinite-loop path, is minimal
+(condition-only change, no new state), and the regression suite is
+unaffected. Landing.
+
+**Still open:** If a sidecar is ever written with `pid=None` (an incomplete
+write, or a hypothetical caller that doesn't yet know its own PID) alongside
+a genuinely-in-progress `.part` file, the `part_path.exists()` fallback
+still allows an indefinite reattach loop for that PID-less case — this is
+judged acceptable because every current sidecar-write call site always
+supplies `pid` alongside `partPath`, so the PID-less branch is defensive
+rather than a currently-reachable code path. Not investigated this
+iteration: whether `_watch()` should also track `.part` file mtime/size
+growth as a secondary staleness signal independent of PID liveness (the
+scouting agent's alternate, more conservative suggestion) — deferred as
+unnecessary given the PID-liveness signal is already reliable per the
+sidecar-write-site audit above.
+
+Commits: `TBD`.

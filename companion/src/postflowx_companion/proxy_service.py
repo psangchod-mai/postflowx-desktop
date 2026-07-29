@@ -475,7 +475,9 @@ def _restore_running_proxy_session(session_id: str, cache_path: Path, folder_pat
     part_path = Path(str(sidecar.get('partPath') or cache_path.with_name(f'.{cache_path.name}.{session_id}.part')))
     progress_path = Path(str(sidecar.get('progressPath') or _proxy_progress_path(cache_path)))
     log_path = Path(str(sidecar.get('logPath') or _proxy_log_path(cache_path)))
-    if not (_is_pid_alive(pid) or part_path.exists()):
+    if pid is not None and not _is_pid_alive(pid):
+        return False
+    if pid is None and not part_path.exists():
         return False
     dovi = {}
     if folder_path and cpl_path:
@@ -537,7 +539,10 @@ def _restore_running_proxy_session(session_id: str, cache_path: Path, folder_pat
             if current and current.get('error'):
                 update_session(session_id, done=True, pct=max(0, min(99, last_pct)), stage='failed', message=str(current.get('error')), error=str(current.get('error')))
                 return
-            if not (_is_pid_alive((current.get('pid') if current else None) or pid) or part_path.exists()):
+            watch_pid = (current.get('pid') if current else None) or pid
+            pid_confirmed_dead = watch_pid is not None and not _is_pid_alive(watch_pid)
+            pid_unknown_and_no_part = watch_pid is None and not part_path.exists()
+            if pid_confirmed_dead or pid_unknown_and_no_part:
                 update_session(session_id, done=True, pct=max(0, min(99, last_pct)), stage='failed', message='Proxy job was interrupted before cache finished', error='proxy_interrupted')
                 _write_proxy_sidecar(cache_path, state='failed', pct=max(0, min(99, last_pct)), stage='failed', message='Proxy job was interrupted before cache finished', done=True, error='proxy_interrupted')
                 return
