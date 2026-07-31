@@ -8299,3 +8299,6 @@ judgement about who that column is for, and it deserves its own night.
 in a translated view — `Key`, `Camera`, `Profiles`, `Rules`, `Examples`,
 `Detected`, `Unsaved`. Same shape of seam as the date headings 158 closed, in a
 panel a colourist reads far more often than the project list.
+
+
+Commits: `1aab3e5`.
