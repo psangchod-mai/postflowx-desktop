@@ -163,7 +163,12 @@ const SCANNED = [
   // disabled, the contact line, the reload hint and its button, the action
   // refusal — plus the two the denied state deliberately shares word-for-word
   // with the toast above, so one event reads as one event.
-  { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 10 },
+  // The 22 above the 10 are the action names, moved here from a plain-English
+  // table in auth/noAccessView.js. They have to be literals in a scanned module
+  // or this test cannot see them: it matches translate('…') and nothing else,
+  // and the view resolved the id to a label first, so every name shipped in
+  // English inside an otherwise translated sentence.
+  { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 32 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

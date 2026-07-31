@@ -137,9 +137,9 @@ window.PFX_PERMISSIONS = (() => {
 
   /** Check if a feature flag is active in the current session policy. */
   function hasFeatureFlag(flagKey) {
-    const p = _perms();
-    if (!p) return false;
-    const flags = p.featureFlags || {};
+    // featureFlags lives at the session TOP LEVEL (set by boot-guard / auth.js /
+    // ipc.js), not nested under permissions.
+    const flags = _cached?.featureFlags || {};
     return !!flags[flagKey];
   }
 
@@ -151,11 +151,15 @@ window.PFX_PERMISSIONS = (() => {
    * Returns true if the switch was allowed, false if denied.
    */
   function openTab(tabKey) {
+    const dataMain = TAB_CANONICAL_TO_DATA_MAIN[tabKey] || tabKey;
     if (!_UNGATED_TABS.has(tabKey) && !canAccessTab(tabKey)) {
-      window.pfxNoAccessView?.showDeniedToast(tabKey);
+      // The toast names things by `data-main`, not by canonical tab key. Passing
+      // tabKey put the schema's own word in front of the user — "Your account
+      // cannot do this: plate_link" — for the one refusal that has a perfectly
+      // good name available. Translate to the key the name table is keyed by.
+      window.pfxNoAccessView?.showDeniedToast(dataMain);
       return false;
     }
-    const dataMain = TAB_CANONICAL_TO_DATA_MAIN[tabKey] || tabKey;
     const btn = document.querySelector(`[data-main="${dataMain}"]`);
     if (btn) btn.click();
     return true;

@@ -21,14 +21,16 @@ import {
   ACCESS_STATUSES,
   accessStatus,
   accessNotice,
+  actionName,
   deniedActionNotice,
 } from '../src/scripts/core/accessNotice.js';
-import { lockedWorkspaceNotice } from '../src/scripts/core/workspaceAccess.js';
+import { lockedWorkspaceNotice, WORKSPACE_NAMES } from '../src/scripts/core/workspaceAccess.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const viewSrc = readFileSync(join(ROOT, 'src/scripts/auth/noAccessView.js'), 'utf8');
 const uiSrc = readFileSync(join(ROOT, 'src/scripts/ui.js'), 'utf8');
 const acesSrc = readFileSync(join(ROOT, 'src/scripts/features/aceslook/index.js'), 'utf8');
+const permSrc = readFileSync(join(ROOT, 'src/scripts/auth/permissions.js'), 'utf8');
 const indexHtml = readFileSync(join(ROOT, 'src/index.html'), 'utf8');
 
 test('accessStatus is total: anything it does not know is the state that promises nothing', () => {
@@ -93,7 +95,7 @@ test('the contact address has a default and survives a blank override', () => {
 });
 
 test('a blocked action is named, and is not accused', () => {
-  const n = deniedActionNotice({ label: 'Export CSV' });
+  const n = deniedActionNotice({ id: 'export_csv' });
   assert.ok(n.text.includes('Export CSV'), `the toast no longer says which action: ${n.text}`);
   // Was "⊘ Permission denied: Export CSV" — a log line with a prohibition sign.
   assert.ok(!/⊘|denied|permission/i.test(n.text), `blame-shaped wording: ${n.text}`);
@@ -102,6 +104,70 @@ test('a blocked action is named, and is not accused', () => {
   const bare = deniedActionNotice({});
   assert.ok(!bare.text.endsWith(':'), `dangling colon: ${bare.text}`);
   assert.ok(!bare.text.includes('“'), `empty quotes: ${bare.text}`);
+});
+
+test('an action id never reaches the user as an action id', () => {
+  // The toast used to fall back to String(actionId), so an id the table did not
+  // know was printed verbatim: `Your account cannot do this: "edit_cut"`. That
+  // is a word from the permissions schema, quoted at someone who has never seen
+  // the schema and cannot act on it. Saying less is the better answer.
+  for (const unknown of ['edit_cut', 'import_media', 'nope', 'constructor', 'toString']) {
+    assert.equal(actionName(unknown), '', `${unknown} is echoed back as its own name`);
+    const t = deniedActionNotice({ id: unknown }).text;
+    assert.ok(!t.includes(unknown), `the toast quotes the raw id: ${t}`);
+    assert.ok(!/_/.test(t), `snake_case leaked into the toast: ${t}`);
+  }
+  for (const empty of [undefined, null, '', '   ']) assert.equal(actionName(empty), '');
+});
+
+test('every action id the renderer can block has a name', () => {
+  // Not a spot check: the ids are grepped out of the call sites, so a new
+  // showDeniedToast('…') with no entry in the table fails here rather than
+  // shipping a nameless toast.
+  const ids = new Set();
+  for (const src of [uiSrc, acesSrc, permSrc, viewSrc,
+    readFileSync(join(ROOT, 'src/scripts/features/aceslook/cards/ExportCard.js'), 'utf8')]) {
+    for (const m of src.matchAll(/showDeniedToast\(\s*'([a-z_]+)'\s*\)/g)) ids.add(m[1]);
+    for (const m of src.matchAll(/_ACTION_KEYS\s*=\s*\{([^}]*)\}/g)) {
+      for (const p of m[1].matchAll(/'([a-z_]+)'/g)) ids.add(p[1]);
+    }
+  }
+  assert.ok(ids.size > 0, 'the call-site scan found nothing, so this test proves nothing');
+  for (const id of ids) {
+    assert.notEqual(actionName(id), '', `${id} is blocked somewhere but has no name`);
+  }
+});
+
+test('a locked tab gets the workspace sentence, not a half-answer', () => {
+  // permissions.js openTab() sends this toast a workspace, not an action. The
+  // two paths are one event to the user — a tab that will not open — so they
+  // say the same thing, byte for byte, rather than two descriptions of it.
+  for (const key of Object.keys(WORKSPACE_NAMES)) {
+    const n = deniedActionNotice({ id: key });
+    assert.equal(n.text, lockedWorkspaceNotice({ key }).text, `${key} drifted from the toast`);
+    assert.ok(n.text.includes(WORKSPACE_NAMES[key]), `${key} is not named`);
+  }
+});
+
+test('openTab hands the toast a key the name table knows', () => {
+  // The bug this replaced: openTab computed `dataMain` one line *below* the
+  // refusal, so the toast got the canonical key ('plate_link') while every
+  // name table in the app is keyed by data-main ('platelink2').
+  assert.ok(
+    /showDeniedToast\(dataMain\)/.test(permSrc),
+    'openTab passes the canonical tab key again, so the toast prints a raw key',
+  );
+  const gate = permSrc.slice(permSrc.indexOf('function openTab('), permSrc.indexOf('function openTab(') + 700);
+  assert.ok(
+    gate.indexOf('const dataMain') < gate.indexOf('showDeniedToast'),
+    'dataMain is still resolved after the refusal, so the toast cannot use it',
+  );
+});
+
+test('the toast can show a two-line notice without running it together', () => {
+  // The workspace wording is "<what happened>\n<who can fix it>". textContent
+  // keeps the newline; the default white-space collapses it on screen.
+  assert.ok(/white-space:pre-line/.test(viewSrc), 'the toast collapses its second sentence');
 });
 
 test('the panel escapes everything it interpolates', () => {
@@ -172,9 +238,36 @@ test('no caller spells the workspace name itself', () => {
 });
 
 test('an unknown action id cannot pull a function out of the prototype chain', () => {
-  // actionId reaches _actionLabel from call sites all over the renderer.
+  // actionId reaches actionName() from call sites all over the renderer, so a
+  // plain lookup would let `constructor` render a function body in the toast.
+  // Asserted as behaviour, not as source text — the check above covers the
+  // wording, this one covers the shape.
+  assert.equal(actionName('constructor'), '');
+  assert.equal(actionName('hasOwnProperty'), '');
+  assert.equal(actionName('__proto__'), '');
+});
+
+test('the view layer no longer carries a name table of its own', () => {
+  // The whole point of the move: names live where the i18n scanner can see
+  // them. A second table here would go untranslated exactly as the first did.
+  assert.ok(!/_actionLabel/.test(viewSrc), 'auth/noAccessView.js resolves names again');
   assert.ok(
-    /Object\.hasOwn\(map, actionId\)/.test(viewSrc),
-    '_actionLabel is a plain lookup again, so `constructor` renders a function body in the toast',
+    !/'Export CSV'|'Open Project'|'Save Preset'/.test(viewSrc),
+    'auth/noAccessView.js spells action names in English again',
   );
+  assert.ok(
+    /deniedActionNotice\(\{ id: actionId \}\)/.test(viewSrc),
+    'the view resolves the id before handing it over, which hides it from the scanner',
+  );
+});
+
+test('no action name is defined in two dictionaries at once', () => {
+  // Export CSV/PDF/XLSX already existed in LOCALE_FULL_DICT and PARITY_DICT.
+  // They were moved into ERROR_DICT rather than copied: six rows per key, not
+  // twelve, so there is one place to fix a translation and no silent winner.
+  const i18nSrc = readFileSync(join(ROOT, 'src/scripts/modules/i18n.js'), 'utf8');
+  for (const key of ['Export CSV', 'Export PDF', 'Export XLSX', 'Open Project', 'Open ACES Look']) {
+    const n = (i18nSrc.match(new RegExp(`"${key}":`, 'g')) || []).length;
+    assert.equal(n, 6, `"${key}" has ${n} rows, not one per locale`);
+  }
 });

@@ -51,7 +51,7 @@
 // the half that was silently wrong.
 
 import { translate } from './friendlyError.js';
-import { workspaceName } from './workspaceAccess.js';
+import { workspaceName, WORKSPACE_NAMES, lockedWorkspaceNotice } from './workspaceAccess.js';
 
 // Where an access request actually goes. Overridable per call so a future
 // deployment can point somewhere else without touching the copy.
@@ -121,18 +121,95 @@ export function accessNotice(state = {}) {
   };
 }
 
+// Every actionId that can reach the refusal toast, as the name of the thing the
+// user just tried to do, in their language.
+//
+// This table used to live in auth/noAccessView.js with bare English values. It
+// was invisible to errorI18n.test.mjs for a structural reason worth stating:
+// the scanner only sees a string literal written straight into the translate
+// call, and the view resolved the id to a label first, handing the notice a
+// *variable* it could not read. So the toast came
+// out half-translated — a Thai sentence with an English noun quoted inside it,
+// which is a worse result than either language on its own. Written as literals
+// here, all 22 are scanned, and the test refuses to let one ship untranslated.
+//
+// Built per call for the same reason _wording() is: translate() reads the live
+// locale, so a table built at import time would freeze the boot language.
+function _actionNames() {
+  return {
+    open_project:         translate('Open Project'),
+    save_project:         translate('Save Project'),
+    load_timeline:        translate('Load Timeline'),
+    load_video:           translate('Load Video'),
+    view_markers:         translate('View Markers'),
+    add_marker:           translate('Add Marker'),
+    edit_marker_meta:     translate('Edit Marker Metadata'),
+    delete_marker:        translate('Delete Marker'),
+    open_annotation:      translate('Open Annotation'),
+    edit_annotation:      translate('Edit Annotation'),
+    export_csv:           translate('Export CSV'),
+    export_pdf:           translate('Export PDF'),
+    export_xlsx:          translate('Export XLSX'),
+    export_package:       translate('Export Package'),
+    relink_all:           translate('Relink All'),
+    export_amf:           translate('Export AMF'),
+    export_cdl:           translate('Export CDL'),
+    export_clf:           translate('Export CLF'),
+    export_color_summary: translate('Export Summary'),
+    save_aces_preset:     translate('Save Preset'),
+    load_aces_preset:     translate('Load Preset'),
+    open_aces_look:       translate('Open ACES Look'),
+  };
+}
+
+/**
+ * The translated name of a blocked action, or '' when there is nothing
+ * nameable — never the raw id.
+ *
+ * The empty string is the deliberate answer for an unknown id. Action ids are
+ * internal keys, and a toast reading `Your account cannot do this:
+ * "edit_marker_meta"` teaches the user a word from the permissions schema and
+ * then asks them to quote it at someone. The bare sentence is less information
+ * and more help.
+ *
+ * @param {string} actionId
+ * @returns {string}
+ */
+export function actionName(actionId) {
+  const id = String(actionId == null ? '' : actionId).trim();
+  if (!id) return '';
+  const names = _actionNames();
+  // hasOwn, not a plain lookup: actionId reaches here from call sites all over
+  // the renderer, and `constructor` would otherwise resolve up the prototype
+  // chain and put a function body in the toast.
+  if (Object.hasOwn(names, id)) return names[id];
+  // A workspace key is not an action, but openTab() hands one to the same
+  // toast. Let the workspace table answer rather than showing 'platelink2'.
+  if (Object.hasOwn(WORKSPACE_NAMES, id)) return workspaceName(id);
+  return '';
+}
+
 /**
  * The three-second toast for an action — not a whole workspace — the account
  * cannot perform. Was "⊘ Permission denied: Export CSV", which is a security
  * log line rather than a sentence; the ⊘ and the word "denied" both read as an
  * accusation, and neither says whose account it is or that it can be changed.
  *
+ * Given a workspace key rather than an action id, it answers with the workspace
+ * sentence instead — word for word the one lockedWorkspaceNotice() already
+ * produces for that event, because clicking a locked tab is that event.
+ *
  * @param {object} state
- * @param {string} [state.label] human name of the blocked action, already resolved
+ * @param {string} [state.id] the actionId (or workspace `data-main` key) that was blocked
  * @returns {{label:string, text:string}}
  */
 export function deniedActionNotice(state = {}) {
-  const label = String(state.label == null ? '' : state.label).trim();
+  const id = String(state.id == null ? '' : state.id).trim();
+  if (Object.hasOwn(WORKSPACE_NAMES, id)) {
+    const w = lockedWorkspaceNotice({ key: id });
+    return { label: w.name, text: w.text };
+  }
+  const label = actionName(id);
   const opening = translate('Your account cannot do this');
   return { label, text: label ? `${opening}: “${label}”` : opening };
 }

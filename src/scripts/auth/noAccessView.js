@@ -90,44 +90,23 @@ function showDeniedToast(actionId) {
     'z-index:99999', 'pointer-events:none',
     'box-shadow:0 4px 16px rgba(0,0,0,.5)',
     'animation:pfx-toast-in .15s ease',
+    // The workspace wording is two sentences on two lines; textContent keeps the
+    // newline but the default white-space collapses it into one run-on line.
+    'white-space:pre-line', 'text-align:center', 'max-width:min(90vw,420px)',
   ].join(';');
 
-  // textContent, so the label needs no escaping — and must not grow into markup.
-  toast.textContent = deniedActionNotice({ label: _actionLabel(actionId) }).text;
+  // textContent, so the text needs no escaping — and must not grow into markup.
+  // The id goes in raw: naming it is core/accessNotice.js's job, because that
+  // is where errorI18n.test.mjs can see the names and hold them to six locales.
+  toast.textContent = deniedActionNotice({ id: actionId }).text;
   document.body.appendChild(toast);
 
   setTimeout(() => toast.remove(), 3000);
 }
 
-function _actionLabel(actionId) {
-  const map = {
-    open_project:         'Open Project',
-    save_project:         'Save Project',
-    load_timeline:        'Load Timeline',
-    load_video:           'Load Video',
-    view_markers:         'View Markers',
-    add_marker:           'Add Marker',
-    edit_marker_meta:     'Edit Marker Metadata',
-    delete_marker:        'Delete Marker',
-    open_annotation:      'Open Annotation',
-    edit_annotation:      'Edit Annotation',
-    export_csv:           'Export CSV',
-    export_pdf:           'Export PDF',
-    export_xlsx:          'Export XLSX',
-    export_package:       'Export Package',
-    relink_all:           'Relink All',
-    export_amf:           'Export AMF',
-    export_cdl:           'Export CDL',
-    export_clf:           'Export CLF',
-    export_color_summary: 'Export Summary',
-    save_aces_preset:     'Save Preset',
-    load_aces_preset:     'Load Preset',
-    open_aces_look:       'Open ACES Look',
-  };
-  // hasOwn, not a plain lookup: actionId reaches here from call sites all over
-  // the renderer, and `constructor` would otherwise resolve up the prototype
-  // chain and put a function body in the toast.
-  return Object.hasOwn(map, actionId) ? map[actionId] : String(actionId ?? '');
-}
+// The 22-entry action-name table that used to live here is now
+// core/accessNotice.js's actionName(), where it is written as translate()
+// literals and therefore scanned into all six locales. Resolving it here meant
+// passing a variable to the notice, which the scanner cannot see.
 
 window.pfxNoAccessView = { renderNoAccess, showDeniedToast };

@@ -7857,3 +7857,65 @@ and it's the one I'd hit first if I were reading this in Thai.
 Rebuilt the index by hand again.
 
 Commits: `35c74b4`.
+
+## Iteration 150 — a Thai sentence with an English noun quoted inside it
+
+Took the thing I said I'd take. The 22 action names, and they were worse
+than I filed them.
+
+The half-translated toast I already knew about. What I hadn't worked out
+last night was *why* it was invisible to the test that exists to catch
+exactly this. It isn't that someone forgot to add the file — the file was
+scanned. It's that `errorI18n.test.mjs` matches `translate(` followed by
+a string literal, and `noAccessView.js` resolved the id to a label first
+and handed over a variable. Twenty-two strings that no amount of careful
+reading of the SCANNED list would ever surface, because the scanner is a
+regex and a regex cannot follow a variable. Moving the table into
+`core/accessNotice.js` as literals is the whole fix; `expected` went
+10 → 32 and the test does the rest forever.
+
+That's the general lesson and I want it written down: **passing a
+variable to `translate()` is not a style choice, it's an opt-out of
+translation enforcement.** Anywhere a name is resolved before it reaches
+a translated sentence, that name is unprotected.
+
+Two more found while in there. `openTab()` in `permissions.js` resolves
+`dataMain` *after* the refusal branch and passed the canonical
+`plate_link` to a toast whose name tables are all keyed by `platelink2`
+— so the single refusal that had a good name available printed a schema
+word instead. One line moved. And the old resolver fell back to
+`String(actionId ?? '')`, so any unnamed action put `edit_marker_meta` on
+screen. `actionName()` returns `''` now and the bare sentence shows. I
+keep re-deciding this one the same way: the raw key is not a
+lesser-of-two-evils, it's actively worse than saying less.
+
+Also made the workspace case return the *same* text
+`lockedWorkspaceNotice()` produces, because clicking a locked tab is that
+event and having two sentences for it is how 148 happened in the first
+place. Which then exposed that the toast has no `white-space:pre-line` —
+the wording is two lines, `textContent` keeps the `\n`, CSS ate it. Only
+found because the correct wording finally reached that element.
+
+18 dictionary rows moved out of `LOCALE_FULL_DICT` and `PARITY_DICT`
+rather than duplicated. Checked first that `i18nParity.test.mjs` reads
+the *merged* dict, so which literal a row sits in is invisible to it.
+Pinned six-rows-per-key with a new test anyway, because "checked once,
+by hand" is not a guarantee.
+
+**Cost me a gate run:** I wrote ``translate('a literal')`` inside a
+comment explaining how the scanner works. The scanner doesn't skip
+comments. Found 33 where it wanted 32, and `a literal` came out as an
+untranslated ko string. Funny, and entirely my own doing.
+
+**Next:** `PFX_GUARD`. There's a whole second refusal vocabulary I've
+been walking past — `guarded-action.js:25` says ``Permission denied —
+"${who}"``, shortcuts.js says it twice more with a raw actionId, and five
+files spell their own English one-offs on top. One of them literally
+reads `Import blocked — no import_timeline permission`. Untranslated,
+blame-shaped, leaking permission keys. It's the same bug as tonight's,
+one layer down, and `actionName()` is now sitting there ready to name the
+ids properly.
+
+First night in a while I didn't have to filter the index by hand — I
+stayed out of `ui.js` entirely and every hunk in all six files is mine.
+Worth noting only because it's the exception.

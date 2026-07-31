@@ -15120,3 +15120,94 @@ tooltips, the `#ntCard` description, Project Setup, the CutDiff
 orphaned-storage leak from 141, and `_refreshStatus()` are all unchanged.
 
 Commits: `35c74b4`.
+
+## Iteration 150 — the refusal toast: a Thai sentence with an English noun quoted inside it
+
+**The surface.** The other toast. Iteration 148 fixed the one you get for
+clicking a locked *workspace*; this is the one you get for a blocked
+*action* — Export CSV, Save Preset, Delete Marker. `showDeniedToast` in
+`auth/noAccessView.js`, fired from ~30 call sites across `ui.js`,
+`features/aceslook/`, `core/shortcuts.js`, and `auth/permissions.js`.
+
+**Three defects, one shape.** All three come from where the naming
+happened.
+
+*One — the names shipped in English.* `noAccessView.js` held a 22-entry
+`_actionLabel` table of bare English strings, resolved the id to a label,
+and handed the label to `deniedActionNotice()`. The sentence around the
+name was translated; the name was not. So a Thai user got
+`บัญชีของคุณทำสิ่งนี้ไม่ได้: "Export CSV"` — worse than either language
+whole. And it was invisible to `errorI18n.test.mjs` for a *structural*
+reason, not an oversight: the scanner matches `translate(` followed by a
+string literal and nothing else, so passing a variable made 22 strings
+unscannable no matter how carefully the file was reviewed. The table is
+now `_actionNames()` in `core/accessNotice.js`, written as 22
+`translate('…')` literals — `expected` there went 10 → 32, and the test
+now refuses to let any of them ship untranslated.
+
+*Two — `openTab()` printed a schema word.* `auth/permissions.js` keys
+tabs canonically (`plate_link`) but every name table in the app keys by
+`data-main` (`platelink2`). `openTab` resolved `dataMain` *after* the
+refusal branch and passed `tabKey` to the toast, so the one refusal with
+a perfectly good name available instead read `Your account cannot do
+this: "plate_link"`. Hoisting `const dataMain` above the gate fixes it.
+
+*Three — an unknown id was echoed verbatim.* The old label resolver fell
+back to `String(actionId ?? '')`. A blocked action with no table entry
+put `edit_marker_meta` in front of the user: a word from the permissions
+schema, which they are then implicitly asked to quote at an admin.
+`actionName()` returns `''` for anything it cannot name, and the existing
+empty-label branch shows the bare sentence. Less information, more help.
+
+**One event, one sentence.** Given a workspace key, `deniedActionNotice`
+now delegates to `lockedWorkspaceNotice()` and returns byte-identical
+text — clicking a locked tab *is* that event, and the two paths had drifted
+into two vocabularies for it. The toast also gained
+`white-space:pre-line`: the workspace wording is two sentences on two
+lines, and `textContent` keeps the `\n` while the default white-space
+collapses it into one run-on line. The fix only landed correct because
+the wording arrived through a path that has two lines in it.
+
+**Dictionary hygiene.** `Export CSV/PDF/XLSX` already had rows — three in
+`LOCALE_FULL_DICT` (zh-TW, th, id, fil) and three in `PARITY_DICT`
+(ko, ja). Those 18 rows were **moved, not copied**, into `ERROR_DICT`
+with values unchanged; 132 rows total (22 × 6) now sit in one dictionary.
+Safe because all four literals merge into a single `DICT` and
+`i18nParity.test.mjs` reads the merged result, so its `PINNED` check on
+`'Export XLSX'` is unaffected by which literal a row lives in. A new test
+pins the invariant directly: exactly six rows per key, no more.
+
+**RED before GREEN.** The new test file failed to even import against a
+`git archive HEAD` checkout (`actionName` did not exist), which proves
+RED but hides the detail, so a hand-written probe asserted each claim
+separately against HEAD sources: 7 RED, 1 already-true (`"Export CSV"`
+had six rows before the move as well as after — correct, and the reason
+the invariant is worth pinning). `accessNotice.test.mjs` went 14 → 22.
+
+**One self-inflicted failure worth recording.** First gate run came back
+red with `expected 32 translated sentences, found 33` and `untranslated
+in ko: a literal`. The 33rd was my own comment: I had written the phrase
+``translate('a literal')`` inside the explanation of how the scanner
+works, and the scanner does not skip comments. Reworded to describe the
+rule without spelling a call in it. The lesson generalises — never write
+a syntactically complete `translate('…')` inside a comment in a SCANNED
+module.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, tests-js 22 passed / 0 failed, pytest 315 passed / 7
+skipped, XSS / XXE / fail-open gates clean. Identical to baseline.
+
+**Still open.** There is a *second* refusal vocabulary, and it is worse
+than the one just fixed: the `PFX_GUARD` channel. `auth/guarded-action.js:25`
+emits ``Permission denied — "${who}"`` / ``Read-only mode — "${who}"``,
+`core/shortcuts.js:59` and `:63` do the same with a raw `actionId`, and
+five more sites spell their own English one-offs (`prep_mark.js:20183`,
+`cutdiff2/index.js:1478` / `:3436` / `:3478`,
+`components/annotateModal/index.js:7`, plus `ExportCard.js`'s
+`_noPermTitle`). All untranslated, all blame-shaped, several leaking
+snake_case permission keys — `no import_timeline permission`. That is the
+next iteration, and `actionName()` now exists to name those ids properly.
+Unchanged: twenty inline `confirm()` sites, the seven naming/metadata
+`TT()` keys, the tab `title=` tooltips, `#ntCard`, Project Setup, the
+CutDiff orphaned-storage leak from 141, `_refreshStatus()`, and the three
+permission gates that still disagree on the admin check.
