@@ -14667,3 +14667,124 @@ its snapshot at `CD_PROJECT_KEY_PREFIX + id`); `_refreshStatus()` in
 `homeScreen.js` is still too interleaved with pre-existing WIP to isolate.
 
 Commits: `fc7e5bd`.
+
+## Iteration 146 — Keyboard Shortcuts: the capitals were on the safe button
+
+**What was wrong.** Settings ▸ Keyboard Shortcuts has two Reset buttons,
+and their dialogs told the reader the opposite of the truth about which
+one to be careful with.
+
+The card's `Reset` (`#scReset`) asked
+
+    Reset Keyboard Shortcuts to defaults?
+
+and went straight to `resetShortcutsToDefaults()` →
+`setShortcutsConfig(defaultConfig())` → `localStorage.setItem`. No Save
+step, no snapshot, no undo, and every tab picks the change up on the next
+`pfx:shortcuts-changed` event. It is the most irreversible control on the
+card and it asked the mildest question on it.
+
+The editor's `Reset All` (`#scResetAll`) asked
+
+    Reset ALL shortcuts in this editor to defaults?
+
+— the only shouted word in either dialog — and then mutated `draft`, a
+deep clone that `closeModal()` throws away. Cancel undoes it completely,
+and the escape hatch is sitting on screen next to the button.
+
+So the two dialogs were sorted by how alarming they sounded, in the wrong
+order. Somebody calibrating on wording alone hesitates over the free
+action and breezes through the permanent one. Capitals are the loudest
+thing a dialog can do; spending them on the reversible action leaves
+nothing left to say when something really cannot be taken back.
+
+**The third fault.** The card handler ends with `// If modal open,
+refresh draft too` — if the editor happens to be open, resetting from the
+card re-seeds `draft` from the defaulted config and re-renders. Whatever
+the reader was assembling in that window is gone, unmentioned by the
+dialog they just agreed to and unrecoverable by the Cancel button still
+sitting there.
+
+**The fix.** Two new builders in `core/confirmText.js`, wired at
+`ui.js:21471` and `ui.js:21494`.
+
+`resetShortcutsConfirm({total, custom, editorDirty})` — the committing
+one. Says "There is no Save step and no history, so this cannot be
+undone", and prints `Shortcuts you have customised: 3 / 62`, the same two
+numbers in the same format as the status line under the card, so the
+reader can check one against the other. `computeCustomCount()` already
+returned `{total, custom}`, so the number costs nothing to obtain and the
+dialog no longer implies all 62 bindings are at stake. At `custom === 0`
+it drops the warning entirely and says nothing of theirs is lost —
+iteration 145's discipline, for the same reason: both binding sets ship
+complete, so most people who reach this button have never changed one,
+and warning them in the same words as the person with forty custom
+bindings is how a dialog teaches everybody to click through it.
+
+The open-editor line is appended only when it is true. The handler
+computes `editorDirty` as `editorOpen && !!draft && configsDiffer(draft,
+saved)`, so an editor merely sitting open raises no warning about work
+that does not exist.
+
+`resetShortcutsDraftConfirm({total, custom})` — the reversible one, with
+the capitals dropped: "Nothing is saved yet — this only changes the list
+in front of you. Closing this window without saving leaves your shortcuts
+as they are." It counts against `draft`, not the saved config, because
+the draft is what it edits.
+
+**Why the buttons are not named.** The obvious wording points at `Cancel`
+and `Save Changes`. Both are localised on screen, so quoting them in
+English would be wrong — unlike `Version History` in iteration 144, which
+genuinely reads English in every locale. Routing them through
+`translate()` was not available either: the Filipino dictionary renders
+`Cancel` as `Cancel`, which the errorI18n contract rejects as untranslated.
+The sentence describes the action instead ("closing this window without
+saving"), which is true whatever the button ends up called.
+
+**`configsDiffer`.** New export in `core/shortcuts.js`. The
+enabled-plus-sorted-combos comparison already existed inline inside
+`computeCustomCount`; both now call one `sameBinding()` helper, so
+"customised" and "changed" cannot drift apart. It iterates the known
+action ids, so a stray key in either object — an imported file, an action
+retired in a later build — is not counted as a difference.
+
+**RED before GREEN.** Eleven assertions were run against `git show
+HEAD:` copies of `ui.js`, `confirmText.js`, `shortcuts.js` and `i18n.js`
+before any edit: 11/11 described HEAD as it stood, including that the
+card handler re-seeds `draft` with no mention of unsaved work and that
+the modal handler never touches storage. The first attempt scored 8/11
+because it anchored on the first `btnReset?.addEventListener` in the
+file, which is iteration 145's note-types button — the script now anchors
+on the shortcuts dialog literal and walks back. `tests-js/confirmText.test.mjs`
+went 44 → 54 tests; `errorI18n.test.mjs`'s expected count for
+`core/confirmText.js` went 16 → 24.
+
+**Dictionary.** Eight new English strings × six locales = 48 rows in
+`modules/i18n.js`. All ≤170 characters and none byte-identical to
+English, per the errorI18n contract. The Japanese and Traditional Chinese
+lines reuse the window name already in the dictionary
+(「ショートカットを編集」/「編輯快捷鍵」) so the dialog points at the
+window under the name the reader sees on it.
+
+**Deferred.** The status readout key `Custom` has zero dictionary
+entries, so `Custom 3 / 62` under the card reads English in all six
+locales while `Keyboard Shortcuts`, `Edit Shortcuts`, `Cancel` and `Save
+Changes` around it are translated. The new dialogs print the same numbers
+under a translated label, so the mismatch is now visible side by side.
+Logged rather than done — it is a one-key change but it belongs with a
+sweep of the other untranslated status lines, not with this dialog.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open
+gates clean. The single `not ok` match in the log is the test *name*
+`PASS - exportPreset: missing → not ok (got false, want false)`, the same
+false positive as 144 and 145.
+
+**Still open.** Twenty-one `confirm()` sites remain inline and
+English-only. The `#ntCard` description in `index.html` still names one
+of the two lists it resets (deferred in 145). The Project Setup panel is
+still untranslated; the CutDiff orphaned-storage leak from 141 is still
+open (`_cdDeleteProject` splices a project out of the index but never
+removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`); `_refreshStatus()`
+in `homeScreen.js` is still too interleaved with pre-existing WIP to
+isolate.

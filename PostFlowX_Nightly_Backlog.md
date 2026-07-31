@@ -7583,3 +7583,69 @@ neighbour is the one that commits. The CutDiff orphaned-storage leak from
 141 is still open, and the Project Setup panel is still untranslated.
 
 Commits: `fc7e5bd`.
+
+## Iteration 146 — Keyboard Shortcuts: the capitals were on the safe button
+
+Two Reset buttons, two dialogs, and between them exactly one shouted
+word — attached to the wrong button.
+
+The card's `Reset` said "Reset Keyboard Shortcuts to defaults?" and wrote
+defaults into localStorage on the spot. No Save step, no snapshot, no
+undo, and every open tab picks it up. The editor's `Reset All` said
+"Reset **ALL** shortcuts in this editor to defaults?" and edited a draft
+object that Cancel throws in the bin. Read the two dialogs cold and you
+would guess the second one was the dangerous one. Somebody calibrating on
+tone alone hesitates over the free action and clicks straight through the
+permanent one, which is worse than either dialog being wrong on its own.
+
+There was a quieter third fault. The card handler finishes with a comment
+saying "If modal open, refresh draft too" — so if the editor happened to
+be open, resetting from the card silently re-seeded the draft from the
+defaulted config and re-rendered. An afternoon's worth of remapping,
+gone, with the Cancel button that would have saved it still visible and
+now useless. The dialog never mentioned it.
+
+Both dialogs now come out of `core/confirmText.js`. The committing one
+says there is no Save step and no history, so it cannot be undone, and
+prints the number at stake — `Shortcuts you have customised: 3 / 62`,
+formatted exactly like the `Custom 3 / 62` readout under the card so the
+two can be read against each other. At zero it drops the warning
+entirely: both binding sets ship complete and most people who reach this
+button have never touched one, and warning them identically to the person
+with forty custom bindings is how you train everybody to click through.
+The unsaved-editor line is appended only when `configsDiffer(draft,
+saved)` says there is unsaved work to lose.
+
+The editor's dialog loses the capitals and gains the way out: "Nothing is
+saved yet — this only changes the list in front of you. Closing this
+window without saving leaves your shortcuts as they are."
+
+The tempting wording named the buttons — Cancel, Save Changes. Both are
+translated on screen, so English names would be wrong, and putting them
+through `translate()` was not an option either: Filipino renders `Cancel`
+as `Cancel`, which the i18n contract reads as an untranslated string and
+fails the build over. Describing the action instead survives whatever the
+buttons end up called.
+
+`configsDiffer` is new in `core/shortcuts.js`, sharing a `sameBinding()`
+helper with `computeCustomCount` rather than carrying a second copy of
+the same enabled-plus-sorted-combos rule, so "customised" and "changed"
+cannot come to disagree.
+
+Eleven RED assertions against `git show HEAD:` copies first — the first
+run scored 8/11 for a silly reason, having anchored on the first
+`btnReset` in the file, which is last night's note-types button. 48 new
+dictionary rows, ten new tests, 44 → 54 in `confirmText.test.mjs`.
+
+`ui.js` still holds six hunks of other people's uncommitted work. Only my
+five went in, same rebuild-the-index technique, `git diff --cached` read
+back to prove it.
+
+**Next:** twenty-one `confirm()` sites left. Worth noting one thing this
+iteration exposed rather than fixed: the `Custom` in `Custom 3 / 62` has
+no dictionary entry at all, so that readout is English in six locales
+while everything around it is translated — and now the dialog above it
+prints the same numbers under a label that *is* translated, which makes
+the gap visible. That belongs with a sweep of the other untranslated
+status lines. The CutDiff orphaned-storage leak from 141 is still open,
+and the Project Setup panel is still untranslated.

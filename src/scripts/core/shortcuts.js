@@ -289,6 +289,19 @@ export function resolveShortcutAction(e, actionIds, opts={}){
   return null;
 }
 
+// Two bindings are the same when they are on/off together and carry the same
+// set of combos — order within combos is a rendering detail, not a difference.
+// computeCustomCount had this inline; configsDiffer needs the identical rule,
+// and two copies of it would let "customised" and "changed" drift apart.
+function sameBinding(a, b){
+  const x = a || {};
+  const y = b || {};
+  if ((x.enabled !== false) !== (y.enabled !== false)) return false;
+  const xc = (Array.isArray(x.combos) ? x.combos : []).slice().sort().join('|');
+  const yc = (Array.isArray(y.combos) ? y.combos : []).slice().sort().join('|');
+  return xc === yc;
+}
+
 export function computeCustomCount(cfg){
   const cur = cfg || getShortcutsConfig();
   const def = defaultConfig();
@@ -296,11 +309,23 @@ export function computeCustomCount(cfg){
   let total = 0;
   for (const id of Object.keys(def)){
     total++;
-    const a = cur[id] || {};
-    const d = def[id] || {};
-    const curCombos = (a.combos || []).slice().sort().join('|');
-    const defCombos = (d.combos || []).slice().sort().join('|');
-    if ((a.enabled !== false) !== (d.enabled !== false) || curCombos !== defCombos) custom++;
+    if (!sameBinding(cur[id], def[id])) custom++;
   }
   return { total, custom };
+}
+
+/**
+ * Whether two shortcut configs bind anything differently.
+ *
+ * Used to tell an untouched editor from one holding unsaved edits, so the
+ * card's Reset can warn about work in the open editor only when there is any.
+ * Compared over the known action ids, so a stray key in either object — an
+ * imported file, an action retired in a later build — is not a "difference".
+ */
+export function configsDiffer(a, b){
+  const def = defaultConfig();
+  for (const id of Object.keys(def)){
+    if (!sameBinding(a?.[id], b?.[id])) return true;
+  }
+  return false;
 }

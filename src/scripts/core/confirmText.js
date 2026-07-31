@@ -386,3 +386,113 @@ export function resetNoteTypesConfirm(lists = {}) {
 
   return { title, detail, changed, count, text: `${title}\n\n${detail}\n${count}` };
 }
+
+// ── The capitals were on the safe button ─────────────────────────────────────
+//
+// Keyboard Shortcuts has two Reset buttons, and until now their dialogs told
+// the reader the opposite of the truth about which one to be careful with.
+//
+// The card's "Reset" asked
+//
+//     Reset Keyboard Shortcuts to defaults?
+//
+// and went straight to resetShortcutsToDefaults() → setShortcutsConfig(
+// defaultConfig()) → localStorage.setItem. No Save step, no snapshot, no undo,
+// and every tab picks it up on the next pfx:shortcuts-changed event. It is the
+// most irreversible button on the card and it asked the mildest question on it.
+//
+// The editor's "Reset All" asked
+//
+//     Reset ALL shortcuts in this editor to defaults?
+//
+// — the only shouted word in either dialog — and then mutated `draft`, a deep
+// clone that closeModal() throws away. Cancel undoes it completely. The editor
+// even keeps its escape hatch on screen next to the button.
+//
+// So the two dialogs were sorted by how alarming they sounded, in the wrong
+// order. A reader calibrating on the wording alone would hesitate over the free
+// action and breeze through the permanent one. Capitals are the loudest thing a
+// dialog can do; spending them on the reversible action leaves nothing left to
+// say when something really cannot be taken back.
+//
+// ── The line about the open editor ───────────────────────────────────────────
+//
+// There is a third fault, quieter than the other two. The card's handler ends
+// with "If modal open, refresh draft too" — if the editor happens to be open,
+// resetting from the card re-seeds `draft` from the defaulted config and
+// re-renders. Whatever the reader had been assembling in that window is gone,
+// unmentioned by the dialog they just agreed to and unrecoverable by the Cancel
+// button still sitting there. The dialog now says so, and only when it is true:
+// the caller passes editorDirty, computed with configsDiffer, so an editor that
+// is merely open does not raise a warning about work that does not exist.
+//
+// ── Counting, again ──────────────────────────────────────────────────────────
+//
+// Same discipline as iteration 145. computeCustomCount already returns
+// {total, custom}, so the committing dialog can say how many of the reader's
+// own bindings are at stake instead of implying all 62 are, and at zero it
+// drops the warning entirely rather than teaching people to click past it.
+//
+// The count is printed as "3 / 62" rather than "3 of 62": that is the format
+// the status line under the card already uses, so the two numbers can be read
+// against each other, and it keeps a joining word out of six translations.
+
+/**
+ * Text for "Reset" on the Settings ▸ Keyboard Shortcuts card.
+ *
+ * This is the committing one: it writes defaults to storage immediately.
+ *
+ * @param {{custom?:number, total?:number, editorDirty?:boolean}} [state]
+ * @returns {{title:string, detail:string, count:string, note:string, custom:number, total:number, text:string}}
+ */
+export function resetShortcutsConfirm(state = {}) {
+  const custom = Number.isFinite(state.custom) ? Math.max(0, state.custom) : 0;
+  const total = Number.isFinite(state.total) ? Math.max(0, state.total) : 0;
+
+  const title = translate('Reset every keyboard shortcut now?');
+  const note = state.editorDirty
+    ? translate('The Edit Shortcuts window is open with changes you have not saved. Those are replaced too.')
+    : '';
+
+  const lines = [];
+  let detail;
+  let count = '';
+
+  if (custom === 0) {
+    detail = translate('Your shortcuts are already the original ones, so nothing of yours is lost.');
+    lines.push(detail);
+  } else {
+    detail = translate('Your shortcuts change everywhere in PostFlowX straight away. There is no Save step and no history, so this cannot be undone.');
+    // No colon: the numbers are appended after it.
+    count = `${translate('Shortcuts you have customised')}: ${custom} / ${total}`;
+    lines.push(detail, count);
+  }
+  if (note) lines.push(note);
+
+  return { title, detail, count, note, custom, total, text: `${title}\n\n${lines.join('\n')}` };
+}
+
+/**
+ * Text for "Reset All" inside the Edit Shortcuts window.
+ *
+ * This one only edits the draft, so it says so instead of shouting.
+ *
+ * @param {{custom?:number, total?:number}} [state]  Counted against the draft.
+ * @returns {{title:string, detail:string, count:string, custom:number, total:number, text:string}}
+ */
+export function resetShortcutsDraftConfirm(state = {}) {
+  const custom = Number.isFinite(state.custom) ? Math.max(0, state.custom) : 0;
+  const total = Number.isFinite(state.total) ? Math.max(0, state.total) : 0;
+
+  const title = translate('Put every shortcut in this window back to its original?');
+
+  if (custom === 0) {
+    const detail = translate('Every shortcut in this window already matches its original, so this changes nothing.');
+    return { title, detail, count: '', custom, total, text: `${title}\n\n${detail}` };
+  }
+
+  const detail = translate('Nothing is saved yet — this only changes the list in front of you. Closing this window without saving leaves your shortcuts as they are.');
+  const count = `${translate('Shortcuts you have customised')}: ${custom} / ${total}`;
+
+  return { title, detail, count, custom, total, text: `${title}\n\n${detail}\n${count}` };
+}

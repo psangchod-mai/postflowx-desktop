@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 const {
   deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm,
   resetSettingsConfirm, resetNoteTypesConfirm,
+  resetShortcutsConfirm, resetShortcutsDraftConfirm,
 } = await import('../src/scripts/core/confirmText.js');
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -724,4 +725,168 @@ test('the card readout counts both lists it can reset', () => {
   // reader's language for free — but only while that stays true.
   assert.ok(i18nSrc.includes('"Scope of Work":'),
     'the status label lost its translations and now reads English in six locales');
+});
+
+// ── The pair whose dialogs were sorted the wrong way round ───────────────────
+//
+// Keyboard Shortcuts has two Resets. The card's one writes defaults to
+// localStorage on the spot; the editor's one edits a draft that Cancel throws
+// away. The permanent one asked "Reset Keyboard Shortcuts to defaults?" and
+// the free one shouted "Reset ALL shortcuts in this editor to defaults?" — the
+// only capitals in either dialog, spent on the action that costs nothing.
+//
+// These tests pin the ordering rather than the exact prose: the committing
+// dialog must say it cannot be undone, the draft dialog must say nothing is
+// saved yet, and neither may shout.
+
+test('the committing reset says it cannot be undone and counts the cost', () => {
+  const { title, detail, count, text } = resetShortcutsConfirm({ total: 62, custom: 3 });
+
+  assert.match(detail, /cannot be undone/,
+    'the dialog that writes to storage stopped saying so');
+  assert.match(detail, /no Save step/,
+    'the absence of a Save step is what makes this one different from the editor');
+  // The status line under the card reads "Custom 3 / 62". Printing the same
+  // two numbers the same way is what lets a reader check one against the other.
+  assert.equal(count, 'Shortcuts you have customised: 3 / 62');
+  assert.ok(text.startsWith(title + '\n\n'), 'the question is no longer first');
+  assert.ok(text.includes(count), 'the count was built but never shown');
+});
+
+test('with nothing customised the committing reset drops the warning', () => {
+  // Both lists of bindings ship complete and usable, so most people who reach
+  // this button have never changed one. Warning them in the same words as the
+  // person with forty custom bindings is how a dialog teaches everybody to
+  // click through it.
+  const { detail, count, text, custom } = resetShortcutsConfirm({ total: 62, custom: 0 });
+
+  assert.equal(custom, 0);
+  assert.equal(count, '', 'a count of zero was printed as if it were news');
+  assert.doesNotMatch(detail, /cannot be undone/,
+    'the reader is warned about losing work they never did');
+  assert.match(detail, /nothing of yours is lost/);
+  assert.doesNotMatch(text, /\d/, 'a number leaked into the nothing-to-lose case');
+});
+
+test('the open-editor line appears only when there is unsaved work to lose', () => {
+  // The card's handler re-seeds the editor's draft after resetting. That is
+  // the one consequence a reader cannot see coming, and also the one that is
+  // usually not happening — an editor sitting open on an untouched draft loses
+  // nothing.
+  const clean = resetShortcutsConfirm({ total: 62, custom: 3, editorDirty: false });
+  assert.equal(clean.note, '');
+  assert.doesNotMatch(clean.text, /Edit Shortcuts/);
+
+  const dirty = resetShortcutsConfirm({ total: 62, custom: 3, editorDirty: true });
+  assert.match(dirty.note, /have not saved/);
+  assert.match(dirty.note, /Edit Shortcuts/, 'the warning does not name the window it means');
+  assert.ok(dirty.text.endsWith(dirty.note),
+    'the surprise is buried above the count instead of last');
+});
+
+test('the draft reset says nothing is saved yet, and does not shout', () => {
+  const { title, detail, count, text } = resetShortcutsDraftConfirm({ total: 62, custom: 5 });
+
+  assert.match(detail, /Nothing is saved yet/);
+  assert.match(detail, /Closing this window without saving/,
+    'the way out is not stated, which is the whole point of this dialog');
+  assert.doesNotMatch(text, /cannot be undone/,
+    'a reversible action is described as permanent');
+  assert.equal(count, 'Shortcuts you have customised: 5 / 62');
+  assert.ok(text.startsWith(title + '\n\n'));
+});
+
+test('an unchanged draft is told it is unchanged', () => {
+  const { detail, count, text } = resetShortcutsDraftConfirm({ total: 62, custom: 0 });
+  assert.match(detail, /already matches its original/);
+  assert.equal(count, '');
+  assert.doesNotMatch(text, /\d/);
+});
+
+test('neither shortcuts dialog shouts a word', () => {
+  // "ALL" was the loudest thing either dialog did and it was attached to the
+  // action you could take back. Capitals are a finite resource in a warning.
+  const texts = [
+    resetShortcutsConfirm({ total: 62, custom: 3, editorDirty: true }).text,
+    resetShortcutsConfirm({ total: 62, custom: 0 }).text,
+    resetShortcutsDraftConfirm({ total: 62, custom: 5 }).text,
+    resetShortcutsDraftConfirm({ total: 62, custom: 0 }).text,
+  ];
+  for (const t of texts) {
+    for (const word of t.split(/[^A-Za-z]+/)) {
+      if (word.length < 2) continue;
+      if (word === 'PostFlowX') continue;   // a product name, not emphasis
+      assert.notEqual(word, word.toUpperCase(), `"${word}" is shouted`);
+    }
+  }
+});
+
+test('both shortcuts dialogs go through translate()', () => {
+  const committing = [];
+  withTranslator((s) => { committing.push(s); return `«${s}»`; },
+    () => resetShortcutsConfirm({ total: 62, custom: 3, editorDirty: true }));
+  assert.deepEqual(committing, [
+    'Reset every keyboard shortcut now?',
+    'The Edit Shortcuts window is open with changes you have not saved. Those are replaced too.',
+    'Your shortcuts change everywhere in PostFlowX straight away. There is no Save step and no history, so this cannot be undone.',
+    'Shortcuts you have customised',
+  ]);
+
+  const draft = [];
+  withTranslator((s) => { draft.push(s); return `«${s}»`; },
+    () => resetShortcutsDraftConfirm({ total: 62, custom: 5 }));
+  assert.deepEqual(draft, [
+    'Put every shortcut in this window back to its original?',
+    'Nothing is saved yet — this only changes the list in front of you. Closing this window without saving leaves your shortcuts as they are.',
+    'Shortcuts you have customised',
+  ]);
+
+  // The numbers must survive translation untouched — they are the reader's
+  // own tally, not prose.
+  const { text } = withTranslator(() => 'x', () => resetShortcutsConfirm({ total: 62, custom: 3 }));
+  assert.match(text, /3 \/ 62/);
+});
+
+test('a caller that passes nothing still gets a usable dialog', () => {
+  // Both handlers read their counts from computeCustomCount, which throws if
+  // localStorage is unavailable. A dialog that renders "undefined / undefined"
+  // is worse than one that renders no count at all.
+  for (const build of [resetShortcutsConfirm, resetShortcutsDraftConfirm]) {
+    const bad = [build(), build({}), build({ custom: NaN, total: null })];
+    for (const r of bad) {
+      assert.equal(r.custom, 0);
+      assert.equal(r.count, '');
+      assert.doesNotMatch(r.text, /undefined|NaN|null/);
+    }
+  }
+});
+
+test('ui.js gives each shortcuts Reset the dialog that matches what it does', () => {
+  // ui.js has more than one btnReset; anchor on the shortcuts wiring.
+  const at = uiSrc.indexOf('resetShortcutsConfirm({');
+  assert.ok(at > 0, 'the committing dialog is not built from the module');
+  const card = uiSrc.slice(uiSrc.lastIndexOf('btnReset?.addEventListener', at));
+  const cardHandler = card.slice(0, card.indexOf('\n  });'));
+
+  assert.doesNotMatch(cardHandler, /confirm\('Reset Keyboard Shortcuts to defaults\?'\)/,
+    'the old inline dialog is still in the committing handler');
+  assert.match(cardHandler, /confirm\(ask\.text\)/);
+  // The count has to be measured against the config that is about to be
+  // replaced, not re-read after the write.
+  assert.match(cardHandler, /const saved = getShortcutsConfig\(\);[\s\S]*computeCustomCount\(saved\)/);
+  assert.match(cardHandler, /editorDirty: editorOpen && !!draft && configsDiffer\(draft, saved\)/,
+    'the unsaved-editor warning is not wired to a real comparison');
+
+  const modalStart = uiSrc.indexOf('btnResetAll?.addEventListener');
+  const modalHandler = uiSrc.slice(modalStart, uiSrc.indexOf('\n  });', modalStart));
+  assert.doesNotMatch(modalHandler, /Reset ALL shortcuts/,
+    'the shouted dialog survives on the reversible button');
+  assert.match(modalHandler, /resetShortcutsDraftConfirm\(\{ total, custom \}\)/);
+  assert.match(modalHandler, /computeCustomCount\(draft\)/,
+    'the draft dialog counts the saved config instead of the draft it edits');
+  assert.doesNotMatch(modalHandler, /setShortcutsConfig|resetShortcutsToDefaults/,
+    'the draft-only reset started writing to storage, which makes its dialog a lie');
+
+  assert.match(uiSrc, /import \{[^}]*\bresetShortcutsConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/);
+  assert.match(uiSrc, /import \{[^}]*\bresetShortcutsDraftConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/);
 });

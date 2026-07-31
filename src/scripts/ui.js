@@ -39,6 +39,7 @@ import {
   captureComboFromEvent,
   comboToDisplay,
   computeCustomCount,
+  configsDiffer,
   actionDefaultCombos,
 } from "./core/shortcuts.js";
 import {
@@ -66,7 +67,7 @@ import {
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
-import { deleteProjectConfirm, resetNoteTypesConfirm } from "./core/confirmText.js";
+import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm } from "./core/confirmText.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -21467,11 +21468,22 @@ function wireShortcutsSettings(){
   btnOpen?.addEventListener('click', ()=>openModal());
 
   btnReset?.addEventListener('click', ()=>{
-    if (!confirm('Reset Keyboard Shortcuts to defaults?')) return;
+    // The committing half of the pair: straight to localStorage, no Save step
+    // and no history. It also wipes an open editor's unsaved work, so the
+    // dialog is told about that. See core/confirmText.js for the wording.
+    const saved = getShortcutsConfig();
+    const { total, custom } = computeCustomCount(saved);
+    const editorOpen = modal?.style?.display === 'flex';
+    const ask = resetShortcutsConfirm({
+      total,
+      custom,
+      editorDirty: editorOpen && !!draft && configsDiffer(draft, saved),
+    });
+    if (!confirm(ask.text)) return;
     resetShortcutsToDefaults();
     refreshStatus();
     // If modal open, refresh draft too.
-    if (modal.style.display === 'flex'){
+    if (editorOpen){
       draft = JSON.parse(JSON.stringify(getShortcutsConfig() || {}));
       render();
     }
@@ -21479,7 +21491,10 @@ function wireShortcutsSettings(){
 
   btnResetAll?.addEventListener('click', ()=>{
     if (!draft) return;
-    if (!confirm('Reset ALL shortcuts in this editor to defaults?')) return;
+    // The reversible half: nothing leaves the draft until Save Changes, and
+    // Cancel throws the draft away, so this dialog does not shout.
+    const { total, custom } = computeCustomCount(draft);
+    if (!confirm(resetShortcutsDraftConfirm({ total, custom }).text)) return;
     for (const a of actions){
       draft[a.id] = { enabled:true, combos: actionDefaultCombos(a.id) };
     }
