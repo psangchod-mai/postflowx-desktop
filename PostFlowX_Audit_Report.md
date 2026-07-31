@@ -14788,3 +14788,5 @@ open (`_cdDeleteProject` splices a project out of the index but never
 removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`); `_refreshStatus()`
 in `homeScreen.js` is still too interleaved with pre-existing WIP to
 isolate.
+
+Commits: `923ea6b`.

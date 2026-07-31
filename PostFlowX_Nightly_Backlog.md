@@ -7649,3 +7649,5 @@ prints the same numbers under a label that *is* translated, which makes
 the gap visible. That belongs with a sweep of the other untranslated
 status lines. The CutDiff orphaned-storage leak from 141 is still open,
 and the Project Setup panel is still untranslated.
+
+Commits: `923ea6b`.
