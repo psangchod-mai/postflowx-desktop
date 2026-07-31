@@ -15504,3 +15504,5 @@ Unchanged: twenty inline `confirm()` sites, `bSaveAs`'s raw `prompt()`, the
 seven naming/metadata `TT()` keys, the tab `title=` tooltips, `#ntCard`,
 Project Setup, the CutDiff orphaned-storage leak from 141, `_refreshStatus()`,
 and the three permission gates that still disagree on the admin check.
+
+Commits: `773414f`.

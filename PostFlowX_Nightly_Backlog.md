@@ -8102,3 +8102,5 @@ leave the failed name sitting there afterwards. They do raise a banner, so it is
 the mild version — but the app is still displaying a project it does not have.
 And `Loaded ${name}` is untranslated English in seven places, which is the last
 raw string on the project bar.
+
+Commits: `773414f`.
