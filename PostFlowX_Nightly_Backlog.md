@@ -7362,3 +7362,72 @@ splices a project out of the index but never removes its snapshot at
 `CD_PROJECT_KEY_PREFIX + id`.
 
 Commits: `75f54e4`.
+
+---
+
+### 143 — a dialog that frightened people away from a safe click
+
+Last night's fix was a dialog that withheld good news. Tonight's is the
+same fault turned inside out: one that actively denied it.
+
+IMF ▸ Proxy QC has a Delete Proxy button, and it said `This cannot be
+undone.` That sentence is accurate about the file and wrong about
+everything the reader cares about. The proxy is a cache entry. The
+companion writes it to a proxy root and indexes it in a
+content-addressable registry keyed on the CPL and its track files, so
+`▶ Generate` on the same package builds it back. There is even a prune
+command for exactly this. The button's tooltip already said "cached" —
+but a tooltip is not what anyone reads with the pointer over an OK
+button.
+
+So an operator standing in front of studio master material was told a
+click was permanent when it was a cache eviction. Nobody clicks that.
+Multi-gigabyte transcodes sit there until a disk fills, and the person
+who eventually clears them is not the person the warning was written for.
+
+It now reads:
+
+    Delete the proxy video?
+
+    …/postflowx/proxies/imf/8f3caa21-proxy.mp4
+
+    This only deletes the preview video PostFlowX made. The IMF package
+    itself is not changed.
+    You can make it again whenever you need it — ▶ Generate
+
+I did not want to write "the IMF package itself is not changed" on the
+strength of it being probably true. The proxy root is user-configurable,
+so a proxy can end up inside the package folder. What actually makes the
+sentence safe is that the companion's `_delete_proxy` will only build a
+delete list from a `.mp4` path plus that stem's `.json`, `.progress` and
+`.log` siblings, and IMF assets are `.mxf` and `.xml`. The delete cannot
+reach them by construction rather than by good manners. There is now a
+test that reads that function out of `api.py` and fails if anyone
+loosens the suffix check, because the day that guard relaxes is the day
+this dialog starts lying.
+
+Paths get their own truncation. Names clamp from the right; a path
+clamped from the right loses the filename and leaves you staring at a
+directory you already knew. So the head goes and the tail stays.
+
+`▶ Generate` is in English on purpose, not by omission. i18n keys on whole
+strings, and while the dictionary has "Generate", the button's text node
+is `▶ Generate` — and the key matcher folds whitespace and case, never
+the glyph. That button reads English in Thai and Korean too, so naming it
+in English is the accurate thing to do in every locale. There is a test
+that fails if someone later adds the glyphed string to the dictionary and
+quietly makes the hint wrong.
+
+`imf_ui.js` has three hunks of somebody else's uncommitted work in it — a
+`fileMap` Map-vs-`Object.keys` false-FAIL fix and an AUD004 label branch.
+Only my two lines went in, same rebuild-the-index-entry technique as the
+last two nights, staged diff read back to prove it.
+
+One correction to last night's note: I said twenty-four `confirm()` sites
+were left. The survey regex missed `projectManager.js:436`, which uses
+`window.confirm(`. It was twenty-six. It is twenty-five now.
+
+**Next:** twenty-five to go, and seven of them are "Reset X to defaults?"
+— one helper should take the whole class. The CutDiff orphaned-storage
+leak from 141 is still open: `_cdDeleteProject` splices a project out of
+the index but never removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`.

@@ -14261,3 +14261,127 @@ never removes its stored snapshot at `CD_PROJECT_KEY_PREFIX + id`.
 isolate safely.
 
 Commits: `75f54e4`.
+
+---
+
+## Iteration 143 — the delete that was safe all along and said otherwise
+
+**Defect.** IMF ▸ Proxy QC has a `🗑 Delete Proxy` button whose dialog
+read:
+
+    Delete proxy file?
+
+    /Users/…/.cache/postflowx/proxies/imf/8f3caa21….mp4
+
+    This cannot be undone.
+
+Every word of that is true about the file and wrong about the
+consequence. The proxy is a *cache entry*: the companion writes it into a
+proxy root (`~/.cache/postflowx/proxies/` by default) and indexes it in a
+content-addressable registry keyed on the CPL id, track-file ids, total
+frames and edit rate, so pressing `▶ Generate` on the same package
+rebuilds it. `proxy_registry.py` even ships `prune_registry()`. The
+button's own tooltip knows this — it reads "Delete cached proxy file for
+this CPL" — but a tooltip is not what anyone reads at the moment of
+deciding.
+
+So the app told an operator standing in front of a panel of studio master
+material that a click was permanent when it was a cache eviction. The
+predictable outcome is that nobody clicks it and multi-gigabyte
+transcodes accumulate until a disk fills. This is iteration 142's defect
+inverted: there the dialog withheld the good news, here it denied it.
+Secondarily, the dialog was English-only like the rest, and printed
+`(unknown path)` when it had no path — a line carrying no information,
+placed where the reader is already under pressure.
+
+**Fix.** `deleteProxyConfirm(path)` in `core/confirmText.js`, wired into
+`imf_ui.js`'s `imfProxyDeleteBtn` handler. English output:
+
+    Delete the proxy video?
+
+    …/postflowx/proxies/imf/8f3caa21-proxy.mp4
+
+    This only deletes the preview video PostFlowX made. The IMF package
+    itself is not changed.
+    You can make it again whenever you need it — ▶ Generate
+
+Three new sentences × six locales = 18 dictionary rows.
+
+**Verified before printed, not assumed.** "The IMF package itself is not
+changed" is a promise about someone's studio masters, and the proxy root
+is user-configurable — `setProxyRoot` (api.py:2087) means a proxy *can*
+be written inside the folder holding the package. The reassurance
+survives that only because `_delete_proxy` (api.py:903) builds its delete
+list solely from a path whose suffix is `.mp4`, plus that same stem's
+`.json`, `.progress` and `.log` siblings. IMF assets are `.mxf` and
+`.xml`. The delete cannot reach them by construction rather than by
+convention. Test 9 reads that function out of `api.py` and pins the
+suffix guard, the sibling tuple, and the fact that there are exactly two
+`paths_to_remove.append` calls, so relaxing the guard fails the build
+rather than silently turning this sentence into a lie.
+
+**`cleanPath` is not `cleanName`.** `cleanName` clamps from the right,
+which is right for a project name. A path clamped from the right loses
+the filename — the one token that says *which* file — and hands the
+reader a directory they already knew. `cleanPath` keeps the tail and
+prefixes `…`, clamped at 64 code points (`Array.from`, so a Thai or
+Japanese path cannot be sliced mid-surrogate).
+
+**Why the button name is in English.** The hint points at `▶ Generate`,
+three buttons along. That label is not translated, and not by oversight:
+i18n keys on whole strings, the dictionary has `"Generate"`, and the
+button's text node is `▶ Generate`, which `_candKeys` (i18n.js) folds only
+for whitespace and case — never for the glyph. So it reads English in
+Thai and Korean too, and naming it in English is the accurate choice in
+every locale rather than a shortcut. It is appended past an em dash as
+its own token, the same bargain 142 struck with the Undo combo. A test
+asserts `"▶ Generate":` is absent from the dictionary, so if anyone later
+adds it the hint's claim is caught rather than quietly falsified.
+
+**Test.** `tests-js/confirmText.test.mjs` grows 20 → 29; the
+`errorI18n.test.mjs` `SCANNED` count for `core/confirmText.js` goes
+6 → 9.
+
+**RED proofs.** Four realistic regressions:
+
+1. Call site reverted to the old inline template → `✖ imf_ui.js builds
+   the proxy delete dialog from this module`.
+2. `cleanPath` switched to clamp from the right → `✖ the proxy path keeps
+   its filename when it is too long to show`.
+3. One Thai row dropped → `✖ th: every failure message is translated`
+   and `✖ the six locales cover exactly the same keys`.
+4. `_delete_proxy`'s `.mp4` suffix guard loosened → `✖ the companion can
+   only ever unlink an .mp4 — what the reassurance rests on`.
+
+All four files restored from `/tmp` and verified byte-identical by
+shasum (OK × 4).
+
+**Working-tree discipline.** `src/scripts/modules/imf/imf_ui.js` carries
+three pre-existing uncommitted hunks that are not mine — a
+`pkg.fileMap instanceof Map` fix in `PLUGFEST_TESTS` (`Object.keys()` on a
+Map returns `[]` and flags every MXF as missing) and an `AUD004` WARN
+branch in `_labelResultsToValidation()`. Only my two hunks were
+committed, by rebuilding the index entry from `git show HEAD:…`,
+re-applying both edits under `assert count == 1`, and
+`git update-index --cacheinfo` — the technique used for `ui.js` in 141 and
+`prep_mark.js` in 142, because interactive `git add -p` is unavailable
+here. The staged diff was read back: 4 added lines, 1 removed, nothing
+else.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail
+/ 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates
+clean.
+
+**Count correction.** Iteration 142 recorded twenty-four remaining
+`confirm()` sites. That count missed `projectManager.js:436`, which uses
+the `window.confirm(` form and slipped the survey's regex. The true
+figure was twenty-six before 143 and is twenty-five after it.
+
+**Still open.** Twenty-five `confirm()` sites remain inline and
+English-only, including a class of seven "Reset X to defaults?" dialogs
+that could share one helper. The CutDiff orphaned-storage leak logged in
+141 is unchanged: `_cdDeleteProject` splices a project out of the index
+but never removes its stored snapshot at `CD_PROJECT_KEY_PREFIX + id`.
+`_refreshStatus()` in `homeScreen.js` remains untouched since iterations
+130–140 — the pre-existing WIP around it is still too interleaved to
+isolate safely.

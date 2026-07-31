@@ -14,6 +14,7 @@ import { parseDoviXml, annotateShots, validateDoviShots, exportDoviXml, buildUui
 import { analyzeDolbyVisionFromImfPackage, DOVI_STATUS, DOVI_SOURCE, doviStatusLabel, doviStatusSeverity } from './imf_dovi_extractor.js';
 import { storeNamedHandle, loadNamedHandle, clearNamedHandle } from '../../core/projectFile.js';
 import { friendlyStatus } from '../../core/friendlyError.js';
+import { deleteProxyConfirm } from '../../core/confirmText.js';
 import { runAllUgChecks } from './imf_ug_checks.js';
 import { validateApp2E, parseDeliverySchema, validateAgainstSchema, APP2E_PRESET } from './imf_delivery_schema.js';
 import { toCSV as buildReportCSV, toJSON as buildReportJSON } from './imfReport.js';
@@ -5732,7 +5733,9 @@ function wireProxyQC() {
       setStatus('warn', 'No proxy path recorded — cannot delete.');
       return;
     }
-    const confirmed = confirm(`Delete proxy file?\n\n${_lastProxyInfo.proxyPath || '(unknown path)'}\n\nThis cannot be undone.`);
+    // Localised, and no longer claims a cache eviction is permanent: the proxy
+    // is rebuilt by ▶ Generate on this same CPL. See core/confirmText.js.
+    const confirmed = confirm(deleteProxyConfirm(_lastProxyInfo.proxyPath).text);
     if (!confirmed) return;
     deleteBtn.disabled = true;
     deleteBtn.textContent = '⏳ Deleting…';

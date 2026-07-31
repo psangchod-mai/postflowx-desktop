@@ -43,8 +43,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const { deleteProjectConfirm, deleteMarkerConfirm } =
+const { deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm } =
   await import('../src/scripts/core/confirmText.js');
+
+const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+const imfUiSrc = read('../src/scripts/modules/imf/imf_ui.js');
+const indexHtmlSrc = read('../src/index.html');
+const i18nSrc = read('../src/scripts/modules/i18n.js');
 
 const uiSrc = readFileSync(
   fileURLToPath(new URL('../src/scripts/ui.js', import.meta.url)), 'utf8',
@@ -333,5 +338,135 @@ test('ui.js builds the delete dialog from this module', () => {
   assert.doesNotMatch(
     uiSrc, /This removes PFX\/\$\{name\}\//,
     'the old English-only delete template is still in ui.js',
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMF ▸ Proxy QC — the delete that was safe all along and said otherwise.
+//
+// The project delete warns because it must. The marker delete reassures
+// because it can. This third one had to *retract* a warning: it said "This
+// cannot be undone." about a file the app rebuilds on demand from a
+// content-addressable registry, which is the reason the operator with a full
+// disk never clicks it. The tests below hold the retraction to a higher bar
+// than the promise in 142, because a wrong reassurance about a delete is the
+// one failure mode this whole module exists to prevent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('the proxy dialog says what goes, what stays, and how to get it back', () => {
+  const { text } = deleteProxyConfirm('/Users/x/.cache/postflowx/proxies/imf/a1.mp4');
+  assert.match(text, /Delete the proxy video\?/);
+  assert.match(text, /only deletes the preview video/);
+  // The sentence that answers the question the operator is actually asking:
+  // am I about to damage the master material I was sent.
+  assert.match(text, /IMF package itself is not changed/);
+  assert.match(text, /You can make it again/);
+});
+
+test('the proxy dialog does not claim the delete is permanent', () => {
+  const { text } = deleteProxyConfirm('/tmp/p.mp4');
+  // The exact regression this iteration exists to prevent, and the exact thing
+  // a future copy-paste from deleteProjectConfirm would reintroduce.
+  assert.doesNotMatch(text, /cannot be undone/i);
+  assert.doesNotMatch(text, /permanent/i);
+  assert.doesNotMatch(text, /\(unknown path\)/);
+});
+
+test('the proxy path keeps its filename when it is too long to show', () => {
+  const long = `/Volumes/PROD_MEDIA_01/${'nested/'.repeat(20)}8f3caa21-proxy.mp4`;
+  const { subject } = deleteProxyConfirm(long);
+  // Clamping from the right would leave the reader a directory prefix they
+  // already know and drop the one token that identifies the file.
+  assert.match(subject, /8f3caa21-proxy\.mp4$/, 'the filename was truncated away');
+  assert.ok(subject.startsWith('…'), 'a clamped path should show it was clamped');
+  assert.ok(Array.from(subject).length <= 64, `path not clamped: ${Array.from(subject).length}`);
+});
+
+test('a short proxy path is shown whole, and a missing one is dropped', () => {
+  const short = '/tmp/p.mp4';
+  assert.equal(deleteProxyConfirm(short).subject, short);
+  for (const empty of ['', '   ', null, undefined]) {
+    const { subject, text } = deleteProxyConfirm(empty);
+    assert.equal(subject, '');
+    // Two blocks, not three, and no stray blank block where the path was.
+    assert.doesNotMatch(text, /\n\n\n/);
+    assert.match(text, /Delete the proxy video\?/);
+    assert.match(text, /You can make it again/);
+  }
+});
+
+test('a pasted newline in the proxy path cannot forge dialog lines', () => {
+  const forged = '/tmp/a.mp4\n\nThis will erase your IMF package.';
+  const { subject, text } = deleteProxyConfirm(forged);
+  assert.doesNotMatch(subject, /\n/);
+  assert.equal(text.split('\n\n').length, 3, 'the forged text opened a new block');
+});
+
+test('the rebuild hint names a button that exists and is not translated', () => {
+  const { hint, button, text } = deleteProxyConfirm('/tmp/p.mp4');
+  assert.equal(button, '▶ Generate');
+  assert.match(text, /You can make it again whenever you need it — ▶ Generate/);
+
+  // The button has to still be on screen, spelled this way.
+  assert.match(
+    indexHtmlSrc, /id="imfProxyBtn"[^>]*>&#9654; Generate<\/button>/,
+    'the ▶ Generate button named by this dialog is gone or renamed in index.html',
+  );
+
+  // And it has to still be untranslated. i18n has a "Generate" key, but the
+  // button's text node is "▶ Generate" and _candKeys folds only whitespace and
+  // case — never the glyph. If someone adds the glyph form to the dictionary,
+  // the button starts reading Thai while this dialog keeps saying "▶ Generate",
+  // and the hint points at a button the reader can no longer find.
+  assert.ok(
+    !i18nSrc.includes('"▶ Generate":'),
+    'i18n now translates "▶ Generate" — the dialog must translate it too, or stop naming it',
+  );
+
+  // The sentence is translated; the button name is deliberately outside it.
+  assert.doesNotMatch(hint, /Generate/);
+});
+
+test('the proxy sentences are translated and the button name is not', () => {
+  const offered = [];
+  const { text } = withTranslator((s) => { offered.push(s); return `«${s}»`; },
+    () => deleteProxyConfirm('/tmp/p.mp4'));
+  assert.deepEqual(offered, [
+    'Delete the proxy video?',
+    'This only deletes the preview video PostFlowX made. The IMF package itself is not changed.',
+    'You can make it again whenever you need it',
+  ]);
+  assert.match(text, /— ▶ Generate$/, 'the button name went through the translator');
+});
+
+test('imf_ui.js builds the proxy delete dialog from this module', () => {
+  assert.match(
+    imfUiSrc, /confirm\(deleteProxyConfirm\(_lastProxyInfo\.proxyPath\)\.text\)/,
+    'imf_ui.js does not build its dialog from deleteProxyConfirm',
+  );
+  assert.match(
+    imfUiSrc, /import \{ deleteProxyConfirm \} from '\.\.\/\.\.\/core\/confirmText\.js'/,
+    'imf_ui.js does not import the module it calls',
+  );
+  assert.doesNotMatch(
+    imfUiSrc, /Delete proxy file\?/,
+    'the old English-only proxy template is still in imf_ui.js',
+  );
+});
+
+test('the companion can only ever unlink an .mp4 — what the reassurance rests on', () => {
+  // "The IMF package itself is not changed" is safe to print only because
+  // _delete_proxy refuses to build a delete list from anything but a .mp4 path
+  // plus that stem's own sidecars. IMF assets are .mxf and .xml. If that guard
+  // is ever relaxed, this dialog becomes a lie about studio master material,
+  // so the claim is pinned to the code that makes it true.
+  const api = read('../companion/src/postflowx_companion/api.py');
+  const body = api.slice(api.indexOf('def _delete_proxy'));
+  const fn = body.slice(0, body.indexOf('\n    def ', 1));
+  assert.match(fn, /p\.suffix\.lower\(\) == "\.mp4"/, 'the .mp4-only guard is gone');
+  assert.match(fn, /for ext in \("\.json", "\.progress", "\.log"\)/, 'sidecar list changed');
+  assert.ok(
+    fn.split('paths_to_remove.append').length - 1 === 2,
+    'a new path source was added to the proxy delete list',
   );
 });

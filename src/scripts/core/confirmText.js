@@ -61,6 +61,20 @@ function cleanName(value) {
   return cp.length > NAME_MAX ? `${cp.slice(0, NAME_MAX - 1).join('')}…` : s;
 }
 
+// A filesystem path gets the same newline-folding as a name, for the same
+// reason, but a different clamp. Truncating a path from the right throws away
+// the filename — the one part that says *which* file — and leaves the reader
+// with a directory they already knew. So the head goes and the tail stays.
+const PATH_MAX = 64;
+
+function cleanPath(value) {
+  const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const cp = Array.from(s);
+  if (cp.length <= PATH_MAX) return s;
+  return `…${cp.slice(cp.length - (PATH_MAX - 1)).join('')}`;
+}
+
 /**
  * Text for the "Delete Project" confirmation in the project bar.
  *
@@ -146,4 +160,74 @@ export function deleteMarkerConfirm(name) {
   blocks.push(`${detail}\n${hint} — ${combo}`);
 
   return { title, detail, hint, combo, subject, text: blocks.join('\n\n') };
+}
+
+// ── A warning that was true about the file and wrong about the consequence ────
+//
+// IMF ▸ Proxy QC has a "🗑 Delete Proxy" button, and its dialog said:
+//
+//     Delete proxy file?
+//     /Users/…/.cache/postflowx/proxies/imf/8f3c….mp4
+//     This cannot be undone.
+//
+// Every word of that is accurate about the file on disk, and the whole thing
+// is wrong about what the reader stands to lose. The proxy is a *cache entry*:
+// the companion writes it into a proxy root (~/.cache/postflowx/proxies/ by
+// default) and indexes it in a content-addressable registry keyed on the CPL
+// id and track-file ids, so pressing ▶ Generate on the same package rebuilds
+// it. The registry even ships a prune command. The button's own tooltip knows
+// this — it reads "Delete cached proxy file for this CPL" — but the tooltip is
+// not what anyone reads at the moment of deciding.
+//
+// So the app told an operator, standing in front of a panel full of studio
+// master material, that a click was permanent when it was a cache eviction.
+// The predictable result is nobody clicks it, and multi-gigabyte transcodes
+// accumulate until a disk fills. This is iteration 142's defect inverted:
+// there the dialog withheld the good news, here it actively denied it.
+//
+// ── What "the package is not changed" rests on ───────────────────────────────
+//
+// The proxy root is user-configurable, so a proxy *can* be written inside the
+// folder that holds the IMF package. The reassurance below survives that only
+// because of a guard in the companion: _delete_proxy builds its delete list
+// solely from a path whose suffix is ".mp4", plus that same stem's .json,
+// .progress and .log siblings. IMF assets are .mxf and .xml. The delete cannot
+// reach them by construction, not by convention — which is what makes this
+// safe to say out loud rather than merely likely to be true.
+//
+// ── Why the button is named in English ───────────────────────────────────────
+//
+// The hint points at ▶ Generate, three buttons along the same toolbar. That
+// label is not translated: i18n keys on whole strings, the dictionary has
+// "Generate", and the button's text node is "▶ Generate" — which _candKeys
+// folds only for whitespace and case, never for the glyph. So the button reads
+// English in Thai and Korean too, and naming it in English is the accurate
+// choice in every locale rather than a shortcut. It is appended as its own
+// token past an em dash, the same bargain the Undo combo strikes above, so no
+// translator has to bend a sentence around a foreign-language button name.
+const REBUILD_BUTTON = '▶ Generate';
+
+/**
+ * Text for the "Delete Proxy" confirmation in IMF ▸ Proxy QC.
+ *
+ * @param {string} path  Absolute path to the cached proxy .mp4, if known.
+ * @returns {{title:string, detail:string, hint:string, button:string, subject:string, text:string}}
+ */
+export function deleteProxyConfirm(path) {
+  const subject = cleanPath(path);
+
+  const title = translate('Delete the proxy video?');
+  const detail = translate('This only deletes the preview video PostFlowX made. The IMF package itself is not changed.');
+  // No full stop: the button name is appended after it.
+  const hint = translate('You can make it again whenever you need it');
+  const button = REBUILD_BUTTON;
+
+  // The old dialog printed "(unknown path)" when it had no path to show. That
+  // is a line of text that carries no information and one more thing to read
+  // under pressure; with nothing to say the block is simply dropped.
+  const blocks = [title];
+  if (subject) blocks.push(subject);
+  blocks.push(`${detail}\n${hint} — ${button}`);
+
+  return { title, detail, hint, button, subject, text: blocks.join('\n\n') };
 }
