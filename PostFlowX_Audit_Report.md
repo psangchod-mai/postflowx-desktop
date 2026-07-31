@@ -14895,3 +14895,120 @@ orphaned-storage leak from 141 is still open; `_refreshStatus()` in
 `homeScreen.js` is still too interleaved with pre-existing WIP to isolate.
 
 Commits: `d03f181`.
+
+---
+
+## Iteration 148 — Workspace Tabs: four names for one workspace, and a pin that quietly does nothing.
+
+**The pin.** The Workspace Tabs panel in the Toolbox draws a locked
+workspace as a greyed card, and clicking that card refuses politely.
+Clicking the *pin* on the same card did not refuse. It had no permission
+check at all: it wrote `pinned: true` to `localStorage`, redrew the pin
+lit, and the tab still never appeared in the toolbar, because the
+permission pass hides it. The setting survived restart, so the pin stayed
+lit forever against a tab that was never going to show up, with nothing
+on screen contradicting it and nothing explaining it. That is the worst
+shape a permission failure can take — the app agreeing with you and then
+not doing it — and it sat one line away from a sibling handler that got
+it right.
+
+The guard now runs **before** the write, not after, and says what the
+silent version could not: pinning will not make the tab appear, because
+the account does not include this workspace. A test asserts the guard's
+index in the handler is lower than the write's, so re-ordering them back
+fails the build rather than silently restoring the bug.
+
+**Four names.** One workspace was named in four places that disagreed.
+For `platelink2`: the toolbar tab said `PLATE LINK 2.0`, the Toolbox card
+said `PLATE LINK 2.0`, the no-access panel said `Plate Link`, and the
+refusal toast said `platelink2` — the raw `data-main` key. Same split for
+`bwav` (`BWAV Inspector` / `BWav Tools`) and `preflight` (`Preflight
+Validator` / `Preflight`), and `prepmark` disagreed with *itself* on the
+version number: `PULLS PREP 2.1` on the tab, `PULLS PREP 2.0` on the card.
+
+Worse than untidy: in each disagreeing pair exactly one side was in the
+dictionary. `Plate Link` is translated in all six locales and `PLATE LINK
+2.0` is in none, so a Thai user clicking a card marked PLATE LINK 2.0 in
+English got a panel about ลิงก์เพลต. The two halves of one event did not
+render in the same language, and nothing on screen cross-referenced them.
+Someone who is not an engineer has no reason to read those as one thing.
+
+`src/scripts/core/workspaceAccess.js` is now the one table, keyed by
+`data-main` and valued with the tab's own label from `src/index.html`,
+verbatim. The toolbar was chosen as canonical because it is where a user
+learns the name, it is the only name visible during normal work, and it
+is identical in every language today — so unifying on it removes the
+mixed-language split instead of deepening it. `__PFX_TOOLBOX_MOVABLE_TABS`
+lost all nine `label:` rows and keeps only decoration; `_gatedTabs` was a
+key→label map and is now `_GATED_TABS`, a `Set` of keys, because its
+labels were the second set of names. A test reads the nine labels back
+out of `src/index.html` and fails if the table drifts, and a second test
+fails if any workspace name reappears as a literal anywhere in `ui.js`.
+
+**Both refusals were dead ends.** `Access denied — "platelink2" tab` and
+`This workspace is not enabled for your account.` were English literals
+in all six locales, and both said what had already happened and nothing
+about what to do — which leaves clicking again as the only move the
+interface suggests. Access is granted per account by whoever set the
+account up. That is the sentence worth saying and neither message said
+it; both notices now end on it, sharing one key so there is a single
+translation of the remedy rather than two that can drift.
+
+**Nine identical buttons.** Nine cards each rendered `Move up`, `Move
+down` and `Pin to Tabs` with no workspace in the accessible name. A
+sighted user tells them apart by the row they sit in; a screen reader
+reads the accessible name alone, so the panel announced nine identical
+"Move up" buttons with nothing saying which workspace each one moved. The
+name is now in `aria-label` (`Move up — PLATE LINK 2.0`) while `title`
+stays short, since the pointer already says where it is. The pin button
+also had `title` and no `aria-label` at all, inconsistent with the
+pin-mini button forty lines above that sets both.
+
+**A prototype leak the tests found.** `WORKSPACE_NAMES[key]` on a frozen
+object literal still resolves through `Object.prototype`, so a tab with
+`data-main="constructor"` would have found `Object.prototype.constructor`,
+handed a *function* to `translate()`, and rendered `function Object() { …
+}` into a toast. Not reachable from today's markup and one attribute away
+from being so; `Object.hasOwn` now gates the lookup. This was written as a
+totality test, not spotted by reading — the test failed on first run.
+
+**RED before GREEN.** Eighteen assertions against `git show HEAD:` copies
+of `ui.js` and `i18n.js` before any edit: 18/18 described HEAD as it
+stood, including that the pin handler never asks whether the workspace is
+allowed, that the sibling card handler does, that `Plate Link` is
+translated in all six locales while `PLATE LINK 2.0` is in none, and that
+all five panel labels are absent from every locale.
+`tests-js/workspaceAccess.test.mjs` is new at 12 tests;
+`errorI18n.test.mjs` gained `core/workspaceAccess.js` at `expected: 3`.
+
+**Dictionary.** Eight new English strings × six locales = 48 rows, split
+by consumer the way iteration 147 learned to: the three sentences reached
+through `translate()` went into `ERROR_DICT`, and the five panel labels
+(`Move up`, `Move down`, `Pin to Tabs`, `Unpin from Tabs`, `Workspace
+Tabs`) reach the user through `ui.js`'s `TT()` and went into `DICT`. No
+red this time.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail
+/ 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates
+clean. Identical to baseline.
+
+**Correction to iteration 147's note.** That entry grouped `Unsaved` with
+the Workspace Tabs panel. It is not there — both call sites (`ui.js:21844`
+and `22166`) belong to the naming/metadata modal. Workspace Tabs is now
+fully translated at five keys; the naming/metadata panel has seven left,
+not six: `Key`, `Camera`, `Profiles`, `Rules`, `Examples`, `Detected`,
+`Unsaved`.
+
+**Still open.** Twenty `confirm()` sites remain inline and English-only.
+The seven naming/metadata `TT()` keys above are the next iteration. New
+tonight: `wireMainTabs()` handles a locked tab two different ways — the
+click path toasts and refuses to navigate, while the Enter/Space keyboard
+path navigates and renders the no-access panel. One action, two
+behaviours, and the keyboard one is the more forgiving; they should meet.
+Also new: the tab `title=` tooltips in `index.html` are a *fifth* naming
+layer (`Pull Prep — build VFX pull packages…` against a tab reading
+`PULLS PREP 2.1`), untouched here because they carry a useful description
+and deserve their own pass. The `#ntCard` description still names one of
+the two lists it resets; Project Setup is still untranslated; the CutDiff
+orphaned-storage leak from 141 is still open; `_refreshStatus()` in
+`homeScreen.js` is still too interleaved with pre-existing WIP to isolate.

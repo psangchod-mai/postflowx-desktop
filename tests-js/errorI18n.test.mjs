@@ -37,6 +37,7 @@ const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
 const confirmTextSrc = readFileSync(SRC_DIR + 'core/confirmText.js', 'utf8');
 const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
+const workspaceAccessSrc = readFileSync(SRC_DIR + 'core/workspaceAccess.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -147,6 +148,13 @@ const SCANNED = [
   // contract went half-implemented until iteration 34, when six of its seven
   // call sites were still handing friendlyStatus a bare English label.
   { file: 'modules/smart_engine_settings.js', src: smartEngineSettingsSrc, expected: 5 },
+  // The two refusals a user meets when a workspace is not on their account.
+  // Both were English literals in all six locales, and both were dead ends —
+  // `Access denied — "platelink2" tab` named the workspace by its data-main
+  // key. Three sentences: not-yours, pinning-will-not-help, and the one line
+  // that says who can change it, shared by both notices so there is a single
+  // translation of the remedy rather than two that can drift.
+  { file: 'core/workspaceAccess.js', src: workspaceAccessSrc, expected: 3 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

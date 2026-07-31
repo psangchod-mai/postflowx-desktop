@@ -68,6 +68,7 @@ import {
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
+import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -3354,65 +3355,58 @@ function renderFileList(fs = []){
 // Main Tabs
 // -------------------------------------------------------------
 const __PFX_TOOLBOX_MOVABLE_TABS_KEY = 'pfx_ui_toolbox_movable_tabs.v1';
+// Decoration only. The NAME of each workspace lives in one place,
+// core/workspaceAccess.js, because it used to live in four and they disagreed.
 const __PFX_TOOLBOX_MOVABLE_TABS = Object.freeze({
   bwav: {
-    label: 'BWAV Inspector',
     themeClass: 'theme-amf',
     accentColor: '#c792ea',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="5" width="2" height="4" rx="1" fill="currentColor"/><rect x="4" y="2" width="2" height="10" rx="1" fill="currentColor"/><rect x="7" y="4" width="2" height="6" rx="1" fill="currentColor"/><rect x="10" y="1" width="2" height="12" rx="1" fill="currentColor"/><rect x="12.5" y="4" width="1.5" height="6" rx="0.5" fill="currentColor"/></svg>',
     defaultPinned: true,
   },
   preflight: {
-    label: 'Preflight Validator',
     themeClass: 'theme-q2',
     accentColor: '#f09a55',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M4 7l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     defaultPinned: true,
   },
   prepmark: {
-    label: 'PULLS PREP 2.0',
     themeClass: 'theme-prepmark',
     accentColor: '#f5c542',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="2" y="4" width="9" height="12" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="4" y1="8" x2="9" y2="8" stroke="currentColor" stroke-width="1"/><line x1="4" y1="10" x2="9" y2="10" stroke="currentColor" stroke-width="1"/><line x1="4" y1="12" x2="7" y2="12" stroke="currentColor" stroke-width="1"/><circle cx="15" cy="9" r="3" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="15" y1="12" x2="15" y2="16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
     defaultPinned: true,
   },
   cutdiff2: {
-    label: 'CUT DIFF 2.0',
     themeClass: 'theme-cd2x',
     accentColor: '#72e6ff',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="7" height="6" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="11" y="3" width="7" height="6" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="2" y="12" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none" opacity="0.5"/><rect x="11" y="12" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none" opacity="0.5"/><line x1="9.5" y1="6" x2="10.5" y2="6" stroke="currentColor" stroke-width="1.5"/><line x1="9.5" y1="14.5" x2="10.5" y2="14.5" stroke="currentColor" stroke-width="1" opacity="0.5"/></svg>',
     defaultPinned: true,
   },
   platelink2: {
-    label: 'PLATE LINK 2.0',
     themeClass: 'theme-pl2',
     accentColor: '#6ea8f0',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="7" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="11" y="11" width="7" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M9 7h1.5a2 2 0 0 1 2 2v1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="12.5" cy="10.5" r="0.9" fill="currentColor"/></svg>',
     defaultPinned: true,
   },
   imf: {
-    label: 'IMF VALIDATION',
     themeClass: 'theme-imf',
     accentColor: '#56b6c2',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 18 18" fill="none"><rect x="1" y="2" width="16" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5 7h8M5 10h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M6 15h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
     defaultPinned: true,
   },
   reviews: {
-    label: 'VISUAL QC',
     themeClass: 'theme-q2',
     accentColor: '#e06c97',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M2 10c2.3-3.8 5-5.5 8-5.5s5.7 1.7 8 5.5c-2.3 3.8-5 5.5-8 5.5s-5.7-1.7-8-5.5z" stroke="currentColor" stroke-width="1.3"/><circle cx="10" cy="10" r="2.2" stroke="currentColor" stroke-width="1.3"/></svg>',
     defaultPinned: true,
   },
   trlconf: {
-    label: 'TRAILERS CONFORM',
     themeClass: 'theme-trlconf',
     accentColor: '#7fd48e',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 18 18" fill="none"><rect x="1" y="4" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/><rect x="2" y="5.5" width="1.5" height="2" rx="0.4" fill="currentColor" opacity="0.7"/><rect x="2" y="9" width="1.5" height="2" rx="0.4" fill="currentColor" opacity="0.7"/><path d="M8.5 8.5h3.5M10.5 6.5l2.5 2-2.5 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="13" y="3" width="4" height="11" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>',
     defaultPinned: true,
   },
   aceslook: {
-    label: 'ACES LOOK',
     themeClass: 'theme-aceslook',
     accentColor: '#b39ddb',
     iconSvg: '<svg width="14" height="14" viewBox="0 0 18 18" fill="none"><polygon points="9,2 16,14 2,14" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><line x1="5.5" y1="10.5" x2="12.5" y2="10.5" stroke="currentColor" stroke-width="1"/><circle cx="9" cy="14" r="1.5" fill="currentColor" opacity="0.7"/></svg>',
@@ -3661,19 +3655,16 @@ function setMainTab(key){
     target.classList.add("active");
   }
   // ── Generic tab permission guard ─────────────────────────────────────────
-  // Only tabs in _gatedTabs are permission-checked. Core tabs (prepmark,
+  // Only tabs in _GATED_TABS are permission-checked. Core tabs (prepmark,
   // cutdiff2, about, renderq) are always accessible and are not listed here.
-  const _gatedTabs = {
-    aceslook:   'ACES Look',
-    trlconf:    'Trailers Conform',
-    platelink2: 'Plate Link',
-    reviews:    'Visual QC',
-    imf:        'IMF Tools',
-    bwav:       'BWav Tools',
-    preflight:  'Preflight',
-  };
+  //
+  // This used to be a key→label map, and its labels were a second set of names
+  // for workspaces the Toolbox card already named differently — so the panel
+  // said "Plate Link" about the card marked PLATE LINK 2.0. It is a set of keys
+  // now; the name comes from core/workspaceAccess.js like everywhere else.
+  const _GATED_TABS = new Set(['aceslook', 'trlconf', 'platelink2', 'reviews', 'imf', 'bwav', 'preflight']);
   const _pfxPg = window.PFX_PERMISSIONS;
-  if (_pfxPg && target && _gatedTabs[key]) {
+  if (_pfxPg && target && _GATED_TABS.has(key)) {
     const _canonicalId = _pfxPg.DATA_MAIN_TO_CANONICAL?.[key];
     if (_canonicalId && !_pfxPg.canAccessTab(_canonicalId)) {
       const _sess = _pfxPg.getSession?.();
@@ -3681,7 +3672,7 @@ function setMainTab(key){
                        : _sess?.status === 'disabled' ? 'disabled' : 'denied';
       window.pfxPolicyApi?.logEvent({ event: 'tab_access_denied', tab: _canonicalId,
         user: _pfxPg.getUser?.()?.email || 'unknown', timestamp: new Date().toISOString() });
-      window.pfxNoAccessView?.renderNoAccess(target, { status: _tabStatus, feature: _gatedTabs[key] });
+      window.pfxNoAccessView?.renderNoAccess(target, { status: _tabStatus, feature: workspaceName(key) });
       return;
     }
   }
@@ -3845,7 +3836,9 @@ function wireMainTabs(){
       if (window.PFX_PERMISSIONS) {
         const allowed = window.PFX_PERMISSIONS.getAllowedDataMainTabs();
         if (allowed && !allowed.has(key)) {
-          window.PFX_GUARD?.toast?.(`Access denied — "${key}" tab`, 'deny');
+          // Was `Access denied — "${key}" tab`, in English in all six locales,
+          // naming the workspace by its data-main key. See core/workspaceAccess.js.
+          window.PFX_GUARD?.toast?.(lockedWorkspaceNotice({ key }).text, 'deny');
           return;
         }
       }
@@ -18274,6 +18267,7 @@ function wireTopAuxTabs(){
     const downSvg= '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3l3 4 3-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     workspaceTabsHost.innerHTML = defs.map(([key, cfg], idx) => {
       const allowed = _pfxIsWorkspaceTabAllowed(key);
+      const wsName = workspaceName(key);
       const isActive = allowed && currentMain === key;
       const permClass = isActive ? 'tb-ws--active' : (allowed ? 'tb-ws--allowed' : 'tb-ws--locked');
       const pinned = !!pinnedState[key];
@@ -18281,14 +18275,20 @@ function wireTopAuxTabs(){
       const accentStyle = cfg.accentColor ? ` style="color:${escHtml(cfg.accentColor)}"` : '';
       const isFirst = idx === 0;
       const isLast  = idx === defs.length - 1;
+      // Sighted users tell these buttons apart by the row they sit in. A screen
+      // reader reads the accessible name alone, so nine cards used to announce
+      // nine identical "Move up" / "Pin to Tabs" buttons with nothing saying
+      // which workspace each one moves. The name goes in the accessible name;
+      // the tooltip stays short because the pointer already says where it is.
+      const named = (label) => escHtml(`${label} — ${wsName}`);
       return `
         <div class="tb-workspace-card ${permClass}" data-main="${escHtml(key)}" data-locked="${allowed ? '0' : '1'}" role="listitem"${cfg.accentColor ? ` style="--tb-ws-accent:${escHtml(cfg.accentColor)}"` : ''}>
           <span class="tb-workspace-icon"${accentStyle} aria-hidden="true">${cfg.iconSvg || ''}</span>
-          <span class="tb-workspace-label">${escHtml(TT(cfg.label || key))}</span>
+          <span class="tb-workspace-label">${escHtml(wsName)}</span>
           <div class="tb-workspace-actions">
-            <button class="tb-workspace-move tb-workspace-move-up" type="button" data-main="${escHtml(key)}" data-dir="up"  title="${escHtml(TT('Move up'))}"   ${isFirst ? 'disabled aria-disabled="true"' : ''}>${upSvg}</button>
-            <button class="tb-workspace-move tb-workspace-move-dn" type="button" data-main="${escHtml(key)}" data-dir="down" title="${escHtml(TT('Move down'))}" ${isLast  ? 'disabled aria-disabled="true"' : ''}>${downSvg}</button>
-            <button class="tb-workspace-pin${pinned ? ' is-pinned' : ''}" type="button" data-main="${escHtml(key)}" data-pinned="${pinned ? '1' : '0'}" title="${escHtml(pinLabel)}">${pinSvg}</button>
+            <button class="tb-workspace-move tb-workspace-move-up" type="button" data-main="${escHtml(key)}" data-dir="up"  title="${escHtml(TT('Move up'))}"   aria-label="${named(TT('Move up'))}"   ${isFirst ? 'disabled aria-disabled="true"' : ''}>${upSvg}</button>
+            <button class="tb-workspace-move tb-workspace-move-dn" type="button" data-main="${escHtml(key)}" data-dir="down" title="${escHtml(TT('Move down'))}" aria-label="${named(TT('Move down'))}" ${isLast  ? 'disabled aria-disabled="true"' : ''}>${downSvg}</button>
+            <button class="tb-workspace-pin${pinned ? ' is-pinned' : ''}" type="button" data-main="${escHtml(key)}" data-pinned="${pinned ? '1' : '0'}" data-locked="${allowed ? '0' : '1'}" title="${escHtml(pinLabel)}" aria-label="${named(pinLabel)}">${pinSvg}</button>
           </div>
         </div>
       `;
@@ -18312,6 +18312,14 @@ function wireTopAuxTabs(){
         e.preventDefault();
         const key = String(btn.dataset.main || '').trim();
         if (!key) return;
+        // The card next to this button refuses a locked workspace; the button
+        // did not, so pinning one wrote pinned:true to localStorage, lit the
+        // pin, and the tab still never appeared — permanently, and silently.
+        // Guard before the write, not after. See core/workspaceAccess.js.
+        if (btn.dataset.locked === '1') {
+          window.PFX_GUARD?.toast?.(lockedPinNotice({ key }).text, 'deny');
+          return;
+        }
         const nextPinned = btn.dataset.pinned !== '1';
         // Protect active tab: navigate home before hiding the tab the user is on
         if (!nextPinned){
@@ -18337,7 +18345,9 @@ function wireTopAuxTabs(){
       const key = String(card.dataset.main || '').trim();
       if (!key) return;
       if (card.dataset.locked === '1') {
-        window.PFX_GUARD?.toast?.('This workspace is not enabled for your account.', 'deny');
+        // Was 'This workspace is not enabled for your account.' — English in
+        // all six locales, and a dead end. See core/workspaceAccess.js.
+        window.PFX_GUARD?.toast?.(lockedWorkspaceNotice({ key }).text, 'deny');
         return;
       }
       // Auto-pin: clicking a card always makes the tab visible in the toolbar

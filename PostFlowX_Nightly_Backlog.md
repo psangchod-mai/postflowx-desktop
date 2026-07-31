@@ -7708,3 +7708,98 @@ non-technical user does daily. The CutDiff orphaned-storage leak from 141
 is still open, and Project Setup is still untranslated.
 
 Commits: `d03f181`.
+
+---
+
+### Iteration 148 — the pin that agreed with you and then didn't
+
+Tonight's was the ugliest thing I've found so far, and it was two lines
+from code that already handled it correctly.
+
+In the Toolbox's Workspace Tabs panel, a workspace your account doesn't
+include is drawn greyed out. Click the card and it refuses. Click the
+**pin** on that same card and it just… pinned. No permission check
+anywhere in the handler. It wrote `pinned: true` to localStorage, lit the
+pin up, and the tab still never appeared in the toolbar, because the
+permission pass filters it out further down. Restart the app and the pin
+is still lit. Forever. Against a tab that is never going to show up, with
+nothing on screen to explain why.
+
+That's worse than a plain "no". A plain no is at least honest. This one
+agreed with the user and then didn't do it, and left a lit button behind
+as evidence that it had. If you're not technical, the only reading
+available is that the app is broken — and you can't even tell *what* is
+broken, because nothing said no.
+
+The guard now runs before the write. I wrote the test to assert the
+guard's position in the handler is *before* the write's, not just that
+both exist, because "add the check but after the write" is exactly the
+shape a hurried future edit takes.
+
+**Then the names.** Chasing that bug I found one workspace with four
+names. `platelink2` is `PLATE LINK 2.0` on the toolbar, `PLATE LINK 2.0`
+on the Toolbox card, `Plate Link` in the no-access panel, and
+`platelink2` in the refusal toast. Same for `bwav` and `preflight`. And
+`prepmark` disagrees with itself about its own version number — 2.1 on
+the tab, 2.0 on the card.
+
+The part that actually hurts: in each pair exactly one side was in the
+dictionary. `Plate Link` is translated in all six locales; `PLATE LINK
+2.0` is in none of them. So a Thai user clicks a card labelled PLATE LINK
+2.0 in English and gets told about ลิงก์เพลต. Two halves of one event,
+two languages, no cross-reference. I don't think anybody would connect
+those.
+
+One table now, in `core/workspaceAccess.js`, and the name it carries is
+the one on the toolbar tab — that's where you learn what the thing is
+called, it's the only name you see while working, and it happens to be
+identical in every language today, so unifying on it *removes* the
+mixed-language split instead of picking a side of it. A test reads the
+nine labels back out of `index.html`; if someone renames a tab and not
+the table, the build fails. Another fails if a workspace name shows up as
+a literal in `ui.js` again.
+
+Both refusals were dead ends too — "Access denied", "not enabled for your
+account" — saying what happened and nothing about what to do. Access is
+granted per account by whoever set the account up. That's the whole
+useful sentence and neither message had it.
+
+**Nine identical buttons.** Nine cards, each with "Move up" / "Move down"
+/ "Pin to Tabs" and nothing naming the workspace. Fine if you can see
+which row you're on. If you're on a screen reader it's nine identical
+"Move up" buttons in a row. The name went into `aria-label`; `title` stays
+short because the pointer already tells you where you are.
+
+**The test caught something I didn't.** I wrote a totality test —
+"unknown key comes back as itself" — and threw `constructor` at it out of
+habit. It returned the `Object` function. A frozen object literal still
+inherits `Object.prototype`, so `data-main="constructor"` would have put
+`function Object() { … }` in a toast. Not reachable today. One attribute
+away. `Object.hasOwn` now. That's the second time this month a totality
+test found something reading the code didn't.
+
+18/18 RED against HEAD first. 48 dictionary rows, new test file at 12
+tests. Split the rows by consumer this time — three `translate()`
+sentences into `ERROR_DICT`, five `TT()` labels into `DICT` — so none of
+last night's twenty wasted minutes repeated.
+
+**Correcting myself:** last night I filed `Unsaved` under Workspace Tabs.
+It isn't there, it's in the naming/metadata modal. So Workspace Tabs is
+done at five keys, and that panel has seven left, not six.
+
+`ui.js` still carries two hunks of somebody else's uncommitted work. Same
+rebuild-the-index dance, `git diff --cached` read back to prove only mine
+went in.
+
+**Next:** the seven naming/metadata keys. But first, something I tripped
+over tonight and left alone: `wireMainTabs()` treats a locked tab two
+different ways depending on how you activate it. Click → toast, refuse to
+navigate. Enter or Space → navigate, show the no-access panel. Same tab,
+same permission, two behaviours, and the keyboard one is the *nicer* one.
+Also the tab tooltips in `index.html` turn out to be a fifth naming layer
+("Pull Prep — build VFX pull packages…" over a tab reading PULLS PREP
+2.1) — those carry a real description though, so they want their own pass
+rather than being flattened into the table.
+
+Twenty `confirm()` sites still inline. CutDiff storage leak from 141 still
+open. Project Setup still untranslated.

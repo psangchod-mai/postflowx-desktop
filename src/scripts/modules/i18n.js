@@ -25,6 +25,11 @@ let _OBS_OPTS = null;
 const DICT = {
   "en": {},
   "ko": {
+    "Move up": "위로 이동",
+    "Move down": "아래로 이동",
+    "Pin to Tabs": "탭에 고정",
+    "Unpin from Tabs": "탭 고정 해제",
+    "Workspace Tabs": "작업 공간 탭",
     "Press the keys you want to use. Esc cancels.": "사용할 키를 누르세요. Esc를 누르면 취소됩니다.",
     "Custom": "사용자 지정",
     "Enabled": "사용",
@@ -242,6 +247,11 @@ const DICT = {
     "Pixelation / Low-Res": "픽셀화 / 저해상도",
 },
   "ja": {
+    "Move up": "上へ移動",
+    "Move down": "下へ移動",
+    "Pin to Tabs": "タブに固定",
+    "Unpin from Tabs": "タブの固定を解除",
+    "Workspace Tabs": "ワークスペース タブ",
     "Press the keys you want to use. Esc cancels.": "使いたいキーを押してください。Esc で取り消します。",
     "Custom": "カスタム",
     "Enabled": "有効",
@@ -458,6 +468,11 @@ const DICT = {
     "Pixelation / Low-Res": "ピクセル化 / 低解像度",
 },
   "zh-TW": {
+    "Move up": "上移",
+    "Move down": "下移",
+    "Pin to Tabs": "釘選到分頁列",
+    "Unpin from Tabs": "從分頁列取消釘選",
+    "Workspace Tabs": "工作區分頁",
     "Press the keys you want to use. Esc cancels.": "請按下你要使用的按鍵。按 Esc 取消。",
     "Custom": "自訂",
     "Enabled": "啟用",
@@ -674,6 +689,11 @@ const DICT = {
     "Pixelation / Low-Res": "像素化 / 低解析",
 },
   "th": {
+    "Move up": "เลื่อนขึ้น",
+    "Move down": "เลื่อนลง",
+    "Pin to Tabs": "ปักหมุดไว้ที่แถบแท็บ",
+    "Unpin from Tabs": "เลิกปักหมุดจากแถบแท็บ",
+    "Workspace Tabs": "แท็บพื้นที่ทำงาน",
     "Press the keys you want to use. Esc cancels.": "กดปุ่มที่ต้องการใช้ กด Esc เพื่อยกเลิก",
     "Custom": "กำหนดเอง",
     "Enabled": "เปิดใช้งาน",
@@ -886,6 +906,11 @@ const DICT = {
     "Gamma": "Gamma",
   },
   "id": {
+    "Move up": "Naikkan",
+    "Move down": "Turunkan",
+    "Pin to Tabs": "Sematkan ke Tab",
+    "Unpin from Tabs": "Lepas dari Tab",
+    "Workspace Tabs": "Tab Ruang Kerja",
     "Press the keys you want to use. Esc cancels.": "Tekan tombol yang ingin dipakai. Esc untuk membatalkan.",
     "Custom": "Kustom",
     "Enabled": "Aktif",
@@ -1069,6 +1094,11 @@ const DICT = {
     "Pixelation / Low-Res": "Pikselasi / Resolusi Rendah",
 },
   "fil": {
+    "Move up": "Ilipat pataas",
+    "Move down": "Ilipat pababa",
+    "Pin to Tabs": "I-pin sa Tabs",
+    "Unpin from Tabs": "Alisin sa Tabs",
+    "Workspace Tabs": "Mga Workspace Tab",
     "Press the keys you want to use. Esc cancels.": "Pindutin ang mga key na gusto mong gamitin. Esc para kanselahin.",
     "Custom": "Pasadya",
     "Enabled": "Naka-enable",
@@ -3422,6 +3452,9 @@ for (const [lang, map] of Object.entries(LOCALE_FULL_DICT)){
 // a translation here, so this cannot silently drift.
 const ERROR_DICT = {
   ko: {
+    "This workspace is not part of your account": "이 작업 공간은 계정에 포함되어 있지 않습니다",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "PostFlowX 계정을 설정해 준 담당자에게 추가를 요청하세요. 고장 난 것은 없습니다.",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "계정에 이 작업 공간이 없어서, 고정해도 탭은 나타나지 않습니다",
     "Helper not responding": "도우미 서비스 응답 없음",
     "PostFlowX's helper service isn't responding right now.": "PostFlowX 도우미 서비스가 현재 응답하지 않습니다.",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "앱을 다시 열거나 설정 › Resolve Engine에서 설치 프로그램을 실행하세요.",
@@ -3549,6 +3582,9 @@ const ERROR_DICT = {
     "Loading the engine logs failed": "엔진 로그 불러오기 실패"
   },
   ja: {
+    "This workspace is not part of your account": "このワークスペースはお使いのアカウントに含まれていません",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "PostFlowX のアカウントを設定した担当者に追加を依頼してください。故障ではありません。",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "アカウントにこのワークスペースが含まれていないため、ピン留めしてもタブは表示されません",
     "Helper not responding": "ヘルパーが応答していません",
     "PostFlowX's helper service isn't responding right now.": "PostFlowX のヘルパーサービスが現在応答していません。",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "アプリを開き直すか、設定 › Resolve Engine からインストーラーを実行してください。",
@@ -3676,6 +3712,9 @@ const ERROR_DICT = {
     "Loading the engine logs failed": "エンジンログの読み込みに失敗しました"
   },
   "zh-TW": {
+    "This workspace is not part of your account": "這個工作區不在您的帳號權限內",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "請找當初為您設定 PostFlowX 帳號的人開通。這不是故障。",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "您的帳號沒有這個工作區，所以釘選之後分頁還是不會出現",
     "Helper not responding": "協助程式沒有回應",
     "PostFlowX's helper service isn't responding right now.": "PostFlowX 的協助服務目前沒有回應。",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "請重新開啟應用程式，或從「設定 › Resolve Engine」執行安裝程式。",
@@ -3803,6 +3842,9 @@ const ERROR_DICT = {
     "Loading the engine logs failed": "載入引擎日誌失敗"
   },
   th: {
+    "This workspace is not part of your account": "พื้นที่ทำงานนี้ไม่ได้อยู่ในบัญชีของคุณ",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "แจ้งผู้ที่ตั้งค่าบัญชี PostFlowX ให้คุณ เพื่อขอเปิดใช้งาน ไม่มีอะไรเสีย",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "การปักหมุดจะไม่ทำให้แท็บปรากฏ เพราะบัญชีของคุณไม่มีพื้นที่ทำงานนี้",
     "Helper not responding": "ตัวช่วยไม่ตอบสนอง",
     "PostFlowX's helper service isn't responding right now.": "บริการตัวช่วยของ PostFlowX ไม่ตอบสนองในขณะนี้",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "เปิดแอปใหม่ หรือเรียกใช้ตัวติดตั้งจาก ตั้งค่า › Resolve Engine",
@@ -3930,6 +3972,9 @@ const ERROR_DICT = {
     "Loading the engine logs failed": "การโหลดบันทึกเอนจินล้มเหลว"
   },
   id: {
+    "This workspace is not part of your account": "Ruang kerja ini tidak termasuk dalam akun Anda",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "Minta orang yang menyiapkan akun PostFlowX Anda untuk menambahkannya. Tidak ada yang rusak.",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "Menyematkan ini tidak akan memunculkan tabnya, karena akun Anda tidak mencakup ruang kerja ini",
     "Helper not responding": "Layanan pembantu tidak merespons",
     "PostFlowX's helper service isn't responding right now.": "Layanan pembantu PostFlowX sedang tidak merespons.",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "Buka ulang aplikasi, atau jalankan pemasang dari Pengaturan › Resolve Engine.",
@@ -4057,6 +4102,9 @@ const ERROR_DICT = {
     "Loading the engine logs failed": "Pemuatan log engine gagal"
   },
   fil: {
+    "This workspace is not part of your account": "Wala sa account mo ang workspace na ito",
+    "Ask whoever set up your PostFlowX account to add it. Nothing here is broken.": "Hilingin sa taong nag-set up ng PostFlowX account mo na idagdag ito. Walang sira dito.",
+    "Pinning this will not make the tab appear, because your account does not include this workspace": "Hindi lalabas ang tab kahit i-pin mo ito, dahil wala sa account mo ang workspace na ito",
     "Helper not responding": "Hindi tumutugon ang helper",
     "PostFlowX's helper service isn't responding right now.": "Hindi tumutugon ngayon ang helper service ng PostFlowX.",
     "Reopen the app, or run the installer from Settings › Resolve Engine.": "Buksan muli ang app, o patakbuhin ang installer mula sa Settings › Resolve Engine.",
