@@ -125,7 +125,11 @@ const SCANNED = [
   // adding one. A locale that softens "the IMF package itself is not changed"
   // into something hedged puts the reader back where the English "This cannot
   // be undone." had them, and this time with a cache they still will not clear.
-  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 12 },
+  // The note-types reset adds a fourth set, and it is the one set where a
+  // locale may NOT soften: it is the only confirm in this file that genuinely
+  // has no way back, so a translation that drops "cannot be undone" is worse
+  // than no translation at all.
+  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 16 },
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },

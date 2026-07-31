@@ -14527,3 +14527,141 @@ removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`); and
 pre-existing WIP to isolate safely since iterations 130–140.
 
 Commits: `bdeddb4`.
+
+---
+
+## Iteration 145 — Settings ▸ Scope of Work / Note Types: the dialog named one list and the button reset two
+
+**Defect.** The card at `index.html:5083` is titled "Scope of Work /
+Note Types" and carries three controls: **Edit Note Types**, **Reset**,
+and a status readout. The Reset handler at `ui.js:21158` was:
+
+```js
+btnReset?.addEventListener('click', ()=>{
+  if (!confirm('Reset Note Types to defaults?')) return;
+  PFX_setNoteTypesConfig(__pfxDefaultNoteTypes());
+  PFX_setSowPresets(['Fix edges','Cleanup','Add element','Roto/Key','Stabilize','Track','Reformat']);
+  refreshStatus();
+});
+```
+
+The dialog names one list. The handler writes two. They are separate
+lists in every way the app itself distinguishes: separate storage keys
+(`pfx.noteTypes.v1`, `pfx.sowPresets.v1`), separate editors inside the
+modal, separate change events (`pfx:notetypes-changed`,
+`pfx:sowpresets-changed`). Nothing in the app treats them as one thing
+except this handler.
+
+The status readout made it worse rather than better. Both builders —
+`__pfxRefreshNoteTypesStatus` at 14344 and `refreshStatus` inside
+`wireNoteTypesSettings` at 21047 — rendered `Add n · Remove n · Change
+n` and never counted the presets. So the second list was invisible
+before the click and invisible after it. A user with seven custom Scope
+of Work entries clicked a button whose dialog mentioned note types,
+answered a question about note types, and lost the seven entries with no
+line of the interface ever changing to say so.
+
+**Neither list has an undo.** `PFX_setNoteTypesConfig` and
+`PFX_setSowPresets` write straight through to `localStorage` with no
+snapshot. Unlike 144 — where a history ring existed and the fix was to
+stop deleting it — here "cannot be undone" is simply true, so it is said
+plainly. But saying it on every press trains people to click through it,
+so the dialog also measures the claim: it counts the user's own changes
+against the defaults in both directions (entries they added, defaults
+they deleted) across all three note-type groups and the presets, and when
+that count is zero it drops the warning entirely.
+
+    Reset note types and Scope of Work presets?
+
+    Both lists on this card go back to their original entries, and neither
+    list keeps a history — this cannot be undone.
+    Changes of your own that would be lost: 3
+
+and, for a user who has customised nothing:
+
+    Reset note types and Scope of Work presets?
+
+    Both lists on this card go back to their original entries. You have not
+    changed either list, so nothing of yours is lost.
+
+**One definition of the defaults.** The SOW default list was written out
+as a literal in three places — the getter's fallback at 20998, this Reset
+handler, and `__pfxResetSettingsForNewProject` at 14358. The dialog's
+count is only honest if it is measured against the same array that is
+about to be written, and hand-copying a fourth literal into the call site
+would have made the number a guess. `__pfxDefaultSowPresets()` is now the
+single definition and all three call it; a test asserts the literal
+appears exactly once in `ui.js`.
+
+**Wording follows the screen, not the storage.** Grep first: unlike the
+Project Setup headings in 144, "Scope of Work" and the card title *are*
+in the dictionary, in all six locales. So the dialog had to use the terms
+the reader can see above the button rather than invent new ones. Worth
+recording that the existing dictionary is internally inconsistent here —
+ja carries both 作業範囲 and 作業内容, id both "Lingkup Kerja" and "Ruang
+Lingkup Kerja" — resolved by matching the card title in each locale,
+since that is the string sitting directly above the button being pressed.
+The four new sentences add 24 dictionary rows. The status readout's new
+segment costs none: `Add`, `Remove`, `Change` and `Scope of Work` were
+all already translated six ways.
+
+**Where the wording lives.** `core/confirmText.js`, as in 141–144 — the
+panel is DOM-coupled and cannot be imported by a node test, the pure leaf
+can. `resetNoteTypesConfirm(lists)` returns `{title, detail, changed,
+count, text}`; `countListChanges` is the two-direction diff.
+
+**Tests.** `tests-js/confirmText.test.mjs` 35 → 45. Ten new: both lists
+named; the zero-change path raises no warning; additions and deletions
+both counted; counted across every group and the presets alike; the
+no-way-back sentence present when there is something to lose; a missing
+or malformed list treated as no changes rather than a crash; every
+sentence reaching `translate()`; `ui.js` asking before resetting and
+resetting exactly what it asked about; the SOW defaults having exactly
+one definition; the readout counting both lists it can reset.
+`tests-js/errorI18n.test.mjs` `expected` 12 → 16 for this file.
+
+**RED before GREEN.** Five source-level assertions checked against the
+HEAD copy of `ui.js` before any edit — the one-list dialog literal
+present, `resetNoteTypesConfirm` unimported, the SOW literal appearing
+three times, `__pfxDefaultSowPresets` absent, both status builders
+ignoring Scope of Work. 5/5 fail against HEAD.
+
+One pre-existing test needed loosening rather than the change needing
+adjusting: `'ui.js builds the delete dialog from this module'` asserted
+the exact single-name import `import { deleteProjectConfirm } from
+"./core/confirmText.js"`. That was my own over-tight assertion from an
+earlier iteration; which siblings share the import line is not that
+test's business, and both it and the new one are now name-tolerant.
+
+**Working-tree discipline.** `src/scripts/ui.js` carries six pre-existing
+uncommitted hunks that are not mine — a `pfxFriendlyText` humanisation
+pass in `showError` plus a `window.showError` export at 3282, and five
+hunks in `wireTopAuxTabs` adding lazy `data-src` iframe lifecycle for the
+Fun box slots. Only my seven hunks were committed, using the
+index-rebuilding technique of 141–144 (note: `git apply -R` on a
+zero-context diff needs `--unidiff-zero`). `git diff --cached -U0` read
+back to confirm: seven hunks, none at 3282 or 18438–18510. The other four
+files were clean against HEAD and staged whole.
+
+**Deferred, deliberately.** The card's own description at
+`index.html:5086` — "Configure Add / Remove / Change categories (Spot On
+style) for Review + Markers notes" — still names only one of the two
+lists the card holds. `index.html` carries foreign WIP of its own, and
+that string already has six dictionary entries that a rewording would
+orphan. Logged rather than done.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open
+gates clean. The single `not ok` match in the log is the test *name*
+`PASS - exportPreset: missing → not ok (got false, want false)`, the same
+false positive as 144.
+
+**Still open.** Twenty-three `confirm()` sites remain inline and
+English-only. Of the shortcuts pair, `ui.js:21484` still says "Reset
+**ALL** shortcuts in this editor" for a draft-only change the user can
+cancel, while the plainer-reading `ui.js:21472` commits immediately — the
+capitals are on the safer of the two. The Project Setup panel is still
+untranslated; the CutDiff orphaned-storage leak from 141 is still open
+(`_cdDeleteProject` splices a project out of the index but never removes
+its snapshot at `CD_PROJECT_KEY_PREFIX + id`); `_refreshStatus()` in
+`homeScreen.js` is still too interleaved with pre-existing WIP to isolate.

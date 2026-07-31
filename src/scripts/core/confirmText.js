@@ -292,3 +292,97 @@ export function resetSettingsConfirm() {
     text: `${title}\n\n${detail}\n${hint} — ${section}`,
   };
 }
+
+// ── The dialog named one list and reset two ──────────────────────────────────
+//
+// The Settings card is titled "Scope of Work / Note Types" and holds two
+// separate lists behind one Reset button: the note-type categories (Add /
+// Remove / Change, used by Review + Markers) and the Scope of Work presets.
+// They are separate in every way that matters — different storage keys
+// (pfx.noteTypes.v1, pfx.sowPresets.v1), different editors inside the modal,
+// different change events. The dialog asked
+//
+//     Reset Note Types to defaults?
+//
+// and the handler then called PFX_setSowPresets(...) as well. Someone who
+// spent an afternoon building a Scope of Work vocabulary for their facility
+// lost it to a question that never mentioned it.
+//
+// The status line under the card could not have warned them either: it reads
+// "Add 21 · Remove 20 · Change 20" and has never counted the presets. So the
+// second list was invisible before the click and invisible after it — the only
+// way to discover the loss was to open the modal and scroll to a section that
+// had quietly reverted. That readout now carries a Scope of Work count too,
+// which is the smaller half of this fix but the half that makes the loss
+// visible at all.
+//
+// ── Why this one says "cannot be undone" when iteration 144 stopped saying it ─
+//
+// 144 removed that sentence from Project Setup's reset because it was false
+// there: a history ring existed three inches above the button and the fix was
+// to stop deleting it. Here it is true. PFX_setNoteTypesConfig and
+// PFX_setSowPresets write straight through to localStorage with no snapshot
+// and no ring, and building one would be a larger change than this dialog is
+// asking for. So the honest move is the opposite of 144's: say it plainly,
+// and count what "it" costs.
+//
+// ── Why the count is computed rather than asserted ───────────────────────────
+//
+// "This cannot be undone" is noise to the user who has never touched either
+// list — which is most people who land on this button, since both lists ship
+// full and usable. Warning them identically to the user with forty custom
+// entries trains everybody to click through. So the dialog measures first:
+// with nothing of the user's own in either list it says so and drops the
+// warning entirely, and otherwise it prints the number at stake.
+//
+// A "change" is counted in both directions. An entry the user added that is
+// not in the defaults will disappear; a default entry the user deleted will
+// come back. Both are the user's work being reverted, so both count.
+const NOTE_TYPE_GROUPS = ['add', 'remove', 'change'];
+
+/**
+ * How many entries differ between a list and its defaults, counted in both
+ * directions (added by the user, and removed by the user).
+ *
+ * @param {string[]|undefined} current
+ * @param {string[]|undefined} defaults
+ * @returns {number}
+ */
+function countListChanges(current, defaults) {
+  const cur = new Set(Array.isArray(current) ? current.map(String) : []);
+  const def = new Set(Array.isArray(defaults) ? defaults.map(String) : []);
+  let n = 0;
+  for (const v of cur) if (!def.has(v)) n += 1;
+  for (const v of def) if (!cur.has(v)) n += 1;
+  return n;
+}
+
+/**
+ * Text for "Reset" on the Settings ▸ Scope of Work / Note Types card.
+ *
+ * @param {{noteTypes?:object, noteTypeDefaults?:object, presets?:string[], presetDefaults?:string[]}} [lists]
+ * @returns {{title:string, detail:string, changed:number, count:string, text:string}}
+ */
+export function resetNoteTypesConfirm(lists = {}) {
+  const { noteTypes, noteTypeDefaults, presets, presetDefaults } = lists;
+
+  let changed = 0;
+  for (const g of NOTE_TYPE_GROUPS) {
+    changed += countListChanges(noteTypes?.[g], noteTypeDefaults?.[g]);
+  }
+  changed += countListChanges(presets, presetDefaults);
+
+  const title = translate('Reset note types and Scope of Work presets?');
+
+  if (changed === 0) {
+    const detail = translate('Both lists on this card go back to their original entries. You have not changed either list, so nothing of yours is lost.');
+    return { title, detail, changed, count: '', text: `${title}\n\n${detail}` };
+  }
+
+  const detail = translate('Both lists on this card go back to their original entries, and neither list keeps a history — this cannot be undone.');
+  // No colon: the number is appended after it.
+  const label = translate('Changes of your own that would be lost');
+  const count = `${label}: ${changed}`;
+
+  return { title, detail, changed, count, text: `${title}\n\n${detail}\n${count}` };
+}

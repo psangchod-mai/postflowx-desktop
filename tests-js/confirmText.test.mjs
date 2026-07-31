@@ -43,8 +43,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const { deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm, resetSettingsConfirm } =
-  await import('../src/scripts/core/confirmText.js');
+const {
+  deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm,
+  resetSettingsConfirm, resetNoteTypesConfirm,
+} = await import('../src/scripts/core/confirmText.js');
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const imfUiSrc = read('../src/scripts/modules/imf/imf_ui.js');
@@ -332,8 +334,10 @@ test('ui.js builds the delete dialog from this module', () => {
   // goes wrong is that the new module lands, the old template is left in place
   // "for now", and the localised text never reaches a user.
   assert.match(uiSrc, /deleteProjectConfirm/, 'ui.js does not call deleteProjectConfirm');
+  // Name-tolerant: ui.js imports more than one confirm builder from this
+  // module now, and which siblings share the line is not this test's business.
   assert.match(
-    uiSrc, /import \{ deleteProjectConfirm \} from "\.\/core\/confirmText\.js"/,
+    uiSrc, /import \{[^}]*\bdeleteProjectConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/,
     'ui.js does not import the module it calls',
   );
   assert.doesNotMatch(
@@ -564,4 +568,160 @@ test('the reset sentences are translated and the section name is not', () => {
     'Your current settings are saved first, so you can bring them back',
   ]);
   assert.match(text, /— Version History$/, 'the section name went through the translator');
+});
+
+// ── The dialog named one list and the handler reset two ──────────────────────
+
+const NT_DEF = { add: ['a1', 'a2'], remove: ['r1'], change: ['c1', 'c2', 'c3'] };
+const SOW_DEF = ['s1', 's2'];
+const untouched = () => ({
+  noteTypes: { add: ['a1', 'a2'], remove: ['r1'], change: ['c1', 'c2', 'c3'] },
+  noteTypeDefaults: NT_DEF,
+  presets: ['s1', 's2'],
+  presetDefaults: SOW_DEF,
+});
+
+test('the dialog names both lists, not just the one on the button', () => {
+  // The whole defect in one assertion. The old text was "Reset Note Types to
+  // defaults?" while the handler also called PFX_setSowPresets, so a reader
+  // answering the question they were asked lost a list they were not asked
+  // about. Whatever this sentence becomes, it has to mention both.
+  const { title } = resetNoteTypesConfirm(untouched());
+  assert.match(title, /note types/i, 'the dialog stopped naming the note types');
+  assert.match(title, /Scope of Work/i, 'the dialog is back to naming only one of the two lists');
+});
+
+test('with nothing of the user\'s own in either list, no warning is raised', () => {
+  // Both lists ship full and usable, so most people who reach this button have
+  // never edited either one. Warning them in the same words as the user with
+  // forty custom entries is how a dialog teaches everyone to click through it.
+  const { changed, text, count } = resetNoteTypesConfirm(untouched());
+  assert.equal(changed, 0);
+  assert.equal(count, '', 'a count of nothing was printed anyway');
+  assert.doesNotMatch(text, /cannot be undone/i,
+    'the no-op reset still threatens the reader with an irreversible action');
+  assert.match(text, /nothing of yours is lost/i);
+});
+
+test('additions and deletions both count as changes to lose', () => {
+  // A default the user deleted comes back on reset, exactly as an entry they
+  // added disappears. Both are their work being reverted, so counting only
+  // one direction would under-report the cost of the click.
+  const added = resetNoteTypesConfirm({ ...untouched(), noteTypes: { ...NT_DEF, add: ['a1', 'a2', 'mine'] } });
+  assert.equal(added.changed, 1, 'an added entry was not counted');
+
+  const deleted = resetNoteTypesConfirm({ ...untouched(), noteTypes: { ...NT_DEF, add: ['a1'] } });
+  assert.equal(deleted.changed, 1, 'a deleted default was not counted');
+
+  // Renaming is a delete plus an add, and costs the user both.
+  const renamed = resetNoteTypesConfirm({ ...untouched(), noteTypes: { ...NT_DEF, add: ['a1', 'renamed'] } });
+  assert.equal(renamed.changed, 2);
+});
+
+test('changes are counted across every group and the presets alike', () => {
+  // The Scope of Work presets are the list the old dialog forgot, so a count
+  // that silently skipped them would reproduce the original defect one level
+  // down — the dialog would name both lists and then under-count one of them.
+  const all = resetNoteTypesConfirm({
+    noteTypes: { add: ['a1', 'a2', 'x'], remove: ['r1', 'y'], change: ['c1', 'c2', 'c3', 'z'] },
+    noteTypeDefaults: NT_DEF,
+    presets: ['s1', 's2', 'w'],
+    presetDefaults: SOW_DEF,
+  });
+  assert.equal(all.changed, 4);
+
+  const sowOnly = resetNoteTypesConfirm({ ...untouched(), presets: ['s1', 's2', 'w'] });
+  assert.equal(sowOnly.changed, 1, 'a preset the user added was not counted');
+  assert.match(sowOnly.text, /: 1$/, 'the number never reached the dialog');
+});
+
+test('when there is something to lose the dialog says there is no way back', () => {
+  // Iteration 144 deleted this sentence from Project Setup's reset because a
+  // history ring made it false there. Here it is true: both setters write
+  // straight to localStorage with no snapshot. The rule is the same rule —
+  // the dialog matches the code — and it lands the opposite way.
+  const { text, count, changed } = resetNoteTypesConfirm({ ...untouched(), presets: ['s1'] });
+  assert.equal(changed, 1);
+  assert.match(text, /cannot be undone/i, 'the one dialog here that really has no undo stopped saying so');
+  assert.equal(count, 'Changes of your own that would be lost: 1');
+  assert.match(text, /\n\nBoth lists[\s\S]*\nChanges of your own[^\n]*: 1$/,
+    'the count is not on its own last line where it can be read at a glance');
+});
+
+test('a missing or malformed list is treated as no changes, not a crash', () => {
+  // The dialog is built from live localStorage reads, and this is the one
+  // place a throw would be worst: it fires between the click and the confirm,
+  // so an exception here does not warn the user — it resets both lists with
+  // no dialog at all.
+  assert.equal(resetNoteTypesConfirm().changed, 0);
+  assert.equal(resetNoteTypesConfirm({}).changed, 0);
+  assert.equal(resetNoteTypesConfirm({ noteTypes: null, presets: 'nope' }).changed, 0);
+  assert.match(resetNoteTypesConfirm().title, /Scope of Work/i);
+});
+
+test('the note-types reset sentences all reach the translator', () => {
+  const safe = [];
+  withTranslator((s) => { safe.push(s); return `«${s}»`; }, () => resetNoteTypesConfirm(untouched()));
+  assert.deepEqual(safe, [
+    'Reset note types and Scope of Work presets?',
+    'Both lists on this card go back to their original entries. You have not changed either list, so nothing of yours is lost.',
+  ]);
+
+  const risky = [];
+  withTranslator((s) => { risky.push(s); return `«${s}»`; },
+    () => resetNoteTypesConfirm({ ...untouched(), presets: ['s1'] }));
+  assert.deepEqual(risky, [
+    'Reset note types and Scope of Work presets?',
+    'Both lists on this card go back to their original entries, and neither list keeps a history — this cannot be undone.',
+    'Changes of your own that would be lost',
+  ]);
+});
+
+test('ui.js asks before resetting and resets exactly what it asked about', () => {
+  const body = uiSrc.slice(uiSrc.indexOf("btnReset?.addEventListener"));
+  const handler = body.slice(0, body.indexOf('\n  });'));
+
+  assert.ok(!handler.includes("confirm('Reset Note Types to defaults?')"),
+    'the old one-list dialog is still in the handler');
+  assert.match(handler, /resetNoteTypesConfirm\(\{[\s\S]*?confirm\(ask\.text\)/,
+    'the dialog is no longer built from the module');
+  // The count is only honest if it is measured against the same defaults that
+  // are about to be written. Reading them once and using that value for both
+  // is what keeps the dialog and the reset describing one event.
+  assert.match(handler, /PFX_setNoteTypesConfig\(ntDefaults\)/);
+  assert.match(handler, /PFX_setSowPresets\(sowDefaults\)/);
+  assert.match(uiSrc, /import \{[^}]*\bresetNoteTypesConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/,
+    'ui.js does not import the builder it calls');
+});
+
+test('the Scope of Work defaults have exactly one definition', () => {
+  // Three copies of this literal used to exist — the getter fallback, the
+  // Reset button, and the new-project reset — so "the defaults" was whichever
+  // copy you read. The reset dialog counts the user's list against them, and
+  // a count measured against a stale copy is a number that looks precise and
+  // is wrong.
+  assert.equal(
+    (uiSrc.match(/'Fix edges','Cleanup','Add element'/g) || []).length, 1,
+    'the Scope of Work defaults are duplicated again',
+  );
+  assert.match(uiSrc, /function __pfxDefaultSowPresets\(\)/);
+  for (const caller of [/return __pfxDefaultSowPresets\(\);/, /PFX_setSowPresets\(__pfxDefaultSowPresets\(\)\)/]) {
+    assert.match(uiSrc, caller, 'a caller stopped using the shared defaults');
+  }
+});
+
+test('the card readout counts both lists it can reset', () => {
+  // The status line was "Add 21 · Remove 20 · Change 20" and never mentioned
+  // the presets, so the list the dialog forgot was also the list the user had
+  // no way to see change. Both builders of this line have to carry the count,
+  // or the loss stays invisible on whichever screen uses the other one.
+  const builders = uiSrc.match(/\$\{TT\('Add'\)\}[^`]*`/g) || [];
+  assert.equal(builders.length, 2, 'a status-line builder appeared or vanished');
+  for (const b of builders) {
+    assert.match(b, /TT\('Scope of Work'\)/, 'a status line still ignores the Scope of Work presets');
+  }
+  // 'Scope of Work' is already a dictionary key, so the new count reads in the
+  // reader's language for free — but only while that stays true.
+  assert.ok(i18nSrc.includes('"Scope of Work":'),
+    'the status label lost its translations and now reads English in six locales');
 });

@@ -7505,3 +7505,79 @@ neighbour is the one that commits — the capitals are pointing at the
 wrong one. The CutDiff orphaned-storage leak from 141 is still open.
 
 Commits: `bdeddb4`.
+
+---
+
+## Iteration 145 — Settings ▸ Scope of Work / Note Types: the dialog named one list and the button reset two
+
+The card is titled "Scope of Work / Note Types". It has a Reset button.
+The Reset button asked "Reset Note Types to defaults?" and then reset
+both lists.
+
+That is not a wording slip, because the app does not otherwise think of
+these as one list. They live under different storage keys, they have
+different editors inside the modal, they fire different change events.
+The only place in the codebase that treats them as a single thing is the
+line that wipes them.
+
+What made it costly rather than merely sloppy is the status line
+underneath. It read `Add 21 · Remove 20 · Change 20`. It never counted
+the Scope of Work presets. So if you had spent an afternoon building up
+seven presets for your facility's shot types, they were invisible before
+you clicked and invisible after — the dialog had not mentioned them, and
+the readout looked exactly the same either way. Nothing on screen ever
+moved to tell you they were gone.
+
+Both builders of that readout now count both lists, and it cost nothing
+in the dictionary: `Add`, `Remove`, `Change` and `Scope of Work` were
+already translated six ways.
+
+Last night the fix was to stop saying "cannot be undone" — there was a
+restore ring sitting right there. Tonight the opposite. These two lists
+write straight to storage with no snapshot, so there really is no way
+back, and the dialog says so. But a warning you see on every press is a
+warning you stop reading, so it also does the arithmetic: it counts what
+you personally changed against the defaults — entries you added, defaults
+you deleted, across all three note-type groups and the presets — and
+tells you the number. If the number is zero it drops the warning entirely
+and says nothing of yours is lost, because for that user nothing is.
+
+    Reset note types and Scope of Work presets?
+
+    Both lists on this card go back to their original entries, and neither
+    list keeps a history — this cannot be undone.
+    Changes of your own that would be lost: 3
+
+That number is why the SOW defaults are now defined once instead of three
+times. The count is only honest if it is measured against the same array
+that is about to be written; copying the list a fourth time into the
+dialog would have turned the number into a guess that happened to be
+right until someone edited one copy.
+
+I checked the dictionary before writing the sentences rather than after.
+Unlike the Project Setup headings last night, "Scope of Work" and the
+card title *are* localised, so the dialog uses the words already on
+screen above the button. The dictionary turns out to disagree with itself
+in two places — ja has both 作業範囲 and 作業内容 for this, id has both
+"Lingkup Kerja" and "Ruang Lingkup Kerja" — and I matched the card title
+each time, on the grounds that the reader is looking at it.
+
+Two things I did not do. The card's own description still says
+"Configure Add / Remove / Change categories… for Review + Markers notes",
+which names one list on a card that holds two — `index.html` has somebody
+else's WIP in it and that string has six translations that a rewrite
+would orphan, so it is written down instead of fixed. And a pre-existing
+test of mine had to be loosened rather than the code bent to satisfy it:
+it asserted the exact single-name import from `confirmText.js`, which was
+never that test's business.
+
+`ui.js` had six hunks of other people's uncommitted work in it — a
+friendlier `showError`, and lazy iframe loading for the Fun box tabs.
+Only my seven went in, same rebuild-the-index technique as the last four
+nights, with `git diff --cached` read back afterwards to prove it.
+
+**Next:** twenty-three `confirm()` sites left. The shortcuts pair is the
+next honest one — the dialog that shouts "Reset **ALL** shortcuts in this
+editor" is the draft you can still cancel, while its mild-mannered
+neighbour is the one that commits. The CutDiff orphaned-storage leak from
+141 is still open, and the Project Setup panel is still untranslated.

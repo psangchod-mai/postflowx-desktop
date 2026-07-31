@@ -66,7 +66,7 @@ import {
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
-import { deleteProjectConfirm } from "./core/confirmText.js";
+import { deleteProjectConfirm, resetNoteTypesConfirm } from "./core/confirmText.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -14340,8 +14340,10 @@ function __pfxSetText(id, text){
 function __pfxRefreshNoteTypesStatus(){
   try{
     const cur = (typeof PFX_getNoteTypesConfig === 'function') ? PFX_getNoteTypesConfig() : __pfxDefaultNoteTypes();
+    // The card holds two lists and Reset clears both, so the readout counts both.
+    const sow = (typeof PFX_getSowPresets === 'function') ? PFX_getSowPresets() : __pfxDefaultSowPresets();
     const TT = (s)=>{ try{ if (typeof window.PFX_t === 'function') return window.PFX_t(String(s||'')); }catch{} return String(s||''); };
-    __pfxSetText('ntStatus', `${TT('Add')} ${cur?.add?.length||0} · ${TT('Remove')} ${cur?.remove?.length||0} · ${TT('Change')} ${cur?.change?.length||0}`);
+    __pfxSetText('ntStatus', `${TT('Add')} ${cur?.add?.length||0} · ${TT('Remove')} ${cur?.remove?.length||0} · ${TT('Change')} ${cur?.change?.length||0} · ${TT('Scope of Work')} ${sow?.length||0}`);
   }catch{}
 }
 
@@ -14355,7 +14357,7 @@ function __pfxRefreshShortcutStatus(){
 
 async function __pfxResetSettingsForNewProject(){
   try{ if (typeof PFX_setNoteTypesConfig === 'function') PFX_setNoteTypesConfig(__pfxDefaultNoteTypes()); }catch{}
-  try{ if (typeof PFX_setSowPresets === 'function') PFX_setSowPresets(['Fix edges','Cleanup','Add element','Roto/Key','Stabilize','Track','Reformat']); }catch{}
+  try{ if (typeof PFX_setSowPresets === 'function') PFX_setSowPresets(__pfxDefaultSowPresets()); }catch{}
   try{ resetShortcutsToDefaults(); }catch{}
   try{ await clearMediaRootDir(); }catch{}
   try{ localStorage.removeItem('pfx_media_root_path'); }catch{}
@@ -20964,6 +20966,15 @@ function __pfxDefaultNoteTypes(){
   };
 }
 
+// The Scope of Work defaults used to be written out as a literal in three
+// separate places — the getter's fallback, the Reset button, and the new-project
+// reset — so "the defaults" was whichever copy you happened to read. The reset
+// dialog has to compare the user's list against them to count what a reset would
+// cost, and a fourth copy would have made that count a guess. One source now.
+function __pfxDefaultSowPresets(){
+  return ['Fix edges','Cleanup','Add element','Roto/Key','Stabilize','Track','Reformat'];
+}
+
 function __pfxSafeParseJSON(s){
   try{ return JSON.parse(String(s||'')); }catch{ return null; }
 }
@@ -20995,7 +21006,7 @@ function PFX_getSowPresets(){
   const arr = __pfxSafeParseJSON(raw);
   if (Array.isArray(arr)) return arr.filter(Boolean).map(String);
   // Minimal defaults (optional)
-  return ['Fix edges','Cleanup','Add element','Roto/Key','Stabilize','Track','Reformat'];
+  return __pfxDefaultSowPresets();
 }
 
 function PFX_setSowPresets(list){
@@ -21042,8 +21053,10 @@ function wireNoteTypesSettings(){
     try{
       const cur = PFX_getNoteTypesConfig();
       const a = cur.add?.length||0, r = cur.remove?.length||0, c = cur.change?.length||0;
-      const TT = (s)=>{ try{ if (typeof window.PFX_t === 'function') return window.PFX_t(String(s||'')); }catch{} return String(s||''); };
-      if (st) st.textContent = `${TT('Add')} ${a} · ${TT('Remove')} ${r} · ${TT('Change')} ${c}`;
+      // The card holds two lists and Reset clears both, so the readout counts both.
+      const s = PFX_getSowPresets()?.length||0;
+      const TT = (t)=>{ try{ if (typeof window.PFX_t === 'function') return window.PFX_t(String(t||'')); }catch{} return String(t||''); };
+      if (st) st.textContent = `${TT('Add')} ${a} · ${TT('Remove')} ${r} · ${TT('Change')} ${c} · ${TT('Scope of Work')} ${s}`;
     }catch{ if (st) st.textContent = ''; }
   };
 
@@ -21131,9 +21144,19 @@ function wireNoteTypesSettings(){
 
   btnOpen?.addEventListener('click', ()=>openModal());
   btnReset?.addEventListener('click', ()=>{
-    if (!confirm('Reset Note Types to defaults?')) return;
-    PFX_setNoteTypesConfig(__pfxDefaultNoteTypes());
-    PFX_setSowPresets(['Fix edges','Cleanup','Add element','Roto/Key','Stabilize','Track','Reformat']);
+    // Both lists go, so the dialog names both and counts what that costs.
+    // See core/confirmText.js for why the wording lives there.
+    const ntDefaults = __pfxDefaultNoteTypes();
+    const sowDefaults = __pfxDefaultSowPresets();
+    const ask = resetNoteTypesConfirm({
+      noteTypes: PFX_getNoteTypesConfig(),
+      noteTypeDefaults: ntDefaults,
+      presets: PFX_getSowPresets(),
+      presetDefaults: sowDefaults,
+    });
+    if (!confirm(ask.text)) return;
+    PFX_setNoteTypesConfig(ntDefaults);
+    PFX_setSowPresets(sowDefaults);
     refreshStatus();
   });
 
