@@ -7290,4 +7290,4 @@ bare `confirm(\`Delete "${sel.shotName}"?\`)` could tell the user the action
 `_cdDeleteProject` never removes the stored snapshot at
 `CD_PROJECT_KEY_PREFIX + id` when it splices a project out of the index.
 
-Commits: pending.
+Commits: `0de41fd`.
