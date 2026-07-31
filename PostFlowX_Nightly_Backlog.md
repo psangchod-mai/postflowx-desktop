@@ -7977,4 +7977,4 @@ two unrelated meanings, sixteen sites, and any caller trying to tell
 failures apart is quietly getting it wrong. Then the twenty `confirm()`
 sites, still sitting there.
 
-Commits: `PENDING`.
+Commits: `4858462`.
