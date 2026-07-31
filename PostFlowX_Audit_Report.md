@@ -14385,3 +14385,5 @@ but never removes its stored snapshot at `CD_PROJECT_KEY_PREFIX + id`.
 `_refreshStatus()` in `homeScreen.js` remains untouched since iterations
 130–140 — the pre-existing WIP around it is still too interleaved to
 isolate safely.
+
+Commits: `8600e79`.
