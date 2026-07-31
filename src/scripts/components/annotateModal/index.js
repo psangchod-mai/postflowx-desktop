@@ -5,7 +5,7 @@
 
 export function openAnnotateModal(opts = {}){
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('annotate')) {
-    window.PFX_GUARD?.toast?.('Annotation not allowed — no annotate permission', 'deny');
+    window.PFX_GUARD?.deny?.('annotate');
     return null;
   }
   const {

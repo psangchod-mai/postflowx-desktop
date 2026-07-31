@@ -11,6 +11,7 @@
 // Fallback: Chrome downloads (best-effort; will create the same folder structure under Downloads).
 
 import { safeWriteText, safeReadJSON } from './safeFile.js';
+import { deniedActionNotice } from './accessNotice.js';
 
 const DB_NAME = "mps_handles_v1";
 const DB_STORE = "handles";
@@ -933,8 +934,17 @@ async function writeProjectViaNative(projectName, files){
 
 export async function saveTabProjectFile(tabKey, projectName){
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('save_project')) {
-    window.PFX_GUARD?.toast?.('Save blocked — no save_project permission', 'deny');
-    return { ok: false, error: 'Permission denied: save_project' };
+    window.PFX_GUARD?.deny?.('save_project');
+    // Same sentence the toast just showed, not a second contradicting one.
+    // ui.js renders r.error verbatim in the save-status pill, so this string
+    // is user-facing despite looking like an internal result code — it read
+    // `Save failed: Permission denied: save_project` on screen, in English,
+    // next to a toast that said the right thing. `reason` is the code now.
+    // Not 'no_permission': that code already means the *folder* permission the
+    // OS refused, it is returned from writeProjectV4ViaFS() below, and it
+    // reaches the same caller. Two unrelated failures under one code would
+    // have made the caller's handling of one of them silently wrong.
+    return { ok: false, reason: 'no_account_permission', error: deniedActionNotice({ id: 'save_project' }).text };
   }
   const t = String(tabKey || '').trim();
   if (!isValidTabKey(t)) return { ok:false, reason:'bad_tab' };
@@ -1430,8 +1440,17 @@ async function writeAuditSidecars(projectName){
 export async function saveUnifiedProjectFile(projectName){
   // Permission check
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('save_project')) {
-    window.PFX_GUARD?.toast?.('Save blocked — no save_project permission', 'deny');
-    return { ok: false, error: 'Permission denied: save_project' };
+    window.PFX_GUARD?.deny?.('save_project');
+    // Same sentence the toast just showed, not a second contradicting one.
+    // ui.js renders r.error verbatim in the save-status pill, so this string
+    // is user-facing despite looking like an internal result code — it read
+    // `Save failed: Permission denied: save_project` on screen, in English,
+    // next to a toast that said the right thing. `reason` is the code now.
+    // Not 'no_permission': that code already means the *folder* permission the
+    // OS refused, it is returned from writeProjectV4ViaFS() below, and it
+    // reaches the same caller. Two unrelated failures under one code would
+    // have made the caller's handling of one of them silently wrong.
+    return { ok: false, reason: 'no_account_permission', error: deniedActionNotice({ id: 'save_project' }).text };
   }
   // Refresh the shots snapshot up front so the Downloads fallback (taken when no
   // project folder is granted / the picker is cancelled) writes current content +

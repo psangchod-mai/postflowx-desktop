@@ -7921,3 +7921,60 @@ stayed out of `ui.js` entirely and every hunk in all six files is mine.
 Worth noting only because it's the exception.
 
 Commits: `27c5709`.
+
+## Iteration 151 — the badge that blamed your account for someone else's open window
+
+Went after the `PFX_GUARD` channel I flagged last night, and it was
+worse than the note said.
+
+The badge told people the wrong thing. Not vaguely — specifically and
+consistently wrong. `project-lease.js` knows the difference between "a
+second window has the edit lease" and "this account has no edit
+permission", and it passes that up as a string. `ui.js` took it in a
+two-argument callback and dropped it. `read-only.js` then printed the
+account sentence either way. So the most common, most trivially fixable
+case — you opened the project twice — was reported as an account
+problem, and the user's next move was to go ask an administrator, who
+would find nothing wrong with their account, because nothing was.
+
+That is the kind of bug that costs someone twenty minutes and a favour.
+
+The toast couldn't have said more even if the words had been right:
+`white-space: nowrap`, no max-width, centred with `translateX(-50%)`, so
+anything long ran off both edges simultaneously. The wording was blunt
+partly because the box punished any wording that wasn't.
+
+Ten call sites each spelled their own English refusal, five of them
+handing the user a permission key — `no import_timeline permission`.
+They all say `deny(actionId)` now. That single change is what let
+`shortcuts.js` lose a branch: once a call site names an action instead of
+writing a sentence, there's nothing left to branch on.
+
+**Caught myself twice, both times with a test I'd just written.**
+
+First: I reached for `reason: 'no_permission'` for the account refusal.
+That code already exists and already means something else — the folder
+permission the OS refused, from `writeProjectV4ViaFS()`, sixteen sites,
+and it lands in the exact `ui.js` branch I was adding. Sharing it would
+have swallowed the filesystem banner and left a pill reading `Save
+failed: no_permission`. The test wanted 2 and found 8, which is how I
+found out.
+
+Second: `accessNotice.test.mjs` had `edit_cut` and `import_media` in a
+list of ids that should come back nameless. Naming them was the point of
+tonight. The test's principle held; its examples had aged. Moved them to
+a positive assertion and left `constructor` / `__proto__` behind as the
+genuinely unnameable case.
+
+Also had to teach the new test to strip comments before scanning for
+leftover English, because every file I touched carries a comment quoting
+the sentence it replaced. Otherwise the fix's own explanation fails the
+fix's own test, and the way to go green is to delete the explanation.
+That's backwards.
+
+**Next:** the `no_permission` overload deserves its own pass — one code,
+two unrelated meanings, sixteen sites, and any caller trying to tell
+failures apart is quietly getting it wrong. Then the twenty `confirm()`
+sites, still sitting there.
+
+Commits: `PENDING`.

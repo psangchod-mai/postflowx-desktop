@@ -19506,7 +19506,7 @@ function _pmComputeStem() {
 
 function _pmExport(fmt = 'both') {
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('export')) {
-    window.PFX_GUARD?.toast?.('Export not allowed — no export permission', 'deny');
+    window.PFX_GUARD?.deny?.('export');
     return;
   }
   const raw  = window.__MPS_EDL_RAW;

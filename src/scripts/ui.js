@@ -15256,6 +15256,13 @@ async function wireProjectBar(){
           : await saveUnifiedProjectFile(currentName);
         if (!r?.ok){
           const msg = String(r?.error || r?.reason || "Save failed");
+          if (r?.reason === 'no_account_permission'){
+            // The guard toast already said this, in the user's language. A
+            // second banner saying it again — behind an English "Save failed:"
+            // prefix — is one event described twice and half-translated.
+            setProjectSaveStatus(msg, "error");
+            return r;
+          }
           setProjectSaveStatus(`Save failed: ${msg}`, "error");
           showError(msg);
           return r;
@@ -23966,11 +23973,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!authResult._needsSignIn) window.PFX_LOGIN_UI?.hide?.();
     // Apply read-only badge and control disabling if applicable
     if (window.PFX_PERMISSIONS?.isReadOnly?.()) {
-      window.PFX_READONLY?.apply?.();
+      // Name the cause. This branch is only reached when the *account* cannot
+      // edit, which is a different situation from the lease one below and used
+      // to be described with the same sentence.
+      window.PFX_READONLY?.apply?.('No edit permission');
     }
     // Initialize lease + media coordinator
     window.PFX_LEASE?.init?.((readOnly, reason) => {
-      if (readOnly) window.PFX_READONLY?.apply?.();
+      // `reason` was accepted and thrown away here, which is how a second open
+      // window came to be reported as a missing permission.
+      if (readOnly) window.PFX_READONLY?.apply?.(reason);
       else window.PFX_READONLY?.remove?.();
     });
     window.PFX_MEDIA_COORD?.init?.((reason) => {

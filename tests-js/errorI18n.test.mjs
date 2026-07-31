@@ -168,7 +168,7 @@ const SCANNED = [
   // or this test cannot see them: it matches translate('…') and nothing else,
   // and the view resolved the id to a label first, so every name shipped in
   // English inside an otherwise translated sentence.
-  { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 32 },
+  { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 49 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

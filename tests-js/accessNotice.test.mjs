@@ -111,13 +111,27 @@ test('an action id never reaches the user as an action id', () => {
   // know was printed verbatim: `Your account cannot do this: "edit_cut"`. That
   // is a word from the permissions schema, quoted at someone who has never seen
   // the schema and cannot act on it. Saying less is the better answer.
-  for (const unknown of ['edit_cut', 'import_media', 'nope', 'constructor', 'toString']) {
+  // `edit_cut` and `import_media` used to stand here as unknown ids, and the
+  // better answer to those two turned out to be naming them rather than saying
+  // less — the guard channel refuses them, so a user meets them. They moved to
+  // the row below. What stays here is the case no table can ever cover.
+  for (const unknown of ['nope', 'constructor', 'toString', '__proto__']) {
     assert.equal(actionName(unknown), '', `${unknown} is echoed back as its own name`);
     const t = deniedActionNotice({ id: unknown }).text;
     assert.ok(!t.includes(unknown), `the toast quotes the raw id: ${t}`);
     assert.ok(!/_/.test(t), `snake_case leaked into the toast: ${t}`);
   }
   for (const empty of [undefined, null, '', '   ']) assert.equal(actionName(empty), '');
+
+  // Named now, and named in words. Not "reads like the id with the underscore
+  // taken out" — `edit_cut` → "Edit Cut" is exactly that and is also the right
+  // English, so the only thing worth asserting is that a person could read it.
+  for (const known of ['edit_cut', 'import_media', 'play_media', 'undo', 'redo']) {
+    const name = actionName(known);
+    assert.notEqual(name, '', `${known} is refusable but nameless`);
+    assert.ok(!/_/.test(name), `${known} kept its underscore: ${name}`);
+    assert.ok(/^[A-Z]/.test(name), `${known} is not written as a label: ${name}`);
+  }
 });
 
 test('every action id the renderer can block has a name', () => {

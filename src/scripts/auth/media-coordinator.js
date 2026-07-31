@@ -54,7 +54,7 @@ window.PFX_MEDIA_COORD = (() => {
    */
   function claimPlayback() {
     if (!_canPlay()) {
-      window.PFX_GUARD?.toast?.('Playback is not allowed for this account', 'deny');
+      window.PFX_GUARD?.deny?.('play_media');
       return false;
     }
     _isPlaying = true;

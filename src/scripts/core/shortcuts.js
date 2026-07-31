@@ -55,15 +55,15 @@ export const PFX_SHORTCUT_MUTATING = new Set([
  */
 export function isShortcutAllowed(actionId) {
   if (!PFX_SHORTCUT_MUTATING.has(actionId)) return true;
-  if (window.PFX_READONLY?.isActive?.()) {
-    window.PFX_GUARD?.toast?.(`Read-only — "${actionId}" shortcut blocked`, 'deny');
-    return false;
-  }
-  if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('edit_cut')) {
-    window.PFX_GUARD?.toast?.(`Permission denied — "${actionId}" shortcut`, 'deny');
-    return false;
-  }
-  return true;
+  // Two reasons a shortcut is refused, one sentence each — and PFX_GUARD.deny()
+  // already knows which of the two applies, so the branches only decide
+  // *whether* to refuse. They used to decide the wording too, and both spelled
+  // the raw actionId into English: `Read-only — "cut_add" shortcut blocked`.
+  const blocked = !!window.PFX_READONLY?.isActive?.()
+    || !!(window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('edit_cut'));
+  if (!blocked) return true;
+  window.PFX_GUARD?.deny?.(actionId);
+  return false;
 }
 
 function safeParseJSON(s){

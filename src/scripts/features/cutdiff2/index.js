@@ -1474,7 +1474,7 @@ export function createCutDiff2Feature(deps = {}) {
 
   async function _loadSlot(slot, files) {
     if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('import_timeline')) {
-      window.PFX_GUARD?.toast?.('Import blocked — no import_timeline permission', 'deny');
+      window.PFX_GUARD?.deny?.('import_timeline');
       return;
     }
     let parsed = null;
@@ -3432,7 +3432,7 @@ export function createCutDiff2Feature(deps = {}) {
   // ── Pull EDL export ───────────────────────────────────────────────────────
   async function _exportPullEdl() {
     if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('export')) {
-      window.PFX_GUARD?.toast?.('Export blocked — no export permission', 'deny'); return;
+      window.PFX_GUARD?.deny?.('export'); return;
     }
     if (!_s.diff.length) { showError?.('Nothing to export — run Analyze first.'); return; }
     const PULL_TYPES = new Set(['NEW', 'CHANGED', 'EXTENDED']);
@@ -3474,7 +3474,7 @@ export function createCutDiff2Feature(deps = {}) {
   // ── PDF smart change list ─────────────────────────────────────────────────
   function _exportPdf() {
     if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('export')) {
-      window.PFX_GUARD?.toast?.('Export blocked — no export permission', 'deny'); return;
+      window.PFX_GUARD?.deny?.('export'); return;
     }
     if (!_s.diff.length) { showError?.('Nothing to export — run Analyze first.'); return; }
     const ymd  = new Date().toISOString().slice(0, 10);

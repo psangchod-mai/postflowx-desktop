@@ -35,14 +35,23 @@ window.PFX_READONLY = (() => {
     '[data-action="relink-media"]',
   ].join(',');
 
-  function apply() {
-    if (isActive()) return;
+  // Why the project is read-only, as project-lease.js reported it. Kept so the
+  // badge, its tooltip, and the shortcut toast can all say the same true thing
+  // — see core/accessNotice.js for what was wrong with saying one thing.
+  let _reason = '';
+
+  function apply(reason) {
+    // Not `if (isActive()) return`: apply() is called again when the lease
+    // changes hands, and the cause can change with it. Bailing early left the
+    // first reason's tooltip on screen for the second reason's situation.
+    if (arguments.length) _reason = String(reason == null ? '' : reason);
     document.body.classList.add(BODY_CLASS);
     _ensureBadge();
     _disableControls();
   }
 
   function remove() {
+    _reason = '';
     document.body.classList.remove(BODY_CLASS);
     document.getElementById(BADGE_ID)?.remove();
     _enableControls();
@@ -52,14 +61,32 @@ window.PFX_READONLY = (() => {
     return document.body.classList.contains(BODY_CLASS);
   }
 
+  function reason() {
+    return _reason;
+  }
+
+  function _notice() {
+    // window.PFX_NOTICE comes from core/noticeGlobals.js — this file is a
+    // classic script and cannot import it. The fallback is English on purpose:
+    // it is only reachable if the module layer failed to load at all, and a
+    // badge with no tooltip is worse than a badge with an untranslated one.
+    return window.PFX_NOTICE?.readOnlyNotice?.({ reason: _reason })
+        || { badge: 'Read Only', title: 'This project cannot be changed right now' };
+  }
+
   function _ensureBadge() {
-    if (document.getElementById(BADGE_ID)) return;
-    const b = document.createElement('div');
-    b.id        = BADGE_ID;
-    b.className = 'pfx-readonly-badge';
-    b.title     = 'Read-only — you do not have edit permissions for this project';
-    b.textContent = 'Read Only';
-    document.body.appendChild(b);
+    const n = _notice();
+    let b = document.getElementById(BADGE_ID);
+    if (!b) {
+      b = document.createElement('div');
+      b.id        = BADGE_ID;
+      b.className = 'pfx-readonly-badge';
+      document.body.appendChild(b);
+    }
+    // Rewritten every time, not just on create, so a lease handover updates the
+    // words instead of leaving the previous cause showing.
+    b.title       = n.title;
+    b.textContent = n.badge;
   }
 
   function _disableControls() {
@@ -83,5 +110,5 @@ window.PFX_READONLY = (() => {
     } catch {}
   }
 
-  return { apply, remove, isActive };
+  return { apply, remove, isActive, reason };
 })();

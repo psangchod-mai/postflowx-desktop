@@ -55723,7 +55723,16 @@ tr:hover .pm-vfx-scan-btn { opacity: 1; color: rgba(160,200,255,.75); }
   pointer-events: none;
   opacity: 0;
   transition: opacity .2s, transform .2s;
-  white-space: nowrap;
+  /* Was `nowrap`, which was safe only while every refusal was three words.
+     The wording now says what happened and what to do about it, on two lines
+     separated by \n — with nowrap the newline collapsed and the toast grew
+     wider than the window, clipped at both ends because it is centred with
+     translateX(-50%). pre-line keeps the break; the max-width keeps the
+     longer single sentences inside the frame. Same four departures the
+     error-banner block below already documents. */
+  white-space: pre-line;
+  max-width: min(90vw, 460px);
+  text-align: center;
   box-shadow: 0 8px 32px rgba(0,0,0,.4);
 }
 .pfx-guard-toast--on {

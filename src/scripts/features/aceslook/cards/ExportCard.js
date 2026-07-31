@@ -2,6 +2,7 @@
 
 import { exportAmf, exportCdl, exportClf, exportSummary } from '../services/exportService.js';
 import { setExportResult, setClipId }                      from '../state/acesLookStore.js';
+import { deniedActionNotice }                             from '../../../core/accessNotice.js';
 
 // Action → permission key mapping (plan E2)
 const _ACTION_KEYS = {
@@ -35,7 +36,11 @@ export function renderExportCard(container, state) {
   const canClf     = _can('export_clf');
   const canSummary = _can('export_color_summary');
 
-  const _noPermTitle = 'You don\'t have permission for this export';
+  // Was one English sentence for all four buttons: "You don't have permission
+  // for this export". Untranslated, and it did not say which export — the user
+  // sees four locked buttons and one tooltip that fits none of them. The notice
+  // builder names the specific one, in their language.
+  const _noPerm = id => _esc(deniedActionNotice({ id }).text);
 
   container.innerHTML = `
     <div class="al-card" id="al-export-card">
@@ -48,22 +53,22 @@ export function renderExportCard(container, state) {
         <div class="al-export-btns">
           <button class="al-btn al-btn--primary" id="al-export-amf"
                   ${!canAmf || hasErrors ? 'disabled' : ''}
-                  title="${!canAmf ? _noPermTitle : hasErrors ? 'Fix errors before exporting' : ''}">
+                  title="${!canAmf ? _noPerm('export_amf') : hasErrors ? 'Fix errors before exporting' : ''}">
             Export AMF${!canAmf ? ' 🔒' : ''}
           </button>
           <button class="al-btn" id="al-export-cdl"
                   ${!canCdl || !state.cdlEnabled || hasErrors ? 'disabled' : ''}
-                  title="${!canCdl ? _noPermTitle : ''}">
+                  title="${!canCdl ? _noPerm('export_cdl') : ''}">
             Export CDL${!canCdl ? ' 🔒' : ''}
           </button>
           <button class="al-btn" id="al-export-clf"
                   ${!canClf || hasErrors ? 'disabled' : ''}
-                  title="${!canClf ? _noPermTitle : ''}">
+                  title="${!canClf ? _noPerm('export_clf') : ''}">
             Export CLF${!canClf ? ' 🔒' : ''}
           </button>
           <button class="al-btn" id="al-export-summary"
                   ${!canSummary ? 'disabled' : ''}
-                  title="${!canSummary ? _noPermTitle : ''}">
+                  title="${!canSummary ? _noPerm('export_color_summary') : ''}">
             Export Summary${!canSummary ? ' 🔒' : ''}
           </button>
         </div>
@@ -103,6 +108,11 @@ export function renderExportCard(container, state) {
   });
 }
 
+// Escapes the full set, not just the double quote it used to. It guards an
+// HTML *attribute* today, but the same helper now also carries translated
+// sentences, and a dictionary is a file somebody edits.
 function _esc(s) {
-  return String(s || '').replace(/"/g, '&quot;');
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 }

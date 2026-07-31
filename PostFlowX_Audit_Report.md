@@ -15213,3 +15213,99 @@ CutDiff orphaned-storage leak from 141, `_refreshStatus()`, and the three
 permission gates that still disagree on the admin check.
 
 Commits: `27c5709`.
+
+## Iteration 151 — the read-only badge: told the wrong reason, in English, in a box that clipped it
+
+**What was wrong.** Five faults in the `PFX_GUARD` channel — the second
+refusal vocabulary flagged at the end of 150.
+
+1. **The badge blamed the account for something the account had not
+   done.** `auth/project-lease.js` already distinguishes two situations
+   and passes the reason up: `Another tab holds the edit lease` and
+   `No edit permission`. `ui.js` took a two-argument callback,
+   `(readOnly, reason)`, and threw the reason away. `read-only.js` then
+   hard-coded one sentence for both. A user whose only problem was a
+   second open window — fixable in two seconds by closing it — was told
+   their account could not edit, and sent to an administrator who could
+   do nothing for them.
+2. **Ten call sites spelled their own English refusal**, five of them
+   printing the permission key at the user: `Import blocked — no
+   import_timeline permission`. `guarded-action.js` was the worst of
+   them, interpolating a caller-supplied label into
+   ``Permission denied — "${who}"``.
+3. **`.pfx-guard-toast` was `white-space: nowrap` with no max-width.**
+   The toast is centred with `translateX(-50%)`, so a sentence longer
+   than the window ran off *both* edges at once. Any two-sentence
+   wording was unreadable — which is part of why the wording had stayed
+   one blunt clause.
+4. **The save result contradicted the toast fired beside it.**
+   `projectFile.js` returned `error: 'Permission denied: save_project'`,
+   and `ui.js:15264` renders `r.error` verbatim into the save-status
+   pill. On screen: a correct translated toast, and next to it
+   `Save failed: Permission denied: save_project` in English with the
+   permission key showing.
+
+**What changed.** `readOnlyCause(reason)` classifies the reason into
+`lease` / `permission` / `unknown`; `readOnlyNotice()` turns the cause
+into a badge label, an opening sentence and a next step. The lease case
+says close the other window. The permission case names the account. The
+unknown case says the project cannot be changed and stops — no remedy at
+all, on purpose, because a wrong remedy costs the user a trip to someone
+who cannot help and an honest dead end costs them one question.
+`guardNotice()` picks between that and `deniedActionNotice()`.
+
+`ui.js` now forwards the reason; `read-only.js` stores it and rewrites
+the badge's `title` and text on every apply. Because the four auth
+scripts are classic `<script src=…>` tags and cannot `import`, a 20-line
+module `core/noticeGlobals.js` publishes `window.PFX_NOTICE` — the same
+bridge pattern as `window.pfxNoAccessView`.
+
+The ten call sites now call `window.PFX_GUARD?.deny?.(actionId)`: a call
+site names an action, never a sentence. That is what collapsed
+`shortcuts.js`'s two hand-written branches into one. Seventeen new keys
+× six locales — 102 ERROR_DICT rows.
+
+**Two near-misses my own tests caught.**
+
+`no_permission` is a *pre-existing* house code meaning the filesystem
+folder permission the OS refused. It is returned from
+`writeProjectV4ViaFS()` and sixteen other sites in the same file, and it
+reaches the same `ui.js` caller. My first draft reused it for the
+account refusal, which would have suppressed the filesystem failure's
+banner too — leaving a user with a pill reading `Save failed:
+no_permission`, no banner, and no toast. Renamed to
+`no_account_permission`. The test that caught it asserted a count of 2
+and got 8.
+
+`accessNotice.test.mjs` listed `edit_cut` and `import_media` as examples
+of ids the name table did *not* know, asserting they came back empty.
+Naming them was the right answer once the guard channel started refusing
+them, so the fixture moved: `nope` / `constructor` / `toString` /
+`__proto__` stay as the unnameable case, and the two real ids moved to a
+new positive assertion. The old test was right about the principle and
+wrong about its examples.
+
+**Tests.** `tests-js/guardNotice.test.mjs`, 16 tests, RED 20 / GREEN 1
+against HEAD. The one that was already green is exactly the recorded
+defect shape: `ui.js`'s callback signature already accepted `reason` —
+it just discarded it. `errorI18n.test.mjs` expected count for
+`accessNotice.js` 32 → 49.
+
+The test strips comments before scanning for stale English, because
+every one of these files carries a comment quoting the wording it
+replaced. A bare-text scan would turn the only durable record of the bug
+into a test failure, and the way to pass would be to delete the record.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open
+gates clean. Matches baseline.
+
+**Still open.** The `no_permission` overload above is a latent trap for
+any caller that distinguishes failure causes — sixteen sites, one code,
+two unrelated meanings. Unchanged: twenty inline `confirm()` sites, the
+seven naming/metadata `TT()` keys, the tab `title=` tooltips, `#ntCard`,
+Project Setup, the CutDiff orphaned-storage leak from 141,
+`_refreshStatus()`, and the three permission gates that still disagree on
+the admin check.
+
+Commits: `PENDING`.

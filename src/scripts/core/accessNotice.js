@@ -159,6 +159,35 @@ function _actionNames() {
     save_aces_preset:     translate('Save Preset'),
     load_aces_preset:     translate('Load Preset'),
     open_aces_look:       translate('Open ACES Look'),
+
+    // The second refusal vocabulary. PFX_GUARD.toast() is a separate channel
+    // from showDeniedToast(), and its call sites spelled their own English
+    // one-offs — several of them printing the permission key itself, as in
+    // "Import blocked — no import_timeline permission". These are the same
+    // kind of name for that channel's ids.
+    //
+    // Deliberately not 'Export', 'Delete', 'Undo', 'Redo': those four are
+    // button labels with six dictionary rows each already, and ERROR_DICT
+    // wins the merge, so reusing them would quietly retranslate every button
+    // in the app. The longer names are also the better answer here — the
+    // sentence is "your account cannot do this: …", and "Delete" alone does
+    // not say what would have been deleted.
+    play_media:           translate('Play Video'),
+    export:               translate('Export Files'),
+    import_timeline:      translate('Import Timeline'),
+    import_media:         translate('Import Media'),
+    edit_cut:             translate('Edit Cut'),
+    comment:              translate('Add Comment'),
+    relink_media:         translate('Relink Media'),
+    cut_add:              translate('Add Cut'),
+    delete:               translate('Delete Selection'),
+    undo:                 translate('Undo Last Change'),
+    redo:                 translate('Redo Last Change'),
+    // Same words as add_marker / open_annotation above, under the ids the
+    // shortcut registry and the annotate modal use. Free: the scanner
+    // collects distinct literals, so a repeated one costs no dictionary row.
+    marker_add:           translate('Add Marker'),
+    annotate:             translate('Open Annotation'),
   };
 }
 
@@ -212,4 +241,103 @@ export function deniedActionNotice(state = {}) {
   const label = actionName(id);
   const opening = translate('Your account cannot do this');
   return { label, text: label ? `${opening}: “${label}”` : opening };
+}
+
+// ── Read-only mode: two different situations wearing one sentence ────────────
+//
+// auth/project-lease.js already knows the difference. It reports
+// 'Another tab holds the edit lease' when the same project is open in a second
+// PostFlowX window, and 'No edit permission' when the account genuinely cannot
+// edit. ui.js received that reason in the lease callback and dropped it on the
+// floor, and auth/read-only.js hard-coded one tooltip for both:
+//
+//   "Read-only — you do not have edit permissions for this project"
+//
+// So a user whose only problem was a second open window — which they can fix
+// themselves in one click — was told they lacked a permission they actually
+// held, and sent to an administrator to ask for nothing. Getting the cause
+// wrong is worse than saying nothing, which is why 'unknown' below promises no
+// remedy at all rather than guessing at the likelier one.
+
+export const READ_ONLY_CAUSES = Object.freeze(['lease', 'permission', 'unknown']);
+
+/**
+ * Which of the two situations a lease reason string describes.
+ *
+ * Matched on the reason text rather than an enum because the strings are what
+ * project-lease.js passes today and the callback is public shape; a reason
+ * this does not recognise has to land on 'unknown', not on a guess.
+ *
+ * @param {string} reason
+ * @returns {'lease'|'permission'|'unknown'}
+ */
+export function readOnlyCause(reason) {
+  const r = String(reason == null ? '' : reason).trim();
+  if (!r) return 'unknown';
+  if (/lease|another (tab|window)/i.test(r)) return 'lease';
+  if (/permission/i.test(r)) return 'permission';
+  return 'unknown';
+}
+
+/**
+ * What the read-only badge, its tooltip, and the read-only toast should say.
+ *
+ * @param {object} state
+ * @param {string} [state.reason] the string auth/project-lease.js reports
+ * @param {string} [state.cause]  a cause from READ_ONLY_CAUSES, if already known
+ * @returns {{cause:string, badge:string, opening:string, next:string,
+ *            title:string, text:string}}
+ *          `title` is one line (a tooltip cannot show a newline); `text` keeps
+ *          the two sentences on two lines for the toast.
+ */
+export function readOnlyNotice(state = {}) {
+  const cause = READ_ONLY_CAUSES.includes(state.cause)
+    ? state.cause
+    : readOnlyCause(state.reason);
+
+  let opening, next;
+  if (cause === 'lease') {
+    opening = translate('This project is open in another PostFlowX window');
+    next = translate('Only one window can make changes. Close the other one and this window can edit again.');
+  } else if (cause === 'permission') {
+    opening = translate('Your account can open this project but not change it');
+    next = translate('Ask whoever set up your PostFlowX account if you need to make changes.');
+  } else {
+    // No next step, on purpose. Every wrong remedy costs the user a trip to
+    // someone who cannot help; an honest dead end costs them one question.
+    opening = translate('This project cannot be changed right now');
+    next = '';
+  }
+
+  return {
+    cause,
+    badge: translate('Read Only'),
+    opening,
+    next,
+    title: next ? `${opening}. ${next}` : opening,
+    text: next ? `${opening}\n${next}` : opening,
+  };
+}
+
+/**
+ * The one entry point for the PFX_GUARD refusal toast.
+ *
+ * Read-only mode blocks *every* mutating action at once, so naming the one the
+ * user happened to press adds nothing and pushes the sentence that explains
+ * how to get out of read-only further down the toast. A permission refusal is
+ * the opposite: it is specific to one action, so the action is named.
+ *
+ * @param {object} state
+ * @param {string} [state.actionId] the id that was blocked
+ * @param {boolean} [state.readOnly] true when read-only mode is what blocked it
+ * @param {string} [state.reason]   the lease reason, when readOnly
+ * @returns {{cause:string, label:string, text:string}}
+ */
+export function guardNotice(state = {}) {
+  if (state.readOnly) {
+    const n = readOnlyNotice({ reason: state.reason, cause: state.cause });
+    return { cause: n.cause, label: actionName(state.actionId), text: n.text };
+  }
+  const d = deniedActionNotice({ id: state.actionId });
+  return { cause: 'permission', label: d.label, text: d.text };
 }

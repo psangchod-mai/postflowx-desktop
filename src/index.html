@@ -154,6 +154,11 @@
   <script src="scripts/auth/planPolicy.js"></script>
   <script src="scripts/auth/permissions.js"></script>
   <script type="module" src="scripts/auth/noAccessView.js"></script>
+  <!-- Publishes window.PFX_NOTICE for the classic scripts below, which cannot
+       import the translated refusal wording themselves. Module scripts are
+       deferred, so this runs after them — fine, every reader is a click
+       handler. -->
+  <script type="module" src="scripts/core/noticeGlobals.js"></script>
   <script src="scripts/auth/policyCache.js"></script>
   <script src="scripts/auth/policyApi.js"></script>
   <script src="scripts/auth/bootPolicyFlow.js"></script>
