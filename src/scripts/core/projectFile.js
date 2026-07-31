@@ -12,6 +12,7 @@
 
 import { safeWriteText, safeReadJSON } from './safeFile.js';
 import { deniedActionNotice } from './accessNotice.js';
+import { projectFolderName } from './projectFolderName.js';
 
 const DB_NAME = "mps_handles_v1";
 const DB_STORE = "handles";
@@ -50,14 +51,14 @@ function isValidTabKey(tab){
 // v4 does not use .mpsproj.json files.
 const AUTOSAVE_SUFFIX = ".autosave";
 
+// The rule this used to inline is now core/projectFolderName.js, because the
+// ASCII-only character class it carried turned every Thai, Korean, Japanese and
+// Chinese project name into the same handful of folders — see that file's
+// header. The name is kept as-is so the thirty call sites below do not move,
+// and so anything outside this module that imports `sanitizeFilename` still
+// gets it.
 export function sanitizeFilename(name){
-  const s = String(name || "Project")
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return s || "Project";
+  return projectFolderName(name);
 }
 
 function nowISO(){

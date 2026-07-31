@@ -15576,3 +15576,97 @@ CutDiff orphaned-storage leak from 141; and the three permission gates that
 still disagree on the admin check.
 
 Commits: `4c37d28`.
+
+## Iteration 155 — every Thai, Korean and Japanese project name was the same folder
+
+**Scope.** `src/scripts/core/projectFile.js:53` (`sanitizeFilename`), extracted to a
+new pure leaf module `src/scripts/core/projectFolderName.js`, with
+`tests-js/projectFolderName.test.mjs`.
+
+**The fault.** Every project is written to `PFX/<folder>/`, and the folder name came
+from one character class:
+
+```js
+.replace(/[^a-zA-Z0-9._-]/g, "_")
+```
+
+Fifty-two letters and ten digits. Every other character — every character of the
+six languages this app ships in — became an underscore; the underscores were then
+collapsed and stripped from both ends, and the remainder went on disk:
+
+| typed | folder on disk |
+|---|---|
+| `ตอนที่ 3` | `3` |
+| `ตอนที่ 4` | `4` |
+| `제3화` | `3` |
+| `第3話` | `3` |
+| `제목` | `Project` |
+| `タイトル` | `Project` |
+
+This is not a cosmetic naming problem, it is a silent overwrite. `ตอนที่ 3` and
+`제3화` are one directory; saving the second writes its `project.json` over the
+first. Any two projects named entirely in Thai or Korean with no digits in them are
+both `Project`, and so are the third and the fourth. The name box goes on showing
+what was typed, because the box holds the typed string and only the *folder* was
+renamed — somewhere the reader never looks. There is no dialog, no status pill and
+no `bad_name` result; the save reports success, because from the app's point of
+view it succeeded.
+
+The users this hits are exactly the users the app was localised for.
+
+**The fix is a widening, not a new rule.** The allowed set becomes the Unicode
+sense of "letters, numbers and the marks that go with them" — `\p{L}\p{N}\p{M}`
+with the `u` flag — instead of the ASCII subset of the same idea. `\p{M}` is not
+optional: Thai vowel signs and tone marks (`◌ี` and `◌่` in `ที่`) are combining
+marks rather than letters, and `\p{L}\p{N}` alone would return `ท_` and shred Thai
+worse than the old rule shredded Korean.
+
+Because `\p{L}` contains `a-zA-Z` and `\p{N}` contains `0-9`, a name that was
+already pure ASCII maps to a byte-identical folder. That is the whole reason for
+writing it this way: there is no migration step and nothing already on disk moves.
+A test asserts it directly rather than against a hand-written expectation list — it
+keeps a copy of the *old* line and requires the two agree on thirteen ASCII names.
+
+**What still gets replaced.** `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, control
+characters and emoji are punctuation and symbols, not letters, so they were never
+inside `\p{L}\p{N}\p{M}` and are still folded to `_`.
+
+**Two guards the old line did not have.**
+
+*Dots.* `.` and `..` came through untouched — `.` was in the allow-list and the
+end-trim only removed underscores. `getDirectoryHandle("..")` is not a traversal in
+the File System Access API, it is a rejection, so the effect was a save that failed
+with a raw DOMException. A dots-only name now takes the fallback. A single leading
+dot is still a legal name and is left alone.
+
+*Bytes.* A directory entry is capped at 255 **bytes**, not characters. The old rule
+could not produce a long non-ASCII name because it could not produce a non-ASCII
+byte at all; now that Thai survives so does its byte count, and a 90-character Thai
+title is 270 bytes. The result is clamped to 200 UTF-8 bytes — walking code points,
+so a CJK ideograph or an emoji is dropped whole rather than cut in half — leaving
+room for the `.autosave.json`-style suffixes callers append to this base name.
+
+**A remaining rough edge, stated plainly.** A user who already saved `ตอนที่ 3`
+has it on disk as `3`. After this change, saving that name again creates
+`ตอนที่_3`, and the old folder stays where it is. Nothing is lost and nothing
+becomes unreachable — the old project is still listed and still opens, under the
+name `3` — but for a short window a user may see both. Fixing that properly means a
+one-time reconciliation pass over `PFX/`, which is a larger change than this one and
+is not attempted here.
+
+**Proof.** RED probe of 24 independent claims against a pristine `git archive HEAD`
+tree: **RED 24 / GREEN 0**. The same probe against the working tree:
+**GREEN 24 / RED 0**. `tests-js/projectFolderName.test.mjs` adds 16 tests, all green,
+each collision test asserting the old behaviour as a precondition first so the test
+proves a bug existed rather than asserting a preference.
+
+**Gate.** `npm run build-verify` → `EXIT=0`. Node aggregate `tests 73 / pass 72 /
+fail 0 / skipped 1`; pytest `315 passed, 7 skipped`; XSS, XXE and fail-open gates
+clean.
+
+**Still open.** `bSaveAs` still opens a raw browser `prompt("Save As - Project
+name")` with no validation and a Cancel indistinguishable from an empty name; the
+folder name a project will actually be saved under is still never shown to the
+reader, so `Trailer#1 → Trailer_1` remains a silent rewrite even though it is now a
+harmless one; `Saved ${relative-time}` in the status pill is still untranslated
+English.

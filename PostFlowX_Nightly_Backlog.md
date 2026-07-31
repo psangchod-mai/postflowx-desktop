@@ -8134,3 +8134,32 @@ explanation of what a project name is for, and a Cancel that looks identical to
 an empty name. The `Saved 4m ago` half of the same pill is also still English.
 
 Commits: `4c37d28`.
+
+## Iteration 155 — two projects, one folder, no warning
+
+The folder a project is saved into was named by an ASCII-only character class, so
+every Thai, Korean, Japanese and Chinese character was replaced with an underscore
+before the directory was created. `ตอนที่ 3` became the folder `3`. So did `제3화`
+and `第3話`. `제목` and `タイトル` were both `Project`. Two projects named in the
+language the app is running in shared a directory, and the second save quietly
+overwrote the first — no error, no `bad_name`, no change in the name box, because
+only the folder was renamed and nobody looks at the folder.
+
+The rule moved out of `core/projectFile.js` into a pure `core/projectFolderName.js`
+so it could be tested at all, and the allowed set widened from `[a-zA-Z0-9._-]` to
+`\p{L}\p{N}\p{M}._-` with the `u` flag. `\p{M}` carries Thai vowel signs and tone
+marks, which are not letters and would otherwise have been stripped out of the
+middle of most Thai words. Since `\p{L}` already contains `a-zA-Z`, every ASCII name
+lands on the byte-identical folder it is already stored in — a test pins that
+against a copy of the old line, so shipping this cannot move an existing project.
+Two guards were added that the old line lacked: a dots-only name (`.`, `..`) now
+takes the fallback instead of reaching `getDirectoryHandle` and throwing, and the
+result is clamped to 200 UTF-8 bytes, because a 90-character Thai title is 270 bytes
+and a directory entry is capped at 255.
+
+**Next:** the folder name is still never shown. `Trailer#1` is saved as `Trailer_1`
+and nothing says so — harmless now that it is no longer a collision, but still a
+rewrite the reader cannot see. `bSaveAs` remains the last raw browser `prompt()` in
+the project bar: no validation, no trim, no duplicate check, and a Cancel that looks
+exactly like typing nothing. And `Saved 4m ago` in the same pill is still English in
+all seven languages.
