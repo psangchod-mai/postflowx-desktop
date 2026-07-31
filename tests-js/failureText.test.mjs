@@ -30,6 +30,8 @@ import {
   FAILURE_CAUSES,
   PROJECT_OPS,
   pickerFallbackNote,
+  openedNotice,
+  settledProjectName,
 } from '../src/scripts/core/failureText.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -326,7 +328,11 @@ test('the Project Manager says why Open failed before it changes the subject', (
     'the Project Manager still discards r.reason');
   assert.ok(/pickerFallbackNote\(\)/.test(ui),
     'the promise about the file picker was dropped along with the old sentence');
-  assert.ok(/import \{ projectFailure, pickerFallbackNote \}/.test(ui),
+  // Written as a membership check rather than an exact import line: iteration
+  // 154 added two more names from the same module, and pinning the whole line
+  // turned "the module grew" into a failure about the file picker.
+  const imports = (ui.match(/import \{([^}]*)\} from "\.\/core\/failureText\.js"/) || [])[1] || '';
+  assert.ok(/\bpickerFallbackNote\b/.test(imports),
     'pickerFallbackNote is used without being imported');
 });
 
@@ -366,4 +372,87 @@ test('every sentence in the module is a literal a scanner can find', () => {
   // translate(someVariable) is invisible to the scanner and would ship English.
   const bad = [...codeOnly(failureTextSrc).matchAll(/translate\(\s*([^'")\s][^)]*)\)/g)];
   assert.deepEqual(bad.map((m) => m[1]), [], 'translate() called with something other than a literal');
+});
+
+// ── Iteration 154: the project bar told the truth about failures and lied
+//    about successes ─────────────────────────────────────────────────────────
+//
+// Every load path writes the wanted name into the box before it tries, and
+// none of them put it back when the try fails. The pill said "could not open"
+// and the box said "EP103_Reel2", and the box is the one people read. At
+// launch it was worse: the box named a project and the app was holding
+// nothing at all.
+//
+// The other half is the success pill — `Loaded ${name}`, built inline at seven
+// call sites in English, the last raw string on the project bar.
+
+test('a failed load leaves the box naming whatever was actually open', () => {
+  assert.equal(settledProjectName('EP101', 'EP103', false), 'EP101');
+  assert.equal(settledProjectName('EP101', 'EP103', true), 'EP103');
+});
+
+test('a failed restore at launch leaves the box empty rather than confident', () => {
+  // Nothing was open before, so nothing is open after. An empty box is the
+  // honest answer; the old code left the wanted name sitting there.
+  assert.equal(settledProjectName('', 'EP103', false), '');
+});
+
+test('the settled name is trimmed and never undefined', () => {
+  assert.equal(settledProjectName('  EP101  ', '  EP103  ', true), 'EP103');
+  assert.equal(settledProjectName(undefined, undefined, true), '');
+  assert.equal(settledProjectName(null, 'EP103', false), '');
+  // A blank attempt cannot be a success worth showing.
+  assert.equal(settledProjectName('EP101', '   ', true), 'EP101');
+});
+
+test('every load path settles the box instead of leaving the wanted name', () => {
+  const ui = codeOnly(uiSrc);
+  const calls = ui.match(/_settleProjectNameBox\(before, /g) || [];
+  assert.ok(calls.length >= 4, `only ${calls.length} load paths put the name box back`);
+  // Each of them has to capture the old name first, or `before` is the name
+  // it just wrote and settling is a no-op that looks like a fix.
+  const captures = ui.match(/const before = String\(nameInput\.value \|\| ''\);/g) || [];
+  assert.ok(captures.length >= calls.length,
+    `${calls.length} settle calls but only ${captures.length} captured a previous name`);
+  assert.ok(/function _settleProjectNameBox\(previous, attempted, ok\)\{/.test(ui),
+    'the helper has been renamed or removed');
+  assert.ok(/settledProjectName\(previous, attempted, ok\)/.test(ui),
+    'the helper stopped using the tested rule and re-typed it inline');
+});
+
+test('the success pill is a translated sentence, not a template literal', () => {
+  const ui = codeOnly(uiSrc);
+  assert.ok(!/`Loaded \$\{/.test(ui), 'a raw English "Loaded <name>" pill is still built inline');
+  const pills = ui.match(/setProjectSaveStatus\(openedNotice\(/g) || [];
+  assert.equal(pills.length, 7, `${pills.length} of the 7 open pills route through openedNotice`);
+});
+
+test('the opened notice puts the name where the locale wants it', () => {
+  const withName = openedNotice('EP103');
+  assert.ok(withName.includes('EP103'), 'the notice dropped the project name');
+  assert.ok(!withName.includes('{name}'), 'the placeholder was not substituted');
+  // Without a name there is nothing to substitute, so it must not leave the
+  // slot on screen either.
+  const bare = openedNotice('');
+  assert.ok(bare.length > 0 && !bare.includes('{name}'), 'the nameless notice leaks its placeholder');
+  assert.notEqual(bare, withName);
+});
+
+test('a very long project name cannot push the pill off the bar', () => {
+  const long = 'X'.repeat(400);
+  const out = openedNotice(long);
+  assert.ok(out.length < 120, `the pill grew to ${out.length} characters`);
+  assert.ok(out.includes('…'), 'a truncated name says nothing about being truncated');
+});
+
+test('every locale keeps the {name} slot', () => {
+  // A translation that drops the placeholder silently drops the project name:
+  // the pill would read "Opened" and nothing else, in that language only.
+  const i18n = read('src/scripts/modules/i18n.js');
+  const rows = i18n.split('\n').filter((l) => l.includes('"Opened \u201c{name}\u201d":'));
+  assert.equal(rows.length, 6, `${rows.length} locales carry the opened notice`);
+  for (const row of rows) {
+    const value = row.split('": "')[1] || '';
+    assert.ok(value.includes('{name}'), `a locale dropped the name slot: ${row.trim()}`);
+  }
 });

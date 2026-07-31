@@ -68,7 +68,7 @@ import {
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
-import { projectFailure, pickerFallbackNote } from "./core/failureText.js";
+import { projectFailure, pickerFallbackNote, openedNotice, settledProjectName } from "./core/failureText.js";
 import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
@@ -14987,13 +14987,15 @@ async function wireProjectBar(){
       btn.title = name;
       btn.addEventListener('click', async () => {
         _closeAllProjDropdowns();
+        const before = String(nameInput.value || '');
         nameInput.value = name;
         syncProjectNameEverywhere(name);
         const r = await loadTabByName(name, { allowPrompt: true });
+        _settleProjectNameBox(before, name, !!r?.ok);
         if (r?.ok){
           setDirty(false);
           await addToRecents(name);
-          setProjectSaveStatus(`Loaded ${name}`, 'idle');
+          setProjectSaveStatus(openedNotice(name), 'idle');
           _updateRecentBtnLabel(name);
         } else {
           // Said "not found" whatever the cause. When the cause is a lapsed
@@ -15007,6 +15009,24 @@ async function wireProjectBar(){
       recentList.appendChild(btn);
     });
   }
+  // Put the name box back where it belongs once a load attempt has settled.
+  //
+  // Every path below fills the box in before it tries, so the click feels
+  // instant. None of them used to put it back on failure, which left the bar
+  // naming a project the app is not holding — the pill said it failed and the
+  // box said it worked, and in a room full of people who do not read status
+  // pills, the box wins. Passing the name the box held *before* the attempt
+  // makes a failure a no-op rather than a lie; at launch that name is empty,
+  // so the box correctly ends up showing nothing.
+  function _settleProjectNameBox(previous, attempted, ok){
+    const settled = settledProjectName(previous, attempted, ok);
+    if (!nameInput || settled === String(nameInput.value || '')) return settled;
+    nameInput.value = settled;
+    try{ syncProjectNameEverywhere(settled); }catch{}
+    try{ _updateRecentBtnLabel(settled); }catch{}
+    return settled;
+  }
+
   function _updateRecentBtnLabel(name){
     const lbl = recentBtn?.querySelector('.proj-recent-btn-label');
     if (!lbl) return;
@@ -15334,13 +15354,17 @@ async function wireProjectBar(){
     const last = String(data?.[kLast] || '').trim();
     __restoreWanted = last;
     if (last){
+      const before = String(nameInput.value || '');
       nameInput.value = last;
       syncProjectNameEverywhere(last);
       const r = await loadTabByName(last);
+      // `before` is empty at launch, so a failed restore empties the box: the
+      // app opens naming nothing, because it is holding nothing.
+      _settleProjectNameBox(before, last, !!r?.ok);
       if (r?.ok){
         setDirty(false);
         await addToRecents(last);
-        setProjectSaveStatus(`Loaded ${last}`, "idle");
+        setProjectSaveStatus(openedNotice(last), "idle");
         _updateRecentBtnLabel(last);
       }else{
         const f = projectFailure(r, 'load', last);
@@ -15365,13 +15389,15 @@ async function wireProjectBar(){
   on(sel, "change", async () => {
     const pick = sel.value;
     if (!pick) return;
+    const before = String(nameInput.value || '');
     nameInput.value = pick;
     syncProjectNameEverywhere(pick);
     const r = await loadTabByName(pick, { allowPrompt: true });
+    _settleProjectNameBox(before, pick, !!r?.ok);
     if (r?.ok){
       setDirty(false);
       await addToRecents(pick);
-      setProjectSaveStatus(`Loaded ${pick}`, "idle");
+      setProjectSaveStatus(openedNotice(pick), "idle");
       _updateRecentBtnLabel(pick);
     }else{
       // Same false "not found" as the recents list, plus a path template —
@@ -15419,7 +15445,7 @@ async function wireProjectBar(){
           _syncNameToAllScopes(n);
           _clearAllScopesDirty();
           await addToRecents(n);
-          setProjectSaveStatus(`Loaded ${n}`, 'idle');
+          setProjectSaveStatus(openedNotice(n), 'idle');
           _updateRecentBtnLabel(n);
           return;
         }
@@ -15456,7 +15482,7 @@ async function wireProjectBar(){
           _syncNameToAllScopes(n);
           _clearAllScopesDirty();
           await addToRecents(n);
-          setProjectSaveStatus(`Loaded ${n}`, 'idle');
+          setProjectSaveStatus(openedNotice(n), 'idle');
           _updateRecentBtnLabel(n);
         }
         return;
@@ -15497,7 +15523,7 @@ async function wireProjectBar(){
       _syncNameToAllScopes(n);
       _clearAllScopesDirty();
       await addToRecents(n);
-      setProjectSaveStatus(`Loaded ${n}`, "idle");
+      setProjectSaveStatus(openedNotice(n), "idle");
       _updateRecentBtnLabel(n);
     }catch(err){
       showError(err?.message || String(err));
@@ -15630,13 +15656,15 @@ async function wireProjectBar(){
     const name = (typeof proj === 'string' ? proj : (proj?.name || proj?.projectName || '')).trim();
     if (!name) return;
     try {
+      const before = String(nameInput.value || '');
       nameInput.value = name;
       syncProjectNameEverywhere(name);
       const r = await loadTabByName(name, { allowPrompt: true });
+      _settleProjectNameBox(before, name, !!r?.ok);
       if (r?.ok) {
         setDirty(false);
         await addToRecents(name);
-        setProjectSaveStatus(`Loaded ${name}`, 'idle');
+        setProjectSaveStatus(openedNotice(name), 'idle');
         _updateRecentBtnLabel(name);
       } else {
         // True, and useless: it repeats the button that was just pressed.

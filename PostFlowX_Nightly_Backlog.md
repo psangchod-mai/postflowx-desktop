@@ -8104,3 +8104,31 @@ And `Loaded ${name}` is untranslated English in seven places, which is the last
 raw string on the project bar.
 
 Commits: `773414f`.
+
+## Iteration 154 — the bar was naming a project the app did not have
+
+Iteration 153 gave the launch auto-restore a voice. It turned out the voice was
+being contradicted one line above it: the name box still had the project name
+in it, because every load path writes the name in before it tries and none of
+them wrote it back out when the try failed. A red pill under a filled-in name
+box does not read as "this did not open" — it reads as noise above a project
+that is plainly, visibly, open. Four paths did this: the recents list, the
+project dropdown, the Home screen card, and launch itself.
+
+The rule is now one tested function. On success the box takes the new name; on
+failure it goes back to whatever was there before the click. At launch there
+was nothing before the click, so the box ends up empty — the app opens naming
+nothing because it is holding nothing, which is the first true thing that
+screen has said in this situation.
+
+The other half was the success message. `Loaded ${name}` was assembled inline in
+seven places, in English, in all seven languages — the last raw string on the
+project bar. It is now a translated sentence with a `{name}` slot so Korean and
+Japanese can put the project where their grammar wants it, and the word changed
+from "Loaded" to "Opened" because Open is what the buttons say.
+
+**Next:** `bSaveAs` still opens a raw browser `prompt()` to ask for a project
+name — the only place left in the project bar that uses one, and the one place
+where a non-technical reader is asked to type something with no validation, no
+explanation of what a project name is for, and a Cancel that looks identical to
+an empty name. The `Saved 4m ago` half of the same pill is also still English.

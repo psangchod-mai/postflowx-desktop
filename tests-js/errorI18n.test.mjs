@@ -179,10 +179,10 @@ const SCANNED = [
   // condition and no way out of it, and the way out is one folder picker.
   // One of the 24 is deliberately shared word-for-word with the guard toast
   // in core/accessNotice.js so the account refusal reads as one event.
-  // 25 as of iteration 153: the 24 project-failure sentences plus the one
-  // line the Project Manager adds when a failed Open falls through to the
-  // file picker.
-  { file: 'core/failureText.js', src: failureTextSrc, expected: 25 },
+  // 27 as of iteration 154: 24 project-failure sentences, the file-picker
+  // line added in 153, and the two the status pill now uses when a project
+  // actually opens — with and without a name to put in it.
+  { file: 'core/failureText.js', src: failureTextSrc, expected: 27 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

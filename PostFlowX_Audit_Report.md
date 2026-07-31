@@ -15506,3 +15506,71 @@ Project Setup, the CutDiff orphaned-storage leak from 141, `_refreshStatus()`,
 and the three permission gates that still disagree on the admin check.
 
 Commits: `773414f`.
+
+## Iteration 154 — the name box said one thing and the pill said another
+
+**Scope.** The four remaining load paths in `src/scripts/ui.js`, plus the seven
+places the status pill announced a successful open.
+
+**The fault.** Every load path writes the wanted project name into the name box
+*before* it tries — the recents list, the project dropdown, the Home screen's
+recent card, and the launch auto-restore. That is deliberate and it is what
+makes the click feel instant. None of them put the name back when the attempt
+failed. Iteration 153 gave the launch path a status pill that says the restore
+failed; the box above it went on naming the project regardless. So the bar read
+
+    EP103_Reel2                    Could not open the project
+
+with the app holding either the previous project or, at launch, nothing at all.
+Between a small red pill and the project name in a text box, the box is what
+people read. A colourist who believes it edits into a project that is not open
+and saves into a name that is not the one they think.
+
+**The rule, and why it is not four copies of one line.** `settledProjectName`
+in `core/failureText.js` answers the whole question: on success the attempted
+name, on failure the name the box held before the attempt. At launch that
+previous name is empty, so a failed restore empties the box — the app opens
+naming nothing, because it is holding nothing, which is the honest state. Four
+call sites have to agree on that, so the rule is a tested export rather than a
+line re-typed at each. `_settleProjectNameBox` is the DOM half: it calls the
+rule, and only touches the box when the answer differs from what is showing.
+
+**Capturing `before` is the part that can go wrong.** If a site reads
+`nameInput.value` *after* writing the wanted name, `before` is the wanted name
+and settling becomes a no-op that looks like a fix. The test counts the capture
+sites and requires at least one per settling call.
+
+**The success pill.** `` setProjectSaveStatus(`Loaded ${n}`) `` appeared at seven
+call sites — the last raw English string on the project bar and the only thing
+the bar says when everything goes right. It is now `openedNotice(name)`, two
+translated sentences: one with a `{name}` slot and one for the paths that have
+no name to put in it. The slot matters — "Opened" plus a name is a sentence in
+English word order and nothing at all in Korean or Japanese, so each locale
+places the project where its own grammar wants it. The wording moved from
+"Loaded" to "Opened" to match the button that was pressed; the app has Open
+buttons everywhere the reader can see, and no Load buttons.
+
+**A guard the translations need.** A locale that drops `{name}` silently drops
+the project name, and the pill reads "Opened" and nothing else — in that
+language only, which is exactly the kind of fault that ships. A test reads the
+six rows out of `i18n.js` and requires the slot in every one.
+
+**One test relaxed, with the reason.** Iteration 153's Project-Manager test
+pinned the whole import line, `import { projectFailure, pickerFallbackNote }`.
+Adding two more names from the same module turned "the module grew" into a
+failure about the file picker. It is now a membership check on the imported
+names, which is what it was reaching for.
+
+**Proof.** A 21-claim probe run against `HEAD` scored RED 21 / GREEN 0, and the
+same probe against the working tree scored GREEN 21 / RED 0.
+
+**Gate.** `npm run build-verify` → `EXIT=0`; node aggregate 73 tests / 72 pass /
+0 fail / 1 skipped; pytest 315 passed, 7 skipped; XSS, XXE and fail-open gates
+clean. `tests-js/failureText.test.mjs` is now 35 tests, all green.
+
+**Still open.** `bSaveAs` still uses a raw `prompt("Save As - Project name")`;
+`Saved ${relative-time}` in the same pill is still untranslated English; the six
+uncalled `projectFile.js` exports and five dead `ui.js` imports; the seven
+untranslated `TT()` keys in the naming panel; the whole Project Setup panel; the
+CutDiff orphaned-storage leak from 141; and the three permission gates that
+still disagree on the admin check.

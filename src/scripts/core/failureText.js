@@ -269,3 +269,48 @@ export function projectFailure(result, op, name) {
 export function pickerFallbackNote() {
   return translate('PostFlowX will open the file picker so you can find the project yourself.');
 }
+
+/**
+ * The success half of the same pill. `Loaded ${name}` was built inline at seven
+ * call sites, in English, in all seven languages — the last raw string on the
+ * project bar and the only thing the bar says when everything goes right.
+ *
+ * The name is substituted rather than concatenated. "Opened" plus a name is a
+ * sentence in English word order and nothing at all in Korean or Japanese; a
+ * `{name}` slot lets each locale put the project where its grammar wants it.
+ * The wording moves from "Loaded" to "Opened" to match the button that was
+ * pressed — the app has Open buttons, not Load buttons, everywhere the reader
+ * can see.
+ *
+ * @param {string} [name] Project name as typed by the user, if there is one.
+ * @returns {string} A translated sentence for the status pill.
+ */
+export function openedNotice(name) {
+  const subject = cleanName(name);
+  if (!subject) return translate('Project opened');
+  return translate('Opened “{name}”').replace('{name}', subject);
+}
+
+/**
+ * Which project name the box should be showing once an attempt has settled.
+ *
+ * Every load path in ui.js writes the wanted name into the box *before* it
+ * tries, because that is what makes the click feel instant. None of them put
+ * it back when the try fails, so a failed Open leaves the bar reading
+ * "EP103_Reel2" while the app is still holding whatever was open before — or,
+ * at launch, holding nothing at all. The pill says it failed and the box says
+ * it worked, and the box is the one people believe.
+ *
+ * The rule is one line, but it has to be the same line at four call sites, so
+ * it lives here where a test can hold it rather than being re-typed at each.
+ *
+ * @param {string} previous The name in the box before the attempt started.
+ * @param {string} attempted The name the attempt was for.
+ * @param {boolean} ok Whether the attempt succeeded.
+ * @returns {string} The name to leave in the box; '' means show nothing.
+ */
+export function settledProjectName(previous, attempted, ok) {
+  const want = String(attempted == null ? '' : attempted).trim();
+  const had = String(previous == null ? '' : previous).trim();
+  return (ok && want) ? want : had;
+}
