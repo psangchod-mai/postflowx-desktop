@@ -70,6 +70,7 @@ import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
 import { projectFailure, pickerFallbackNote, openedNotice, settledProjectName } from "./core/failureText.js";
 import { saveAsPromptLabel, nameEntryProblem, isCancelled, cleanProjectName } from "./core/projectNameEntry.js";
+import { relativeTime, savedLabel } from "./core/relativeTime.js";
 import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
@@ -15235,11 +15236,11 @@ async function wireProjectBar(){
   let __projSaveInFlight = null;
   let __lastSaveMs = 0;
   let __saveRelTimer = 0;
+  // Was a hand-rolled `${n}m ago` — English, and untranslatable in that shape
+  // because it glued a number to the word "ago". core/relativeTime.js asks Intl
+  // instead, which knows how each of the six languages builds the phrase.
   function _fmtRelTime(ms){
-    const s = Math.floor((Date.now() - ms) / 1000);
-    if (s < 60)  return 'just now';
-    if (s < 3600) return `${Math.floor(s/60)}m ago`;
-    return `${Math.floor(s/3600)}h ago`;
+    return relativeTime(ms);
   }
   function setProjectSaveStatus(message, state = "idle"){
     if (!saveStatus) return;
@@ -15260,7 +15261,9 @@ async function wireProjectBar(){
       __projSaveStatusTimer = setTimeout(() => {
         try{
           // Switch to live relative-time ticker
-          const tick = () => { try{ saveStatus.textContent = `Saved ${_fmtRelTime(__lastSaveMs)}`; }catch{} };
+          // `'Saved ' + rel` put the word first, which is an English decision
+          // as much as the word itself is. savedLabel lets each locale place it.
+          const tick = () => { try{ saveStatus.textContent = savedLabel(__lastSaveMs); }catch{} };
           tick();
           saveStatus.classList.remove("is-saving", "is-saved", "is-error");
           __saveRelTimer = setInterval(tick, 30_000);

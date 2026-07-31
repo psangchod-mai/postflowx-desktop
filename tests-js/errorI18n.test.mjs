@@ -41,6 +41,7 @@ const workspaceAccessSrc = readFileSync(SRC_DIR + 'core/workspaceAccess.js', 'ut
 const accessNoticeSrc = readFileSync(SRC_DIR + 'core/accessNotice.js', 'utf8');
 const failureTextSrc = readFileSync(SRC_DIR + 'core/failureText.js', 'utf8');
 const projectNameEntrySrc = readFileSync(SRC_DIR + 'core/projectNameEntry.js', 'utf8');
+const relativeTimeSrc = readFileSync(SRC_DIR + 'core/relativeTime.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -189,6 +190,11 @@ const SCANNED = [
   // dialog is for, the warning that the name becomes a folder and loses its
   // spaces, and the one thing that can still be wrong with what gets typed.
   { file: 'core/projectNameEntry.js', src: projectNameEntrySrc, expected: 3 },
+  // One string, and it exists only because the pill used to be built as
+  // 'Saved ' + rel — two English decisions in one line, the word and its
+  // position. Everything else this module says comes from Intl, which needs
+  // no dictionary rows at all.
+  { file: 'core/relativeTime.js', src: relativeTimeSrc, expected: 1 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

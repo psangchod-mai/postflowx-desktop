@@ -8,6 +8,7 @@
 'use strict';
 
 import { friendlyAlert } from '../../core/friendlyAlert.js';
+import { relativeTime, absoluteDateTime } from '../../core/relativeTime.js';
 
 const _esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -78,14 +79,14 @@ function _tabChips(tabs) {
   return `<div class="pfx-pm-tabs">${chips}</div>`;
 }
 
+// The exact timestamp behind every row's relative label — it goes in the title=,
+// which is the one place the reader can go to find out what "3 days ago" was.
+// It used to be built from a hard-coded ['Jan','Feb',…] array and a 24-hour
+// clock, so the tooltip stayed English even when the row above it was not.
 function _fmtDate(ms) {
   if (!ms) return '—';
-  try {
-    const d = new Date(ms);
-    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-    const p = n => String(n).padStart(2, '0');
-    return `${mo} ${p(d.getDate())} ${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  } catch { return '—'; }
+  try { return absoluteDateTime(ms) || '—'; }
+  catch { return '—'; }
 }
 
 // Day index (local midnight, days since epoch) for "same day" / bucket math.
@@ -97,21 +98,12 @@ function _dayIndex(ms) {
 // Relative "smart" date for the row (exact timestamp goes in the title attribute).
 function _relDate(ms) {
   if (!ms) return '—';
-  try {
-    const now = Date.now();
-    const diff = now - ms;
-    const min = 60000, hr = 3600000, day = 86400000;
-    if (diff < 0) return _fmtDate(ms);
-    if (diff < min) return 'just now';
-    if (diff < hr)  return `${Math.floor(diff / min)} min ago`;
-    const today = _dayIndex(now), d = _dayIndex(ms);
-    if (d === today)     return `${Math.floor(diff / hr) || 1} hr ago`;
-    if (d === today - 1) return 'Yesterday';
-    if (today - d < 7)   return `${today - d} days ago`;
-    const dd = new Date(ms);
-    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getMonth()];
-    return `${mo} ${dd.getDate()}, ${dd.getFullYear()}`;
-  } catch { return _fmtDate(ms); }
+  // The hand-rolled ladder this replaced said 'just now', 'Yesterday' and
+  // 'Jan 5, 2026' in English no matter which language the app was in, and its
+  // month-name array had no other spelling to offer. core/relativeTime.js asks
+  // Intl, which has the idiom and the month names for all six.
+  try { return relativeTime(ms) || _fmtDate(ms); }
+  catch { return _fmtDate(ms); }
 }
 
 // Bucket for date grouping headers. Lower order = nearer to now.

@@ -15738,3 +15738,119 @@ The folder name is still never shown before it is created. `Saved 4m ago` in the
 same status pill is still English in all seven languages.
 
 Commits: `2d3d933`.
+
+## Iteration 157 — four clocks, four sets of rules, one language
+
+### Scope
+
+`src/scripts/core/relativeTime.js` (new), `src/scripts/ui.js`,
+`src/scripts/features/projectManager/projectManager.js`,
+`src/scripts/modules/i18n.js`, `tests-js/relativeTime.test.mjs` (new),
+`tests-js/errorI18n.test.mjs`.
+
+### The fault
+
+Four files each carried their own "how long ago was that" formatter, and no two
+of them agreed:
+
+| file | under a minute | then | then |
+|---|---|---|---|
+| `ui.js` | `just now` | `4m ago` | `2h ago` |
+| `render_queue.js` | `just now` (under 5s) | `12s ago`, `4m ago` | `2h ago` |
+| `projectManager.js` | `just now` | `4 min ago`, `2 hr ago` | `Yesterday`, `3 days ago` |
+| `trlconf/index.js` | `just now` | `4 minutes ago` | `2 hours ago` |
+
+The same save, read off two panels five seconds apart, said `just now` in one
+and `5s ago` in the other. But the disagreement is the smaller problem.
+
+All four are English, and not in the way a missing dictionary row is English —
+they are **untranslatable in the shape they were written**. Each builds the
+sentence by gluing a number to the word "ago", and that is not how the sentence
+is built in any of the six languages this app ships. Korean puts the marker
+after the number; Thai wraps the phrase in ที่แล้ว; Japanese ends with 前.
+`trlconf` went further and hard-coded the English plural rule as
+`${n === 1 ? '' : 's'}` — a rule that produces nonsense the moment the
+surrounding words are not English, applied to languages that have no plural
+morphology at all.
+
+The project list had a second fault of the same kind: the exact timestamp behind
+each row, the thing a reader hovers to find out what "3 days ago" actually was,
+was built from a hard-coded `['Jan','Feb',…]` array and a 24-hour clock. The
+tooltip stayed English even when the row above it was not, and it had no other
+spelling to offer.
+
+And the save pill was assembled as `'Saved ' + rel`, which is two English
+decisions in one line: the word, and the fact that the word comes first. It does
+not come first in Korean or Japanese.
+
+### The fix
+
+One module, `core/relativeTime.js`, exporting three functions:
+
+- `relativeTime(ms, {now, lang})` — the label, via `Intl.RelativeTimeFormat`
+- `absoluteDateTime(ms, {lang})` — the tooltip, via `Intl.DateTimeFormat`
+- `savedLabel(ms, …)` — the pill, as `translate('Saved {when}')` with the time
+  substituted, so each locale places the word where its grammar puts it
+
+`now` is injectable, which is the only reason any of this is testable.
+
+### Why Intl and not dictionary rows
+
+A dictionary would need one row per number per unit per locale to be correct,
+and would still be wrong for the first number nobody thought to write a row for.
+Intl is in the runtime already and carries CLDR's rules for every locale we
+ship, including the plural categories Thai and Korean do not have and Filipino
+does. `numeric: 'auto'` is what makes it say "yesterday" rather than "1 day
+ago" — the idiom, in each language, instead of a literal count.
+
+Exactly one new dictionary row was needed: `Saved {when}`, in all six locales.
+
+### What was deliberately not changed
+
+- **`src/scripts/render_queue.js`'s `_relTime` (~line 1352) is the fourth
+  formatter and was left alone.** The file is loaded as a classic
+  `<script src="scripts/render_queue.js" defer>` at `src/index.html:6508`, so it
+  has no `import` available to it. Fixing it means either a `window.PFX_relTime`
+  bridge or converting the file to a module — more than this iteration.
+  `tests-js/relativeTime.test.mjs` asserts that the script tag is still classic,
+  so the day it becomes a module, the suite says so.
+- **`features/trlconf/index.js` was wired to the shared rule, but that change is
+  not in this commit.** The function it lives in, `_relativeTimeAgo`, does not
+  exist at `HEAD` — it is part of a larger unlanded change in that file, and
+  committing my six lines would have dragged 1,492 foreign ones with them. The
+  improvement ships in the packaged app (the renderer build copies the working
+  tree); the *test* assertion for it was removed rather than pinned to a working
+  tree that no clean checkout would reproduce.
+- `projectManager.js`'s `_dateBucket` group headings (`Today`, `Yesterday`,
+  `Previous 7 Days`, `Older`) are still English. They are labels, not formatted
+  times — dictionary rows, a separate piece of work.
+
+### Proof
+
+RED/GREEN probe over 37 claims — exports, six-locale divergence, every
+boundary, the backwards-clock case, totality on junk input, the pill, the
+tooltip, the removed ladders, and the dictionary rows.
+
+- against `HEAD` (`git archive` into `/tmp/red157`): **RED 37 / GREEN 0**
+- against the working tree: **GREEN 37 / RED 0**
+
+Two claims passed at baseline on the first draft of the probe and were both
+wrong: one matched a regex against a `trlconf` function that does not exist at
+`HEAD`, and one was vacuously true because `.every()` on an empty array is
+`true`. Both were tightened before the run above.
+
+`tests-js/relativeTime.test.mjs` adds 20 tests, including the one that matters
+most — that five locales produce five *different* strings for the same instant.
+A shared helper that returned English everywhere would pass every structural
+check and fix nothing.
+
+### Gate
+
+`npm run build-verify` → `EXIT=0`. 73 node tests / 72 pass / 0 fail / 1 skipped;
+315 pytest passed, 7 skipped; XSS, XXE and fail-open gates clean.
+
+### Still open
+
+`render_queue.js` remains the fourth clock. Until it becomes a module, a reader
+watching a render can still see one panel say "just now" while the pill six
+inches away says something in their own language.

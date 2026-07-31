@@ -8188,3 +8188,45 @@ still no duplicate check, so saving a copy over an existing name silently replac
 And `Saved 4m ago`, six inches away in the same pill, is still English everywhere.
 
 Commits: `2d3d933`.
+
+## Iteration 157 — the app told you the time in a language you had not asked for
+
+Set the app to Thai. Open a project. The pill says `Saved 4m ago`. Hover the
+row in the project list and the tooltip says `Jan 05 2026 14:32`. Every other
+word on the screen is Thai; the two that tell you *when* are not.
+
+This was not a missing translation. It was four separate pieces of code, in four
+files, each building the phrase by writing a number and then writing the word
+"ago" after it. That is an English sentence structure, and there is nowhere to
+put a Thai translation into it — Thai does not put a word after the number, it
+wraps the whole phrase. Korean does something else again. Japanese does a third
+thing. The code had made a decision about grammar and there was no row in any
+dictionary that could undo it.
+
+They also disagreed with each other, which is how you notice. Save a project and
+look at two panels: one said `just now`, the other said `5s ago`, about the same
+save, one second apart. Two panels reporting different times for one event is
+the kind of thing that makes a person stop trusting the timestamps entirely, and
+timestamps are most of what tells you whether you are looking at the current
+version of a cut.
+
+The fix is that the app now asks the operating system how the sentence is built,
+instead of assuming. That is what `Intl` is — a table of how every language
+writes "4 minutes ago", already sitting in the runtime, already knowing that
+Thai has no plural form and Filipino has two. It also means the app is right
+about numbers nobody wrote a rule for, and right the first time somebody adds a
+seventh language.
+
+The tooltip got the same treatment, so hovering a row now gives you the date in
+your own month names and your own clock format.
+
+One thing is knowingly unfinished, and it is visible: the render queue still has
+its own clock. Its file is loaded the old way, as a plain script, so it cannot
+share the new rule without being converted first. A person watching a render can
+still catch the two panels disagreeing. The test suite now fails the day that
+file changes shape, so it will not be forgotten quietly.
+
+**Next:** the project list still groups rows under `Today`, `Yesterday`,
+`Previous 7 Days` and `Older`, in English, directly above rows whose dates are
+now correctly localised — which reads worse than when everything was English,
+because now the mismatch is inside one panel.
