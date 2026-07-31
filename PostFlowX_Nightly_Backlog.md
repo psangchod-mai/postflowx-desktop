@@ -7291,3 +7291,74 @@ bare `confirm(\`Delete "${sel.shotName}"?\`)` could tell the user the action
 `CD_PROJECT_KEY_PREFIX + id` when it splices a project out of the index.
 
 Commits: `0de41fd`.
+
+## Iteration 142 — Prep & Mark marker Delete: an information-free dialog that hid the fact the delete was reversible
+
+Iteration 141 fixed a dialog that buried a warning it needed. This one is
+the mirror image: a dialog that needed no warning and gave no information
+at all.
+
+The marker Delete in the Prep & Mark slate inspector asked `Delete
+"SH010"?` and stopped. Like the project delete before it, the string was
+built inline so it reached all seven languages in English. But the more
+interesting fault is that the sentence is empty of content. It repeats
+the button that was just pressed. It tells the reader nothing they did
+not already know, which means the one fact that would let them answer —
+is this recoverable? — is the fact they have to guess. Working inside a
+project full of other people's footage, the guess a non-technical user
+makes is that delete means gone. So the safe answer is Cancel, and then
+a walk over to whoever knows. That is a small tax, charged every single
+time, on an edit that was never dangerous.
+
+Because it never was. The delete is backed by a hundred-deep undo stack:
+`_pmSlySnapshot()` runs on the very next line, before the splice. I
+checked that properly before writing it into the copy, since "you can
+undo this" is a promise and a wrong promise is worse than silence. Two
+Undo buttons sit on screen, Cmd/Ctrl-Z is bound, and there is even a
+voice command.
+
+One scare along the way. `_pmSlySerializeState()` strips `annoStrokes`
+and `thumbAnn` from every snapshot, which looks exactly like undo
+quietly throwing away the annotations somebody drew on a frame. It
+isn't: annotation data lives in `_pmAnnotMap`, which is persisted
+separately and keyed by timecode rather than marker id, so it survives
+the delete and reattaches when the marker comes back. The stripped
+fields are regenerable caches. I had most of a data-loss finding written
+before the evidence turned it around.
+
+So the dialog now reads:
+
+    Delete this marker?
+
+    “SH010_bg”
+
+    This removes the marker and the note written on it.
+    You can bring it back with Undo — Cmd+Z
+
+The shortcut sits outside the translated sentence on purpose. The
+handler answers to both Cmd and Ctrl, so "Cmd+Z" is flatly wrong on the
+Windows and Linux extension builds; putting it inside the sentence would
+also have meant two dictionary keys per language for one idea. It is
+rendered by `comboToDisplay`, the same function the shortcuts UI uses,
+so the dialog cannot drift from the rest of the app's key hints. And it
+renders the combo the Prep & Mark handler actually hard-codes, not
+whatever the user may have remapped in the shortcuts editor — that
+editor does not reach this handler, and promising the remapped key would
+have been the more impressive-looking lie.
+
+The platform test pins `navigator.platform` in both directions instead
+of reading the host's. Left alone it would assert `Cmd+Z` on my Mac and
+`Ctrl+Z` on a Linux runner and pass in both places while verifying
+nothing.
+
+`prep_mark.js` has +828/−136 of somebody else's uncommitted work in it.
+Only my two lines went in, via the same rebuild-the-index-entry
+technique used on `ui.js` last time, with the staged diff read back
+afterwards to prove it.
+
+**Next:** twenty-four `confirm()` sites still to go. The CutDiff
+orphaned-storage leak from 141 is still open — `_cdDeleteProject`
+splices a project out of the index but never removes its snapshot at
+`CD_PROJECT_KEY_PREFIX + id`.
+
+Commits: `PENDING`.

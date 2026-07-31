@@ -14117,3 +14117,147 @@ CutDiff index but never removes its stored snapshot at
 today, but a live bug the moment that panel is wired up.
 
 Commits: `0de41fd`.
+
+## Iteration 142 — Prep & Mark marker Delete: an information-free dialog that hid the fact the delete was reversible
+
+**Scope.** The marker Delete button in the Prep & Mark slate inspector
+(`#pmSlyMkDeleteBtn`). One confirmation string, its call site, six
+dictionary locales, and the shared confirmation module introduced in
+iteration 141.
+
+**Defect.** The dialog read, in full:
+
+    Delete "SH010"?
+
+Two faults, and the second is the interesting one. The first is the same
+gap iteration 141 closed for the project delete: the string was assembled
+inline at the call site, so it reached all seven languages in English.
+
+The second is the inverse of 141's problem. The project delete buried a
+warning it genuinely needed. This delete needed no warning at all — it is
+backed by a hundred-deep undo stack — and said nothing, which is worse
+than it sounds. A bare "Delete X?" restates the button that was just
+pressed and contributes no new fact, so the reader has to supply the
+missing one themselves. The assumption a non-technical user makes about
+a delete, working in a project full of other people's footage, is that
+delete means gone. The dialog did nothing to correct that, so the
+cautious answer was Cancel — and then a question to whoever is nearest.
+That cost was paid on every marker delete, for an edit that was always
+safe.
+
+**Verification that the promise is true.** Copy that says "you can undo
+this" is a liability if it is wrong, so the recoverability was confirmed
+before it was written down, not after:
+
+- `_pmSlySnapshot()` runs on the line immediately after the confirm and
+  before the `splice`, and `_pmSlyRestoreSnapshot` refills
+  `_pmClipMarkers` and `_pmMetaMap` wholesale. History is 100 deep.
+- Annotations are not silently lost. `_pmSlySerializeState()` strips
+  `thumb`, `thumbAnn`, `annoStrokes`, `_thumbCapturing` and
+  `_thumbError`, which reads at first glance like undo discarding
+  user-drawn work. It is not: annotation data lives in the separately
+  persisted `_pmAnnotMap`, keyed by timecode rather than marker id, is
+  not cleared on marker delete, and is reattached through the
+  `mk.annoStrokes || annotEntry?.shapes` fallback via `_annotTcKey` /
+  `recIn` — both preserved by the snapshot. The stripped fields are
+  regenerable caches. A data-loss finding was drafted here and withdrawn.
+- Undo is reachable three ways, not one: `#pmCtxUndoBtn`
+  (`src/index.html:2276`), `#pmSlyUndoBtn` (`src/index.html:2811`), the
+  Cmd/Ctrl-Z keydown handler at `prep_mark.js:24988`, and a voice command
+  at `prep_mark.js:28928`.
+
+**Fix.** `deleteMarkerConfirm(name)` added to `src/scripts/core/confirmText.js`
+— the module was written generic in 141 for exactly this. The dialog now
+carries the same three beats as the project delete with the last one
+inverted: what is being deleted, what goes with it, and how to get it back.
+
+    Delete this marker?
+
+    “SH010_bg”
+
+    This removes the marker and the note written on it.
+    You can bring it back with Undo — Cmd+Z
+
+**The shortcut is deliberately outside the translated sentence.** Three
+reasons, in order of weight. It is platform-dependent: the same keydown
+handler answers to `metaKey || ctrlKey`, so "Cmd+Z" is simply wrong on
+the Windows and Linux extension builds. Baking it into the sentence
+would need two dictionary keys per language for one idea. And a key-cap
+label is not prose — it should no more be translated than the project
+path in 141. It is rendered by `comboToDisplay('MOD+KeyZ')`, the function
+the shortcuts UI already uses, so this dialog cannot drift from the rest
+of the app's key hints.
+
+`MOD+KeyZ` is the combo hard-coded in the Prep & Mark keydown handler,
+**not** whatever the user may have remapped in the shortcuts editor —
+that editor does not reach this handler. Rendering the configured combo
+here would have looked more sophisticated and would have been a lie.
+
+**Input validation.** The marker name comes from `sel.shotName || sel.id`,
+and shot names are typed in spreadsheets and pasted in bulk, so the same
+hardening the project name gets applies unchanged via the shared
+`cleanName`: whitespace folded so a pasted newline cannot forge a line
+that reads as the app talking, and an 80-code-point clamp so a long name
+cannot push the undo line off the bottom of an alert that does not
+scroll. The clamp counts code points, so a name of CJK or emoji is not
+sliced mid-surrogate. Nullish input is handled as an empty name rather
+than stringified into the dialog.
+
+**Accuracy of the consequence line.** "the marker and the note written on
+it" is exactly what the handler removes — it splices the marker (which
+carries `note`, `noteType`, `scopeOfWork`, `shotName`), unregisters it,
+and drops its `_pmLinkMap` entry. Drawn annotations survive, so the copy
+does not claim they go. No folder path is shown, because a marker is not
+a folder; repeating 141's `PFX/<name>/` line here would have pointed at
+something that does not exist.
+
+**No new attack surface.** A pure leaf module with two imports
+(`translate`, `comboToDisplay`), no DOM access, no I/O, no storage. The
+output goes to `confirm()`, which renders plain text.
+
+**Error handling.** `translate()` is try/caught internally and falls back
+to the English literal, so a delete pressed before `i18n.js` installs
+`PFX_t` still yields a complete dialog. `comboToDisplay` reads
+`navigator.platform` inside a try/catch and degrades to the Ctrl form.
+
+**Test.** `tests-js/confirmText.test.mjs` grows from 12 tests to 20; the
+`errorI18n.test.mjs` `SCANNED` count for `core/confirmText.js` goes 3 → 6.
+The platform test pins `navigator.platform` in both directions rather
+than reading the host's — the same test would otherwise assert `Cmd+Z`
+on a developer Mac and `Ctrl+Z` on a Linux CI box and be green on both
+while checking nothing.
+
+**RED proofs.** Three realistic regressions, not deleted files:
+
+1. Call site reverted to the old inline template → `✖ prep_mark.js builds
+   the marker delete dialog from this module` (19 pass / 1 fail).
+2. Shortcut hard-coded to `'Cmd+Z'` → `✖ the undo shortcut is correct for
+   the platform the app is running on`, on the assertion
+   `a Windows build was told to press Cmd`.
+3. One Thai row dropped → `✖ th: every failure message is translated` and
+   `✖ the six locales cover exactly the same keys`.
+
+All three files restored from `/tmp` and verified byte-identical by shasum.
+
+**Working-tree discipline.** `src/scripts/prep_mark.js` carries a
+pre-existing uncommitted delta of +828/−136 that is not mine. Only my two
+hunks were committed, by rebuilding the index entry from
+`git show HEAD:src/scripts/prep_mark.js`, re-applying both edits under
+`assert count == 1`, and `git update-index --cacheinfo` — the same
+technique used for `ui.js` in 141, because interactive `git add -p` is
+unavailable here. The staged diff was read back to confirm it is 4 added
+lines and 1 removed line and nothing else.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail
+/ 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates
+clean.
+
+**Still open.** Twenty-four `confirm()` sites remain inline and
+English-only. The CutDiff orphaned-storage leak logged in 141 is
+unchanged: `_cdDeleteProject` splices a project out of the index but
+never removes its stored snapshot at `CD_PROJECT_KEY_PREFIX + id`.
+`_refreshStatus()` in `homeScreen.js` remains untouched since iterations
+130–140 — the pre-existing WIP around it is still too interleaved to
+isolate safely.
+
+Commits: `PENDING`.

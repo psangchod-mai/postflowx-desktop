@@ -116,7 +116,12 @@ const SCANNED = [
   // this row explains a failure after the fact; this one is read *before* an
   // irreversible click, which is the worst place to hand someone a language
   // they only half-read. Question, consequence, and way out — three sentences.
-  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 3 },
+  // Three for the project delete, three for the marker delete. The second set
+  // is the first copy in the app to promise something rather than warn about
+  // it, which raises the stakes on the translation: a locale that renders
+  // "you can undo this" too weakly leaves the reader exactly where the bare
+  // English "Delete X?" left them.
+  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 6 },
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },

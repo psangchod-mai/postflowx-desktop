@@ -7,6 +7,7 @@ import { sourceTcAtRecord, sourceFrameAtRecord } from './modules/pullRange.js';
 import { createRadialMenu, RadialIcons } from './components/radialMenu/index.js';
 import { openAnnotateModal } from './components/annotateModal/index.js';
 import { getShortcutsConfig, resolveShortcutAction, comboToDisplay, isTypingTarget } from './core/shortcuts.js';
+import { deleteMarkerConfirm } from './core/confirmText.js';
 import { computeCutDiff, summarizeDiff } from './modules/cutdiff.js';
 import { matchMarkersToTimelineClips, buildClipsFromEvents } from './modules/markerClipMatcher.js';
 import { buildEDLFiles } from './modules/edl_export.js';
@@ -25066,7 +25067,9 @@ function _pmSlyRefreshMarkerCard() {
 
     // Delete
     detail.querySelector('#pmSlyMkDeleteBtn')?.addEventListener('click', () => {
-      if (!confirm(`Delete "${sel.shotName || sel.id}"?`)) return;
+      // Localised, and — unlike the project delete — it says out loud that the
+      // snapshot on the next line makes this reversible. See core/confirmText.js.
+      if (!confirm(deleteMarkerConfirm(sel.shotName || sel.id).text)) return;
       _pmSlySnapshot(`Delete ${sel.shotName || sel.id}`);
       const idx = _pmClipMarkers.indexOf(sel);
       if (idx >= 0) {

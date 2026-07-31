@@ -43,10 +43,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const { deleteProjectConfirm } = await import('../src/scripts/core/confirmText.js');
+const { deleteProjectConfirm, deleteMarkerConfirm } =
+  await import('../src/scripts/core/confirmText.js');
 
 const uiSrc = readFileSync(
   fileURLToPath(new URL('../src/scripts/ui.js', import.meta.url)), 'utf8',
+);
+const prepMarkSrc = readFileSync(
+  fileURLToPath(new URL('../src/scripts/prep_mark.js', import.meta.url)), 'utf8',
 );
 
 // translate() reads window.PFX_t at call time, so a test can install one and
@@ -191,6 +195,131 @@ test('a translator that throws still yields a usable dialog', () => {
 });
 
 // ── The call site actually uses it ───────────────────────────────────────────
+
+// ── The marker delete: the same shape, with the last line inverted ───────────
+//
+// deleteProjectConfirm warns that nothing brings the folder back. This one has
+// the opposite job: the delete it guards is backed by a hundred-deep undo
+// stack, and the old dialog — `Delete "SH010"?` — never said so. Everything
+// below is about that promise being true, legible, and correct per platform.
+
+// comboToDisplay reads navigator.platform. Node on a Mac reports "MacIntel"
+// and on CI reports "Linux x86_64", so a test that just called the function
+// would assert a different string depending on the machine it ran on. Both
+// branches are pinned here instead.
+function withPlatform(platform, body) {
+  const prev = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { platform }, configurable: true, writable: true,
+  });
+  try { return body(); }
+  finally {
+    if (prev) Object.defineProperty(globalThis, 'navigator', prev);
+    else delete globalThis.navigator;
+  }
+}
+
+test('the marker dialog says what goes and that it comes back', () => {
+  const { text } = withPlatform('MacIntel', () => deleteMarkerConfirm('SH010_bg'));
+  assert.match(text, /note written on it/, 'the dialog no longer says the note goes too');
+  assert.match(text, /bring it back with Undo/, 'the dialog no longer offers the undo');
+});
+
+test('the marker dialog does not warn that the delete is permanent', () => {
+  // The specific regression: someone extends this module by copying the
+  // project-delete body, and the marker dialog inherits "cannot be undone".
+  // That is a false statement about a reversible action, and it costs exactly
+  // what the bare "Delete X?" cost — a cancel, and a question to a colleague.
+  const { text } = withPlatform('MacIntel', () => deleteMarkerConfirm('SH010_bg'));
+  assert.doesNotMatch(text, /cannot be undone/, 'the marker dialog claims to be permanent');
+  assert.doesNotMatch(text, /Save As/, 'the marker dialog offers a workaround it does not need');
+});
+
+test('the marker name is shown, and no folder path is invented for it', () => {
+  // A marker is not a folder. The project dialog earns its PFX/<name>/ line;
+  // repeating that shape here would point at something that does not exist.
+  const { text, subject } = withPlatform('MacIntel', () => deleteMarkerConfirm('SH010_bg'));
+  assert.equal(subject, 'SH010_bg');
+  assert.match(text, /“SH010_bg”/);
+  assert.doesNotMatch(text, /PFX\//, 'invented a folder path for a marker');
+});
+
+test('the marker dialog reads question, then name, then consequence, then undo', () => {
+  const { text } = withPlatform('MacIntel', () => deleteMarkerConfirm('SH010_bg'));
+  const order = ['Delete this marker?', '“SH010_bg”', 'note written on it', 'Undo'];
+  let at = -1;
+  for (const part of order) {
+    const next = text.indexOf(part);
+    assert.ok(next > at, `"${part}" is out of reading order in:\n${text}`);
+    at = next;
+  }
+});
+
+test('the undo shortcut is correct for the platform the app is running on', () => {
+  // The Prep & Mark keydown handler answers to metaKey || ctrlKey, so the
+  // action works everywhere — but the dialog naming the wrong key is worse
+  // than naming none, because the reader tries it, nothing happens, and the
+  // promise that the delete is reversible is the thing they stop believing.
+  const mac = withPlatform('MacIntel', () => deleteMarkerConfirm('SH010_bg'));
+  assert.equal(mac.combo, 'Cmd+Z');
+  assert.match(mac.text, /Undo — Cmd\+Z/);
+
+  const win = withPlatform('Win32', () => deleteMarkerConfirm('SH010_bg'));
+  assert.equal(win.combo, 'Ctrl+Z');
+  assert.match(win.text, /Undo — Ctrl\+Z/);
+  assert.doesNotMatch(win.text, /Cmd/, 'a Windows build was told to press Cmd');
+});
+
+test('the marker sentences are translated but the shortcut is not', () => {
+  // Same bargain as the project name and path: the prose is translated, the
+  // literal key-cap is not. "Cmd+Z" is what is printed on the key.
+  const seen = [];
+  const { text, combo } = withPlatform('MacIntel', () =>
+    withTranslator((s) => { seen.push(s); return `[${s}]`; },
+      () => deleteMarkerConfirm('SH010_bg')));
+  assert.deepEqual(seen, [
+    'Delete this marker?',
+    'This removes the marker and the note written on it.',
+    'You can bring it back with Undo',
+  ], 'a sentence was assembled without passing through translate()');
+  assert.equal(combo, 'Cmd+Z', 'the shortcut went through the translator');
+  assert.match(text, /Cmd\+Z/);
+});
+
+test('the marker dialog inherits the same name hardening as the project one', () => {
+  // cleanName is shared, and this proves the marker path actually calls it
+  // rather than interpolating sel.shotName raw — shot names are typed in a
+  // spreadsheet and pasted in bulk, so multi-line values are routine.
+  const pasted = withPlatform('MacIntel', () =>
+    deleteMarkerConfirm('SH010\n\nAlready approved.'));
+  assert.equal(pasted.subject, 'SH010 Already approved.');
+  assert.equal(pasted.text.split('\n\n').length, 3, 'the name forged an extra block');
+
+  const long = withPlatform('MacIntel', () => deleteMarkerConfirm('S'.repeat(800)));
+  assert.ok(long.subject.length <= 80, `name was not clamped: ${long.subject.length}`);
+  assert.match(long.text, /Undo/, 'the undo line was pushed out by the name');
+
+  for (const v of [null, undefined, '   ']) {
+    const { text } = withPlatform('MacIntel', () => deleteMarkerConfirm(v));
+    assert.doesNotMatch(text, /null|undefined/, `${v} leaked into the dialog`);
+    assert.doesNotMatch(text, /“”/, 'rendered an empty pair of quotes');
+    assert.match(text, /Delete this marker\?/);
+    assert.match(text, /Undo/);
+  }
+});
+
+test('prep_mark.js builds the marker delete dialog from this module', () => {
+  assert.match(prepMarkSrc, /deleteMarkerConfirm\(sel\.shotName \|\| sel\.id\)/,
+    'prep_mark.js does not call deleteMarkerConfirm at the delete handler');
+  assert.match(
+    prepMarkSrc, /import \{ deleteMarkerConfirm \} from '\.\/core\/confirmText\.js'/,
+    'prep_mark.js does not import the module it calls',
+  );
+  assert.doesNotMatch(
+    prepMarkSrc, /confirm\(`Delete "\$\{sel\.shotName \|\| sel\.id\}"\?`\)/,
+    'the old English-only marker template is still in prep_mark.js',
+  );
+});
 
 test('ui.js builds the delete dialog from this module', () => {
   // A pure module nobody calls is worth nothing, and the specific way this

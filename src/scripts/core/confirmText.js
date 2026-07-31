@@ -1,5 +1,5 @@
 // scripts/core/confirmText.js
-// PostFlowX — the wording for the dialogs that cannot be taken back.
+// PostFlowX — the wording for the dialogs that stop someone mid-click.
 //
 // ── The gap this closes ──────────────────────────────────────────────────────
 //
@@ -41,6 +41,7 @@
 // own line, where a non-reader of English can still recognise it.
 
 import { translate } from './friendlyError.js';
+import { comboToDisplay } from './shortcuts.js';
 
 // A project name is user-typed and can be pasted from anywhere. Newlines would
 // let it forge extra lines in a plain-text dialog, and an unbounded name would
@@ -85,4 +86,64 @@ export function deleteProjectConfirm(name) {
   blocks.push(`${detail}\n${hint}`);
 
   return { title, detail, hint, subject, text: blocks.join('\n\n') };
+}
+
+// ── The opposite problem: a dialog that frightens people out of a safe edit ───
+//
+// Not every confirm() is guarding a folder. The marker Delete in Prep & Mark
+// asked `Delete "SH010"?` and stopped there — English-only like the rest, but
+// with a second fault the project delete did not have: it withheld good news.
+// That delete is backed by a hundred-deep undo stack. _pmSlySnapshot() runs on
+// the line after the confirm, two Undo buttons sit on screen, Cmd+Z is bound,
+// and a voice command reaches the same function.
+//
+// A bare "Delete X?" is the least useful thing a dialog can say. It repeats the
+// button that was just pressed and adds no fact, so the reader has to supply
+// the missing one themselves — and the assumption a non-technical user makes in
+// a room full of other people's footage is that delete means gone. The cautious
+// ones cancel and go and ask someone. That is a real cost, paid every time, for
+// an edit that was always safe.
+//
+// So this dialog carries the same three beats as the one above with the last
+// one inverted: what you are deleting, what goes with it, and how to undo it.
+//
+// ── Why the shortcut is not part of the translated sentence ──────────────────
+//
+// "Cmd+Z" is wrong on the Windows and Linux extension builds, where the same
+// keydown handler answers to Ctrl. Baking the glyph into the sentence would
+// need two dictionary keys per language for one idea, and would put a
+// platform-specific string behind a translator's judgement. Instead the
+// sentence stays platform-neutral and the combo is appended as its own token —
+// rendered by comboToDisplay, the function the shortcuts UI already uses, so
+// this dialog cannot drift from the rest of the app's key hints.
+//
+// It renders MOD+KeyZ, which is the combo hard-coded in the Prep & Mark keydown
+// handler, NOT whatever the user may have remapped in the shortcuts editor —
+// that editor does not reach this handler. Promising the configured combo here
+// would be the more impressive-looking lie.
+
+/**
+ * Text for the marker "Delete" confirmation in Prep & Mark.
+ *
+ * The counterpart to deleteProjectConfirm: same shape, but the last line tells
+ * the reader the action is reversible instead of warning them that it is not.
+ *
+ * @param {string} name  Marker's shot name, or its id when it has no name yet.
+ * @returns {{title:string, detail:string, hint:string, combo:string, subject:string, text:string}}
+ */
+export function deleteMarkerConfirm(name) {
+  const subject = cleanName(name);
+
+  const title = translate('Delete this marker?');
+  const detail = translate('This removes the marker and the note written on it.');
+  // No full stop: the combo is appended after it, and a shortcut reads as part
+  // of the sentence rather than a footnote to it.
+  const hint = translate('You can bring it back with Undo');
+  const combo = comboToDisplay('MOD+KeyZ');
+
+  const blocks = [title];
+  if (subject) blocks.push(`“${subject}”`);
+  blocks.push(`${detail}\n${hint} — ${combo}`);
+
+  return { title, detail, hint, combo, subject, text: blocks.join('\n\n') };
 }
