@@ -7805,3 +7805,55 @@ Twenty `confirm()` sites still inline. CutDiff storage leak from 141 still
 open. Project Setup still untranslated.
 
 Commits: `1f80775`.
+
+## Iteration 149 — the locked-out screen: a full-page wall of English, in a language nobody chose
+
+Last night I fixed the toast. Tonight I found the other half of the same
+event and it was worse: `auth/noAccessView.js`, the panel that replaces a
+whole tab pane, had **no dictionary rows at all**. Not a bad translation
+— none, in six locales, because nothing ever scanned the file. Somebody
+working in Thai hits a full page of English at the exact moment they need
+to read something. Ten strings into `SCANNED`, 48 rows into `ERROR_DICT`.
+
+The words were the other problem. "Access Restricted … with your current
+role" against a toast that had just said "This workspace is not part of
+your account: PLATE LINK 2.0" — one event, two vocabularies, and "role"
+is a word from the admin console. The denied state now reuses the toast's
+sentence byte-for-byte, and the test asserts equality against
+`lockedWorkspaceNotice()` rather than trusting me to keep them in step.
+
+"Already approved? Reload PostFlowX to refresh your session." — an
+instruction with no control. ⌘R is exactly the knowledge the person
+reading that screen doesn't have. Pending gets a button now. Denied and
+disabled don't, because reloading can't help them and a button there just
+invites someone to keep trying.
+
+Six raw `${}` interpolations into `innerHTML` while I was in there, and
+`_actionLabel` was a plain lookup again — `constructor` would have put a
+function body in a toast. Second file this week. And `aceslook/index.js`
+was passing `feature: 'ACES Look'` at a tab reading ACES LOOK: a *fifth*
+copy of a name, one file over from where I was looking last night.
+
+8/8 RED against HEAD first. New test file at 14 tests. One of them I had
+to narrow mid-run — it matched the bare text `'ACES Look'` and caught the
+comment that quotes the old wording, which is the record I keep on
+purpose. Same call-site-not-bare-text distinction `workspaceAccess.test.mjs`
+already makes; I should have written it that way first.
+
+**Closing something out:** the `wireMainTabs()` click-vs-keyboard split I
+filed last night is not reachable. Permissions land at 23989,
+`applyTabPermissions()` runs at 24025 and sets `display:none`, and
+`_pfxApplyMovableTabsState()` never touches display — so the element is
+neither clickable nor focusable and the keyboard path can't be entered.
+Dropped it rather than ship a fix for a bug nobody can hit. The three
+gates still disagree on the admin check, which is worth remembering.
+
+**Next:** the 22 action names in `_actionLabel`. They reach the notice as
+a variable, so the scanner is blind to them and the toast is
+half-translated — localised sentence, English noun. That's an ugly shape
+and it's the one I'd hit first if I were reading this in Thai.
+
+`ui.js` still carries two hunks of somebody else's uncommitted work.
+Rebuilt the index by hand again.
+
+Commits: pending.

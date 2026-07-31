@@ -3672,7 +3672,7 @@ function setMainTab(key){
                        : _sess?.status === 'disabled' ? 'disabled' : 'denied';
       window.pfxPolicyApi?.logEvent({ event: 'tab_access_denied', tab: _canonicalId,
         user: _pfxPg.getUser?.()?.email || 'unknown', timestamp: new Date().toISOString() });
-      window.pfxNoAccessView?.renderNoAccess(target, { status: _tabStatus, feature: workspaceName(key) });
+      window.pfxNoAccessView?.renderNoAccess(target, { status: _tabStatus, key });
       return;
     }
   }

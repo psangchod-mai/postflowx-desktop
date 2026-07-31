@@ -38,6 +38,7 @@ const confirmTextSrc = readFileSync(SRC_DIR + 'core/confirmText.js', 'utf8');
 const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
 const workspaceAccessSrc = readFileSync(SRC_DIR + 'core/workspaceAccess.js', 'utf8');
+const accessNoticeSrc = readFileSync(SRC_DIR + 'core/accessNotice.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -155,6 +156,14 @@ const SCANNED = [
   // that says who can change it, shared by both notices so there is a single
   // translation of the remedy rather than two that can drift.
   { file: 'core/workspaceAccess.js', src: workspaceAccessSrc, expected: 3 },
+  // The full-screen version of the same refusal. workspaceAccess.js fixed the
+  // toast; auth/noAccessView.js replaces an entire pane and still said "Access
+  // Restricted … with your current role" in English, in every locale, because
+  // nothing scanned it. Ten strings: two heads and two bodies for pending and
+  // disabled, the contact line, the reload hint and its button, the action
+  // refusal — plus the two the denied state deliberately shares word-for-word
+  // with the toast above, so one event reads as one event.
+  { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 10 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

@@ -102,7 +102,10 @@ export function mountAcesLook() {
     const sess   = _p.getSession?.();
     const status = sess?.status === 'pending'  ? 'pending'
                  : sess?.status === 'disabled' ? 'disabled' : 'denied';
-    window.pfxNoAccessView?.renderNoAccess(root, { status, feature: 'ACES Look' });
+    // key, not a spelled-out name: this call site said 'ACES Look' while the tab
+    // it covers says ACES LOOK, which is the same drift core/workspaceAccess.js
+    // was written to end. The panel looks the name up like everywhere else.
+    window.pfxNoAccessView?.renderNoAccess(root, { status, key: 'aceslook' });
     return;
   }
 

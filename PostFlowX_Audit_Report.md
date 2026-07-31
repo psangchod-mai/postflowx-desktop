@@ -15014,3 +15014,109 @@ orphaned-storage leak from 141 is still open; `_refreshStatus()` in
 `homeScreen.js` is still too interleaved with pre-existing WIP to isolate.
 
 Commits: `1f80775`.
+
+## Iteration 149 — the locked-out screen: a full-page wall of English, in a language nobody chose
+
+**The surface.** Iteration 148 fixed the *toast* a user gets when they
+click a workspace their account does not include. It did not touch the
+other half of the same event: `auth/noAccessView.js`, the panel that
+replaces an entire tab pane with a lock icon and three lines of text.
+That is the larger surface — a toast is three seconds, this is the whole
+workspace, and it is what the user is looking at while they decide
+whether the app is broken.
+
+**Every string in it was English.** Not mistranslated, not falling back:
+the panel had no dictionary rows at all, in any of the six locales,
+because nothing scanned the file. A user working in Thai all day hit a
+full-page wall of English at the exact moment they most needed to read
+it. That is the failure mode `errorI18n.test.mjs` exists to make
+impossible, and the file had simply never been added to `SCANNED`.
+Ten strings now are, at `expected: 10`; eight new English strings × six
+locales = 48 new `ERROR_DICT` rows.
+
+**The words themselves.** `Access Restricted` / `You don't have
+permission to access this feature with your current role.` Two problems.
+It did not match the toast that had fired one click earlier — that said
+"This workspace is not part of your account: PLATE LINK 2.0", so one
+event spoke in two vocabularies. And "role" is an admin-console word: a
+colourist reading it cannot tell whether a role is something they have,
+something they lost, or something they were supposed to set up. The
+denied state now uses the toast's sentence **byte-for-byte** — asserted
+against `lockedWorkspaceNotice()` rather than merely eyeballed — so there
+is one dictionary row for the remedy instead of two that can drift.
+
+**An instruction with no control.** The pending state ended on "Already
+approved? Reload PostFlowX to refresh your session." Reloading an
+Electron app means knowing about ⌘R, which is precisely the knowledge the
+non-technical user does not have, and nothing on screen said so. Pending
+— and only pending — now carries a real button. Denied and disabled do
+not, because reloading cannot fix either, and offering the button there
+only invites someone to try the same thing repeatedly.
+
+**Six unescaped interpolations.** The panel built its markup with
+`innerHTML` and dropped `featureLabel`, `msg.heading`, `msg.body` and
+`contact` (twice) in raw. `featureLabel` reached it from a caller and
+`contact` is caller-supplied; none of them were the panel's to assume
+HTML-safe. All values now route through `_esc()`, and a test walks every
+`${…}` in the template and fails on any that does not.
+
+**A fifth copy of a workspace name.** `features/aceslook/index.js` passed
+`feature: 'ACES Look'` at a tab labelled `ACES LOOK` — exactly the drift
+`core/workspaceAccess.js` was written to end, one file over from where
+148 looked. Both call sites now pass the `data-main` key and let the one
+table name the workspace.
+
+**Two smaller things found while in there.** `_actionLabel` was a plain
+object lookup, so an `actionId` of `constructor` would have resolved up
+the prototype chain and rendered a function body into a toast — the same
+class of bug the totality test caught in 148, in a second file.
+`Object.hasOwn` now gates it. And the panel replaces a pane in place with
+no navigation and no focus change, so a screen-reader user was told
+nothing at all; it is now `role="status"` / `aria-live="polite"` with the
+lock icon `aria-hidden`.
+
+**Shape.** The words moved into a new pure leaf module,
+`core/accessNotice.js` — no DOM, no `window`, no side effects — which is
+what lets the wording be unit-tested and the translations be enforced.
+`noAccessView.js` became an ES module to import it, so `index.html:156`
+gained `type="module"`. Verified safe first: `src/index.html` is the only
+HTML loader, and both consumers (`ui.js`, `features/aceslook/index.js`)
+are modules that reach it through `window.pfxNoAccessView` at runtime
+rather than at load time.
+
+**RED before GREEN.** Eight assertions against `git show HEAD:` copies
+before any edit: `core/accessNotice.js` did not exist, all four stale
+English phrases were present, no `role="status"`, no reload control, no
+`Object.hasOwn`, six raw interpolations, `feature: 'ACES Look'` at the
+ACES call site, and a classic `<script>` tag. 8/8 described HEAD as it
+stood. `tests-js/accessNotice.test.mjs` is new at 14 tests.
+
+**One test rewritten mid-run.** The first version of "no caller spells
+the workspace name itself" matched the bare text `'ACES Look'` and failed
+against the fixed tree — the comment left at that line quotes the wording
+it replaced, and keeping that record is the point of it. Narrowed to the
+call-site form `feature: 'ACES Look'`, the same distinction
+`workspaceAccess.test.mjs` already draws.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open
+gates clean. Identical to baseline.
+
+**Still open.** The 22 action names in `_actionLabel` (`Open Project`,
+`Export CSV`, …) are still English: they reach `deniedActionNotice` as a
+*variable*, so the scanner cannot see them and the action toast is half
+translated — the sentence around the name is localised, the name is not.
+That is the next iteration's shape. The `wireMainTabs()` click-vs-keyboard
+asymmetry filed last night turns out **not to be reachable**: permissions
+are set at `ui.js:23989` before `applyTabPermissions()` at `24025`, gated
+tabs get inline `display:none`, and `_pfxApplyMovableTabsState()` never
+touches `style.display`, so the element is neither clickable nor
+focusable. Left alone rather than shipping a fix for a theoretical bug;
+it stays worth noting that the three permission gates disagree
+(`applyTabPermissions` and the click handler have no admin check,
+`_pfxIsWorkspaceTabAllowed` does). Twenty `confirm()` sites still inline
+and English-only. The seven naming/metadata `TT()` keys, the tab `title=`
+tooltips, the `#ntCard` description, Project Setup, the CutDiff
+orphaned-storage leak from 141, and `_refreshStatus()` are all unchanged.
+
+Commits: pending.
