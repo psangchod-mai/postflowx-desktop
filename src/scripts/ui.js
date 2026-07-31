@@ -67,7 +67,7 @@ import {
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
-import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm } from "./core/confirmText.js";
+import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -21287,7 +21287,10 @@ function wireShortcutsSettings(){
     if (!draft) return;
     capturing = String(actionId || '');
     const meta = actionById.get(capturing);
-    setHint(`⏺ ${TT('Press keys for')}: ${TT(meta?.name || capturing)} (Esc ${TT('to cancel')})`);
+    // Was `Press keys for: <name> (Esc to cancel)` — two fragments with no
+    // dictionary entry in any of the six locales, glued in English word order.
+    // The name goes first on its own, then one whole sentence that translates.
+    setHint(`⏺ ${TT(meta?.name || capturing)} — ${TT('Press the keys you want to use. Esc cancels.')}`);
     try{ window.addEventListener('keydown', onCaptureKey, true); }catch{}
   };
 
@@ -21312,8 +21315,19 @@ function wireShortcutsSettings(){
     if (conflictId){
       const a = actionById.get(conflictId);
       const cur = actionById.get(capturing);
-      const msg = `"${comboToDisplay(combo)}" ${TT('is already used by')} "${TT(a?.name || conflictId)}".\n${TT('Move it to')} "${TT(cur?.name || capturing)}"?`;
-      if (!confirm(msg)) return;
+      // The dialog used to glue four translated fragments around two names, so
+      // it read in English word order in six languages and never said the plain
+      // fact: the action holding this combo is about to lose it. Count what it
+      // keeps — losing your last shortcut is not the same event as losing one
+      // of four. See core/confirmText.js.
+      const heldNow = Array.isArray(draft?.[conflictId]?.combos) ? draft[conflictId].combos : [];
+      const ask = shortcutConflictConfirm({
+        combo,
+        heldBy: TT(a?.name || conflictId),
+        moveTo: TT(cur?.name || capturing),
+        remaining: heldNow.filter(x => x !== combo).length,
+      });
+      if (!confirm(ask.text)) return;
       removeComboFromAction(conflictId, combo);
     }
 

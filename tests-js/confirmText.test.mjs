@@ -47,6 +47,7 @@ const {
   deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm,
   resetSettingsConfirm, resetNoteTypesConfirm,
   resetShortcutsConfirm, resetShortcutsDraftConfirm,
+  shortcutConflictConfirm,
 } = await import('../src/scripts/core/confirmText.js');
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -889,4 +890,133 @@ test('ui.js gives each shortcuts Reset the dialog that matches what it does', ()
 
   assert.match(uiSrc, /import \{[^}]*\bresetShortcutsConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/);
   assert.match(uiSrc, /import \{[^}]*\bresetShortcutsDraftConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/);
+});
+
+// ── The sentence that was glued together out of four translated pieces ───────
+//
+// Rebinding a taken key put up `"⌘K" is already used by "Play".\nMove it to
+// "Pause"?` — every fragment wrapped in TT, none of them in the dictionary, and
+// the whole thing only grammatical in English. These tests hold the replacement
+// to whole sentences, to naming the cost, and to counting it.
+
+test('the conflict dialog names both actions on their own labelled lines', () => {
+  const t = shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 2 });
+
+  assert.match(t.held, /Used now by: “Play”/);
+  assert.match(t.gain, /Give it to: “Pause”/);
+  // Neither name is embedded in a sentence — that is the whole point. Every
+  // line that carries grammar must be free of them, or it cannot be translated.
+  assert.doesNotMatch(t.title, /Play|Pause/);
+  assert.doesNotMatch(t.detail, /Play|Pause/);
+  assert.doesNotMatch(t.cost, /Play|Pause/);
+  assert.doesNotMatch(t.hint, /Play|Pause/);
+});
+
+test('the conflict dialog says the other action loses the shortcut', () => {
+  const t = shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 2 });
+  assert.match(t.detail, /gives it up/);
+  assert.match(t.detail, /one action at a time/);
+});
+
+test('losing your last shortcut reads differently from losing one of four', () => {
+  const last = shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 0 });
+  const some = shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 3 });
+
+  assert.match(last.cost, /no shortcut at all/);
+  assert.doesNotMatch(last.cost, /\d/, 'a count of zero should be a sentence, not a zero');
+  assert.equal(some.cost, 'Other shortcuts it keeps: 3');
+  assert.notEqual(last.cost, some.cost);
+});
+
+test('the conflict dialog reuses the draft reset reassurance, word for word', () => {
+  const conflict = shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 1 });
+  const draft = resetShortcutsDraftConfirm({ custom: 2, total: 62 });
+  // Same key, so it costs no new translations and cannot drift from its twin.
+  assert.equal(conflict.hint, draft.detail);
+  assert.ok(conflict.text.endsWith(conflict.hint));
+});
+
+test('the combo is rendered per platform, not printed as its raw id', () => {
+  // Same reason as the marker dialog: comboToDisplay reads navigator.platform,
+  // so both branches are pinned rather than whichever machine runs the suite.
+  const mac = withPlatform('MacIntel', () =>
+    shortcutConflictConfirm({ combo: 'MOD+Shift+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 1 }));
+  const pc = withPlatform('Win32', () =>
+    shortcutConflictConfirm({ combo: 'MOD+Shift+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 1 }));
+
+  assert.match(mac.combo, /^Cmd\+/);
+  assert.match(pc.combo, /^Ctrl\+/);
+  for (const t of [mac, pc]) {
+    assert.ok(t.text.includes(`“${t.combo}”`));
+    assert.doesNotMatch(t.combo, /MOD\+|KeyK/, 'the raw combo id leaked into the dialog');
+  }
+});
+
+test('the conflict dialog goes through translate() for every sentence it owns', () => {
+  const seen = [];
+  withTranslator((s) => { seen.push(s); return s; }, () =>
+    shortcutConflictConfirm({ combo: 'MOD+KeyK', heldBy: 'Play', moveTo: 'Pause', remaining: 2 }));
+
+  assert.deepEqual(seen, [
+    'Move this shortcut to a different action?',
+    'Used now by',
+    'Give it to',
+    'A shortcut belongs to one action at a time, so the action using it now gives it up.',
+    'Other shortcuts it keeps',
+    'Nothing is saved yet — this only changes the list in front of you. Closing this window without saving leaves your shortcuts as they are.',
+  ]);
+});
+
+test('a conflict dialog built from nothing is still a usable dialog', () => {
+  for (const t of [shortcutConflictConfirm(), shortcutConflictConfirm({}),
+                   shortcutConflictConfirm({ remaining: NaN })]) {
+    assert.doesNotMatch(t.text, /undefined|NaN|null/);
+    assert.equal(t.remaining, 0);
+    assert.match(t.cost, /no shortcut at all/);
+  }
+});
+
+test('ui.js hands the conflict builder the count of what the holder keeps', () => {
+  const start = uiSrc.indexOf('// Conflict handling (move binding)');
+  const handler = uiSrc.slice(start, uiSrc.indexOf('addComboToAction(capturing, combo);', start));
+
+  assert.notEqual(start, -1);
+  // The fragments are gone, along with the two dictionary keys that never were.
+  assert.doesNotMatch(handler, /TT\('is already used by'\)/);
+  assert.doesNotMatch(handler, /TT\('Move it to'\)/);
+
+  assert.match(handler, /shortcutConflictConfirm\(\{/);
+  // Counted against the draft, and against the combos left after this one goes.
+  assert.match(handler, /draft\?\.\[conflictId\]\?\.combos/);
+  assert.match(handler, /remaining: heldNow\.filter\(x => x !== combo\)\.length/);
+  assert.match(handler, /if \(!confirm\(ask\.text\)\) return;/);
+  assert.match(uiSrc, /import \{[^}]*\bshortcutConflictConfirm\b[^}]*\} from "\.\/core\/confirmText\.js"/);
+});
+
+test('the capture hint is one whole sentence, not two fragments', () => {
+  const start = uiSrc.indexOf('const startCapture = (actionId)=>{');
+  const hint = uiSrc.slice(start, uiSrc.indexOf('const stopCapture = ()=>{', start));
+
+  assert.notEqual(start, -1);
+  assert.doesNotMatch(hint, /TT\('Press keys for'\)/);
+  assert.doesNotMatch(hint, /TT\('to cancel'\)/);
+  assert.match(hint, /TT\('Press the keys you want to use\. Esc cancels\.'\)/);
+});
+
+test('every string the shortcuts panel asks TT to translate is in all six locales', () => {
+  // The panel's own words, including the two the dialog above now prints under
+  // a translated label — `Custom 3 / 62` read English in six locales while the
+  // card around it was translated.
+  const KEYS = ['Custom', 'Enabled', 'Press the keys you want to use. Esc cancels.'];
+  const LANGS = ['ko', 'ja', 'zh-TW', 'th', 'id', 'fil'];
+
+  for (const k of KEYS) {
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rows = [...i18nSrc.matchAll(new RegExp(`^\\s*"${esc}"\\s*:\\s*"([^"]*)"`, 'gm'))];
+    assert.ok(rows.length >= LANGS.length,
+      `"${k}" has ${rows.length} dictionary rows, want at least ${LANGS.length}`);
+    for (const [, value] of rows) {
+      assert.notEqual(value, k, `"${k}" is left in English in one of its locales`);
+    }
+  }
 });

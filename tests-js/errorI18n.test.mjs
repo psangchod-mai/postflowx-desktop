@@ -129,7 +129,12 @@ const SCANNED = [
   // locale may NOT soften: it is the only confirm in this file that genuinely
   // has no way back, so a translation that drops "cannot be undone" is worse
   // than no translation at all.
-  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 24 },
+  // The shortcut-conflict dialog adds six more. It is the first set in this
+  // file that replaces a sentence somebody had already tried to localise: the
+  // old call site wrapped four fragments in TT and glued them in English word
+  // order, which no locale can rescue. A whole sentence per idea is the only
+  // shape a dictionary keyed on English strings can actually translate.
+  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 30 },
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },

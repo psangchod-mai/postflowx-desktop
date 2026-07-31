@@ -7651,3 +7651,58 @@ status lines. The CutDiff orphaned-storage leak from 141 is still open,
 and the Project Setup panel is still untranslated.
 
 Commits: `923ea6b`.
+
+---
+
+## Iteration 147 — Keyboard Shortcuts: a sentence assembled from four pieces, in six word orders
+
+Press a key that another action already owns and the app asked `"Cmd+Shift+K"
+is already used by "Play". Move it to "Pause"?` — four translated
+fragments glued around two names, in English word order. That shape can
+never work in six languages: Japanese and Korean want the verb last, Thai
+marks the passive with a particle. And it turned out all four fragments
+had no dictionary entry in any locale anyway, which fragment-gluing hides
+nicely, because the surrounding words are English regardless.
+
+The bigger problem was what it left out. "Move it to Pause?" names the
+gain and not the cost. The action holding the key loses it — and if that
+was its only binding it is left with nothing, silently. So the dialog now
+counts: `Other shortcuts it keeps: 2`, and at zero it says the whole
+sentence instead, `The action using it now will be left with no shortcut
+at all.` Same rule as the last two nights: a different consequence gets
+different words, not a `0`.
+
+`shortcutConflictConfirm()` puts the names on their own labelled lines
+(`Used now by: "Play"`) so nothing translatable is joined to a name by
+grammar. The closing "nothing is saved yet" line is 146's key reused
+verbatim — both dialogs only touch the draft, so it's true in both, free
+to translate, and a test holds the twins together.
+
+13/13 RED against HEAD copies first. 54 dictionary rows, ten new tests,
+54 → 64 in `confirmText.test.mjs`.
+
+One thing worth writing down: three of those 54 rows went into the wrong
+dictionary and turned the gate red. `ERROR_DICT` is policed for orphans —
+every key must be scanned out of a module that calls `translate()` — and
+`Custom`, `Enabled` and the capture hint reach the user via `ui.js`'s
+`TT()` instead. The failure reads as "these keys are dead, delete them"
+when the right move was to file them in `DICT`. Cost twenty minutes; that
+was the whole of tonight's red.
+
+Upside: that closes the `Custom` gap I logged last night. `Custom 3 / 62`
+is translated now, and so is `Enabled`. Every `TT()` key in the Keyboard
+Shortcuts panel resolves.
+
+`ui.js` still holds two hunks of other people's uncommitted work
+(a `showError` humanizer and a Fun-box iframe lifecycle). Only my three
+went in, same rebuild-the-index technique, `git diff --cached` read back
+to prove it.
+
+**Next:** twenty `confirm()` sites left. Twelve untranslated `TT()` keys
+remain and they split cleanly into two panels — Workspace Tabs (`Move
+up`, `Move down`, `Pin to Tabs`, `Unpin from Tabs`, `Workspace Tabs`,
+`Unsaved`) and the naming/metadata panel (`Key`, `Camera`, `Profiles`,
+`Rules`, `Examples`, `Detected`) — one iteration each, and the first is
+the better one because pinning and unpinning a tab is something a
+non-technical user does daily. The CutDiff orphaned-storage leak from 141
+is still open, and Project Setup is still untranslated.

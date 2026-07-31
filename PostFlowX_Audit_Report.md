@@ -14790,3 +14790,106 @@ in `homeScreen.js` is still too interleaved with pre-existing WIP to
 isolate.
 
 Commits: `923ea6b`.
+
+---
+
+## Iteration 147 — Keyboard Shortcuts: a sentence assembled from four pieces, in six word orders
+
+**The fault.** Assigning a key already held by another action opened a
+`confirm()` built like this:
+
+```js
+const msg = `"${comboToDisplay(combo)}" ${TT('is already used by')} "${TT(a?.name || conflictId)}".
+${TT('Move it to')} "${TT(cur?.name || capturing)}"?`;
+```
+
+Four translated fragments glued around two action names, in English word
+order. Two separate failures compound here. The first is structural: even
+with perfect translations, Japanese and Korean put the verb last and Thai
+marks the passive with a particle, so no locale can render a sentence
+whose join order is fixed in English. The second is that all four
+fragments — `is already used by`, `Move it to`, and the capture hint's
+`Press keys for` / `to cancel` — had **zero dictionary entries in all six
+locales**. Fragment-gluing hides that, because the words either side are
+English anyway and nothing looks obviously broken.
+
+**What it never said.** "Move it to X?" describes the gain and omits the
+cost. A shortcut belongs to one action at a time, so the action holding
+it is about to lose it — and if that was its only binding, it is left
+with no shortcut at all, silently, with no undo and no notice. A user who
+reads "Move it to Pause?" and clicks OK has no way to know they have just
+unbound Play entirely.
+
+**The fix.** `shortcutConflictConfirm()` in `core/confirmText.js` builds
+the dialog out of whole sentences plus labelled data lines:
+
+```
+Move this shortcut to a different action?
+
+"Cmd+Shift+K"
+Used now by: "Play"
+Give it to: "Pause"
+
+A shortcut belongs to one action at a time, so the action using it now gives it up.
+Other shortcuts it keeps: 2
+
+Nothing is saved yet — this only changes the list in front of you. …
+```
+
+No grammar joins a translated string to a name: names sit on their own
+labelled lines, and every line that carries grammar is one complete
+translatable sentence. The count comes too, and zero reads differently —
+`The action using it now will be left with no shortcut at all.` rather
+than `Other shortcuts it keeps: 0`, because losing your last shortcut is
+not the same event as losing one of four. That is the same discipline as
+145 and 146.
+
+The closing reassurance reuses iteration 146's `resetShortcutsDraftConfirm`
+key **word for word** — both dialogs edit only the draft, so the sentence
+is accurate in both, costs no new translations, and a test pins the two
+to the same string so they cannot drift apart.
+
+The capture hint was rebuilt on the same principle: `⏺ Play — Press the
+keys you want to use. Esc cancels.` — the name first on its own, then one
+sentence that translates whole.
+
+**RED before GREEN.** Thirteen assertions against `git show HEAD:` copies
+of `ui.js`, `confirmText.js` and `i18n.js` before any edit: 13/13
+described HEAD as it stood, including that the dialog counts nothing and
+never says the other action loses anything, and that all six flagged
+strings are absent from every locale. `tests-js/confirmText.test.mjs`
+went 54 → 64 tests; `errorI18n.test.mjs`'s expected count for
+`core/confirmText.js` went 24 → 30.
+
+**Dictionary.** Nine new English strings × six locales = 54 rows. Six
+belong to the conflict dialog and went into `ERROR_DICT` alongside the
+other `confirmText.js` sentences. The other three — `Press the keys you
+want to use. Esc cancels.`, `Custom`, `Enabled` — reach the user through
+`ui.js`'s `TT()`/`window.PFX_t`, not through a module that calls
+`translate()`, and putting them in `ERROR_DICT` made the gate go red:
+`no dictionary entry is left behind after a rule is reworded` polices
+`ERROR_DICT` for keys no scanned source consumes, and those three looked
+exactly like dead rows. They were moved into `DICT`, which is the right
+home for a plain UI label. Worth recording, because the error message
+reads as "delete these" when the correct action was "file these
+elsewhere".
+
+That also closes the `Custom` gap deferred by 146: `Custom 3 / 62` under
+the shortcuts card is now translated in all six locales, as is `Enabled`.
+All six of the Keyboard Shortcuts panel's `TT()` keys now resolve.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0
+fail / 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open
+gates clean. The single `not ok` match in the log remains the test *name*
+`PASS - exportPreset: missing → not ok (got false, want false)`.
+
+**Still open.** Twenty `confirm()` sites remain inline and English-only
+(was 21; the conflict site is now module-built). Twelve untranslated
+`TT()` keys remain, splitting cleanly into two panels: Workspace Tabs
+(`Move up`, `Move down`, `Pin to Tabs`, `Unpin from Tabs`, `Workspace
+Tabs`, `Unsaved`) and a naming/metadata panel (`Key`, `Camera`,
+`Profiles`, `Rules`, `Examples`, `Detected`) — one iteration each. The
+`#ntCard` description in `index.html` still names one of the two lists it
+resets (deferred in 145). Project Setup is still untranslated; the CutDiff
+orphaned-storage leak from 141 is still open; `_refreshStatus()` in
+`homeScreen.js` is still too interleaved with pre-existing WIP to isolate.

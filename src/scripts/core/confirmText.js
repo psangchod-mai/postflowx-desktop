@@ -496,3 +496,80 @@ export function resetShortcutsDraftConfirm(state = {}) {
 
   return { title, detail, count, custom, total, text: `${title}\n\n${detail}\n${count}` };
 }
+
+// ── A sentence assembled from four pieces, in six word orders ────────────────
+//
+// Rebinding a key that another action already holds put up this, at ui.js:21340:
+//
+//   const msg = `"${comboToDisplay(combo)}" ${TT('is already used by')} "${TT(a?.name || conflictId)}".\n`
+//             + `${TT('Move it to')} "${TT(cur?.name || capturing)}"?`;
+//
+// Four translated fragments glued around two names. The intent was right —
+// somebody wrapped every piece in TT and meant for this to be localised — but
+// gluing fragments only reproduces English word order. "is already used by"
+// followed by a name is a Subject-Verb-Object sentence with the object last;
+// Japanese and Korean put the verb at the end, Thai marks the passive with a
+// particle before the agent, and none of the six can be built by dropping a
+// name into that slot. Even fully translated it would read as a jumble.
+//
+// And it was not translated: `is already used by`, `Move it to`, `Press keys
+// for` and `to cancel` had zero dictionary entries between them, in any of the
+// six locales, so the dialog rendered half in the reader's language and half in
+// English. That is the failure mode fragment-gluing hides — nobody notices a
+// missing key when the surrounding words are English anyway.
+//
+// So the sentences here are whole, and the two names arrive on labelled lines
+// of their own where no grammar joins them. That is the same bargain the rest
+// of this file makes, and it is what lets these six strings be translated once
+// and stay correct.
+//
+// ── What the old dialog did not say ──────────────────────────────────────────
+//
+// "Move it to Pause?" describes the destination and stops. The reader is not
+// told the cost: Play is about to lose that key, and if it was Play's only
+// binding then Play is left with no shortcut at all, silently, discoverable
+// only by scrolling back up the list. "Move" implies it, but implying is not
+// the job of a dialog that exists to state a consequence.
+//
+// So the count comes too — the same discipline as iterations 145 and 146.
+// "Other shortcuts it keeps: 2" and "will be left with no shortcut at all" are
+// different facts and now read differently, instead of both being "Move it to".
+//
+// The closing line is the one from resetShortcutsDraftConfirm, reused verbatim:
+// this dialog also edits nothing but the draft, so the reassurance is true here
+// too, and sharing the key means six locales already have it.
+
+/**
+ * Text for the "this key is taken" confirmation inside the Edit Shortcuts window.
+ *
+ * @param {object} [state]
+ * @param {string} [state.combo]      Raw combo, rendered by comboToDisplay.
+ * @param {string} [state.heldBy]     Name of the action that holds it now.
+ * @param {string} [state.moveTo]     Name of the action being edited.
+ * @param {number} [state.remaining]  Combos the holder keeps once this one goes.
+ *
+ * Both names are already localised by the caller — the shortcuts editor runs
+ * every action name through PFX_t before it reaches the screen, and a name that
+ * differed between the list and this dialog would be worse than an English one.
+ *
+ * @returns {{title:string, held:string, gain:string, detail:string, cost:string, hint:string, text:string}}
+ */
+export function shortcutConflictConfirm(state = {}) {
+  const combo = comboToDisplay(state.combo || '') || cleanName(state.combo);
+  const heldBy = cleanName(state.heldBy);
+  const moveTo = cleanName(state.moveTo);
+  const remaining = Number.isFinite(state.remaining) ? Math.max(0, state.remaining) : 0;
+
+  const title = translate('Move this shortcut to a different action?');
+  const held = `${translate('Used now by')}: “${heldBy}”`;
+  const gain = `${translate('Give it to')}: “${moveTo}”`;
+  const detail = translate('A shortcut belongs to one action at a time, so the action using it now gives it up.');
+  const cost = remaining === 0
+    ? translate('The action using it now will be left with no shortcut at all.')
+    // No colon: the number is appended after it.
+    : `${translate('Other shortcuts it keeps')}: ${remaining}`;
+  const hint = translate('Nothing is saved yet — this only changes the list in front of you. Closing this window without saving leaves your shortcuts as they are.');
+
+  const text = `${title}\n\n“${combo}”\n${held}\n${gain}\n\n${detail}\n${cost}\n\n${hint}`;
+  return { title, held, gain, detail, cost, hint, combo, heldBy, moveTo, remaining, text };
+}
