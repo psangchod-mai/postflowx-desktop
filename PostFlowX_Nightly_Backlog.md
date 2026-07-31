@@ -8230,3 +8230,5 @@ file changes shape, so it will not be forgotten quietly.
 `Previous 7 Days` and `Older`, in English, directly above rows whose dates are
 now correctly localised — which reads worse than when everything was English,
 because now the mismatch is inside one panel.
+
+Commits: `8cb1771`.
