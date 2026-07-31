@@ -15736,3 +15736,5 @@ RED 0**. Twelve new unit tests in `tests-js/projectNameEntry.test.mjs`.
 **Still open.** The prompt is still a browser prompt. No duplicate-name check.
 The folder name is still never shown before it is created. `Saved 4m ago` in the
 same status pill is still English in all seven languages.
+
+Commits: `2d3d933`.
