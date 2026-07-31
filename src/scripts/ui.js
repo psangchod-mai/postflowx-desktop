@@ -68,6 +68,7 @@ import {
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
+import { projectFailure } from "./core/failureText.js";
 import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
@@ -14995,7 +14996,12 @@ async function wireProjectBar(){
           setProjectSaveStatus(`Loaded ${name}`, 'idle');
           _updateRecentBtnLabel(name);
         } else {
-          showError('Project not found in Project Folder. Use Load to open a project.json file.');
+          // Said "not found" whatever the cause. When the cause is a lapsed
+          // folder permission that sentence is false, and false in the
+          // direction that makes someone start rebuilding a day's work over a
+          // file that is still sitting on disk.
+          const f = projectFailure(r, 'load', name);
+          if (!f.silent) showError(f.text);
         }
       });
       recentList.appendChild(btn);
@@ -15255,16 +15261,18 @@ async function wireProjectBar(){
           ? await saveTabProjectFile(scope, currentName)
           : await saveUnifiedProjectFile(currentName);
         if (!r?.ok){
-          const msg = String(r?.error || r?.reason || "Save failed");
-          if (r?.reason === 'no_account_permission'){
-            // The guard toast already said this, in the user's language. A
-            // second banner saying it again — behind an English "Save failed:"
-            // prefix — is one event described twice and half-translated.
-            setProjectSaveStatus(msg, "error");
-            return r;
-          }
-          setProjectSaveStatus(`Save failed: ${msg}`, "error");
-          showError(msg);
+          // `r.reason` is a machine code — `no_permission`, `bad_tab` — and it
+          // was printed here verbatim, in the pill and again in the banner, in
+          // every language. The most common failure in this app is a Project
+          // Folder handle that did not survive a restart, and it read
+          // `Save failed: no_permission` with no way out written anywhere.
+          // core/failureText.js owns the sentence and the remedy now.
+          const f = projectFailure(r, 'save', currentName);
+          setProjectSaveStatus(f.title, "error");
+          // Silent causes have already spoken: the account gate fires its own
+          // guard toast before returning, and a cancelled folder picker is an
+          // answer rather than a failure worth a banner.
+          if (!f.silent) showError(f.text);
           return r;
         }
         // Clear dirty for the scope that was actually saved (user may have
@@ -15283,9 +15291,15 @@ async function wireProjectBar(){
         try{ showError(`Saved: ${currentName} → ${where}`); }catch{}
         return r;
       }catch(err){
+        // The other half of the same fault: this branch put a raw JS exception
+        // on screen — `Cannot read properties of undefined (reading 'kind')` —
+        // which is less use to a non-technical reader than the code was. It
+        // stays in the console, where the person who can act on it is looking.
         const msg = err?.message || String(err);
-        setProjectSaveStatus(`Save failed: ${msg}`, "error");
-        showError(msg);
+        try{ console.error('[PostFlowX] save failed', err); }catch{}
+        const f = projectFailure(null, 'save', currentName);
+        setProjectSaveStatus(f.title, "error");
+        showError(f.text);
         return { ok:false, error: msg };
       }finally{
         __projSaveInFlight = null;
@@ -15331,7 +15345,11 @@ async function wireProjectBar(){
       setProjectSaveStatus(`Loaded ${pick}`, "idle");
       _updateRecentBtnLabel(pick);
     }else{
-      showError("Project not found in your Project Folder (PFX/<ProjectName>/...). Use Load to open a project.json or tab file.");
+      // Same false "not found" as the recents list, plus a path template —
+      // `PFX/<ProjectName>/...` — that reads as a placeholder someone forgot
+      // to fill in rather than as the shape of a folder.
+      const f = projectFailure(r, 'load', pick);
+      if (!f.silent) showError(f.text);
     }
     sel.value = "";
   });
@@ -15528,11 +15546,13 @@ async function wireProjectBar(){
           await refreshProjectSelect();
           showError(`Deleted project: ${name}`);
         }else{
-          if (r?.reason === "no_dir") showError("Set Project Folder first (gear icon).");
-          else if (r?.reason === "no_permission") showError("No permission to delete in Project Folder. Re-pick Project Folder (gear icon).");
-          else if (r?.reason === "not_found") showError("Project not found in Project Folder.");
-          else if (r?.reason === "not_supported") showError("Delete is not supported by this browser build.");
-          else showError(r?.error || "Delete failed.");
+          // Was four `else if`s on r.reason written in English at this call
+          // site, covering four of the six codes deleteUnifiedProjectByName()
+          // can return — `bad_name` and `delete_failed` fell through to the
+          // bare "Delete failed.". A literal here is a literal no translation
+          // scanner reaches, which is the other half of why it moved.
+          const f = projectFailure(r, 'delete', name);
+          if (!f.silent) showError(f.text);
         }
       }catch(err){
         showError(err?.message || String(err));
@@ -15583,7 +15603,9 @@ async function wireProjectBar(){
         setProjectSaveStatus(`Loaded ${name}`, 'idle');
         _updateRecentBtnLabel(name);
       } else {
-        showError(`Could not load project: ${name}`);
+        // True, and useless: it repeats the button that was just pressed.
+        const f = projectFailure(r, 'load', name);
+        if (!f.silent) showError(f.text);
       }
     } catch(err) {
       showError(err?.message || String(err));

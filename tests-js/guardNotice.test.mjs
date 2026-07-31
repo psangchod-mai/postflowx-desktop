@@ -191,8 +191,20 @@ test('the save result stops contradicting the toast it fires alongside', () => {
     'both save paths should report a machine-readable reason instead of an English one');
   assert.ok(/deniedActionNotice\(\{ id: 'save_project' \}\)\.text/.test(pf),
     'the save refusal does not reuse the translated sentence');
-  assert.ok(/r\?\.reason === 'no_account_permission'/.test(read('src/scripts/ui.js')),
-    'ui.js still prefixes the refusal with an untranslated "Save failed:" and repeats it in a banner');
+  // Iteration 152 replaced ui.js's `r?.reason === 'no_account_permission'`
+  // special case with a `silent` flag carried on the notice, so every caller
+  // inherits the fix instead of the one that was hand-patched here. The
+  // guarantee is unchanged: the save pill shows a translated sentence and the
+  // banner stays shut when the guard toast has already spoken.
+  const ui = codeOnly(read('src/scripts/ui.js'));
+  assert.ok(!/Save failed: \$\{/.test(ui),
+    'ui.js still prefixes the refusal with an untranslated "Save failed:"');
+  assert.ok(/if \(!f\.silent\) showError\(f\.text\)/.test(ui),
+    'ui.js no longer suppresses the banner for a refusal the guard toast already reported');
+  assert.ok(/no_account_permission: 'not_allowed'/.test(read('src/scripts/core/failureText.js')),
+    'the account refusal is not mapped to the cause the silent list names');
+  assert.ok(/const SILENT = Object\.freeze\(\[[^\]]*'not_allowed'/.test(read('src/scripts/core/failureText.js')),
+    "'not_allowed' dropped off the silent list, so the refusal is reported twice again");
   // And not under the code that already means something else: 'no_permission'
   // is the folder permission the OS refused, writeProjectV4ViaFS() returns it,
   // and it reaches this same caller. Sharing the code would have silenced that

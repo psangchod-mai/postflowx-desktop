@@ -15309,3 +15309,107 @@ Project Setup, the CutDiff orphaned-storage leak from 141,
 the admin check.
 
 Commits: `4858462`.
+
+## Iteration 152 — twenty-four machine codes, printed to the reader as themselves
+
+**Found.** `core/projectFile.js` reports every failure as a short code on
+the result object — `{ ok:false, reason:'no_permission' }` — and twenty-four
+of them exist. Nothing on that object is written for a person. That is the
+right shape for a module boundary and the wrong thing to put on a screen,
+and six call sites in `ui.js` put it on a screen anyway.
+
+The save handler did
+
+```js
+const msg = String(r?.error || r?.reason || "Save failed");
+setProjectSaveStatus(`Save failed: ${msg}`, "error");
+showError(msg);
+```
+
+No save-path failure carries an `error` field, so `r.reason` is what fell
+through. A colourist who has restarted their Mac since granting folder
+access — the most common way this app breaks, because the File System
+Access handle does not survive a restart — pressed Cmd+S and read
+`Save failed: no_permission` in the status pill and `no_permission` again
+in the banner below it. In English, in all seven languages. It named no
+cause anyone can act on, and the four-second remedy — re-pick the Project
+Folder from the gear icon — appeared nowhere.
+
+Worse, three of the four load call sites ignored `reason` entirely and
+printed "Project not found in Project Folder." for **every** failure. When
+the cause was a lapsed permission or an unset folder that sentence was
+false, and false in the direction that frightens people: it tells an editor
+their project is gone when the file is on disk, untouched, one dialog away.
+Someone who believes it starts rebuilding the day.
+
+Delete had the third shape — five `else if`s on `r.reason` written in
+English at the call site, covering four of the six codes delete can return.
+`bad_name` and `delete_failed` fell through to "Delete failed."
+
+**Fixed.** New pure leaf module `src/scripts/core/failureText.js`. It keys
+on *cause*, not code, so `pfx_dir_failed` and `tabs_dir_failed` share one
+sentence; the per-op wording differs only where the verb changes the
+meaning (no Project Folder blocks a save because there is nowhere to put
+the file and a load because there is nowhere to look). Twenty-four
+translated literals, a code-point-safe name clamp borrowed from
+`core/confirmText.js`, and a `silent` flag carried on the notice — so
+iteration 151's double-report fix for the account gate now generalises to
+every future caller instead of being a special case in `ui.js`.
+
+The branch that matters is the fallback. Codes get added to
+`projectFile.js` by whoever is writing the feature, not by whoever is
+thinking about six locales, so the default path is the one that will
+actually run in a year. An unrecognised code resolves to "The project could
+not be saved" — vague, true, translated, and never `templates_dir_failed`.
+
+Seven `ui.js` call sites rewired, one of which my own test found: the save
+handler's `catch` was still doing `Save failed: ${err.message}`, a raw JS
+exception on the pill. The exception now goes to `console.error` where it
+belongs, and the reader gets a sentence.
+
+**Tests.** New `tests-js/failureText.test.mjs`, 23 tests. The drift guard
+regex-extracts the codes back out of `projectFile.js` and asserts none of
+them maps to `unknown` — so the next person to add a code fails a test
+rather than shipping it to the screen. Also: no code is ever visible in
+rendered text for any code × op pair; a `reason` inherited from `Object`
+(`constructor`, `toString`, `__proto__`) does not resolve to a function;
+a name containing a newline cannot forge a line that looks like the app
+speaking; 200 combining-heavy code points clamp without splitting a
+character; and the account refusal's hint is byte-identical to the one the
+guard toast uses, asserted against `accessNotice.js` rather than restated.
+
+138 `ERROR_DICT` rows added (23 keys × 6 locales). `errorI18n.test.mjs`
+gained the module in its SCANNED table at `expected: 24`, which is what
+makes the coverage tests bite.
+
+`guardNotice.test.mjs:182` had to change: it asserted `ui.js` special-cases
+`r?.reason === 'no_account_permission'`, and that special case is exactly
+what this iteration deleted. The replacement asserts the mechanism that
+supersedes it — the `!f.silent` guard, `no_account_permission → not_allowed`,
+and `not_allowed` on the SILENT list — so the guarantee is unchanged and the
+test now fails if any of the three links breaks rather than if the code is
+tidied.
+
+**RED proof.** Against a clean `git archive HEAD` tree the test file fails
+to load at all, which is only coarse evidence, so a 20-claim probe checked
+each assertion independently: **RED 19 / GREEN 1** at HEAD, **GREEN 20 / 20**
+on the working tree. The one green at HEAD was a probe bug — my regex
+looked for `r?.reason === 'not_found'` and the old delete chain used double
+quotes. Corrected before counting.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail /
+1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates clean.
+Matches baseline.
+
+**Still open.** `ui.js` ~15313, the startup auto-load of the last project,
+has no failure branch at all and stays silent — arguably the highest-value
+moment to tell someone their folder permission lapsed, but a launch-time
+banner is a separate judgement call and is not in this change. Six
+`projectFile.js` exports have no callers anywhere in `src/`
+(`renameUnifiedProjectByName`, `cloneUnifiedProjectByName`,
+`saveProjectTemplate`, `listProjectTemplates`, `createProjectFromTemplate`,
+`readUnifiedProjectInfo`), and five more are imported into `ui.js` and
+never used. Unchanged: twenty inline `confirm()` sites, the seven
+naming/metadata `TT()` keys, the tab `title=` tooltips, `#ntCard`, Project
+Setup, the CutDiff orphaned-storage leak from 141, `_refreshStatus()`, and
+the three permission gates that still disagree on the admin check.

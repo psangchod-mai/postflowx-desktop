@@ -39,6 +39,7 @@ const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
 const workspaceAccessSrc = readFileSync(SRC_DIR + 'core/workspaceAccess.js', 'utf8');
 const accessNoticeSrc = readFileSync(SRC_DIR + 'core/accessNotice.js', 'utf8');
+const failureTextSrc = readFileSync(SRC_DIR + 'core/failureText.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -169,6 +170,16 @@ const SCANNED = [
   // and the view resolved the id to a label first, so every name shipped in
   // English inside an otherwise translated sentence.
   { file: 'core/accessNotice.js', src: accessNoticeSrc, expected: 49 },
+  // The result codes core/projectFile.js returns — `no_permission`, `bad_tab`,
+  // `templates_dir_failed` — which ui.js printed on screen verbatim because
+  // none of the save-path failures carry an `error` field for it to prefer.
+  // 24 sentences: a title for each cause, worded per operation where the verb
+  // changes the sentence, and the remedy that goes with it. The remedy is the
+  // half that was missing entirely — `Save failed: no_permission` named a
+  // condition and no way out of it, and the way out is one folder picker.
+  // One of the 24 is deliberately shared word-for-word with the guard toast
+  // in core/accessNotice.js so the account refusal reads as one event.
+  { file: 'core/failureText.js', src: failureTextSrc, expected: 24 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

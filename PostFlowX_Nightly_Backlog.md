@@ -7978,3 +7978,72 @@ failures apart is quietly getting it wrong. Then the twenty `confirm()`
 sites, still sitting there.
 
 Commits: `4858462`.
+
+## Iteration 152 — the app told an editor their project was gone when it was sitting right there
+
+Last night's pass fixed the read-only badge. Tonight I went looking for
+what happens when a project operation simply fails, and found the app
+handing people its own internal vocabulary.
+
+`projectFile.js` answers with a code — `no_dir`, `no_permission`,
+`dest_exists`, `templates_dir_failed`. Twenty-four of them. That is fine;
+it is a module talking to a module. What is not fine is that `ui.js` was
+printing the code. Press Cmd+S after your Mac has restarted — which
+silently drops the folder permission, every time, by design of the
+browser API this thing is built on — and you got:
+
+    Save failed: no_permission
+
+on the status pill, and `no_permission` on its own in a banner underneath.
+Twice. In English no matter which of the seven languages you picked. It
+tells you nothing you can act on, and the fix that takes four seconds —
+open the gear, re-pick the folder — is not mentioned. What I think
+actually happens is that people press Cmd+S again, see the app respond,
+assume it worked, and lose the session.
+
+The load path was worse, and it is the one that would have made me angry
+as a user. Three of four load sites ignored the reason entirely and said
+"Project not found in Project Folder." for every possible failure. So a
+lapsed permission — the file is fine, on disk, one dialog away — reads as
+*your project is not there*. That is a false statement in the direction
+that makes someone start rebuilding a day's work. An error that lies is
+worse than an error that shrugs.
+
+So: `core/failureText.js`. It maps codes to causes and causes to
+sentences, because `pfx_dir_failed` and `tabs_dir_failed` are two lines of
+code and one bad afternoon, and the reader should get the afternoon, not
+the line. Per-operation wording only where the verb genuinely changes
+things. And a `silent` flag on the notice, which is me finally
+generalising the fix I hand-patched into one call site last night — the
+account gate already fires its own toast, and a second banner saying the
+same thing in different words reads as two problems.
+
+The part I care most about is the unknown-code fallback. Whoever adds the
+twenty-fifth code next quarter will not be thinking about six locales.
+So the default has to be a real sentence — "The project could not be
+saved" — and never the code. There is also a test that pulls every code
+back out of `projectFile.js` and fails if one has no sentence, which
+turns a silent regression into a red build.
+
+My own test caught a second instance of the bug while I was fixing the
+first: the save handler's `catch` was putting a raw JS exception message
+on the pill. That went to `console.error`, where a stack trace is
+actually useful to somebody.
+
+One existing test had to change, which I want to be explicit about rather
+than quiet: `guardNotice.test.mjs` asserted that `ui.js` special-cases
+`no_account_permission`, and deleting that special case was the point.
+I replaced it with assertions on the three links of the new mechanism, so
+it still fails if the guarantee breaks — just not if the code gets tidier.
+
+RED proof was 19 of 20 claims failing at HEAD. The one that passed was my
+own regex being wrong about quote style in the old code, which I found
+and fixed before counting, because a probe that flatters the change is
+not a probe.
+
+**Next:** the startup auto-load at `ui.js` ~15313 has no failure branch at
+all — it fails completely silently, which is the single best moment to
+tell someone their folder access lapsed, before they've typed anything.
+I left it because a banner at launch is a product decision, not a bug fix.
+Then the twenty `confirm()` sites, still sitting there, still not
+translated.
