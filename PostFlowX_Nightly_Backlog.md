@@ -7361,4 +7361,4 @@ orphaned-storage leak from 141 is still open — `_cdDeleteProject`
 splices a project out of the index but never removes its snapshot at
 `CD_PROJECT_KEY_PREFIX + id`.
 
-Commits: `PENDING`.
+Commits: `75f54e4`.
