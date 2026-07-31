@@ -15012,3 +15012,5 @@ and deserve their own pass. The `#ntCard` description still names one of
 the two lists it resets; Project Setup is still untranslated; the CutDiff
 orphaned-storage leak from 141 is still open; `_refreshStatus()` in
 `homeScreen.js` is still too interleaved with pre-existing WIP to isolate.
+
+Commits: `1f80775`.
