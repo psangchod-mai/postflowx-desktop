@@ -7503,3 +7503,5 @@ shortcut resets, the one that shouts "Reset **ALL** shortcuts in this
 editor" is the draft you can still cancel, while its plainer-sounding
 neighbour is the one that commits — the capitals are pointing at the
 wrong one. The CutDiff orphaned-storage leak from 141 is still open.
+
+Commits: `bdeddb4`.
