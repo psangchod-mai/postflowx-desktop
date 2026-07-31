@@ -125,7 +125,7 @@ const SCANNED = [
   // adding one. A locale that softens "the IMF package itself is not changed"
   // into something hedged puts the reader back where the English "This cannot
   // be undone." had them, and this time with a cache they still will not clear.
-  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 9 },
+  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 12 },
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },

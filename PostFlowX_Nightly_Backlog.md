@@ -7433,3 +7433,73 @@ leak from 141 is still open: `_cdDeleteProject` splices a project out of
 the index but never removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`.
 
 Commits: `8600e79`.
+
+## Iteration 144 — Project Setup ▸ Reset All Settings: the dialog deleted the undo it said did not exist
+
+Three nights of dialog work and this is the first one where the warning
+was true. It was true the way an alibi is true.
+
+Project Setup's Storage section lays out a "Version History" group — the
+last ten saved versions, each with a Restore button — and directly under
+it a "Danger Zone" group holding **Reset All Settings to Defaults**. The
+way out is three inches above the way to get hurt. Whoever laid that out
+was thinking clearly.
+
+Pressing the reset destroyed the way out. The handler did
+`_pssSettings = _pssDefaults()`, and `_pssDefaults()` returns
+`_history: []` — so one assignment reset the settings and emptied the
+restore ring, and the thirty-second autosave then wrote the emptiness to
+disk. Someone who hit it by mistake scrolled up to the Restore buttons
+they had been looking at a moment earlier and read "No history yet".
+
+And the dialog said *This cannot be undone*. Which was accurate, and
+accurate only because of the bug it did not mention. It reads as a
+statement about what the feature can't do. It was actually a description
+of a deletion the handler was carrying out quietly, on the single piece
+of UI that existed to stop this exact thing.
+
+So this one got fixed in the order that matters. The handler now saves
+first — so the settings you are throwing away become restore point [0]
+rather than something up to thirty seconds older — then carries the ring
+across the reset. The action is genuinely reversible now. Only then did
+the dialog get to say so. Writing the reassuring sentence first would
+have been the easier half of the job and the wrong half; a promise the
+code doesn't keep is worse than the blunt warning it replaced.
+
+    Reset all project settings?
+
+    Every setting on this page goes back to its original value. Your
+    footage and project files are not touched.
+    Your current settings are saved first, so you can bring them back — Version History
+
+Two other things the old string got wrong. It shouted `ALL` — spending
+its only emphasis on how much resets rather than on what happens — and
+it never answered the question a Project Setup reset actually raises.
+This panel holds OCR settings, proxy roots, delivery paths. "Reset
+everything" is genuinely ambiguous about whether the media sitting at the
+end of those paths is included. It isn't. Now the dialog says so.
+
+"Version History" stays in English, and I checked rather than assumed:
+that string isn't in the dictionary, and neither is "Restore" or "Danger
+Zone". The whole Project Setup panel is untranslated, so those headings
+read English in Thai and Korean too and pointing at them in English is
+what the reader will actually see on screen. Same answer as `▶ Generate`
+last night, different reason — there the glyph blocked the lookup, here
+the string just isn't there. A test holds all three keys absent, so
+whoever localises this panel later trips a failure instead of quietly
+leaving the hint aimed at a heading that no longer goes by that name.
+
+`project_setup.js` had two hunks of somebody else's uncommitted work in
+it — a clamp on number inputs so a blank field stops wiping the stored
+value, and a change making a missing DaVinci Resolve report "optional"
+rather than an error at boot. Only my two went in, same rebuild-the-index
+technique as the last three nights.
+
+**Next:** twenty-four `confirm()` sites left, six of them still in the
+"Reset X to defaults?" family — and that family is inconsistent in both
+directions, not just untranslated. `ui.js:21159` resets note types and
+quietly takes the SOW presets with it without saying so. And of the two
+shortcut resets, the one that shouts "Reset **ALL** shortcuts in this
+editor" is the draft you can still cancel, while its plainer-sounding
+neighbour is the one that commits — the capitals are pointing at the
+wrong one. The CutDiff orphaned-storage leak from 141 is still open.

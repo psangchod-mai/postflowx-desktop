@@ -14387,3 +14387,141 @@ but never removes its stored snapshot at `CD_PROJECT_KEY_PREFIX + id`.
 isolate safely.
 
 Commits: `8600e79`.
+
+## Iteration 144 — Project Setup ▸ Reset All Settings: the dialog deleted the undo it said did not exist
+
+**Defect.** Project Setup ▸ Storage renders two groups, in this order:
+
+    Version History
+      2026-07-31 11:42   [Restore]
+      2026-07-31 10:15   [Restore]
+      … up to ten entries
+
+    Danger Zone
+      [ Reset All Settings to Defaults ]
+
+The escape hatch sits directly above the hazard, which is the right
+layout. Pressing the hazard destroyed the escape hatch. The handler at
+`project_setup.js:1181` was:
+
+```js
+resetBtn.addEventListener('click', () => {
+  if (!confirm('Reset ALL project settings to defaults? This cannot be undone.')) return;
+  _pssSettings = _pssDefaults();
+  _pssMarkDirty();
+  …
+```
+
+`_pssDefaults()` returns `{_version: 1, _savedAt: null, _history: [], …}`.
+So the single assignment reset the settings *and* emptied the ten-entry
+restore ring, and `_pssMarkDirty()` then scheduled `_pssSaveNow(true)` on
+the 30-second autosave, writing that emptiness through to IndexedDB and
+the `chrome.storage.local` fallback. A user who reset by mistake scrolled
+up to the Restore buttons they had just been reading and found
+"No history yet".
+
+The dialog's "This cannot be undone." was therefore accurate — but only
+because of the bug it did not mention. It read as a statement about a
+limitation of the feature. It was in fact a description of a deletion the
+handler was performing silently, on the one UI element that existed to
+prevent exactly this.
+
+Two smaller faults in the same string. `ALL` in caps spent the sentence's
+only emphasis on scope rather than consequence, and it did not answer the
+question a Project Setup reset actually raises — *does this touch my
+footage?* Project Setup holds OCR settings, proxy roots, delivery paths;
+"reset everything" is ambiguous about whether the media on the other end
+of those paths is included.
+
+**Fix, in the order that matters.** The code first:
+
+```js
+resetBtn.addEventListener('click', async () => {
+  if (!confirm(resetSettingsConfirm().text)) return;
+  try { await _pssSaveNow(true); } catch {}
+  const keptHistory = Array.isArray(_pssSettings?._history) ? _pssSettings._history : [];
+  _pssSettings = _pssDefaults();
+  _pssSettings._history = keptHistory;
+  …
+```
+
+`_pssSaveNow(true)` unshifts the *current* settings onto the ring as entry
+`[0]` before they are replaced, so the state being discarded is itself the
+newest restore point rather than a snapshot up to 30 seconds stale; then
+`keptHistory` carries the ring across the `_pssDefaults()` assignment.
+The action becomes genuinely reversible, which is what earns the right to
+say so. Wording a promise the code did not keep would have been the
+easier half of this and the wrong half.
+
+Then the wording — `resetSettingsConfirm()` in `core/confirmText.js`:
+
+    Reset all project settings?
+
+    Every setting on this page goes back to its original value. Your
+    footage and project files are not touched.
+    Your current settings are saved first, so you can bring them back — Version History
+
+Three beats, same shape as 141–143: scope, then the reassurance the old
+string never gave, then the way back named by the section that provides
+it. Eighteen dictionary rows (three sentences × six locales).
+
+**"Version History" stays English, and that is measured, not assumed.**
+Grepped `i18n.js` for `"Version History":`, `"Restore":` and
+`"Danger Zone":` — count 0 for all three. The entire Project Setup panel
+is untranslated, so those headings read English in Thai and Korean alike
+and pointing at them in English is what the reader will actually see.
+Same conclusion as `▶ Generate` in 143, reached by a different route:
+there the glyph blocked the key lookup, here the string is simply absent
+from the dictionary. A test asserts all three keys stay absent, so
+localising the panel later trips the guard instead of quietly leaving the
+hint pointing at a heading that no longer exists under that name.
+
+**Tests.** `tests-js/confirmText.test.mjs` 29 → 35. Six added: the three
+beats; the absence of "cannot be undone" / "permanent" / a bare `ALL`;
+that the handler both pre-saves and carries `_history` across the reset;
+the call-site wiring plus the old template's absence; that the
+`pfx-setup-group-head">Version History` heading exists and all three
+headings stay out of the dictionary; and that exactly the three sentences
+reach `translate()` while the section name does not.
+`tests-js/errorI18n.test.mjs` `SCANNED` for `core/confirmText.js` 9 → 12.
+
+**RED proofs.** Two realistic regressions, each restored and re-verified:
+
+1. `await _pssSaveNow(true)`, `keptHistory` and the `_history` re-assign
+   stripped from the handler — i.e. the pre-144 code — → `✖ project_setup.js
+   carries the history ring across the reset`. 1 fail.
+2. Old wording restored as the title literal → `✖ the reset dialog says
+   what changes and, separately, what does not`, `✖ the dialog no longer
+   claims the reset cannot be undone`, `✖ the reset sentences are
+   translated and the section name is not`. 3 fails.
+
+Tree restored after each; `ℹ fail 0` confirmed on the restored tree.
+
+**Working-tree discipline.** `src/scripts/modules/project_setup.js`
+carries two pre-existing uncommitted hunks that are not mine — a clamp on
+`input[type=number]` handling in `_pssWireSection` (blank/invalid input no
+longer overwrites the stored value; min/max applied), and a change in
+`autoConnectResolveOnBoot` making a missing DaVinci Resolve report
+`idle` / "Resolve optional" instead of an error. Only my two hunks were
+committed, using the same index-rebuilding technique as 141–143.
+`confirmText.js`, `i18n.js` and both test files were clean against HEAD
+and staged whole.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail
+/ 1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates
+clean.
+
+**Still open.** Twenty-four `confirm()` sites remain inline and
+English-only. Six of the seven "Reset X to defaults?" dialogs are
+untouched, and the survey in 143 found the class inconsistent in both
+directions, not merely unlocalised: `ui.js:21159` resets note types and
+silently overwrites SOW presets as well, which its dialog does not
+mention; and of the shortcuts pair, `ui.js:21484` says "Reset **ALL**
+shortcuts in this editor" for a draft-only change the user can still
+cancel, while the plainer-reading `ui.js:21472` commits immediately — the
+capitals point at the safer of the two. Also unchanged: the entire
+Project Setup panel is untranslated; the CutDiff orphaned-storage leak
+from 141 (`_cdDeleteProject` splices a project out of the index but never
+removes its snapshot at `CD_PROJECT_KEY_PREFIX + id`); and
+`_refreshStatus()` in `homeScreen.js`, still too interleaved with
+pre-existing WIP to isolate safely since iterations 130–140.

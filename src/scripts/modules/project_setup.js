@@ -10,6 +10,8 @@
  *          that prep_mark.js and naming_template.js already read.
  */
 
+import { resetSettingsConfirm } from '../core/confirmText.js';
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 const _PSS_IDB_NAME    = 'pfxProjectSetup';
 const _PSS_IDB_STORE   = 'settings';
@@ -1169,9 +1171,17 @@ function _pssWireSection(container) {
   // Reset all
   const resetBtn = container.querySelector('#pfxSetupResetAll');
   if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      if (!confirm('Reset ALL project settings to defaults? This cannot be undone.')) return;
+    resetBtn.addEventListener('click', async () => {
+      if (!confirm(resetSettingsConfirm().text)) return;
+      // Save first, so the settings being discarded become history entry [0]
+      // and the Restore button directly above this one can bring them back.
+      try { await _pssSaveNow(true); } catch {}
+      // _pssDefaults() returns `_history: []`, so assigning it bare used to
+      // empty the restore ring in the same statement that reset the settings —
+      // deleting the only way back, then autosaving that away 30 s later.
+      const keptHistory = Array.isArray(_pssSettings?._history) ? _pssSettings._history : [];
       _pssSettings = _pssDefaults();
+      _pssSettings._history = keptHistory;
       _pssMarkDirty();
       _pssRepaintActiveSection();
       _pssToast('Settings reset to defaults.');

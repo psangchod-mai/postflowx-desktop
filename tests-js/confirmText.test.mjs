@@ -43,13 +43,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const { deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm } =
+const { deleteProjectConfirm, deleteMarkerConfirm, deleteProxyConfirm, resetSettingsConfirm } =
   await import('../src/scripts/core/confirmText.js');
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const imfUiSrc = read('../src/scripts/modules/imf/imf_ui.js');
 const indexHtmlSrc = read('../src/index.html');
 const i18nSrc = read('../src/scripts/modules/i18n.js');
+const projectSetupSrc = read('../src/scripts/modules/project_setup.js');
 
 const uiSrc = readFileSync(
   fileURLToPath(new URL('../src/scripts/ui.js', import.meta.url)), 'utf8',
@@ -469,4 +470,98 @@ test('the companion can only ever unlink an .mp4 — what the reassurance rests 
     fn.split('paths_to_remove.append').length - 1 === 2,
     'a new path source was added to the proxy delete list',
   );
+});
+
+// ── Reset All Settings: the dialog that deleted its own undo ─────────────────
+
+test('the reset dialog says what changes and, separately, what does not', () => {
+  const { text } = resetSettingsConfirm();
+
+  // Beat 1: which settings. "All project settings" is the whole panel, and a
+  // reader who came in through one section needs to know the other eight go too.
+  assert.match(text, /^Reset all project settings\?/);
+  // Beat 2: the reassurance. This is the question the dialog was never
+  // answering — "does this touch my footage?" — and the answer is no.
+  assert.match(text, /Your footage and project files are not touched\./);
+  // Beat 3: the way back, named by the section that provides it.
+  assert.match(text, /Version History$/);
+});
+
+test('the dialog no longer claims the reset cannot be undone', () => {
+  // It said "This cannot be undone." while itself emptying the restore ring —
+  // true only because of a bug. The code fix below is what earns the removal.
+  const { text } = resetSettingsConfirm();
+  assert.doesNotMatch(text, /cannot be undone/i);
+  assert.doesNotMatch(text, /permanent/i);
+  // And it stops shouting. "ALL" in caps was the old template's only emphasis,
+  // spent on the scope rather than on the consequence.
+  assert.doesNotMatch(text, /\bALL\b/);
+});
+
+test('project_setup.js carries the history ring across the reset', () => {
+  // The whole dialog rests on this. _pssDefaults() returns `_history: []`, so
+  // a bare `_pssSettings = _pssDefaults()` destroys every Restore button
+  // rendered directly above the reset button — and _pssMarkDirty() then
+  // autosaves that away 30 s later, past any chance of a reload rescuing it.
+  const body = projectSetupSrc.slice(projectSetupSrc.indexOf("#pfxSetupResetAll"));
+  const handler = body.slice(0, body.indexOf('\n  }'));
+
+  assert.match(handler, /_pssSettings\s*=\s*_pssDefaults\(\)/, 'the reset itself is gone');
+  assert.match(
+    handler, /const keptHistory\s*=[\s\S]*?_pssSettings\._history = keptHistory/,
+    'the reset no longer preserves _history — the dialog is now promising an undo that is deleted',
+  );
+  // Saving first is what makes the *discarded* settings restorable, not just
+  // the ones from before them. Without it the newest entry is up to 30 s stale.
+  assert.match(
+    handler, /await _pssSaveNow\(true\)[\s\S]*?_pssSettings = _pssDefaults\(\)/,
+    'the current settings are no longer snapshotted before being replaced',
+  );
+});
+
+test('project_setup.js builds its dialog from this module', () => {
+  assert.match(
+    projectSetupSrc, /confirm\(resetSettingsConfirm\(\)\.text\)/,
+    'project_setup.js does not build its dialog from resetSettingsConfirm',
+  );
+  assert.match(
+    projectSetupSrc, /import \{ resetSettingsConfirm \} from '\.\.\/core\/confirmText\.js'/,
+    'project_setup.js does not import the module it calls',
+  );
+  assert.doesNotMatch(
+    projectSetupSrc, /Reset ALL project settings to defaults\?/,
+    'the old English-only reset template is still in project_setup.js',
+  );
+});
+
+test('the section named in the hint exists, and is still shown in English', () => {
+  // Same shape as the ▶ Generate check above: the hint points the reader at a
+  // heading, so the heading has to be there and has to read the way the hint
+  // spells it.
+  assert.match(
+    projectSetupSrc, /pfx-setup-group-head">Version History</,
+    'the "Version History" heading this dialog points at is gone or renamed',
+  );
+  // Nothing in Project Setup is translated, so the heading reads English in
+  // every locale and an English section name is accurate everywhere. If that
+  // ever changes, the hint has to change with it or it points at a heading the
+  // reader cannot find.
+  for (const key of ['Version History', 'Restore', 'Danger Zone']) {
+    assert.ok(
+      !i18nSrc.includes(`"${key}":`),
+      `i18n now translates "${key}" — the reset hint must be translated too, or stop naming the section`,
+    );
+  }
+});
+
+test('the reset sentences are translated and the section name is not', () => {
+  const offered = [];
+  const { text } = withTranslator((s) => { offered.push(s); return `«${s}»`; },
+    () => resetSettingsConfirm());
+  assert.deepEqual(offered, [
+    'Reset all project settings?',
+    'Every setting on this page goes back to its original value. Your footage and project files are not touched.',
+    'Your current settings are saved first, so you can bring them back',
+  ]);
+  assert.match(text, /— Version History$/, 'the section name went through the translator');
 });

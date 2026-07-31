@@ -231,3 +231,64 @@ export function deleteProxyConfirm(path) {
 
   return { title, detail, hint, button, subject, text: blocks.join('\n\n') };
 }
+
+// ── The undo was directly above the button, and the button deleted it ─────────
+//
+// Project Setup's Storage section lays out, in this order: a "Version History"
+// group listing the last ten saved versions with a Restore button beside each,
+// then a "Danger Zone" group holding "Reset All Settings to Defaults". The
+// escape hatch is three inches above the hazard. That is good design.
+//
+// Pressing the hazard destroyed the escape hatch. The handler did
+//
+//     _pssSettings = _pssDefaults();
+//
+// and _pssDefaults() returns `_history: []`. So the reset replaced the settings
+// *and* emptied the restore ring in the same statement, and the 30-second
+// autosave then wrote that emptiness to IndexedDB. A user who reset by mistake
+// went looking for the Restore buttons they had just been reading and found
+// "No history yet".
+//
+// The dialog said "Reset ALL project settings to defaults? This cannot be
+// undone." — which is the rare case of a warning being accurate only because
+// of the bug it failed to mention. It was not describing a limitation; it was
+// describing a deletion it was performing silently.
+//
+// So this is fixed in the order that matters: the handler now snapshots the
+// current settings into the history ring before replacing them and carries the
+// ring across the reset, which makes the action genuinely reversible, and only
+// then does the dialog get to say so. Wording a promise the code did not keep
+// would have been the easier half of this and the wrong half.
+//
+// ── Why "Version History" is in English ──────────────────────────────────────
+//
+// Same reasoning as ▶ Generate above, arrived at differently. There the glyph
+// blocked the lookup; here the string is simply not in the dictionary — nor is
+// "Restore", nor "Danger Zone". The whole Project Setup panel is untranslated,
+// so those headings read English in Thai and Korean alike and pointing at them
+// in English is what a reader will actually see. A test asserts the key is
+// absent, so the day somebody localises this panel the hint is caught and
+// updated rather than quietly left pointing at a heading that no longer exists
+// under that name.
+const HISTORY_SECTION = 'Version History';
+
+/**
+ * Text for "Reset All Settings to Defaults" in Project Setup ▸ Storage.
+ *
+ * @returns {{title:string, detail:string, hint:string, section:string, text:string}}
+ */
+export function resetSettingsConfirm() {
+  const title = translate('Reset all project settings?');
+  const detail = translate('Every setting on this page goes back to its original value. Your footage and project files are not touched.');
+  // No full stop: the section name is appended after it.
+  const hint = translate('Your current settings are saved first, so you can bring them back');
+  const section = HISTORY_SECTION;
+
+  return {
+    title,
+    detail,
+    hint,
+    section,
+    text: `${title}\n\n${detail}\n${hint} — ${section}`,
+  };
+}
