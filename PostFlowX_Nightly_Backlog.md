@@ -8232,3 +8232,36 @@ now correctly localised — which reads worse than when everything was English,
 because now the mismatch is inside one panel.
 
 Commits: `8cb1771`.
+
+## Iteration 158 — a bold English word on top of a Thai list
+
+Open the project list with the app in Thai. The rows read correctly now — that
+was last iteration. The headings they are filed under do not: **Today**,
+**Yesterday**, **Previous 7 Days**, **Older**. Four English words in bold, each
+with a stack of correctly-localised rows indented beneath it.
+
+This is worse than it was before the dates were fixed. When the whole panel was
+English, a reader who does not read English skipped the column. Now the column
+is theirs and the label above it is not, so the eye stops on every heading. The
+previous iteration made the mismatch visible by fixing half of it.
+
+They are fixed the ordinary way, because they are ordinary words: five keys in
+the dictionary, six languages each. What was worth being careful about is that
+the grouping now runs on a key (`today`, `yesterday`, `week`, `older`,
+`undated`) rather than on the heading text, so switching language re-labels the
+groups without re-cutting them. And the day arithmetic — which had never been
+tested, because it lived in a file that needs a browser to load — moved into a
+module that does not, and now has sixteen tests, including the two cases that
+catch everyone: eleven hours apart can be two different days, and twenty-five
+hours apart can be one.
+
+One word changed while it was being moved. The heading for projects whose date
+could not be read said **Undated**; it now says **No date**. The first is a word
+from a library catalogue. The second is what a person would say.
+
+**Next:** `render_queue.js` still keeps its own "just now" clock and still says
+it in English, because it is loaded as a classic `<script>` and cannot import
+the shared rule. It needs either a `window.PFX_relTime` bridge or a conversion
+to a module — and until then, a reader watching a render sees one panel in their
+language and the panel next to it in someone else's.
+

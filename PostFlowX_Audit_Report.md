@@ -15856,3 +15856,77 @@ watching a render can still see one panel say "just now" while the pill six
 inches away says something in their own language.
 
 Commits: `8cb1771`.
+
+## Iteration 158 — the heading was still in English above rows that were not
+
+Iteration 157 localised the dates inside the project list. It did not touch the
+headings those rows are grouped under, which were five string literals inside
+the render function:
+
+```js
+if (!ms) return { order: 4, label: 'Undated' };
+if (d >= today)      return { order: 0, label: 'Today' };
+if (d === today - 1) return { order: 1, label: 'Yesterday' };
+if (today - d < 7)   return { order: 2, label: 'Previous 7 Days' };
+return { order: 3, label: 'Older' };
+```
+
+The result was a panel in two languages at once: an English word in bold, with
+correctly-localised rows indented beneath it. That reads worse than the panel
+did before 157, because the seam is now inside a single view rather than
+between the app and its users' expectations. Fixing the dates created it, so
+fixing the headings closes it.
+
+### Why dictionary rows and not Intl
+
+The opposite call from 157. `Intl.RelativeTimeFormat` knows how each language
+says "3 days ago" because CLDR carries that; nothing in CLDR carries the phrase
+"Previous 7 Days". These are labels the product invented, so they are ordinary
+dictionary rows — five keys, six locales, thirty rows in `ERROR_DICT`.
+
+`'Undated'` became `'No date'` on the way. "Undated" is a cataloguing word; the
+heading it sits over is a list of projects whose timestamp could not be read.
+
+### Why the key is not the label
+
+`core/dateBucket.js` returns `{ order, key }` and translates separately:
+
+```js
+if (d >= today) return { order: 0, key: 'today' };
+```
+
+Grouping on the translated heading would be a bug that only appears in one
+language — two buckets whose translations happen to collide would silently
+merge into a single run. Grouping on a stable key cannot. The render site was
+changed to match: `if (b.key !== lastBucket)`, not `b.label`.
+
+The split also makes the decision testable. `_dateBucket` lived in a file that
+cannot be imported without a DOM, so the day arithmetic had never been tested,
+and it is subtler than it looks: it is a *day* boundary, not a 24-hour one.
+Eleven hours apart can be two different days; twenty-five hours apart can be
+one. `tests-js/dateBucket.test.mjs` pins both, plus the seven-day edge, which is
+an off-by-one that would be invisible on screen — a row simply appears under the
+wrong heading, and only on one day of the week.
+
+The future-timestamp case was kept as it was: a file stamped ahead of the clock
+sorts with today rather than into a group of its own below "Older", because a
+row nobody scrolls to is a row nobody finds. It is now written down as a test
+rather than as an accident of `d >= today`.
+
+### Proof
+
+`/tmp/red158/probe.mjs`, 40 claims, run against `git archive HEAD` and then
+against the working tree: **RED 40 / GREEN 0 → GREEN 40 / RED 0.** Every claim
+that could pass vacuously asserts its collection length first — the lesson from
+157, where `.every()` over an empty array returned `true`.
+
+`npm run build-verify` EXIT=0, holding the baseline exactly: node 73 tests / 72
+pass / 0 fail / 1 skipped; pytest 315 passed, 7 skipped; XSS, XXE and fail-open
+gates clean. `tests-js/dateBucket.test.mjs` is 16 of those.
+
+### Still open
+
+`render_queue.js` is unchanged and still the fourth clock. The seven untranslated
+`TT()` keys in the naming panel, the untranslated Project Setup panel, and the
+twenty remaining raw `confirm()` calls are all still there.
+

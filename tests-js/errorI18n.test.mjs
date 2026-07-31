@@ -42,6 +42,7 @@ const accessNoticeSrc = readFileSync(SRC_DIR + 'core/accessNotice.js', 'utf8');
 const failureTextSrc = readFileSync(SRC_DIR + 'core/failureText.js', 'utf8');
 const projectNameEntrySrc = readFileSync(SRC_DIR + 'core/projectNameEntry.js', 'utf8');
 const relativeTimeSrc = readFileSync(SRC_DIR + 'core/relativeTime.js', 'utf8');
+const dateBucketSrc = readFileSync(SRC_DIR + 'core/dateBucket.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -195,6 +196,11 @@ const SCANNED = [
   // position. Everything else this module says comes from Intl, which needs
   // no dictionary rows at all.
   { file: 'core/relativeTime.js', src: relativeTimeSrc, expected: 1 },
+  // The five headings the project list groups its rows under. These are labels,
+  // not formatted values, so Intl has nothing to offer: there is no CLDR entry
+  // for the phrase "Previous 7 Days". They are the seam the relative-time work
+  // opened — localised rows sitting under an English heading, in one panel.
+  { file: 'core/dateBucket.js', src: dateBucketSrc, expected: 5 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 

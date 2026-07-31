@@ -9,6 +9,7 @@
 
 import { friendlyAlert } from '../../core/friendlyAlert.js';
 import { relativeTime, absoluteDateTime } from '../../core/relativeTime.js';
+import { dateBucket, bucketLabel } from '../../core/dateBucket.js';
 
 const _esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -89,12 +90,6 @@ function _fmtDate(ms) {
   catch { return '—'; }
 }
 
-// Day index (local midnight, days since epoch) for "same day" / bucket math.
-function _dayIndex(ms) {
-  const d = new Date(ms);
-  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86400000);
-}
-
 // Relative "smart" date for the row (exact timestamp goes in the title attribute).
 function _relDate(ms) {
   if (!ms) return '—';
@@ -107,13 +102,12 @@ function _relDate(ms) {
 }
 
 // Bucket for date grouping headers. Lower order = nearer to now.
+// The decision and the words live in core/dateBucket.js: the decision so it can
+// be tested without a DOM, the words so the i18n scanner can find them. These
+// headings used to be English above rows that were not.
 function _dateBucket(ms) {
-  if (!ms) return { order: 4, label: 'Undated' };
-  const today = _dayIndex(Date.now()), d = _dayIndex(ms);
-  if (d >= today)      return { order: 0, label: 'Today' };
-  if (d === today - 1) return { order: 1, label: 'Yesterday' };
-  if (today - d < 7)   return { order: 2, label: 'Previous 7 Days' };
-  return { order: 3, label: 'Older' };
+  const b = dateBucket(ms);
+  return { order: b.order, key: b.key, label: bucketLabel(b.key) };
 }
 
 function _injectStyle() {
@@ -353,7 +347,9 @@ export async function openProjectManager() {
         let html = '', lastBucket = null;
         for (const p of view) {
           const b = _dateBucket(p[key]);
-          if (b.label !== lastBucket) { html += `<div class="pfx-pm-group">${_esc(b.label)}</div>`; lastBucket = b.label; }
+          // Compare on the key, not the heading: the heading is a translation,
+          // and two buckets could share one in a language we have not added yet.
+          if (b.key !== lastBucket) { html += `<div class="pfx-pm-group">${_esc(b.label)}</div>`; lastBucket = b.key; }
           html += rowHtml(p);
         }
         rowsEl.innerHTML = html;
