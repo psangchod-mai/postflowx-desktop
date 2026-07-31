@@ -7581,3 +7581,5 @@ next honest one — the dialog that shouts "Reset **ALL** shortcuts in this
 editor" is the draft you can still cancel, while its mild-mannered
 neighbour is the one that commits. The CutDiff orphaned-storage leak from
 141 is still open, and the Project Setup panel is still untranslated.
+
+Commits: `fc7e5bd`.
