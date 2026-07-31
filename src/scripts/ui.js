@@ -69,6 +69,7 @@ import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
 import { projectFailure, pickerFallbackNote, openedNotice, settledProjectName } from "./core/failureText.js";
+import { saveAsPromptLabel, nameEntryProblem, isCancelled, cleanProjectName } from "./core/projectNameEntry.js";
 import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
@@ -15415,8 +15416,18 @@ async function wireProjectBar(){
 
   on(bSaveAs, "click", async () => {
     const cur = nameInput.value || "Project";
-    const nn = prompt("Save As - Project name", cur);
-    if (!nn) return;
+    // The label used to be "Save As - Project name" — a field name, in English,
+    // in all seven languages. It now asks a question and says what the name is
+    // for, because the name becomes a folder and the folder rule rewrites
+    // characters the reader never sees it rewrite.
+    const raw = prompt(saveAsPromptLabel(), cur);
+    // Cancel and an empty box used to be the same `!nn`. They are not the same
+    // event: one is the reader saying no, which earns silence, and the other is
+    // a request that failed, which earns a sentence.
+    if (isCancelled(raw)) return;
+    const problem = nameEntryProblem(raw);
+    if (problem){ showErrorBanner(problem); return; }
+    const nn = cleanProjectName(raw);
     // New project identity (new lock + new audit ledger)
     try{ window.MPS_newProjectId?.(); }catch{}
     nameInput.value = nn;

@@ -15672,3 +15672,67 @@ harmless one; `Saved ${relative-time}` in the status pill is still untranslated
 English.
 
 Commits: `098e07f`.
+
+## Iteration 156 — the Save As box could not tell "no" from "nothing"
+
+**Scope.** `src/scripts/ui.js` (the `bSaveAs` click handler), one new leaf module
+`src/scripts/core/projectNameEntry.js`, eighteen `ERROR_DICT` rows, one new test file.
+
+**The fault.** Save As was two lines:
+
+```js
+const nn = prompt("Save As - Project name", cur);
+if (!nn) return;
+```
+
+`!nn` is true for `null` and true for `""`. Those are not the same event. `null`
+is the reader pressing Cancel — an answer, which earns silence. `""` is the
+reader pressing OK with an empty box — a request that failed, and answering a
+failed request with silence teaches people the button is broken. Someone who
+clears the field, presses OK, and sees nothing happen has no way to tell whether
+the app ignored them or saved something invisible.
+
+Three smaller faults rode along. `"Save As - Project name"` is a developer's
+field name, not a question, and it was the last untranslated string on the
+project bar — the app can be running entirely in Thai and this one dialog is in
+English. The typed name was never trimmed, so a pasted trailing space went into
+the name box, into every scope that mirrors it, and into the recents list as
+`"EP103 "` — a separate-looking row resolving to the same folder as `EP103`. And
+nothing said what a project name is *for*: it becomes a directory, and
+`core/projectFolderName.js` rewrites what a directory name cannot hold. Since
+iteration 155 that rewrite is no longer a collision, but it is still invisible —
+type `EP103 Reel 2` and the folder is `EP103_Reel_2`, discovered a week later in
+Finder.
+
+**The fix.** Four pure functions in a new leaf module, and a handler that routes
+through them: `isCancelled(raw)` returns early and silently; `nameEntryProblem`
+returns a translated sentence for an empty or whitespace-only box, which
+`showErrorBanner` shows; `cleanProjectName` trims and folds runs of whitespace;
+`saveAsPromptLabel()` supplies two lines — what the dialog is for, and the
+warning that spaces and punctuation become underscores on disk.
+
+**Why a separate module.** Same bargain `core/confirmText.js` and
+`core/failureText.js` made. A literal at a call site inside a 25,000-line DOM
+module is a literal no scanner reaches and no test can hold; `ui.js` cannot be
+imported under node at all. Here they are `translate()` calls in a module with
+no DOM, so `tests-js/errorI18n.test.mjs` proves all six locales carry them and
+`tests-js/projectNameEntry.test.mjs` proves the rules are right.
+
+**What was deliberately not changed.** The dialog is still `window.prompt`. It
+is modal, unstyled, and cannot show the folder name it is about to create as the
+reader types — a real in-app dialog is the right answer and is more than one
+iteration of work. This change fixes what the existing dialog *says* and what
+happens to the answer, not the dialog itself. There is also still no duplicate
+check: saving a copy under a name that already exists will overwrite it, exactly
+as before.
+
+**Proof.** A 31-claim probe against a clean `git archive HEAD` checkout scored
+**RED 31 / GREEN 0**; the same probe against the working tree scores **GREEN 31 /
+RED 0**. Twelve new unit tests in `tests-js/projectNameEntry.test.mjs`.
+
+**Gate.** `npm run build-verify` → `EXIT=0`. Node aggregate 73 tests / 72 pass /
+0 fail / 1 skipped; pytest 315 passed, 7 skipped; XSS, XXE and fail-open gates clean.
+
+**Still open.** The prompt is still a browser prompt. No duplicate-name check.
+The folder name is still never shown before it is created. `Saved 4m ago` in the
+same status pill is still English in all seven languages.

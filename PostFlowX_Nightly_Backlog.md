@@ -8165,3 +8165,24 @@ exactly like typing nothing. And `Saved 4m ago` in the same pill is still Englis
 all seven languages.
 
 Commits: `098e07f`.
+
+## Iteration 156 — pressing OK on an empty box looked exactly like a broken button
+
+Save As asked `"Save As - Project name"` — a field name, in English, no matter which
+of the seven languages the rest of the app was speaking — and then threw away the
+difference between the two things a reader could do. `if (!nn) return;` treats Cancel
+and an empty box identically. One of those is somebody saying no, and silence is the
+correct answer to it. The other is somebody asking for something and getting nothing
+back, which is how a button earns a reputation for being broken.
+
+Four functions now sit between the dialog and the save: Cancel returns silently, an
+empty or whitespace-only box gets a sentence in the error banner, the name is trimmed
+and its internal whitespace folded before it reaches the name box and the folder rule,
+and the dialog itself now asks a question and warns that spaces and punctuation become
+underscores in the folder on disk — the first time the app has told anyone that the
+name they type is not the name that gets written.
+
+**Next:** the dialog is still `window.prompt` — modal, unstyled, and unable to show
+the folder name it is about to create while the reader is still typing it. There is
+still no duplicate check, so saving a copy over an existing name silently replaces it.
+And `Saved 4m ago`, six inches away in the same pill, is still English everywhere.

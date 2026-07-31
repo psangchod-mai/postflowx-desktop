@@ -40,6 +40,7 @@ const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8')
 const workspaceAccessSrc = readFileSync(SRC_DIR + 'core/workspaceAccess.js', 'utf8');
 const accessNoticeSrc = readFileSync(SRC_DIR + 'core/accessNotice.js', 'utf8');
 const failureTextSrc = readFileSync(SRC_DIR + 'core/failureText.js', 'utf8');
+const projectNameEntrySrc = readFileSync(SRC_DIR + 'core/projectNameEntry.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
 const reviewsIndexSrc = readFileSync(SRC_DIR + 'features/reviews/index.js', 'utf8');
 const smartEngineSettingsSrc = readFileSync(SRC_DIR + 'modules/smart_engine_settings.js', 'utf8');
@@ -183,6 +184,11 @@ const SCANNED = [
   // line added in 153, and the two the status pill now uses when a project
   // actually opens — with and without a name to put in it.
   { file: 'core/failureText.js', src: failureTextSrc, expected: 27 },
+  // The Save As dialog — the last raw browser prompt() on the project bar, and
+  // the last English string a reader meets there. Three sentences: what the
+  // dialog is for, the warning that the name becomes a folder and loses its
+  // spaces, and the one thing that can still be wrong with what gets typed.
+  { file: 'core/projectNameEntry.js', src: projectNameEntrySrc, expected: 3 },
 ];
 for (const m of SCANNED) m.strings = translatedStrings(m.src);
 
