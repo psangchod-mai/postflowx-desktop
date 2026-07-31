@@ -8049,3 +8049,56 @@ Then the twenty `confirm()` sites, still sitting there, still not
 translated.
 
 Commits: `b1f18b4`.
+
+## Iteration 153 — the app opened, showed a project name, and was holding nothing
+
+PostFlowX remembers the last project you had open and reopens it when you
+launch. When that works you see the name in the box and "Loaded EP103" beside
+it. When it does not work you saw the name in the box and nothing beside it.
+
+Nothing is the problem. The name box is filled in *before* the load is
+attempted, so a failed restore leaves the app looking exactly like a successful
+one, minus a small grey pill most people would not notice was missing. The most
+common way for this to fail is the most invisible: macOS does not always hand
+back folder permission after a restart, so the Project Folder that worked
+yesterday is unreachable this morning. The app knew that. It said nothing, and
+the person in front of it started working on an empty project with somebody
+else's name on it.
+
+Launch is the best possible moment to mention a lapsed folder, because nobody
+has typed anything yet and the fix is four seconds in the gear menu. So the
+restore now finishes its sentence: if it fails, the pill next to the name says
+what happened — "PostFlowX cannot open your Project Folder", or that there is
+no project by that name, or whichever of the eleven causes it actually was.
+
+It is a pill and not a pop-up on purpose. A modal in front of an app you have
+just opened, before you have even seen the window, is worse than the silence it
+replaces; the pill is already there, already the place where "Loaded" and
+"Saved" appear, and it is where someone looks when they wonder whether their
+project came back.
+
+The same block also ended in a bare `}catch{}`, which meant a crash during the
+restore was as quiet as a failure. That now reports too, and puts the actual
+exception in the console where a support person can find it.
+
+The second half of this change is the Project Manager. Its Open button, when it
+could not open something, said `Could not load "EP103" — opening file picker.`
+for every possible reason. "Could not load" sounds like the file is damaged.
+Usually the file is perfect and the folder is what is unreachable — and those
+two sentences send someone down completely different afternoons. It now says
+which, and keeps the old promise about the file picker as a second line, since
+the picker does still open.
+
+One new sentence went into all six languages. Two existing tests changed shape
+rather than gaining assertions — both were pinning the exact code of iteration
+152 rather than the guarantee behind it, and one of them scored this iteration's
+correct behaviour as a bug. The audit report says which and why, because a test
+that gets edited by the change it is supposed to be guarding deserves to be
+written down.
+
+**Next:** the recents list, the project dropdown and the Load button all set the
+name box before attempting the load, exactly like launch did, and all three
+leave the failed name sitting there afterwards. They do raise a banner, so it is
+the mild version — but the app is still displaying a project it does not have.
+And `Loaded ${name}` is untranslated English in seven places, which is the last
+raw string on the project bar.

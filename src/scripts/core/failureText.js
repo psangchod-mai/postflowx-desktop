@@ -255,3 +255,17 @@ export function projectFailure(result, op, name) {
     text: blocks.join('\n'),
   };
 }
+
+/**
+ * The one place a failed load is not the end of the story: the Project
+ * Manager's Open falls through to the file picker instead of stopping. The
+ * old wording — "Could not load "X" — opening file picker." — carried that
+ * promise in the same breath as the (wrong) diagnosis. Splitting the two lets
+ * `projectFailure` say what actually happened while this keeps the promise,
+ * so the reader is not surprised by a dialog they did not ask for.
+ *
+ * @returns {string} A translated sentence to append under `projectFailure().text`.
+ */
+export function pickerFallbackNote() {
+  return translate('PostFlowX will open the file picker so you can find the project yourself.');
+}

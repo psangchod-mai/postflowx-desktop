@@ -29,6 +29,7 @@ import {
   failureCause,
   FAILURE_CAUSES,
   PROJECT_OPS,
+  pickerFallbackNote,
 } from '../src/scripts/core/failureText.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -244,7 +245,11 @@ test('every load failure that speaks explains the cause it actually had', () => 
     'the project dropdown still shows a path template as if it were a path');
   assert.ok(!/Could not load project: \$\{name\}/.test(ui),
     'the load button still repeats the button that was pressed');
-  assert.equal((ui.match(/projectFailure\(r, 'load'/g) || []).length, 3,
+  // Three at iteration 152 — the three sites that said something wrong.
+  // Iteration 153 added the two that said nothing at all: the launch
+  // auto-restore and the Project Manager's Open. A floor rather than an exact
+  // count, because the next load path added should join them, not trip this.
+  assert.ok((ui.match(/projectFailure\(r, 'load'/g) || []).length >= 5,
     'not every load call site that shows a message routes through the table');
 });
 
@@ -258,12 +263,82 @@ test('delete stops keeping its own half-copy of the table', () => {
 
 test('a silent cause is not shown by any call site that could produce one', () => {
   const ui = codeOnly(uiSrc);
-  // Only the sites handed a real result can see 'cancel' or the account gate.
-  // The thrown-exception branch passes null on purpose and is always 'unknown'.
-  const calls = (ui.match(/projectFailure\(r, /g) || []).length;
-  const guards = (ui.match(/if \(!f\.silent\) showError\(f\.text\)/g) || []).length;
-  assert.equal(guards, calls, `${calls} uses of the table, ${guards} of them honour f.silent`);
-  assert.ok(calls >= 5, `only ${calls} call sites route through the table`);
+  // Iteration 152 counted banners against `projectFailure(r, ` call sites and
+  // required the two to be equal. Iteration 153 added a site that reports
+  // through the status pill and never opens a banner at all — correct
+  // behaviour that the old counting rule read as a missing guard. The
+  // invariant it was reaching for is about banners, so state that directly:
+  // every banner fed from the notice honours `silent`, whatever the site is.
+  const banners = ui.split('\n').filter(l => /showError\(/.test(l) && /\bf\.text\b/.test(l));
+  assert.ok(banners.length >= 4, `only ${banners.length} banners read from the table`);
+  for (const line of banners) {
+    assert.ok(/!f\.silent/.test(line), `banner fires for a silent cause: ${line.trim()}`);
+  }
+  const calls = (ui.match(/projectFailure\(/g) || []).length;
+  assert.ok(calls >= 8, `only ${calls} call sites route through the table`);
+});
+
+// ── Iteration 153: the two load failures that still said nothing useful ──────
+
+// The block is located by code, not by its comment: codeOnly() strips the
+// comments, so anchoring on the prose would silently match nothing and every
+// assertion below would pass against an empty string.
+function autoRestoreBlock() {
+  const ui = codeOnly(uiSrc);
+  const from = ui.indexOf("let __restoreWanted = ''");
+  const to = ui.indexOf('on(nameInput,', from);
+  assert.ok(from > 0 && to > from, 'the auto-restore block has been renamed or removed');
+  return ui.slice(from, to);
+}
+
+test('the launch auto-restore stopped failing in silence', () => {
+  // The block filled the project-name box, tried the load, and — if it did
+  // not work — did nothing whatsoever. The name on screen was the only
+  // statement the app made, and it was the wrong one.
+  const block = autoRestoreBlock();
+
+  assert.ok(/projectFailure\(r, 'load', last\)/.test(block),
+    'the auto-restore still has no failure branch');
+  assert.ok(/setProjectSaveStatus\(f\.title, "error"\)/.test(block),
+    'the failure branch does not reach the one surface the reader can see');
+  assert.ok(!/showError/.test(block),
+    'launch now throws a modal at someone who has just opened the app');
+});
+
+test('a throw during auto-restore is not swallowed either', () => {
+  const block = autoRestoreBlock();
+  // The inner `}catch{}` guards around console/DOM calls are deliberate and
+  // stay; what must not come back is the *outer* one, which caught the whole
+  // restore and bound nothing.
+  assert.ok(/\}catch\(err\)\{/.test(block),
+    'the outer catch binds nothing again — a thrown error is silent');
+  assert.ok(/console\.error\('\[PostFlowX\] auto-restore failed', err\)/.test(block),
+    'the exception is dropped rather than moved to the console');
+  assert.ok(/projectFailure\(null, 'load', __restoreWanted\)/.test(block),
+    'a throw leaves the reader with no sentence at all');
+});
+
+test('the Project Manager says why Open failed before it changes the subject', () => {
+  const ui = codeOnly(uiSrc);
+  assert.ok(!/Could not load "\$\{act\.name\}" — opening file picker\./.test(ui),
+    'the one-sentence-for-every-cause wording is still here');
+  assert.ok(/projectFailure\(r, 'load', act\.name\)/.test(ui),
+    'the Project Manager still discards r.reason');
+  assert.ok(/pickerFallbackNote\(\)/.test(ui),
+    'the promise about the file picker was dropped along with the old sentence');
+  assert.ok(/import \{ projectFailure, pickerFallbackNote \}/.test(ui),
+    'pickerFallbackNote is used without being imported');
+});
+
+test('the file-picker note is a translated sentence, not a fragment', () => {
+  const note = pickerFallbackNote();
+  assert.ok(note.length > 20, `too short to be a sentence: ${note}`);
+  assert.ok(/\.$/.test(note), `not a sentence: ${note}`);
+  assert.ok(note.includes('PostFlowX'), 'the note does not say who is opening the picker');
+  // It is appended under projectFailure().text, so it must not repeat the
+  // diagnosis or contradict it.
+  const f = projectFailure({ reason: 'no_permission' }, 'load', 'EP103');
+  assert.ok(!f.text.includes(note), 'the note is already in the notice — it would print twice');
 });
 
 test('a thrown exception does not reach the reader as itself', () => {

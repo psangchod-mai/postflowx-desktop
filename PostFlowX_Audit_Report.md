@@ -15415,3 +15415,92 @@ Setup, the CutDiff orphaned-storage leak from 141, `_refreshStatus()`, and
 the three permission gates that still disagree on the admin check.
 
 Commits: `b1f18b4`.
+
+## Iteration 153 — the two load failures that said nothing at all
+
+**Scope.** The launch auto-restore in `wireProjectBar()` and the Project
+Manager's Open. Iteration 152 gave every project-file failure a sentence; these
+are the two paths that never asked for one.
+
+**The launch fault.** `src/scripts/ui.js` read `lastActiveProject`, put the name
+into the project-name box, called `loadTabByName(last)`, and branched on
+`if (r?.ok){…}` with no `else`. The whole block ended `}catch{}`. So when the
+Project Folder handle did not survive a restart — the single most common
+failure this app has — launch produced no message of any kind, while the name
+box above had already been filled in with the project. The app was showing
+"EP103" and holding nothing. The reader's next move is to edit something that
+is not there.
+
+It now takes the `else`, calls `projectFailure(r, 'load', last)`, and puts
+`f.title` into the existing save-status pill with state `"error"`. The outer
+catch binds `err`, sends it to `console.error('[PostFlowX] auto-restore failed', err)`,
+and shows the same pill via `projectFailure(null, 'load', __restoreWanted)` —
+from the reader's side of the screen a throw and a returned failure are one
+event, so they get one treatment.
+
+**No banner at launch, deliberately.** 152 deferred this as a product decision.
+The resolution: the pill only. `f.title` is a complete sentence on its own —
+`projectFailure` returns title, hint and text separately for exactly this — and
+a modal in front of an app someone has just opened is worse than the silence it
+replaces. `tests-js/failureText.test.mjs` pins the absence: the block must
+contain no `showError` at all.
+
+**The Project Manager fault.** `showError(`Could not load "${act.name}" —
+opening file picker.`)` threw `r.reason` away and printed one English sentence
+for every cause. "Could not load" reads as "that file is broken" when the usual
+answer is a folder that needs re-picking. Now `projectFailure(r, 'load', act.name)`
+plus a second line from the new `pickerFallbackNote()`, which keeps the promise
+about the picker that the old wording carried — the code below still opens it
+either way, so dropping the sentence would have made the dialog a surprise.
+
+**One new translated sentence.** `pickerFallbackNote()` adds
+`PostFlowX will open the file picker so you can find the project yourself.` —
+six `ERROR_DICT` rows inserted by the six-occurrence anchor, pure insertion,
+zero deletions. `core/failureText.js` in the `errorI18n.test.mjs` SCANNED table
+goes 24 → 25.
+
+**A guard written where it cannot fire.** The save-path `catch` calls
+`projectFailure(null, …)`, which is always cause `unknown` and therefore never
+`silent`, and it printed its banner unguarded. It is now `if (!f.silent)` like
+every other banner in the file. No behaviour change; it means no future reader
+has to work out which branches are allowed to skip the check.
+
+**Two tests changed rather than added to.** Both were pinning shapes this change
+supersedes, and both are recorded here so neither reads as a gate quietly
+weakened:
+- *a silent cause is not shown by any call site that could produce one* counted
+  `projectFailure(r, ` sites against `if (!f.silent) showError(f.text)` guards
+  and required equality. The launch site reports through the pill and opens no
+  banner — correct behaviour the counting rule scored as a missing guard. It
+  now states the invariant it was reaching for directly: every line that feeds
+  `f.text` into `showError` carries `!f.silent`, whatever the site count is.
+- *every load failure that speaks explains the cause it actually had* pinned the
+  load-site count at exactly 3. Now a floor of 5, so the next load path added
+  joins the table instead of tripping the test.
+
+**A probe bug caught before it counted.** The first draft of the RED probe
+located the auto-restore block by its comment text, then ran the block through
+`codeOnly()` — which strips comments. `indexOf` returned -1, `slice(-1)` gave a
+one-character string, and every assertion about the block passed against
+nothing. Anchored on the `__restoreWanted` declaration instead. Same class of
+error as 152's quote-style regex: a check that cannot see its subject reports
+GREEN, not RED.
+
+**Proof.** Probe of 20 claims: RED 20 / GREEN 0 against `git archive HEAD`,
+GREEN 20 / RED 0 against the working tree. `tests-js/failureText.test.mjs`
+27 tests, all pass.
+
+**Gate.** `npm run build-verify` exit 0 — node 73 tests / 72 pass / 0 fail /
+1 skipped, pytest 315 passed / 7 skipped, XSS / XXE / fail-open gates clean.
+Matches baseline.
+
+**Still open.** The three recents/dropdown/Load-button failure branches set the
+name box *before* the load and leave the failed name sitting in it, the same
+misleading state launch had; they at least raise a banner, so it is a smaller
+version of the same fault. `setProjectSaveStatus(`Loaded ${n}`)` is untranslated
+English at seven call sites. Six `projectFile.js` exports have no callers
+anywhere in `src/` and five more are imported into `ui.js` and never used.
+Unchanged: twenty inline `confirm()` sites, `bSaveAs`'s raw `prompt()`, the
+seven naming/metadata `TT()` keys, the tab `title=` tooltips, `#ntCard`,
+Project Setup, the CutDiff orphaned-storage leak from 141, `_refreshStatus()`,
+and the three permission gates that still disagree on the admin check.

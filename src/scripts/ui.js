@@ -68,7 +68,7 @@ import {
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
 import { deleteProjectConfirm, resetNoteTypesConfirm, resetShortcutsConfirm, resetShortcutsDraftConfirm, shortcutConflictConfirm } from "./core/confirmText.js";
-import { projectFailure } from "./core/failureText.js";
+import { projectFailure, pickerFallbackNote } from "./core/failureText.js";
 import { workspaceName, lockedWorkspaceNotice, lockedPinNotice } from "./core/workspaceAccess.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
@@ -15299,7 +15299,11 @@ async function wireProjectBar(){
         try{ console.error('[PostFlowX] save failed', err); }catch{}
         const f = projectFailure(null, 'save', currentName);
         setProjectSaveStatus(f.title, "error");
-        showError(f.text);
+        // A thrown exception is always cause 'unknown', so `silent` can never
+        // be true here. The guard is written anyway so that every banner in
+        // this file reads the same way, and nobody has to work out which
+        // branches are the ones allowed to skip it.
+        if (!f.silent) showError(f.text);
         return { ok:false, error: msg };
       }finally{
         __projSaveInFlight = null;
@@ -15310,11 +15314,25 @@ async function wireProjectBar(){
   }
 
   // Try auto-restore last active project for THIS tab scope (best-effort)
+  //
+  // "Best-effort" used to mean "silent": `if (r?.ok){…}` had no else, and the
+  // whole block ended in a bare `}catch{}`. So a Project Folder whose
+  // permission lapsed overnight produced no message of any kind at launch —
+  // while the name box above had *already* been filled in with the project,
+  // which reads as "your project is open". The first thing the reader does
+  // next is edit something that is not there.
+  //
+  // Launch is the best moment to say the folder needs re-picking, before
+  // anyone has typed a word. The pill is the whole report: no banner fires
+  // here, because a modal in front of an app you have only just opened is
+  // worse than the silence it replaces.
+  let __restoreWanted = '';
   try{
     const scope = _pfxProjectScope();
     const kLast = _pfxKey('lastActiveProject');
     const data = await _storageGet([kLast]);
     const last = String(data?.[kLast] || '').trim();
+    __restoreWanted = last;
     if (last){
       nameInput.value = last;
       syncProjectNameEverywhere(last);
@@ -15323,10 +15341,21 @@ async function wireProjectBar(){
         setDirty(false);
         await addToRecents(last);
         setProjectSaveStatus(`Loaded ${last}`, "idle");
-      _updateRecentBtnLabel(last);
+        _updateRecentBtnLabel(last);
+      }else{
+        const f = projectFailure(r, 'load', last);
+        setProjectSaveStatus(f.title, "error");
       }
     }
-  }catch{}
+  }catch(err){
+    // From the reader's side of the screen a throw here is the same event as
+    // a returned failure, so it gets the same pill. The exception itself goes
+    // where the person who can act on it is looking.
+    try{ console.error('[PostFlowX] auto-restore failed', err); }catch{}
+    if (__restoreWanted){
+      try{ setProjectSaveStatus(projectFailure(null, 'load', __restoreWanted).title, "error"); }catch{}
+    }
+  }
 
   on(nameInput, "input", () => {
     syncProjectNameEverywhere(nameInput.value);
@@ -15394,7 +15423,14 @@ async function wireProjectBar(){
           _updateRecentBtnLabel(n);
           return;
         }
-        showError(`Could not load "${act.name}" — opening file picker.`);
+        // This threw `r.reason` away and printed one English sentence for
+        // every cause. "Could not load" reads as "that file is broken", when
+        // the usual answer is that the Project Folder is no longer reachable
+        // — and the reader can fix that in four seconds if anyone tells them.
+        // The second line keeps the promise the old wording made about the
+        // picker, which the code below still honours either way.
+        const f = projectFailure(r, 'load', act.name);
+        if (!f.silent) showError(`${f.text}\n${pickerFallbackNote()}`);
         // fall through to the file picker below
       } else if (act.action === 'new'){
         try{ bNew?.click?.(); }catch{}
