@@ -66,6 +66,7 @@ import {
 } from "./core/projectFile.js";
 import { initI18nUI, applyI18n } from "./modules/i18n.js";
 import { showErrorBanner, hideErrorBanner } from "./core/errorBanner.js";
+import { deleteProjectConfirm } from "./core/confirmText.js";
 import { nominalBase } from "./modules/utils_time.js";
 import { durationFramesFor, measuredDurationFrames } from "./modules/eventDuration.js";
 import { loadFCPXMLD } from "./fflate-bridge.js";
@@ -15501,7 +15502,10 @@ async function wireProjectBar(){
         return;
       }
 
-      const ok = confirm(`Delete project "${name}"?\n\nThis removes PFX/${name}/ from your Project Folder. This cannot be undone.`);
+      // Localised, and split so the two lines that matter — what goes, and
+      // that nothing brings it back — are not buried mid-sentence next to a
+      // path. See core/confirmText.js for why the wording lives there.
+      const ok = confirm(deleteProjectConfirm(name).text);
       if (!ok) return;
 
       try{

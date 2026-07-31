@@ -34,6 +34,7 @@ const SRC_DIR = fileURLToPath(new URL('../src/scripts/', import.meta.url));
 const friendlySrc = readFileSync(SRC_DIR + 'core/friendlyError.js', 'utf8');
 const saveNoticeSrc = readFileSync(SRC_DIR + 'core/saveNotice.js', 'utf8');
 const printOutcomeSrc = readFileSync(SRC_DIR + 'core/printOutcome.js', 'utf8');
+const confirmTextSrc = readFileSync(SRC_DIR + 'core/confirmText.js', 'utf8');
 const proResProxySrc = readFileSync(SRC_DIR + 'modules/proResProxy.js', 'utf8');
 const playableMediaSrc = readFileSync(SRC_DIR + 'core/playableMedia.js', 'utf8');
 const vfxPullPanelSrc = readFileSync(SRC_DIR + 'features/vfxPull/vfxPullPanel.js', 'utf8');
@@ -111,6 +112,11 @@ function errorDict(src) {
 const SCANNED = [
   { file: 'core/saveNotice.js', src: saveNoticeSrc, expected: 3 },
   { file: 'core/printOutcome.js', src: printOutcomeSrc, expected: 3 },
+  // The first confirmation in the app to be localised at all. Everything above
+  // this row explains a failure after the fact; this one is read *before* an
+  // irreversible click, which is the worst place to hand someone a language
+  // they only half-read. Question, consequence, and way out — three sentences.
+  { file: 'core/confirmText.js', src: confirmTextSrc, expected: 3 },
   // Not a core/ module: proResProxy is the only place that says WHY a proxy
   // build failed, and it is the producer for eight consumers' status lines.
   { file: 'modules/proResProxy.js', src: proResProxySrc, expected: 7 },

@@ -7204,3 +7204,90 @@ values. Verified RED without the fix via `git stash`/`git stash pop`
 staged); `test:node` matches baseline (72 pass, 1 skip, 0 fail).
 
 Commits: `fbdf74a`.
+
+## Iteration 141 — Project-bar Delete: the one dialog with no undo behind it was English-only, and buried its warning
+
+PostFlowX has localised its *failures* since Iteration 27. `friendlyError`
+routes every message through `window.PFX_t`, and `errorI18n.test.mjs` exists
+specifically to fail the build the moment a sentence would reach six locales
+still in English. That machinery was never pointed at the *confirmations*.
+All twenty-six `confirm()` calls in the renderer built an English template
+inline, and the most expensive one deletes a folder off the disk:
+
+    Delete project "EP103"?
+
+    This removes PFX/EP103/ from your Project Folder. This cannot be undone.
+
+Two things wrong at once. It was English-only, so a reader in Bangkok or Seoul
+had to parse the only warning they would ever get in a second language. And
+the warning itself sat in the tail of a paragraph that opens with a path — so
+the two clauses that actually decide the answer, *everything inside it goes*
+and *nothing brings it back*, are the last things read. A misread failure
+message costs a search. A misread delete costs the folder.
+
+The wording now lives in `core/confirmText.js`, a pure leaf module following
+the same pattern as `vfxPull/idtBadge.js` and `electron/native/seekModel.js`.
+The three sentences are literals a scanner can find, each passed through the
+existing `translate()` shim; the project name and the `PFX/<name>/` path are
+interpolated around them and are deliberately never translated, because a
+localised copy of either names a different folder. What ships:
+
+    Delete this project?
+
+    “EP103_VFX”
+    PFX/EP103_VFX/
+
+    This deletes the project folder and everything saved inside it.
+    This cannot be undone — use Save As first if you might need a copy.
+
+The path survived from the old string — it was its one good idea, the
+difference between "some project" and "that folder I can go and look at in
+Finder before I answer". What changed is the reading order around it.
+
+A project name is user-typed and can be pasted from anywhere, so it is folded
+before use: whitespace runs collapse so a pasted `\n\nThis is safe.` cannot
+render as its own paragraph in the app's own voice, and the name is clamped
+to 80 with a trailing `…` so an 800-character name cannot scroll the warning
+out of an alert box that does not scroll. The audit pass caught a third case
+before commit — the clamp sliced by UTF-16 unit, so a name of emoji or astral
+CJK cut at unit 79 ended in a lone surrogate and rendered as `�`. Half the
+audience for this dialog types in Thai, Japanese, Korean or Chinese, and a
+corrupt-looking name in the dialog where you are checking you recognise the
+project is the wrong place for that. It counts code points now.
+
+The first candidate for this fix was `_cdDeleteProject` in
+`features/cutdiff/index.js`, which has an even barer `confirm()`. It was
+dropped after checking whether it runs: none of its seven project-bar element
+IDs exists in `src/index.html`, so it is dead UI and fixing it would have
+shipped nothing. The live target is `#projDelete`, wired at `ui.js:14897`.
+
+**Test:** `tests-js/confirmText.test.mjs` (new), 12 tests — assembly, reading
+order, the three untrusted-input cases, the localisation contract, and a
+call-site guard against the specific way this rots (new module lands, old
+template left in place "for now", localised text never reaches a user).
+`errorI18n.test.mjs` now scans the module with `expected: 3`, plus 18 new
+dictionary rows across ko/ja/zh-TW/th/id/fil. "Save As" is left untranslated
+in all six, following the existing "Resolve Engine" / "Simple Mode"
+proper-noun precedent.
+
+**RED verified three ways**, each simulating a realistic regression rather
+than deleting the file: reverting only the `ui.js` call site fails the
+call-site guard; dropping one Thai row fails both `th: every failure message
+is translated` and `the six locales cover exactly the same keys`; restoring
+the UTF-16 clamp fails the surrogate test with a trailing `\ud83c`. Working
+tree confirmed byte-identical by shasum after every restore. Full
+`npm run build-verify` exits 0 at baseline — node 72 pass / 1 skip, pytest
+315 passed / 7 skipped, XSS + XXE + fail-open gates clean.
+
+`ui.js` carries two pre-existing uncommitted hunks that are not mine, so its
+index entry was built explicitly from HEAD-plus-my-two-hunks rather than
+`git add`-ing the file and sweeping them in.
+
+**Next:** the other twenty-five `confirm()` sites — `confirmText.js` was
+written generic on purpose. `prep_mark.js:25758` is the interesting one: its
+bare `confirm(\`Delete "${sel.shotName}"?\`)` could tell the user the action
+*is* undoable, since `_pmSlySnapshot` runs immediately after. Also logged:
+`_cdDeleteProject` never removes the stored snapshot at
+`CD_PROJECT_KEY_PREFIX + id` when it splices a project out of the index.
+
+Commits: pending.

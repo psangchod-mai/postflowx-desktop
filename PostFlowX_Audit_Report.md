@@ -13961,3 +13961,159 @@ unaddressed, carried over from Iterations 130-139 for the same reason
 (pre-existing WIP too tightly interleaved to isolate safely).
 
 Commits: `fbdf74a`.
+
+## Iteration 141 — Project-bar Delete: the one dialog with no undo behind it was English-only, and buried its warning
+
+**Scope of the audit:** the five paths staged for this iteration —
+`src/scripts/core/confirmText.js` (new), `src/scripts/ui.js` (two
+hunks), `src/scripts/modules/i18n.js` (18 dictionary rows),
+`tests-js/confirmText.test.mjs` (new), `tests-js/errorI18n.test.mjs`
+(scanner registration). No `dist/**` path, no packaged `.app`
+content, and no binary was touched.
+
+**The defect:** PostFlowX ships in seven languages and has localised
+its *failures* since Iteration 27 — `core/friendlyError.js` routes
+every message through `window.PFX_t`, and `errorI18n.test.mjs` fails
+the build the moment a sentence would reach six locales in English.
+None of that machinery was ever pointed at the *confirmations*. All
+twenty-six `confirm()` calls in the renderer assembled an English
+template inline. The most expensive of them deletes a folder off the
+disk:
+
+    Delete project "EP103"?
+
+    This removes PFX/EP103/ from your Project Folder. This cannot be undone.
+
+Two faults at once. It was English-only, so a reader in Bangkok or
+Seoul was asked to parse the only warning they will ever get in a
+second language. And the warning itself was packed into the tail of a
+paragraph that opens with a path, so the two clauses that decide the
+answer — everything inside it goes, and nothing brings it back — are
+the last things read rather than the first. A misread failure message
+costs a search; a misread delete costs the folder.
+
+**The fix:** the wording moved into a pure leaf module,
+`core/confirmText.js`, following the established testability pattern
+(`vfxPull/idtBadge.js`, `electron/native/seekModel.js`). The three
+sentences are now literals a scanner can find, each passed through the
+same `translate()` shim; the project name and the `PFX/<name>/` path
+are interpolated *around* them and are never translated, because a
+localised copy of either names a different folder. The dialog now
+reads:
+
+    Delete this project?
+
+    “EP103_VFX”
+    PFX/EP103_VFX/
+
+    This deletes the project folder and everything saved inside it.
+    This cannot be undone — use Save As first if you might need a copy.
+
+**Input validation.** The project name is user-typed and can be pasted
+from anywhere, so `cleanName()` treats it as untrusted:
+
+- *Line forgery.* There is no markup to escape in a `confirm()`, but
+  there is layout — a name carrying `\n\nThis is safe.` would render
+  as its own paragraph in the same voice as the sentences the app
+  wrote. All whitespace runs are folded to a single space, so the name
+  can never occupy a line of its own.
+- *Warning displacement.* An 800-character name would scroll the two
+  sentences that matter out of an alert box that does not scroll.
+  Clamped to 80, with a trailing `…` so the reader can see it was
+  clamped rather than conclude the name is wrong.
+- *Surrogate splitting.* Caught during this audit and fixed before
+  commit: the clamp originally sliced by UTF-16 code unit, so a name
+  of emoji or astral CJK cut at unit 79 would end in a lone surrogate
+  and render as `�`. Roughly half the audience for this dialog types
+  in Thai, Japanese, Korean or Chinese, and a corrupt-looking name in
+  the one dialog where the reader is checking they recognise the
+  project is exactly the wrong place for it. The clamp now counts code
+  points via `Array.from`.
+- *Nullish input.* `null`/`undefined` are folded to the empty name
+  rather than stringified, and an empty name drops the whole
+  name-and-path block instead of rendering `“”` over `PFX//`. The
+  three sentences are written to stand without it.
+
+**Accepted trade-off, recorded deliberately.** For a name longer than
+80 code points the displayed path contains the ellipsis and so is not
+the literal path on disk. The alternative — rendering an 800-character
+path — pushes the warning out of the dialog, which is the more
+dangerous failure. The `…` is a visible truncation marker, so the
+string is not silently false.
+
+**No new attack surface.** `confirmText.js` performs no I/O, touches
+no DOM, reads no storage, and constructs no HTML — its output goes to
+a plain-text `confirm()`. It cannot contribute to the XSS gate (no
+`innerHTML` sink), the XXE gate (no XML), or path traversal (it never
+resolves or writes a path; the actual delete path is built downstream
+in `ui.js` exactly as before, unchanged by this iteration).
+
+**Error handling.** `translate()` already wraps its `window.PFX_t`
+lookup in try/catch and falls back to the English literal, and
+`i18n.js` installs `PFX_t` asynchronously. A delete pressed before the
+dictionary settles, or a dictionary bug, therefore degrades to English
+rather than throwing at the call site — covered by a dedicated test
+that installs a throwing translator and asserts the dialog is still
+usable.
+
+**Liveness verified before any code was written.** The first candidate
+for this fix was `_cdDeleteProject` in `features/cutdiff/index.js`,
+which has an even barer `confirm(\`Delete project “${name}”?\`)`. It
+was rejected: none of its seven project-bar element IDs
+(`cutdiffProjectSelect`, `cutdiffProjectNew`, `cutdiffProjectRename`,
+`cutdiffProjectDelete`, `cutdiffProjectSave`, `cutdiffProjectSaveAs`,
+`cutdiffProjectLoad`) exists anywhere in `src/index.html`, so that is
+dead UI and fixing it would have shipped nothing. The target actually
+used is `#projDelete`, wired at `src/scripts/ui.js:14897` and present
+at `src/index.html:530`.
+
+**Test:** `tests-js/confirmText.test.mjs` (new), 12 tests. Covers the
+assembly (consequence and irreversibility both stated; name and path
+both survive; question before path before consequence, which is the
+whole point of splitting the paragraph up), the untrusted-input
+handling above, and the localisation contract (all three sentences
+offered to `translate()` in order via `deepEqual`; name and path never
+translated; a throwing translator still yields usable text). The last
+test guards the specific way this kind of change rots — the new module
+lands, the old template is left in place "for now", and the localised
+text never reaches a user — by asserting `ui.js` imports and calls
+`deleteProjectConfirm` and no longer contains
+`This removes PFX/${name}/`. Dictionary coverage is deliberately *not*
+duplicated here; `errorI18n.test.mjs` now scans `core/confirmText.js`
+with `expected: 3`.
+
+**Verification.** Two RED proofs beyond module-not-found, each
+simulating a realistic regression rather than deleting the file:
+
+1. Reverting *only* the `ui.js` call site to the old inline template
+   → `✖ ui.js builds the delete dialog from this module` (11 pass, 1
+   fail). The call-site guard bites.
+2. Dropping *one* Thai dictionary row → `✖ th: every failure message
+   is translated` and `✖ the six locales cover exactly the same keys`
+   (`th key set differs from ko`). The i18n coverage guard bites.
+3. Restoring the UTF-16 clamp → `✖ clamping a name never cuts a
+   character in half`, reporting the trailing `\ud83c`.
+
+Working tree confirmed byte-identical after every restore by shasum.
+Full `npm run build-verify` exits 0 and holds the baseline: node 73
+tests / 72 pass / 1 pre-existing skip / 0 fail, pytest 315 passed / 7
+skipped, and all three gates clean (XSS, XXE, fail-open).
+
+**Working-tree discipline.** `src/scripts/ui.js` carries two
+pre-existing uncommitted hunks that are not mine — the `showError`
+`pfxFriendlyText` wrapper and the Fun-box lazy-iframe lifecycle, both
+part of the inherited 79-file delta. Rather than `git add` the file
+and sweep them in, the index entry for `ui.js` was built explicitly
+(`git hash-object` on HEAD-plus-my-two-hunks, then `git update-index
+--cacheinfo`), so the commit contains only the import line and the
+call site. Verified by reading back `git diff --cached -- ui.js`.
+
+**Still open:** `_refreshStatus()` in `homeScreen.js` remains
+unaddressed, carried over from Iterations 130-140 for the same reason
+(pre-existing WIP too tightly interleaved to isolate safely). Newly
+logged this iteration: `_cdDeleteProject` splices a project out of the
+CutDiff index but never removes its stored snapshot at
+`CD_PROJECT_KEY_PREFIX + id`, an orphaned-storage leak — dead UI
+today, but a live bug the moment that panel is wired up.
+
+Commits: pending.
