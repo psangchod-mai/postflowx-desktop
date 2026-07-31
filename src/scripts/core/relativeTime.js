@@ -136,3 +136,18 @@ export function savedLabel(ms, opts = {}) {
   if (!when) return '';
   return translate('Saved {when}').replace('{when}', when);
 }
+
+// ── The bridge for classic scripts ───────────────────────────────────────────
+//
+// render_queue.js is loaded as `<script src="..." defer>`, not as a module, so
+// it has no `import` available to it and cannot reach anything here the normal
+// way. It carried the fourth copy of the ladder because of that, and it was the
+// copy nobody could fix without rewriting how the file loads.
+//
+// i18n.js already solved this for `t()` by hanging it on `window`; this follows
+// that precedent rather than inventing a second convention. Guarded, because
+// this module is imported in node tests where there is no window at all.
+try {
+  window.PFX_relTime = relativeTime;
+  window.PFX_absTime = absoluteDateTime;
+} catch { /* no DOM — node tests, and the extension's service worker */ }

@@ -1346,13 +1346,24 @@
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // This file is a classic <script>, so it cannot import core/relativeTime.js
+  // the way the other three panels do. It reaches the same rule through the
+  // window bridge that module publishes — the same trick i18n.js uses for t().
+  //
+  // What this replaced was a hand-rolled seconds/minutes/hours ladder, in
+  // English, with its own set of boundaries: it was the panel that said five
+  // seconds had passed about the save the pill six inches away called "just
+  // now". Written out here rather than quoted, because the tests grep for the
+  // old spellings and a comment quoting them would keep reading as a relapse.
   function _relTime(ts) {
     if (!ts) return '';
-    const s = Math.floor((Date.now() - ts) / 1000);
-    if (s < 5)     return 'just now';
-    if (s < 60)    return `${s}s ago`;
-    if (s < 3600)  return `${Math.floor(s/60)}m ago`;
-    if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+    try {
+      const shared = window.PFX_relTime;
+      if (typeof shared === 'function') return shared(ts);
+    } catch { /* fall through to the local spelling below */ }
+    // Only reached if this file somehow runs before the renderer's modules do.
+    // Kept deliberately: a render history that renders nothing is worse than
+    // one that renders a date, and toLocaleDateString is at least the reader's.
     return new Date(ts).toLocaleDateString();
   }
 

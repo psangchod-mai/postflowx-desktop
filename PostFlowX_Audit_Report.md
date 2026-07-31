@@ -15932,3 +15932,93 @@ twenty remaining raw `confirm()` calls are all still there.
 
 
 Commits: `c30018b`.
+
+## Iteration 159 — the fourth clock, the one that could not import
+
+Iterations 156–158 collapsed three relative-time ladders onto one shared rule in
+`src/scripts/core/relativeTime.js`. A fourth survived, in `src/scripts/render_queue.js`:
+
+```js
+function _relTime(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 5)     return 'just now';
+  ...
+  return new Date(ts).toLocaleDateString();
+}
+```
+
+It survived for a structural reason and not an oversight. `index.html:6508` loads
+that file as `<script src="scripts/render_queue.js" defer></script>` — a classic
+script, not a module. It has no `import` statement available to it, so the fix
+the other three panels got was not open to it. Iteration 157 recorded that fact
+in a test rather than a comment, and 158's backlog named it as the next thing.
+
+It mattered because the two panels sit next to each other. The save pill said
+"just now" for the first minute and then counted in the reader's own language;
+the render history six inches away counted seconds, in English, with different
+boundaries — five seconds versus a minute. Same event, two answers, two languages.
+
+### Why a window bridge and not a module conversion
+
+Converting `render_queue.js` to `type="module"` is the cleaner change and the
+wrong one to make tonight: it is a 2,100-line file full of top-level `function`
+declarations that other classic scripts call by bare name, and module scope
+would take every one of those off `window` at once. That is a rewrite with a
+long tail of silent breakage, not a translation fix.
+
+The bridge is a convention the codebase already has. `modules/i18n.js:5581`
+publishes `window.PFX_t = t` for exactly this reason — classic scripts that need
+a module's function. Following it means one pattern to learn instead of two:
+
+```js
+try {
+  window.PFX_relTime = relativeTime;
+  window.PFX_absTime = absoluteDateTime;
+} catch { /* no DOM — node tests, and the extension's service worker */ }
+```
+
+Guarded, and the guard is not decorative: `relativeTime.test.mjs` imports this
+module in node, where `window` does not exist. An unguarded assignment would
+throw at import time and take the whole suite down with it. The test asserts the
+guard is there, and then proves it holds by the fact that it ran at all.
+
+The call site keeps a fallback — `new Date(ts).toLocaleDateString()` — for the
+case where the classic script somehow runs before the renderer's modules do. A
+render history that renders nothing is worse than one that renders a bare date,
+and a bare date is at least in the reader's locale.
+
+`_absTime` was left alone deliberately. It is a sortable `YYYY-MM-DD HH:MM:SS`
+stamp used as a machine-ish label, not a sentence to a reader, and changing it
+is a separate decision. `window.PFX_absTime` is now published and waiting for
+whoever makes it.
+
+### A mistake worth recording
+
+The first version of this change failed its own new test:
+
+```
+✖ the render queue reaches the rule through the window bridge
+  AssertionError: the hand-rolled seconds ladder is still there
+```
+
+Nothing was wrong with the code. The comment I wrote above the new `_relTime`
+quoted the old spellings it had replaced, and the test greps the file — comments
+included. This is the same family as the standing rule about never writing a
+syntactically complete `translate('…')` inside a comment in a scanned module.
+The comment now describes the old code in prose and says why.
+
+### Proof
+
+`/tmp/red159/probe.mjs`, 10 claims, run against `git archive HEAD` and then
+against the working tree: **RED 10 / GREEN 0 → GREEN 10 / RED 0.**
+
+`npm run build-verify` EXIT=0, holding the baseline exactly: node 73 tests / 72
+pass / 0 fail / 1 skipped; pytest 315 passed, 7 skipped; XSS, XXE and fail-open
+gates clean. `tests-js/relativeTime.test.mjs` is now 20 of those.
+
+### Still open
+
+`render_queue.js:_absTime` is still a hand-rolled timestamp. The seven
+untranslated `TT()` keys in the naming panel, the untranslated Project Setup
+panel, and the twenty remaining raw `confirm()` calls are all still there.

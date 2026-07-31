@@ -163,11 +163,29 @@ test('the project list no longer has its own English month names', () => {
 // larger unlanded change in that file. Asserting on it here would pin a test to
 // a working tree, so the assertion waits until that work lands.
 
-test('render_queue.js is knowingly left out, because it cannot import', () => {
-  // Loaded as a classic <script src> in index.html, so it has no import
-  // statement available to it. Recording that here rather than in a comment
-  // nobody reads means the day it becomes a module, this test says so.
+test('the render queue reaches the rule through the window bridge', () => {
+  // It is a classic <script src> in index.html, so it has no import statement
+  // available to it — which is why it kept the fourth copy of the ladder for as
+  // long as it did. The bridge is the same one i18n.js publishes for t().
   const html = read('index.html');
   assert.match(html, /<script src="scripts\/render_queue\.js" defer><\/script>/,
-    'render_queue.js is a module now — move its _relTime onto the shared rule');
+    'render_queue.js is a module now — it can import the rule directly');
+
+  const rq = read('scripts/render_queue.js');
+  assert.ok(rq.includes('window.PFX_relTime'), 'the render queue is not on the shared rule');
+  assert.equal(/\$\{s\}s ago/.test(rq), false, 'the hand-rolled seconds ladder is still there');
+  assert.equal(/\$\{Math\.floor\(s\/60\)\}m ago/.test(rq), false,
+    'the hand-rolled minutes ladder is still there');
+});
+
+test('the bridge is published, and does not need a DOM to be imported', () => {
+  // The publish is guarded: this very test file imports the module in node,
+  // where `window` does not exist, and an unguarded assignment would throw at
+  // import time and take the whole suite with it.
+  const src = read('scripts/core/relativeTime.js');
+  assert.ok(src.includes('window.PFX_relTime = relativeTime'), 'the bridge is not published');
+  assert.ok(src.includes('window.PFX_absTime = absoluteDateTime'), 'the tooltip has no bridge');
+  assert.match(src, /try \{[^}]*window\.PFX_relTime/s, 'the bridge assignment is not guarded');
+  // And the proof it holds: we got here, having imported the module at the top.
+  assert.equal(typeof relativeTime, 'function');
 });

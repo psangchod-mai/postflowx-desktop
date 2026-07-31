@@ -8267,3 +8267,35 @@ language and the panel next to it in someone else's.
 
 
 Commits: `c30018b`.
+
+## Iteration 159 — one save, two answers, two languages
+
+Open the render queue while a project is saving and you could, until tonight,
+read two different accounts of the same moment. The save pill at the top said
+"just now" and then, after a minute, counted in Korean or Thai or Japanese. The
+render history underneath counted in seconds, in English, and disagreed about
+when "just now" ended — five seconds there, a full minute in the pill.
+
+The three panels fixed over the last three nights all had one thing in common:
+they could reach the shared rule with an `import`. This one could not. It is
+loaded the old way, as a plain `<script>` tag, and that single line in the HTML
+is the reason it kept its own clock for as long as it did.
+
+The fix is the same trick the translation function already uses to get to
+scripts like this one: the shared rule hangs itself on the window, and the
+render queue picks it up from there. No rewrite, no new convention — the second
+user of a pattern that was already in the file next door.
+
+There is still a fallback in place, and it is deliberate. If the render queue
+somehow loads before the shared rule exists, the history shows a plain date
+rather than nothing at all. A list of blanks is worse than a list of dates.
+
+One thing was left as it was on purpose. The queue also writes a full
+`2026-07-31 13:47:22` stamp on completed renders, and that one is meant to be
+sorted and compared rather than read as a sentence. Changing it is a separate
+judgement about who that column is for, and it deserves its own night.
+
+**Next:** the naming and metadata panel still has seven English labels sitting
+in a translated view — `Key`, `Camera`, `Profiles`, `Rules`, `Examples`,
+`Detected`, `Unsaved`. Same shape of seam as the date headings 158 closed, in a
+panel a colourist reads far more often than the project list.
