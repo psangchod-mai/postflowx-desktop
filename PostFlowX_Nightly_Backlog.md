@@ -7919,3 +7919,5 @@ ids properly.
 First night in a while I didn't have to filter the index by hand — I
 stayed out of `ui.js` entirely and every hunk in all six files is mine.
 Worth noting only because it's the exception.
+
+Commits: `27c5709`.
