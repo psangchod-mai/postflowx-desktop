@@ -121,7 +121,7 @@ async function runPhoton(packagePath, { timeoutMs = 90000 } = {}) {
 function _findAssetMap(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir);
-  const am = entries.find(e => e.toUpperCase() === 'ASSETMAP.xml' || e.toUpperCase() === 'ASSETMAP');
+  const am = entries.find(e => e.toUpperCase() === 'ASSETMAP.XML' || e.toUpperCase() === 'ASSETMAP');
   return am ? path.join(dir, am) : null;
 }
 

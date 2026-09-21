@@ -1537,7 +1537,8 @@ export class ReviewsStore {
     ]));
 
     const esc = (v) => {
-      const s = String(v ?? '');
+      let s = String(v ?? '');
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;   // neutralize spreadsheet formula injection
       return /[\",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 

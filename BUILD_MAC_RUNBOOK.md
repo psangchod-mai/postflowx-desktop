@@ -32,15 +32,9 @@ npm run build:renderer   # node build-renderer.js --target desktop
   ```bash
   npm run dist:mac:unsigned
   ```
-- **Signed release** (needs Developer ID in keychain; electron-builder reads these env vars):
-  ```bash
-  export CSC_LINK="/path/to/DeveloperIDApplication.p12"   # or rely on keychain
-  export CSC_KEY_PASSWORD="<p12 password>"
-  export APPLE_ID="psangchod@netflix.com"
-  export APPLE_APP_SPECIFIC_PASSWORD="<app-specific-password>"
-  export APPLE_TEAM_ID="<your team id>"
-  npm run build:mac                # electron-builder --mac (signs + notarizes per config)
-  ```
+- **Netflix signed release**: use Rocket CI rather than exporting credentials in a local shell. `.netflix/rocket.yml` selects `macos_arm64_aws && nf.app:sct_macbuilders`; `.netflix/netflix.ci` uses `update-keychain`, the exact `Developer ID Application: Netflix, Inc. (EZ4M4LKSQP)` identity, and Jenkins-bound `NOTARIZE_APPLE_ID` / `NOTARIZE_APP_PASSWORD` credentials. Signing and notarization run only on `main`.
+
+  The CI gate runs `npm run build-verify`, uses electron-builder for the signed/notarized universal app, then separately signs, submits, staples, and Gatekeeper-checks the final DMG. It mounts that DMG read-only and verifies the Applications shortcut, universal executable, and byte-identical packaged `app.asar` before reporting the artifact ready. Credentials are never stored in this repository.
 
 ## D. Sanity-check the result
 ```bash

@@ -47,8 +47,9 @@ export function validatePullList(events = [], opts = {}) {
 
     if (matchResults) {
       const m = matchFor(matchResults, i, ev);
-      const conf = m && m.confidence != null ? Number(m.confidence) : null;
-      const missing = !m || m.status === 'MISSING' || (conf != null && conf < 28);
+      const mm = m && m.match ? m.match : m;
+      const conf = mm && mm.confidence != null ? Number(mm.confidence) : null;
+      const missing = !mm || mm.status === 'MISSING' || (conf != null && conf < 28);
       if (missing) unmatched++;
     }
 

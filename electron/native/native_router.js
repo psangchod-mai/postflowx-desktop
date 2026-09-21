@@ -35,12 +35,15 @@ const HANDLED = new Set([
   'resolveStartBackground', 'resolve.startBackground',
   'resolveStartEngine', 'resolve.startEngine',
   'resolve.extractStillFrame', 'resolve.renderEXR.prepare',
+  'resolve.renderOcfProxy', 'resolve.renderOcfProxyStatus',
 ]);
 
 // Companion action name mapping (some have different legacy names in the Python side).
 const COMPANION_MAP = {
   'resolve.status':            'resolveStatus',
   'resolve.extractStillFrame': 'resolve.extractStillFrame',
+  'resolve.renderOcfProxy':       'resolve.renderOcfProxy',
+  'resolve.renderOcfProxyStatus': 'resolve.renderOcfProxyStatus',
   'resolve.renderEXR.prepare': 'resolve.renderEXR.prepare',
   'media.probe':               'mediaProbe',
   'media.extractStill':        'vfx.preview.avfStill',
@@ -215,10 +218,15 @@ async function _resolveStatusDirect() {
 }
 
 // ── Resolve background launch (Node-side, no companion needed) ──────────────
-// `open -g` = don't bring to foreground, `-j` = launch hidden. Resolve has no
-// true headless mode, so the process still starts fully — but it won't steal
-// focus or show its window. Combined with the Node→resolve_bridge.py status +
-// extract path, this lets OCF RAW previews work without the user opening Resolve.
+// Preferred path (Resolve STUDIO): launch the Resolve binary directly with
+// `-nogui`. Studio's headless mode runs with NO GUI at all — no window, and
+// crucially no Project Manager modal on startup — while the scripting API still
+// answers. This is what lets OCF RAW previews work without the user ever seeing
+// Resolve. The binary is detached + its stdio ignored so it outlives this spawn.
+//
+// Fallback (free version / no headless support): `open -gj` on the .app bundle.
+// `open -g` = don't foreground, `-j` = launch hidden — but Resolve still boots
+// its full GUI and shows the Project Manager, so this is the degraded path only.
 async function _resolveStartBackground() {
   const appBundle = '/Applications/DaVinci Resolve/DaVinci Resolve.app';
   if (!fs.existsSync(appBundle)) {
@@ -227,12 +235,34 @@ async function _resolveStartBackground() {
   if (await _isProcessRunning('Resolve')) {
     return { ok: true, installed: true, running: true, launched: false, state: 'already_running' };
   }
+
+  // Try headless first: the raw binary + `-nogui` (Studio-only).
+  const binary = path.join(appBundle, 'Contents', 'MacOS', 'Resolve');
+  if (fs.existsSync(binary)) {
+    try {
+      const child = spawn(binary, ['-nogui'], { detached: true, stdio: 'ignore' });
+      child.unref();
+      // Give the process a beat to either establish or die (e.g. free version
+      // rejects -nogui). If it exited immediately, fall through to `open -gj`.
+      const stillAlive = await new Promise((resolve) => {
+        let exited = false;
+        child.once('error', () => { exited = true; resolve(false); });
+        child.once('exit', () => { exited = true; resolve(false); });
+        setTimeout(() => resolve(!exited), 800);
+      });
+      if (stillAlive) {
+        return { ok: true, installed: true, running: false, launched: true, state: 'launching', headless: true };
+      }
+    } catch { /* fall through to GUI launch */ }
+  }
+
+  // Fallback: hidden GUI launch (still shows Project Manager).
   await new Promise((resolve) => {
     const p = spawn('open', ['-gj', appBundle]);
     p.on('exit', () => resolve());
     p.on('error', () => resolve());
   });
-  return { ok: true, installed: true, running: false, launched: true, state: 'launching' };
+  return { ok: true, installed: true, running: false, launched: true, state: 'launching', headless: false };
 }
 
 // ── Resolve detect (install + scripting + API probe) ────────────────────────
@@ -412,6 +442,50 @@ async function route({ type, payload = {} }) {
         return { ok: false, stage: 'bridge_error', error: bridgeErr.message,
                  requiresResolve: true };
       }
+
+    // Full-range OCF proxy render (Problem 2): render the whole HdlSt→HdlEnd
+    // range to a cached .mp4 the OCF pane can scrub. Companion runs it async on a
+    // background thread; the direct bridge renders synchronously and returns
+    // 'complete' in one shot (no async status needed for that path).
+    case 'resolve.renderOcfProxy':
+      if (_companion?.isReady) {
+        try {
+          const r = await _viaCompanion(type, payload, 300000);
+          return { ok: true, ...r };
+        } catch (err) {
+          if (err.code === 'COMPANION_UNAVAILABLE') throw err;
+          // Companion failed — fall through to direct bridge
+        }
+      }
+      try {
+        const cacheDir = _getAppPaths().cache;
+        _ensureDir(cacheDir);
+        const r = await _runResolveBridge({
+          action: 'renderOcfProxy',
+          ...payload,
+          cacheDir,
+        }, 300000);
+        // The direct bridge renders synchronously; normalize to a 'complete' state.
+        if (r && r.ok && !r.state) r.state = 'complete';
+        return r;
+      } catch (bridgeErr) {
+        return { ok: false, stage: 'bridge_error', error: bridgeErr.message,
+                 requiresResolve: true };
+      }
+
+    case 'resolve.renderOcfProxyStatus':
+      // Async status is only meaningful on the companion path (background thread).
+      if (_companion?.isReady) {
+        try {
+          const r = await _viaCompanion(type, payload, 15000);
+          return { ok: true, ...r };
+        } catch (err) {
+          if (err.code === 'COMPANION_UNAVAILABLE') throw err;
+        }
+      }
+      // Direct bridge has no async job — a prior renderOcfProxy already returned
+      // 'complete', so a status poll here means the job is unknown.
+      return { ok: false, state: 'error', error: 'No async proxy job (direct bridge renders synchronously).' };
 
     case 'resolve.renderEXR.prepare':
       return { ok: true, status: 'stub',

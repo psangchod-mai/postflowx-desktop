@@ -10,6 +10,7 @@ import { getShortcutsConfig, resolveShortcutAction, comboToDisplay, isTypingTarg
 import { deleteMarkerConfirm } from './core/confirmText.js';
 import { computeCutDiff, summarizeDiff } from './modules/cutdiff.js';
 import { matchMarkersToTimelineClips, buildClipsFromEvents } from './modules/markerClipMatcher.js';
+import { regionalHash, regionalDistance, distanceToConfidence, confidenceStatus } from './modules/conform/pictureMatcher.js';
 import { buildEDLFiles } from './modules/edl_export.js';
 import { buildOTIOJSON } from './modules/otio_export.js';
 import { buildShotsListXlsxV5Bytes } from './modules/amf_convert.js';
@@ -20,12 +21,50 @@ import { tokenizeCompanionUrl, companionAuthHeaders } from './modules/companionA
 import { isFpsMismatch } from './modules/fpsMatch.js';
 import { buildOcfErrorPaneHtml, buildOcfStripCellHtml, buildOcfEngineRequiredHtml } from './features/vfxPull/ocfErrorPane.js';
 import { classifyBackendStatus } from './features/vfxPull/backendStatusBadge.js';
+import {
+  associatedVfxShotName,
+  buildNetflixPlateName,
+  buildTimelineVfxName,
+  canonicalVfxName,
+  nextUniqueVfxName,
+  normalizeVfxName,
+  splitVfxPlateName,
+} from './core/vfxNameReview.js';
+import { derivePullPrepHealth, localizePullPrepHealth } from './core/pullPrepHealth.js';
 
 // Compact JSON for diagnostics. The Electron main process mirrors the renderer
 // console to logs/renderer.log via the `console-message` event, which delivers a
 // PRE-FORMATTED string — object args collapse to "[object Object]" there. Embed
 // the payload in the message string so the real stage/error survives in the log.
 function _pmJ(o) { try { return JSON.stringify(o); } catch { return String(o); } }
+
+function _pmNormalizeStoredVfxMarker(marker = {}) {
+  const next = { ...marker };
+  const rawName = String(next.shotName || '').trim();
+  if (!rawName) return next;
+  const parsed = splitVfxPlateName(rawName);
+  const metadataPlate = `${String(next._pmPlateCode || '').trim()}${String(next._pmPlateNum || '').trim()}`;
+  next.shotName = buildNetflixPlateName(rawName, parsed.plateId || metadataPlate || 'PL01', parsed.version || next._pmPlateVer || 'v001');
+  const resolved = splitVfxPlateName(next.shotName);
+  next._pmAssociatedShotName = associatedVfxShotName(next.shotName);
+  next._pmPlateCode = String(resolved.plateId || 'PL01').replace(/\d+$/, '');
+  next._pmPlateNum = resolved.plateId.match(/\d+$/)?.[0] || '01';
+  next._pmPlateVer = resolved.version || 'v001';
+  return next;
+}
+
+function _pmNormalizeStoredEventMeta(meta = {}) {
+  const next = { ...meta };
+  for (const key of ['shot', 'shotName']) {
+    const raw = String(next[key] || '').trim();
+    if (!raw) continue;
+    const parsed = splitVfxPlateName(raw);
+    next[key] = parsed.plateId
+      ? buildNetflixPlateName(raw)
+      : normalizeVfxName(raw);
+  }
+  return next;
+}
 
 // HTML-escape for any file-derived / error-message string interpolated into
 // innerHTML. macOS filenames can contain <>"'&, so an OCF path or companion
@@ -60,6 +99,7 @@ let _pmVideoFile   = null;        // in-memory File reference — set on load, c
 let _pmLinkMap     = new Map();   // markerId → eventIndex  (built from _pmClipMarkers)
 let _pmClipMatchMap = new Map();  // markerId → MatchResult (from markerClipMatcher)
 let _pmStatusMap  = new Map();   // `${reel}|${srcIn}` → 'none'|'pulled'|'delivered'|'approved'
+let _pmVfxEditorMap = new Map(); // `${reel}|${srcIn}` → version/status/due/QC/handoff control
 let _pmCurrentProjectKey = '';   // normalised project name used as localStorage key prefix
 let _pmLastRaw = null;           // last __MPS_EDL_RAW reference — change = new project loaded
 let _pmMetaMap    = new Map();   // `${reel}|${srcIn}` → { shot, handle, retime, stabilize, resize }
@@ -188,6 +228,11 @@ function _pmToast(msg, type = 'info', durationMs = 3500) {
 
 function _pmReadVideoMediaTimeSec({ preferPresented = true } = {}) {
   if (!pmVideo) return 0;
+  const nativeTime = Number(pmVideo._pfxNativeEngine?.currentTime);
+  if (Number.isFinite(nativeTime)) {
+    _pmRememberVideoMediaTimeSec(nativeTime);
+    return nativeTime;
+  }
   let sec = NaN;
   if (preferPresented && !pmVideo.seeking && !pmVideo.paused && Number.isFinite(_pmPresentedMediaTimeSec)) {
     sec = _pmPresentedMediaTimeSec;
@@ -1112,6 +1157,856 @@ function _pmSetPreviewSuppressed(suppressed, reason = '') {
   try { window.__pfxElectron?.avplayer?.command?.({ type: 'show' }); } catch {}
 }
 
+// ─── Professional Pull Prep workspace ────────────────────────────────────────
+// A thin presentation layer over the existing engines. It never owns project
+// data; it translates live timeline/video/marker state into one obvious action.
+const _PM_PRO_VIEW_KEY = 'pfx.prepmark.proView.v1';
+const _PM_PRO_WIDTH_KEY = 'pfx.prepmark.shotListRatio.v1';
+let _pmProFilter = 'all';
+let _pmProQuery = '';
+
+function _pmProHasVideo() {
+  // Direct AVFoundation playback paints into the native canvas and deliberately
+  // leaves the hidden HTML <video> without a src. Treat the attached engine as
+  // live media so the workspace badge never says "No video" over a visible frame.
+  return !!(_pmNativeAssetId || pmVideo?._pfxNativeEngine || pmVideo?.currentSrc || pmVideo?.getAttribute?.('src'));
+}
+
+// ── Smart VFX Editor control plane ──────────────────────────────────────────
+// Pull Prep already knows editorial timing, transforms, markers and handles.
+// This layer adds the production-control information a VFX Editor owns without
+// duplicating media or moving the work out of the NLE workspace.
+const _PM_VE_STAGES = ['turnover', 'vendor', 'review', 'approved', 'final'];
+const _PM_VE_STAGE_LABELS = {
+  turnover: 'TURNOVER', vendor: 'AT VENDOR', review: 'IN REVIEW',
+  approved: 'APPROVED', final: 'FINAL',
+};
+const _PM_VE_QC_KEYS = ['frames', 'timing', 'resolution', 'color', 'handles'];
+const _PM_VE_HANDOFF_KEYS = ['editorial', 'vfx', 'color', 'online', 'sound'];
+const _pmVfxDetailsOpen = new Set();
+
+function _pmVfxLinkedMarkers(idx) {
+  return _pmClipMarkers.filter(mk => (_pmLinkMap.get(mk.id) ?? mk._eventIdx) === idx);
+}
+
+function _pmVfxIsTracked(idx) {
+  return _pmVfxLinkedMarkers(idx).length > 0;
+}
+
+function _pmVfxExplicitShotName(ev, idx) {
+  return String(ev?._pmShot || _pmVfxLinkedMarkers(idx)[0]?.shotName || '').trim();
+}
+
+function _pmVfxOccupiedNames(excludeEventIndices = []) {
+  const excluded = new Set((excludeEventIndices || []).map(Number).filter(Number.isFinite));
+  const names = [];
+  _pmEvents.forEach((ev, idx) => {
+    if (excluded.has(idx)) return;
+    const name = String(ev?._pmShot || ev?.shotName || '').trim();
+    if (name) names.push(name);
+  });
+  _pmClipMarkers.forEach(mk => {
+    const idx = _pmLinkMap.get(mk.id) ?? _pmLinkMap.get(Number(mk.id)) ?? mk._eventIdx ?? -1;
+    if (excluded.has(Number(idx))) return;
+    const name = String(mk?.shotName || '').trim();
+    if (name) names.push(name);
+  });
+  return names;
+}
+
+function _pmVfxNameReviewState(ev, idx) {
+  const marker = _pmVfxLinkedMarkers(idx)[0] || null;
+  const name = _pmVfxExplicitShotName(ev, idx);
+  const canonical = canonicalVfxName(name);
+  const duplicate = !!canonical && _pmVfxOccupiedNames([idx])
+    .some(other => canonicalVfxName(other) === canonical);
+  const stored = String(marker?._pmNameReview || ev?._pmNameReview || '').toLowerCase();
+  const pending = stored === 'pending';
+  const approved = !!name && !duplicate && !pending;
+  return {
+    name,
+    marker,
+    duplicate,
+    pending,
+    approved,
+    source: String(marker?._pmNameSource || ev?._pmNameSource || (stored ? 'auto' : 'legacy')),
+    reviewedBy: String(marker?._pmNameReviewedBy || ''),
+    reviewedAt: String(marker?._pmNameReviewedAt || ''),
+  };
+}
+
+function _pmCurrentVfxReviewer() {
+  const session = window.PFX_PERMISSIONS?.getSession?.()
+    || window.PFX_AUTH?.getPfxSession?.()
+    || null;
+  const user = session?.user || window.PFX_PERMISSIONS?.getUser?.() || null;
+  return String(user?.email || user?.name || window.pfxPlatform?.osUser?.username || 'Local user');
+}
+
+function _pmSetVfxNameReview(idx, status = 'approved', { lock = false, source = 'user' } = {}) {
+  const linked = _pmVfxLinkedMarkers(idx);
+  if (!linked.length) return false;
+  const reviewedAt = new Date().toISOString();
+  const reviewedBy = _pmCurrentVfxReviewer();
+  linked.forEach(mk => {
+    mk._pmNameReview = status;
+    mk._pmNameSource = source || mk._pmNameSource || 'user';
+    if (status === 'approved') {
+      mk._pmNameReviewedAt = reviewedAt;
+      mk._pmNameReviewedBy = reviewedBy;
+      delete mk._pmNameSuggested;
+      if (lock) {
+        mk._pmShotLocked = true;
+        mk._pmNameMode = 'shot';
+      }
+    }
+  });
+  const ev = _pmEvents[idx];
+  if (ev) {
+    ev._pmNameReview = status;
+    ev._pmNameSource = source || ev._pmNameSource || 'user';
+    _pmSaveMeta(ev);
+  }
+  _pmSaveClipMarkers();
+  window.MPS_markProjectDirty?.();
+  _pmRenderEventTable();
+  _pmRenderInspector(idx);
+  _pmPushTimelineData();
+  _pmScheduleDraw();
+  _pmUpdateProWorkspace();
+  return true;
+}
+
+function _pmVfxInferVersion(ev, idx) {
+  const marker = _pmVfxLinkedMarkers(idx)[0] || {};
+  const source = [marker.version, marker.shotName, ev?._pmShot, ev?.clipName, ev?.reel]
+    .filter(Boolean).join(' ');
+  const match = source.match(/(?:^|[_\-.\s])v(?:er(?:sion)?)?\s*0*(\d{1,4})(?=$|[_\-.\s])/i);
+  return match ? `v${String(Number(match[1])).padStart(3, '0')}` : '';
+}
+
+function _pmVfxTodayIso() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function _pmVfxEditorProfile(ev, idx) {
+  const stored = _pmVfxEditorMap.get(_pmStatusKey(ev)) || {};
+  const linked = _pmVfxLinkedMarkers(idx);
+  const marker = linked[0] || {};
+  const retime = !!(ev?._pmRetime === true || (ev?._pmRetime == null && ev?._pmRetimeAuto));
+  const resize = !!(ev?._pmResize === true || (ev?._pmResize == null && ev?._pmResizeAuto));
+  const transition = Number(ev?._pmTransitionHandleFrames || 0) > 0;
+  const oldStatus = _pmStatusMap.get(_pmStatusKey(ev)) || 'none';
+  const inferredStage = oldStatus === 'approved' ? 'approved'
+    : oldStatus === 'delivered' ? 'review'
+      : oldStatus === 'pulled' ? 'vendor' : 'turnover';
+  const inferredQc = {
+    frames: linked.length ? 'pass' : 'pending',
+    timing: retime ? 'pending' : 'pass',
+    resolution: resize ? 'pending' : 'pass',
+    color: 'pending',
+    handles: (retime || transition) && ev?._pmHandle == null ? 'pending' : 'pass',
+  };
+  const qc = { ...inferredQc, ...(stored.qc || {}) };
+  const handoff = Object.fromEntries(_PM_VE_HANDOFF_KEYS.map(key => [key, !!stored.handoff?.[key]]));
+  return {
+    stage: _PM_VE_STAGES.includes(stored.stage) ? stored.stage : inferredStage,
+    version: String(stored.version || _pmVfxInferVersion(ev, idx) || ''),
+    due: /^\d{4}-\d{2}-\d{2}$/.test(stored.due || '') ? stored.due : '',
+    owner: String(stored.owner || marker.owner || ''),
+    vendor: String(stored.vendor || marker.plateVendor || ''),
+    note: String(stored.note || ''),
+    qc,
+    handoff,
+    updatedAt: stored.updatedAt || '',
+  };
+}
+
+function _pmVfxEditorIssues(ev, idx) {
+  const tracked = _pmVfxIsTracked(idx);
+  const profile = _pmVfxEditorProfile(ev, idx);
+  const nameReview = _pmVfxNameReviewState(ev, idx);
+  const issues = [];
+  if (!tracked) return { tracked, profile, nameReview, issues, overdue: false, dueSoon: false, qcIssue: false, approved: false, attention: false };
+
+  if (!nameReview.name) issues.push('Create VFX shot name');
+  else if (nameReview.duplicate) issues.push('Resolve duplicate shot name');
+  else if (nameReview.pending) issues.push('Review suggested name');
+  if (!profile.version) issues.push('Add version');
+  if (['vendor', 'review'].includes(profile.stage) && !profile.owner && !profile.vendor) issues.push('Assign owner or vendor');
+  if (['vendor', 'review'].includes(profile.stage) && !profile.due) issues.push('Add delivery date');
+
+  const dueTime = profile.due ? Date.parse(`${profile.due}T00:00:00`) : NaN;
+  const todayTime = Date.parse(`${_pmVfxTodayIso()}T00:00:00`);
+  const approved = profile.stage === 'approved' || profile.stage === 'final';
+  const overdue = Number.isFinite(dueTime) && dueTime < todayTime && !approved;
+  const dueSoon = Number.isFinite(dueTime) && dueTime >= todayTime && dueTime <= todayTime + (3 * 86400000) && !approved;
+  if (overdue) issues.push('Delivery overdue');
+
+  const qcFailed = _PM_VE_QC_KEYS.filter(key => profile.qc[key] === 'fail');
+  if (qcFailed.length) issues.push(`QC failed: ${qcFailed.join(', ')}`);
+  if (['review', 'approved', 'final'].includes(profile.stage)) {
+    const pending = _PM_VE_QC_KEYS.filter(key => profile.qc[key] !== 'pass');
+    if (pending.length && !qcFailed.length) issues.push(`Finish QC: ${pending.join(', ')}`);
+  }
+  if (profile.stage === 'final' && !profile.handoff.online) issues.push('Confirm final online handoff');
+
+  const qcIssue = qcFailed.length > 0 || (['review', 'approved', 'final'].includes(profile.stage)
+    && _PM_VE_QC_KEYS.some(key => profile.qc[key] !== 'pass'));
+  return { tracked, profile, nameReview, issues, overdue, dueSoon, qcIssue, approved, attention: issues.length > 0 };
+}
+
+function _pmVfxEditorSummary() {
+  const rows = _pmEvents.map((ev, idx) => ({ ev, idx, ..._pmVfxEditorIssues(ev, idx) }))
+    .filter(item => item.tracked);
+  return {
+    tracked: rows.length,
+    attention: rows.filter(item => item.attention).length,
+    overdue: rows.filter(item => item.overdue).length,
+    dueSoon: rows.filter(item => item.dueSoon).length,
+    qc: rows.filter(item => item.qcIssue).length,
+    approved: rows.filter(item => item.approved).length,
+    firstAttention: rows.find(item => item.attention) || null,
+  };
+}
+
+function _pmSaveVfxEditorMap() {
+  try {
+    const obj = {};
+    for (const [key, value] of _pmVfxEditorMap) obj[key] = value;
+    localStorage.setItem(_lsKey('vfxEditorDesk.v1'), JSON.stringify(obj));
+  } catch {}
+}
+
+function _pmPatchVfxEditorProfile(ev, idx, patch) {
+  if (!ev || idx < 0) return;
+  const key = _pmStatusKey(ev);
+  const current = _pmVfxEditorProfile(ev, idx);
+  const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  if (patch.qc) next.qc = { ...current.qc, ...patch.qc };
+  if (patch.handoff) next.handoff = { ...current.handoff, ...patch.handoff };
+  _pmVfxEditorMap.set(key, next);
+  _pmSaveVfxEditorMap();
+  window.MPS_markProjectDirty?.();
+  try { _pmRenderEventTable(); } catch {}
+  _pmUpdateProWorkspace();
+}
+
+function _pmRenderVfxEditorDesk() {
+  const root = document.getElementById('pmVfxShotControl');
+  if (!root) return;
+  const htmlEsc = value => String(value || '').replace(/[&<>\"]/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;',
+  }[char]));
+  const idx = _pmActiveEventIdx;
+  const ev = idx >= 0 ? _pmEvents[idx] : null;
+  if (!ev) {
+    root.classList.remove('is-details-open');
+    root.innerHTML = '<div class="pm-ve-empty"><b>Select a VFX shot</b><span>Track its version, status, technical checks, owner, and delivery.</span></div>';
+    return;
+  }
+
+  const tracked = _pmVfxIsTracked(idx);
+  const shotName = _pmVfxExplicitShotName(ev, idx) || ev.clipName || ev.reel || `Shot ${idx + 1}`;
+  if (!tracked) {
+    root.classList.remove('is-details-open');
+    root.innerHTML = `<div class="pm-ve-empty pm-ve-empty-action"><div><b>${htmlEsc(shotName)}</b><span>This edit is not tracked as a VFX shot yet.</span></div><button type="button" data-ve-track>+ Track VFX shot</button></div>`;
+    root.querySelector('[data-ve-track]')?.addEventListener('click', () => {
+      document.querySelector(`#pmEventBody .pm-mk-add-btn[data-i="${idx}"]`)?.click();
+    });
+    return;
+  }
+
+  const result = _pmVfxEditorIssues(ev, idx);
+  const profile = result.profile;
+  const issueText = result.issues.length ? result.issues[0] : 'Ready for the next handoff';
+  const nameReviewLabel = result.nameReview?.duplicate
+    ? 'DUPLICATE NAME'
+    : result.nameReview?.pending
+      ? 'NAME REVIEW'
+      : '';
+  const detailKey = _pmStatusKey(ev);
+  const detailsOpen = _pmVfxDetailsOpen.has(detailKey);
+  const qcPassCount = _PM_VE_QC_KEYS.filter(key => profile.qc[key] === 'pass').length;
+  const handoffDoneCount = _PM_VE_HANDOFF_KEYS.filter(key => profile.handoff[key]).length;
+  root.classList.toggle('is-details-open', detailsOpen);
+  const qcButtons = _PM_VE_QC_KEYS.map(key => {
+    const state = profile.qc[key] || 'pending';
+    const icon = state === 'pass' ? '✓' : state === 'fail' ? '!' : '·';
+    return `<button type="button" class="pm-ve-qc is-${state}" data-ve-qc="${key}" title="Click: pending → pass → fail"><span>${icon}</span>${key}</button>`;
+  }).join('');
+  const handoffButtons = _PM_VE_HANDOFF_KEYS.map(key =>
+    `<button type="button" class="pm-ve-handoff${profile.handoff[key] ? ' is-done' : ''}" data-ve-handoff="${key}"><span>${profile.handoff[key] ? '✓' : '○'}</span>${key}</button>`
+  ).join('');
+  const stageOptions = _PM_VE_STAGES.map(stage =>
+    `<option value="${stage}"${profile.stage === stage ? ' selected' : ''}>${_PM_VE_STAGE_LABELS[stage]}</option>`
+  ).join('');
+
+  root.innerHTML = `
+    <div class="pm-ve-shot-head">
+      <div><small>VFX SHOT CONTROL · ${String(idx + 1).padStart(3, '0')}</small><b>${htmlEsc(shotName)}</b></div>
+      <span class="pm-ve-readiness ${result.attention ? 'needs-attention' : 'is-ready'}${result.nameReview?.duplicate ? ' is-name-duplicate' : result.nameReview?.pending ? ' is-name-review' : ''}">${nameReviewLabel || (result.attention ? `${result.issues.length} TO CHECK` : 'READY')}</span>
+      <span class="pm-ve-issue">${htmlEsc(issueText)}</span>
+    </div>
+    <div class="pm-ve-smart-row">
+      <label class="pm-ve-stage"><span>Status</span><select data-ve-field="stage">${stageOptions}</select></label>
+      <div class="pm-ve-progress" aria-label="Shot readiness progress">
+        <span class="${qcPassCount === _PM_VE_QC_KEYS.length ? 'is-complete' : ''}">QC <b>${qcPassCount}/${_PM_VE_QC_KEYS.length}</b></span>
+        <span class="${handoffDoneCount === _PM_VE_HANDOFF_KEYS.length ? 'is-complete' : ''}">HANDOFF <b>${handoffDoneCount}/${_PM_VE_HANDOFF_KEYS.length}</b></span>
+      </div>
+      <button type="button" class="pm-ve-next-task${result.attention ? ' needs-attention' : ''}" data-ve-next-task>
+        <small>${result.attention ? 'FIX NEXT' : 'NEXT STEP'}</small><b>${htmlEsc(issueText)}</b>
+      </button>
+      <button type="button" class="pm-ve-details-toggle" data-ve-details-toggle aria-expanded="${detailsOpen ? 'true' : 'false'}">Details ${detailsOpen ? '▴' : '▾'}</button>
+    </div>
+    <div class="pm-ve-details${detailsOpen ? ' is-open' : ''}">
+    <div class="pm-ve-fields pm-ve-fields-secondary">
+      <label><span>Version</span><input data-ve-field="version" value="${htmlEsc(profile.version)}" placeholder="v001"></label>
+      <label><span>Due</span><input data-ve-field="due" type="date" value="${htmlEsc(profile.due)}"></label>
+      <label><span>Owner</span><input data-ve-field="owner" value="${htmlEsc(profile.owner)}" placeholder="Person / team"></label>
+      <label><span>Vendor</span><input data-ve-field="vendor" value="${htmlEsc(profile.vendor)}" placeholder="Vendor"></label>
+    </div>
+    <div class="pm-ve-check-row"><span>TECH QC</span><div>${qcButtons}</div></div>
+    <div class="pm-ve-check-row"><span>HANDOFF</span><div>${handoffButtons}</div></div>
+    <label class="pm-ve-note"><span>Latest note</span><input data-ve-field="note" value="${htmlEsc(profile.note)}" placeholder="Director, editor, supervisor, or delivery note…"></label>
+    </div>`;
+
+  root.querySelector('[data-ve-details-toggle]')?.addEventListener('click', () => {
+    if (_pmVfxDetailsOpen.has(detailKey)) _pmVfxDetailsOpen.delete(detailKey);
+    else _pmVfxDetailsOpen.add(detailKey);
+    _pmRenderVfxEditorDesk();
+  });
+  root.querySelector('[data-ve-next-task]')?.addEventListener('click', () => {
+    const issue = String(issueText || '');
+    if (issue === 'Create VFX shot name') {
+      const suggested = _pmAutoShotName(ev, idx);
+      const commit = _pmCommitShotNameChange({
+        name: suggested,
+        eventIndices: [idx],
+        source: 'auto',
+        markerNameMode: 'shot',
+      });
+      if (commit.ok) _pmToast(`Suggested ${commit.text} — review before approval`, 'info', 2600);
+      return;
+    }
+    if (issue === 'Resolve duplicate shot name') {
+      const current = _pmVfxExplicitShotName(ev, idx) || _pmAutoShotName(ev, idx);
+      const suggested = nextUniqueVfxName(current, _pmVfxOccupiedNames([idx]), { step: 10, pad: 3 });
+      const commit = _pmCommitShotNameChange({
+        name: suggested,
+        eventIndices: [idx],
+        source: 'auto-dedupe',
+        markerNameMode: 'shot',
+      });
+      if (commit.ok) _pmToast(`Duplicate fixed: ${commit.text} — review the new name`, 'info', 2800);
+      return;
+    }
+    if (issue === 'Review suggested name') {
+      if (_pmSetVfxNameReview(idx, 'approved', { lock: true, source: 'user' })) {
+        _pmToast(`Name approved and locked by ${_pmCurrentVfxReviewer()}`, 'info', 2400);
+      }
+      return;
+    }
+    _pmVfxDetailsOpen.add(detailKey);
+    _pmRenderVfxEditorDesk();
+    requestAnimationFrame(() => {
+      let selector = '[data-ve-field="stage"]';
+      if (issue.includes('version')) selector = '[data-ve-field="version"]';
+      else if (issue.includes('owner') || issue.includes('vendor')) selector = '[data-ve-field="owner"]';
+      else if (issue.includes('date') || issue.includes('overdue')) selector = '[data-ve-field="due"]';
+      else if (issue.includes('QC')) selector = '[data-ve-qc]';
+      else if (issue.includes('online handoff')) selector = '[data-ve-handoff="online"]';
+      const target = root.querySelector(selector);
+      target?.focus?.();
+      target?.scrollIntoView?.({ block: 'nearest' });
+    });
+  });
+
+  root.querySelectorAll('[data-ve-field]').forEach(input => input.addEventListener('change', () => {
+    _pmPatchVfxEditorProfile(ev, idx, { [input.dataset.veField]: String(input.value || '').trim() });
+  }));
+  root.querySelectorAll('[data-ve-qc]').forEach(button => button.addEventListener('click', () => {
+    const key = button.dataset.veQc;
+    const current = profile.qc[key] || 'pending';
+    const next = current === 'pending' ? 'pass' : current === 'pass' ? 'fail' : 'pending';
+    _pmPatchVfxEditorProfile(ev, idx, { qc: { [key]: next } });
+  }));
+  root.querySelectorAll('[data-ve-handoff]').forEach(button => button.addEventListener('click', () => {
+    const key = button.dataset.veHandoff;
+    _pmPatchVfxEditorProfile(ev, idx, { handoff: { [key]: !profile.handoff[key] } });
+  }));
+}
+
+function _pmSetProView(view = 'split', persist = true) {
+  const main = document.getElementById('main-prepmark');
+  if (!main) return;
+  const safe = ['list', 'split', 'review'].includes(view) ? view : 'split';
+  main.classList.remove('pm-pro-view-list', 'pm-pro-view-split', 'pm-pro-view-review');
+  main.classList.add(`pm-pro-view-${safe}`);
+  main.dataset.pmProView = safe;
+  if (safe === 'split') _pmRestoreShotListWidth();
+  else main.classList.remove('pm-pro-custom-width');
+  main.querySelectorAll('[data-pm-view]').forEach(btn => {
+    const active = btn.dataset.pmView === safe;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  if (persist) try { localStorage.setItem(_PM_PRO_VIEW_KEY, safe); } catch {}
+  requestAnimationFrame(() => {
+    try { _pmResizeTlCanvas(); } catch {}
+    try { pmVideo?.dispatchEvent(new Event('resize')); } catch {}
+  });
+}
+
+function _pmShotListBounds() {
+  const main = document.getElementById('main-prepmark');
+  const body = main?.querySelector('.pm-body');
+  const total = Math.max(1, body?.getBoundingClientRect?.().width || 0);
+  // Preserve a useful Program Monitor at every size while still letting the
+  // list expand far enough for full editorial metadata on wide displays.
+  const min = Math.min(520, Math.max(360, Math.round(total * 0.32)));
+  const max = Math.max(min, Math.min(Math.round(total * 0.72), total - 480));
+  return { main, body, total, min, max };
+}
+
+function _pmApplyShotListRatio(ratio, { persist = false, announce = false } = {}) {
+  const { main, total, min, max } = _pmShotListBounds();
+  if (!main || total <= 1) return null;
+  const safeRatio = Math.max(0.3, Math.min(0.72, Number(ratio) || 0.46));
+  const px = Math.round(Math.max(min, Math.min(max, total * safeRatio)));
+  const actualRatio = px / total;
+  const pct = Math.round(actualRatio * 100);
+  main.style.setProperty('--pm-shot-list-width', `${px}px`);
+  main.classList.add('pm-pro-custom-width');
+  const divider = document.getElementById('pmPanelDivider');
+  divider?.setAttribute('aria-valuenow', String(pct));
+  divider?.setAttribute('aria-valuetext', `Shot List ${pct} percent`);
+  const value = document.getElementById('pmPanelDividerValue');
+  if (value) value.textContent = `${pct}% SHOTS`;
+  if (persist) {
+    try { localStorage.setItem(_PM_PRO_WIDTH_KEY, String(actualRatio)); } catch {}
+  }
+  if (announce) _pmToast(`Shot List · ${pct}%`, 'info', 1300);
+  requestAnimationFrame(() => {
+    try { _pmResizeTlCanvas(); } catch {}
+    try { pmVideo?._pfxNativeCanvas?._pfxEngine?.repaint?.(); } catch {}
+  });
+  return { px, ratio: actualRatio, pct };
+}
+
+function _pmRestoreShotListWidth() {
+  let ratio = null;
+  try { ratio = Number(localStorage.getItem(_PM_PRO_WIDTH_KEY)); } catch {}
+  if (Number.isFinite(ratio) && ratio >= 0.3 && ratio <= 0.72) {
+    return _pmApplyShotListRatio(ratio);
+  }
+  const main = document.getElementById('main-prepmark');
+  main?.classList.remove('pm-pro-custom-width');
+  main?.style.removeProperty('--pm-shot-list-width');
+  const divider = document.getElementById('pmPanelDivider');
+  divider?.setAttribute('aria-valuenow', '46');
+  divider?.setAttribute('aria-valuetext', 'Shot List 46 percent');
+  const value = document.getElementById('pmPanelDividerValue');
+  if (value) value.textContent = '46% SHOTS';
+  return null;
+}
+
+function _pmResetShotListWidth(announce = true) {
+  try { localStorage.removeItem(_PM_PRO_WIDTH_KEY); } catch {}
+  _pmSetProView('split');
+  _pmRestoreShotListWidth();
+  if (announce) _pmToast('Shot List width reset · 46%', 'info', 1400);
+}
+
+function _pmWirePanelDivider() {
+  const divider = document.getElementById('pmPanelDivider');
+  const main = document.getElementById('main-prepmark');
+  if (!divider || !main || divider.dataset.wired === '1') return;
+  divider.dataset.wired = '1';
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  const moveTo = clientX => {
+    const { total } = _pmShotListBounds();
+    if (total <= 1) return;
+    // Save continuously: native macOS drags can release outside Electron's
+    // narrow splitter before the element receives pointerup.
+    _pmApplyShotListRatio((startWidth + clientX - startX) / total, { persist: true });
+  };
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    main.classList.remove('pm-panel-resizing');
+    document.body.classList.remove('pm-panel-resizing-active');
+    const { total } = _pmShotListBounds();
+    const leftWidth = main.querySelector('.pm-left')?.getBoundingClientRect?.().width || total * 0.46;
+    _pmApplyShotListRatio(leftWidth / Math.max(1, total), { persist: true, announce: true });
+  };
+
+  divider.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    if (main.dataset.pmProView !== 'split') _pmSetProView('split');
+    try { divider.focus({ preventScroll: true }); } catch { divider.focus(); }
+    dragging = true;
+    startX = e.clientX;
+    startWidth = main.querySelector('.pm-left')?.getBoundingClientRect?.().width || 520;
+    main.classList.add('pm-panel-resizing');
+    document.body.classList.add('pm-panel-resizing-active');
+    try { divider.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+  });
+  divider.addEventListener('pointermove', e => { if (dragging) moveTo(e.clientX); });
+  divider.addEventListener('pointerup', finish);
+  divider.addEventListener('pointercancel', finish);
+  window.addEventListener('pointerup', finish, true);
+  window.addEventListener('pointercancel', finish, true);
+  divider.addEventListener('click', () => {
+    try { divider.focus({ preventScroll: true }); } catch { divider.focus(); }
+  });
+  divider.addEventListener('dblclick', e => { e.preventDefault(); _pmResetShotListWidth(); });
+  divider.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Home') {
+      e.preventDefault();
+      _pmResetShotListWidth();
+      return;
+    }
+    const left = e.key === 'ArrowLeft' || e.key === 'Left';
+    const right = e.key === 'ArrowRight' || e.key === 'Right';
+    if (!left && !right) return;
+    e.preventDefault();
+    if (main.dataset.pmProView !== 'split') _pmSetProView('split');
+    const { total } = _pmShotListBounds();
+    const current = main.querySelector('.pm-left')?.getBoundingClientRect?.().width || total * 0.46;
+    const delta = (e.shiftKey ? 64 : 24) * (right ? 1 : -1);
+    _pmApplyShotListRatio((current + delta) / Math.max(1, total), { persist: true });
+  });
+  window.addEventListener('resize', () => {
+    if (main.dataset.pmProView === 'split') _pmRestoreShotListWidth();
+  }, { passive: true });
+}
+
+function _pmProNextAction() {
+  const editorSummary = _pmVfxEditorSummary();
+  const signals = _pmEvents.map((ev, i) => _pmProEventSignals(ev, i));
+  return derivePullPrepHealth({
+    timelineCount: _pmEvents.length,
+    hasVideo: _pmProHasVideo(),
+    markerCount: _pmClipMarkers.length,
+    linkedCount: _pmLinkMap.size,
+    taggedEventCount: new Set([..._pmLinkMap.values()]).size,
+    trackedCount: editorSummary.tracked,
+    attentionCount: signals.filter(signal => signal.attention).length,
+    overdueCount: editorSummary.overdue,
+    approvedCount: editorSummary.approved,
+    retimeCount: signals.filter(signal => signal.retime).length,
+    resizeCount: signals.filter(signal => signal.resize).length,
+    qcCount: signals.filter(signal => signal.qcIssue).length,
+    unmarkedCount: Math.max(0, _pmEvents.length - new Set([..._pmLinkMap.values()]).size),
+  }).action;
+}
+
+function _pmProEventSignals(ev, idx) {
+  const retime = !!(ev?._pmRetime === true || (ev?._pmRetime == null && ev?._pmRetimeAuto));
+  const resize = !!(ev?._pmResize === true || (ev?._pmResize == null && ev?._pmResizeAuto));
+  const stabilize = !!ev?._pmStabilize;
+  const transition = Number(ev?._pmTransitionHandleFrames || 0) > 0;
+  const marked = _pmClipMarkers.some(mk => (_pmLinkMap.get(mk.id) ?? mk._eventIdx) === idx);
+  const vfx = _pmVfxEditorIssues(ev, idx);
+  return {
+    retime, resize, stabilize, transition, marked,
+    overdue: vfx.overdue,
+    dueSoon: vfx.dueSoon,
+    qcIssue: vfx.qcIssue,
+    approved: vfx.approved,
+    vfxAttention: vfx.attention,
+    attention: retime || resize || stabilize || transition || vfx.attention,
+  };
+}
+
+function _pmProAttentionIndices() {
+  const out = [];
+  for (let i = 0; i < _pmEvents.length; i++) if (_pmProEventSignals(_pmEvents[i], i).attention) out.push(i);
+  return out;
+}
+
+function _pmProIssueForIndex(idx) {
+  const ev = _pmEvents[idx];
+  if (!ev) return null;
+  const sig = _pmProEventSignals(ev, idx);
+  const vfx = _pmVfxEditorIssues(ev, idx);
+  const primary = vfx.issues[0] || '';
+  let reason = primary;
+  let priority = 40;
+  if (vfx.overdue) priority = 100;
+  else if (vfx.nameReview?.duplicate) priority = 95;
+  else if (vfx.qcIssue) priority = 90;
+  else if (vfx.nameReview?.pending || !vfx.nameReview?.name) priority = 80;
+  else if (primary) priority = 70;
+  else if (sig.retime) reason = 'Check speed change';
+  else if (sig.resize) reason = 'Check resize / reframe';
+  else if (sig.stabilize) reason = 'Check stabilization';
+  else if (sig.transition) reason = 'Check transition handles';
+  if (!reason && !sig.marked) {
+    reason = 'Mark as VFX or skip';
+    priority = 20;
+  }
+  const shot = _pmVfxExplicitShotName(ev, idx) || ev?.reel || ev?.clipName || `Shot ${idx + 1}`;
+  return { idx, shot, reason: reason || 'Review shot', priority };
+}
+
+function _pmProAttentionQueue() {
+  return _pmProAttentionIndices()
+    .map(_pmProIssueForIndex)
+    .filter(Boolean)
+    .sort((a, b) => b.priority - a.priority || a.idx - b.idx);
+}
+
+function _pmApplyProListFilter() {
+  const rows = document.querySelectorAll('#pmEventBody tr[data-i]');
+  let shown = 0;
+  rows.forEach(row => {
+    const idx = Number(row.dataset.i);
+    const ev = _pmEvents[idx];
+    const sig = _pmProEventSignals(ev, idx);
+    const editorProfile = _pmVfxEditorProfile(ev, idx);
+    const haystack = [ev?.reel, ev?.clipName, ev?._pmShot, ev?.srcIn, ev?.recIn, ev?.recOut,
+      editorProfile.version, editorProfile.stage, editorProfile.owner, editorProfile.vendor,
+      editorProfile.due, editorProfile.note]
+      .filter(Boolean).join(' ').toLowerCase();
+    const filterMatch = _pmProFilter === 'all'
+      || (_pmProFilter === 'attention' && sig.attention)
+      || (_pmProFilter === 'retime' && sig.retime)
+      || (_pmProFilter === 'resize' && sig.resize)
+      || (_pmProFilter === 'qc' && sig.qcIssue)
+      || (_pmProFilter === 'due' && (sig.overdue || sig.dueSoon))
+      || (_pmProFilter === 'marked' && sig.marked)
+      || (_pmProFilter === 'approved' && sig.approved)
+      || (_pmProFilter === 'unmarked' && !sig.marked);
+    const show = filterMatch && (!_pmProQuery || haystack.includes(_pmProQuery));
+    row.classList.toggle('pm-pro-filtered-out', !show);
+    if (show) shown++;
+  });
+  const visible = document.getElementById('pmProVisibleCount');
+  if (visible) visible.textContent = shown === _pmEvents.length
+    ? `${shown} shown`
+    : `${shown} visible · ${_pmEvents.length} total`;
+}
+
+function _pmProJumpNextAttention() {
+  let queue = _pmProAttentionQueue();
+  if (!queue.length) {
+    const marked = new Set([..._pmLinkMap.values()]);
+    queue = _pmEvents.map((_, i) => i).filter(i => !marked.has(i)).map(_pmProIssueForIndex).filter(Boolean);
+  }
+  if (!queue.length) {
+    _pmToast('Review complete — no open issues', 'info', 1800);
+    return;
+  }
+  const pos = queue.findIndex(item => item.idx === _pmActiveEventIdx);
+  const nextIssue = queue[(pos + 1) % queue.length];
+  const next = nextIssue.idx;
+  _pmSetProView('review');
+  try { _pmSetActiveRow(next); } catch {}
+  const frame = tcToFrames(_pmEvents[next]?.recIn || '00:00:00:00', Math.max(1, _pmFps || 24));
+  try { _pmSeekVideoAbsFrame(frame, { syncNow: true }); } catch {}
+  _pmToast(`${nextIssue.shot} — ${nextIssue.reason}`, 'info', 2200);
+}
+
+function _pmRunProNextAction(action = _pmProNextAction()) {
+  switch (action.key) {
+    case 'timeline': pmImportEdlBtn?.click(); break;
+    case 'video': (pmVideoImportBtn || pmVideoBrowseBtn)?.click(); break;
+    case 'review':
+      _pmSetProView('review');
+      if (_pmEvents.length) {
+        try { _pmSetActiveRow(Math.max(0, _pmActiveEventIdx)); } catch {}
+        document.getElementById('pmPlayerWrap')?.focus?.({ preventScroll: true });
+      }
+      break;
+    case 'link': pmAutoLinkBtn?.click(); break;
+    case 'vfx-attention': _pmProJumpNextAttention(); break;
+    case 'export': pmExportBtn?.click(); break;
+  }
+}
+
+function _pmUpdateProWorkspace() {
+  const main = document.getElementById('main-prepmark');
+  if (!main) return;
+  const hasTimeline = _pmEvents.length > 0;
+  const hasVideo = _pmProHasVideo();
+  const markerCount = _pmClipMarkers.length;
+  const linked = _pmLinkMap.size;
+  const orphanCount = Math.max(0, markerCount - linked);
+  const taggedEvents = new Set([..._pmLinkMap.values()]).size;
+  const coverage = hasTimeline ? Math.round((taggedEvents / _pmEvents.length) * 100) : 0;
+  const signals = _pmEvents.map((ev, i) => _pmProEventSignals(ev, i));
+  const attentionCount = signals.filter(s => s.attention).length;
+  const retimeCount = signals.filter(s => s.retime).length;
+  const resizeCount = signals.filter(s => s.resize).length;
+  const qcCount = signals.filter(s => s.qcIssue).length;
+  const dueCount = signals.filter(s => s.overdue || s.dueSoon).length;
+  const approvedCount = signals.filter(s => s.approved).length;
+  const unmarkedCount = Math.max(0, _pmEvents.length - taggedEvents);
+  const editorSummary = _pmVfxEditorSummary();
+  const healthModel = localizePullPrepHealth(derivePullPrepHealth({
+    timelineCount: _pmEvents.length,
+    hasVideo,
+    markerCount,
+    linkedCount: linked,
+    taggedEventCount: taggedEvents,
+    trackedCount: editorSummary.tracked,
+    attentionCount,
+    overdueCount: editorSummary.overdue,
+    approvedCount: editorSummary.approved,
+    retimeCount,
+    resizeCount,
+    qcCount,
+    unmarkedCount,
+  }), window.PFX_getLang?.() || 'en');
+  const action = healthModel.action;
+
+  main.classList.toggle('pm-pro-has-timeline', hasTimeline);
+  main.classList.toggle('pm-pro-has-video', hasVideo);
+  main.classList.toggle('pm-pro-has-markers', markerCount > 0);
+
+  const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+  setText('pmProMediaState', hasTimeline ? `${_pmEvents.length} shots` : 'Add timeline');
+  setText('pmProReviewState', hasVideo ? (_pmActiveEventIdx >= 0 ? `Shot ${_pmActiveEventIdx + 1}` : 'Ready') : 'Add video');
+  setText('pmProMarkState', markerCount ? `${markerCount} marked` : '0 selected');
+  setText('pmProDeliverState', editorSummary.tracked
+    ? `${editorSummary.approved}/${editorSummary.tracked} approved`
+    : (orphanCount ? `${orphanCount} unmatched` : 'Not ready'));
+  setText('pmProListSummary', hasTimeline ? `${_pmEvents.length} edits · ${editorSummary.tracked} VFX · ${attentionCount} to check` : 'No timeline loaded');
+  setText('pmProMonitorTitle', _pmActiveEventIdx >= 0 ? (_pmEvents[_pmActiveEventIdx]?.reel || `Shot ${_pmActiveEventIdx + 1}`) : 'Reference review');
+  setText('pmProMonitorState', hasVideo ? 'Video ready' : 'No video');
+  setText('pmProNextKicker', action.kicker);
+  setText('pmProNextLabel', action.label);
+  setText('pmProCountAll', _pmEvents.length);
+  setText('pmProCountAttention', attentionCount);
+  setText('pmProCountRetime', retimeCount);
+  setText('pmProCountResize', resizeCount);
+  setText('pmProCountQc', qcCount);
+  setText('pmProCountDue', dueCount);
+  setText('pmProCountMarked', taggedEvents);
+  setText('pmProCountApproved', approvedCount);
+  setText('pmProCountUnmarked', unmarkedCount);
+  setText('pmProAttentionBadge', attentionCount);
+  setText('pmVeTracked', editorSummary.tracked);
+  setText('pmVeAttention', editorSummary.attention);
+  setText('pmVeOverdue', editorSummary.overdue);
+  setText('pmVeApproved', editorSummary.approved);
+
+  const attentionQueue = _pmProAttentionQueue();
+  const currentQueuePos = attentionQueue.findIndex(item => item.idx === _pmActiveEventIdx);
+  const nextIssue = attentionQueue.length
+    ? attentionQueue[(currentQueuePos + 1) % attentionQueue.length]
+    : null;
+  setText('pmProNextAttentionLabel', nextIssue ? 'Next issue' : 'Review complete');
+  setText('pmProNextAttentionReason', nextIssue ? `${nextIssue.shot} · ${nextIssue.reason}` : 'Nothing to review');
+  const nextAttentionButton = document.getElementById('pmProNextAttention');
+  if (nextAttentionButton) {
+    nextAttentionButton.disabled = !nextIssue;
+    nextAttentionButton.title = nextIssue
+      ? `Open ${nextIssue.shot}: ${nextIssue.reason}`
+      : 'No open review issues';
+  }
+
+  let priority = 'Import a timeline to begin';
+  if (hasTimeline && !editorSummary.tracked) priority = 'Mark the first VFX shot in the edit';
+  else if (editorSummary.overdue) priority = `${editorSummary.overdue} overdue shot${editorSummary.overdue === 1 ? '' : 's'} — review delivery dates`;
+  else if (editorSummary.firstAttention) {
+    const first = editorSummary.firstAttention;
+    priority = `${_pmVfxExplicitShotName(first.ev, first.idx) || first.ev?.reel || `Shot ${first.idx + 1}`} — ${first.issues[0]}`;
+  } else if (editorSummary.tracked) priority = `${editorSummary.approved}/${editorSummary.tracked} approved · prepare final delivery`;
+  setText('pmVePriority', priority);
+  const ribbon = document.getElementById('pmVfxEditorRibbon');
+  if (ribbon) ribbon.dataset.tone = editorSummary.overdue ? 'danger' : editorSummary.attention ? 'warn' : editorSummary.tracked ? 'good' : 'neutral';
+
+  const order = { timeline: 0, video: 0, review: 1, link: 2, 'vfx-attention': 2, export: 3 };
+  main.querySelectorAll('.pm-pro-step').forEach((step, index) => {
+    const current = order[action.key] ?? 0;
+    step.classList.toggle('is-complete', index < current || (index === 0 && hasTimeline && hasVideo));
+    step.classList.toggle('is-current', index === current);
+  });
+
+  const health = document.getElementById('pmProHealth');
+  if (health) {
+    health.dataset.tone = healthModel.tone;
+    health.dataset.blockers = String(healthModel.blockerCount);
+    health.title = `${healthModel.title}. ${healthModel.detail}`;
+  }
+  const nextButton = document.getElementById('pmProNextBtn');
+  if (nextButton) {
+    nextButton.dataset.tone = healthModel.tone;
+    nextButton.dataset.blockers = String(healthModel.blockerCount);
+    nextButton.setAttribute('aria-label', `${action.label}. ${healthModel.title}. ${healthModel.openItemsText}`);
+    nextButton.title = `${healthModel.title} — ${healthModel.detail}`;
+  }
+  setText('pmProHealthTitle', healthModel.title);
+  setText('pmProHealthDetail', healthModel.detail);
+  _pmApplyProListFilter();
+  _pmRenderVfxEditorDesk();
+}
+
+function _wireProWorkspace() {
+  const main = document.getElementById('main-prepmark');
+  const next = document.getElementById('pmProNextBtn');
+  if (!main || !next || next.dataset.wired === '1') return;
+  next.dataset.wired = '1';
+  _pmWirePanelDivider();
+  next.addEventListener('click', () => _pmRunProNextAction());
+  main.querySelectorAll('[data-pm-view]').forEach(btn => btn.addEventListener('click', () => _pmSetProView(btn.dataset.pmView)));
+  main.querySelectorAll('[data-pm-filter]').forEach(btn => btn.addEventListener('click', () => {
+    _pmProFilter = btn.dataset.pmFilter || 'all';
+    main.querySelectorAll('[data-pm-filter]').forEach(item => item.classList.toggle('is-active', item === btn));
+    btn.closest('details')?.removeAttribute('open');
+    _pmApplyProListFilter();
+  }));
+  main.querySelectorAll('[data-ve-filter]').forEach(btn => btn.addEventListener('click', () => {
+    _pmProFilter = btn.dataset.veFilter || 'attention';
+    main.querySelectorAll('[data-pm-filter]').forEach(item => item.classList.toggle('is-active', item.dataset.pmFilter === _pmProFilter));
+    _pmSetProView('list');
+    _pmApplyProListFilter();
+  }));
+  document.getElementById('pmProSearch')?.addEventListener('input', e => {
+    _pmProQuery = String(e.target.value || '').trim().toLowerCase();
+    _pmApplyProListFilter();
+  });
+  document.getElementById('pmProNextAttention')?.addEventListener('click', _pmProJumpNextAttention);
+  main.querySelectorAll('.pm-pro-step').forEach(step => step.addEventListener('click', () => {
+    const key = step.dataset.step;
+    if (key === 'media') _pmRunProNextAction({ key: _pmEvents.length ? 'video' : 'timeline' });
+    if (key === 'review') _pmRunProNextAction({ key: 'review' });
+    if (key === 'mark') _pmProJumpNextAttention();
+    if (key === 'deliver') _pmRunProNextAction({ key: 'export' });
+  }));
+  document.addEventListener('keydown', e => {
+    if (!(e.metaKey && e.key === 'Enter') || main.offsetParent == null) return;
+    const tag = e.target?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    e.preventDefault();
+    _pmRunProNextAction();
+  });
+  pmVideo?.addEventListener('loadedmetadata', _pmUpdateProWorkspace);
+  pmVideo?.addEventListener('emptied', _pmUpdateProWorkspace);
+  window.addEventListener('pfx:languagechange', _pmUpdateProWorkspace);
+  let lastSignature = '';
+  window.setInterval(() => {
+    if (main.offsetParent == null) return;
+    const signature = `${_pmEvents.length}|${_pmClipMarkers.length}|${_pmLinkMap.size}|${_pmActiveEventIdx}|${_pmProHasVideo()}`;
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    _pmUpdateProWorkspace();
+  }, 500);
+  let initial = 'split';
+  try { initial = localStorage.getItem(_PM_PRO_VIEW_KEY) || 'split'; } catch {}
+  _pmSetProView(initial, false);
+  _pmUpdateProWorkspace();
+}
+
 function _pmForcePreviewVisible(reason = '') {
   _pmPreviewSuppressDepth = 0;
   const video = pmVideo || document.getElementById('pmVideo');
@@ -1248,6 +2143,7 @@ window.PFX_exportPullPrepState = function exportPullPrepState() {
     clipMarkers: _pmSerializableClipMarkers(),
     shotStatus: _pmObjectFromMap(_pmStatusMap),
     eventMeta: _pmObjectFromMap(_pmMetaMap),
+    vfxEditor: _pmObjectFromMap(_pmVfxEditorMap),
     annotations: _pmSerializableAnnotations(),
     video: {
       zeroAbsF: Number.isFinite(_pmVideoZeroAbsF) ? _pmVideoZeroAbsF : null,
@@ -1260,6 +2156,7 @@ window.PFX_exportPullPrepState = function exportPullPrepState() {
     prepMark.clipMarkers.length ||
     Object.keys(prepMark.shotStatus).length ||
     Object.keys(prepMark.eventMeta).length ||
+    Object.keys(prepMark.vfxEditor).length ||
     Object.keys(prepMark.annotations).length
   );
   if (!raw && !media && !hasContent) return null;
@@ -1283,7 +2180,7 @@ window.PFX_applyPullPrepState = function applyPullPrepState(state) {
       if (Array.isArray(prepMark.clipMarkers)) {
         const cleaned = prepMark.clipMarkers.map(mk => {
           const { _thumbCapturing, _thumbError, ...rest } = mk || {};
-          return { thumb: '', thumbAnn: '', annoStrokes: null, ...rest };
+          return _pmNormalizeStoredVfxMarker({ thumb: '', thumbAnn: '', annoStrokes: null, ...rest });
         });
         _pmClipMarkers = cleaned;
         localStorage.setItem(_lsKey('clipMarkers.v2'), JSON.stringify(_pmSerializableClipMarkers()));
@@ -1296,8 +2193,13 @@ window.PFX_applyPullPrepState = function applyPullPrepState(state) {
     } catch {}
     try {
       _pmMetaMap.clear();
-      for (const [k, v] of Object.entries(prepMark.eventMeta || {})) _pmMetaMap.set(k, v);
-      localStorage.setItem(_lsKey('eventMeta.v1'), JSON.stringify(prepMark.eventMeta || {}));
+      for (const [k, v] of Object.entries(prepMark.eventMeta || {})) _pmMetaMap.set(k, _pmNormalizeStoredEventMeta(v));
+      localStorage.setItem(_lsKey('eventMeta.v1'), JSON.stringify(_pmObjectFromMap(_pmMetaMap)));
+    } catch {}
+    try {
+      _pmVfxEditorMap.clear();
+      for (const [k, v] of Object.entries(prepMark.vfxEditor || {})) _pmVfxEditorMap.set(k, v);
+      localStorage.setItem(_lsKey('vfxEditorDesk.v1'), JSON.stringify(prepMark.vfxEditor || {}));
     } catch {}
     try {
       _pmAnnotMap.clear();
@@ -1352,9 +2254,16 @@ window._pfxGetVfxShotList = function () {
       const hasSpeed = !!(ev?._pmRetime || ev?._pmRetimeAuto ||
         (Array.isArray(ev?.speedKeys) && ev.speedKeys.length > 0));
       const hasReframe = !!(ev?.resize?.width || ev?.reformatName || ev?.resizeMode);
+      // shotName is the CONFIRMED VFX name only (from a marker / template /
+      // OCR). Do NOT fall back to the raw OCF/camera clip name here — that
+      // masks unnamed rows as if they had a real shot name. clipName is kept
+      // separately as a last-resort display hint; needsOcr flags rows that
+      // have a marker but no name yet (OCR hasn't run or failed).
+      const _shotName = String(mk0.shotName || '').trim();
       return {
         eventIndex: i,
-        shotName:   String(mk0.shotName || ev?.clipName || '').trim(),
+        shotName:   _shotName,
+        needsOcr:   !_shotName,
         clipName:   String(ev?.clipName || ev?.reel || '').trim(),
         recIn: ev?.recIn || '', recOut: ev?.recOut || '',
         srcIn: ev?.srcIn || '', srcOut: ev?.srcOut || '',
@@ -1577,6 +2486,7 @@ function _pmClear() {
   _pmClipMatchMap.clear();
   _pmStatusMap.clear();
   _pmMetaMap.clear();
+  _pmVfxEditorMap.clear();
   _pmAnnotMap.clear();
   _pmAnnotImgCache.clear();
   _pmAleMap.clear();
@@ -1836,6 +2746,7 @@ export function initPrepMark() {
   try { _wireControls();         } catch(e) { console.warn('[PM] _wireControls failed', e); }
   try { _wireKeyboard();         } catch(e) { console.warn('[PM] _wireKeyboard failed', e); }
   try { _wireExport();           } catch(e) { console.warn('[PM] _wireExport failed', e); }
+  try { _wireToolsMenu();        } catch(e) { console.warn('[PM] _wireToolsMenu failed', e); }
   try { _wireTimeline();         } catch(e) { console.warn('[PM] _wireTimeline failed', e); }
   try { _wireQsRow();            } catch(e) { console.warn('[PM] _wireQsRow failed', e); }
   try { _wireAnnotations();      } catch(e) { console.warn('[PM] _wireAnnotations failed', e); }
@@ -1853,6 +2764,7 @@ export function initPrepMark() {
   try { _wirePmVidAnnotate();   } catch(e) { console.warn('[PM] _wirePmVidAnnotate failed', e); }
   try { _wirePmQuickAnnotate(); } catch(e) { console.warn('[PM] _wirePmQuickAnnotate failed', e); }
   try { _wireVfxWorkspace();    } catch(e) { console.warn('[PM] _wireVfxWorkspace failed', e); }
+  try { _wireProWorkspace();    } catch(e) { console.warn('[PM] _wireProWorkspace failed', e); }
   // Listen for EDL updates from Pull Prep
   window.addEventListener('mps:edl-timeline-updated', () => {
     try { _pmRefreshData(); } catch {}
@@ -1892,6 +2804,29 @@ export function initPrepMark() {
 
   // Column resize
   _pmInitColResize();
+}
+
+// Keep specialist actions discoverable without permanently crowding the NLE
+// toolbar. The command itself still uses the original button ID/listener; this
+// wrapper only manages one predictable menu surface.
+function _wireToolsMenu() {
+  const menu = document.getElementById('pmToolsMenu');
+  if (!menu || menu.dataset.wired === '1') return;
+  menu.dataset.wired = '1';
+
+  menu.addEventListener('click', (event) => {
+    if (!event.target.closest('.pm-tools-item')) return;
+    queueMicrotask(() => { menu.open = false; });
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && menu.open) {
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+    }
+  });
 }
 
 // ─── Column resize ────────────────────────────────────────────────────────────
@@ -2021,7 +2956,17 @@ function _pmLoadProjectData() {
     const raw = localStorage.getItem(_lsKey('eventMeta.v1'));
     if (raw) {
       const obj = JSON.parse(raw);
-      for (const [k, v] of Object.entries(obj)) _pmMetaMap.set(k, v);
+      for (const [k, v] of Object.entries(obj)) _pmMetaMap.set(k, _pmNormalizeStoredEventMeta(v));
+    }
+  } catch {}
+
+  // Smart VFX Editor control data (version, stage, delivery, QC and handoffs)
+  _pmVfxEditorMap.clear();
+  try {
+    const raw = localStorage.getItem(_lsKey('vfxEditorDesk.v1'));
+    if (raw) {
+      const obj = JSON.parse(raw);
+      for (const [k, v] of Object.entries(obj)) _pmVfxEditorMap.set(k, v);
     }
   } catch {}
 
@@ -2034,8 +2979,9 @@ function _pmLoadProjectData() {
       // _thumbError / _thumbCapturing must never survive a reload — a stale error
       // permanently blocks auto-capture until the user manually clicks retry.
       const { _thumbCapturing, _thumbError, ...rest } = mk;
-      return { thumb: '', thumbAnn: '', annoStrokes: null, ...rest };
+      return _pmNormalizeStoredVfxMarker({ thumb: '', thumbAnn: '', annoStrokes: null, ...rest });
     });
+    localStorage.setItem(_lsKey('clipMarkers.v2'), JSON.stringify(_pmSerializableClipMarkers()));
   } catch { _pmClipMarkers = []; }
 
   // Annotations
@@ -2423,6 +3369,7 @@ async function _pmRefreshData() {
   const linked = _pmLinkMap.size;
   if (pmCtxLinked) pmCtxLinked.textContent = `${linked} linked`;
 
+  try { _pmUpdateProWorkspace(); } catch(e) { console.warn('[PM] _pmUpdateProWorkspace failed', e); }
   try { _pmSlyRefresh();    } catch(e) { console.warn('[PM] _pmSlyRefresh failed', e); }
   try { _pmUpdateMkRail(); } catch(e) { console.warn('[PM] _pmUpdateMkRail failed', e); }
 }
@@ -3233,11 +4180,28 @@ function _pmSyncShotNameAcrossMarkerStores(markerIds, text, ocrMeta = null, sour
       if (touchedRefs.has(mk)) continue;
       touchedRefs.add(mk);
       const oldName = mk.shotName || mk.name || mk.label || '';
+      const nameChanged = canonicalVfxName(oldName) !== canonicalVfxName(text);
       mk.shotName = text;
       if (Object.prototype.hasOwnProperty.call(mk, 'name')) mk.name = text;
       if (Object.prototype.hasOwnProperty.call(mk, 'label')) mk.label = text;
       if (Object.prototype.hasOwnProperty.call(mk, 'title')) mk.title = text;
       if (Object.prototype.hasOwnProperty.call(mk, 'displayName')) mk.displayName = text;
+      if (nameChanged) {
+        const automated = ['auto', 'auto-dedupe', 'ai', 'ocr', 'template'].includes(source);
+        mk._pmNameSource = source || 'manual';
+        if (automated) {
+          mk._pmNameReview = 'pending';
+          mk._pmNameSuggested = text;
+          delete mk._pmNameReviewedAt;
+          delete mk._pmNameReviewedBy;
+          delete mk._pmShotLocked;
+        } else {
+          mk._pmNameReview = 'approved';
+          mk._pmNameReviewedAt = new Date(renamedAt).toISOString();
+          mk._pmNameReviewedBy = _pmCurrentVfxReviewer();
+          delete mk._pmNameSuggested;
+        }
+      }
       if (source === 'ocr') {
         mk._ocrHistory = mk._ocrHistory || [];
         mk._ocrHistory.push({
@@ -3268,12 +4232,26 @@ function _pmCommitShotNameChange({
   expandEventMarkers = true,
   markerNameMode = null,
   notifyLocked = false,
+  snapshot = true,
 } = {}) {
-  const text = String(name || '').trim();
-  if (!text) return { ok: false, reason: 'empty', applied: [], touchedEi: [] };
+  const requestedText = String(name || '').trim();
+  if (!requestedText) return { ok: false, reason: 'empty', applied: [], touchedEi: [] };
+
+  const excludedEi = new Set((eventIndices || []).map(Number).filter(Number.isFinite));
+  for (const markerId of markerIds || []) {
+    const mk = _pmResolveMarkerById(markerId);
+    const ei = _pmLinkMap.get(markerId) ?? _pmLinkMap.get(Number(markerId)) ?? mk?._eventIdx ?? -1;
+    if (Number(ei) >= 0) excludedEi.add(Number(ei));
+  }
+  const text = nextUniqueVfxName(requestedText, _pmVfxOccupiedNames([...excludedEi]), { step: 10, pad: 3 });
+  const deduped = canonicalVfxName(text) !== canonicalVfxName(requestedText);
+  const commitSource = deduped && source === 'manual' ? 'auto-dedupe' : source;
+  if (deduped && source === 'manual') {
+    _pmToast(`“${requestedText}” is already used. Suggested ${text} for review.`, 'info', 3200);
+  }
 
   // ── Unified undo snapshot ─────────────────────────────────────────────────
-  _pmSlySnapshot(`Shot: ${String(name || '').trim().slice(0, 24)}`);
+  if (snapshot) _pmSlySnapshot(`Shot: ${text.slice(0, 24)}`);
 
   const touchedEi = new Set();
   const allMarkerIds = new Set();
@@ -3315,7 +4293,7 @@ function _pmCommitShotNameChange({
   }
 
   if (!allMarkerIds.size && !touchedEi.size) {
-    if (notifyLocked && lockedMarkers.length) _pmNotifyShotNameLocked(lockedMarkers, { source });
+    if (notifyLocked && lockedMarkers.length) _pmNotifyShotNameLocked(lockedMarkers, { source: commitSource });
     return { ok: false, reason: lockedMarkers.length ? 'locked' : 'noop', applied: [], touchedEi: [], lockedMarkerIds: [...lockedMarkerIds] };
   }
 
@@ -3325,7 +4303,7 @@ function _pmCommitShotNameChange({
   }
 
   const applied = [];
-  const syncedMarkerIds = _pmSyncShotNameAcrossMarkerStores([...allMarkerIds], text, ocrMeta, source);
+  const syncedMarkerIds = _pmSyncShotNameAcrossMarkerStores([...allMarkerIds], text, ocrMeta, commitSource);
   for (const markerId of syncedMarkerIds) {
     const mk = _pmClipMarkers.find(m => String(m.id) === String(markerId))
       || (_pmMarkers || []).find(m => String(m?.id) === String(markerId))
@@ -3343,6 +4321,9 @@ function _pmCommitShotNameChange({
     if (!_pmEvents[ei]) continue;
     _pmEvents[ei]._pmShot = text;
     _pmEvents[ei].shotName = text;
+    const automated = ['auto', 'auto-dedupe', 'ai', 'ocr', 'template'].includes(commitSource);
+    _pmEvents[ei]._pmNameReview = automated ? 'pending' : 'approved';
+    _pmEvents[ei]._pmNameSource = commitSource || 'manual';
   }
 
   for (const ei of touchedEi) {
@@ -3386,23 +4367,23 @@ function _pmCommitShotNameChange({
   _pmUpdateInfoRail();
 
   if (applied.length && window.PFX_SWI?.renameByMarkerIds) {
-    const renameMeta = source === 'ocr'
+    const renameMeta = commitSource === 'ocr'
       ? {
-          source,
+          source: commitSource,
           rawText: ocrMeta?.rawText || '',
           confidence: ocrMeta?.confidence ?? null,
           region: ocrMeta?.region || '',
           detectionMode: ocrMeta?.detectionMode || 'vfxShotName',
         }
-      : { source };
+      : { source: commitSource };
     window.PFX_SWI.renameByMarkerIds(applied, text, renameMeta).catch(err => {
       console.warn('[PM] SWI shot rename sync failed', err);
     });
   }
 
-  if (notifyLocked && lockedMarkers.length) _pmNotifyShotNameLocked(lockedMarkers, { source });
+  if (notifyLocked && lockedMarkers.length) _pmNotifyShotNameLocked(lockedMarkers, { source: commitSource });
 
-  return { ok: true, text, applied, touchedEi: [...touchedEi], renderEi, lockedMarkerIds: [...lockedMarkerIds] };
+  return { ok: true, text, requestedText, deduped, source: commitSource, applied, touchedEi: [...touchedEi], renderEi, lockedMarkerIds: [...lockedMarkerIds] };
 }
 
 // Undo the most recent shot name rename committed via _pmCommitShotNameChange.
@@ -3469,8 +4450,8 @@ function _pmRenderEventTable() {
       pmEventEmpty.style.display = 'flex';
       const t = pmEventEmpty.querySelector('.pm-drop-hint-title');
       const s = pmEventEmpty.querySelector('.pm-drop-hint-sub');
-      if (t) t.textContent = 'Drop EDL / FCPXML / OTIO / ALE';
-      if (s) s.textContent = 'or use the Import button above';
+      if (t) t.textContent = 'Add your timeline';
+      if (s) s.textContent = 'Drop EDL, FCPXML, OTIO, ALE or AAF here';
     }
     if (pmCovStats) pmCovStats.textContent = '';
     const _strip0 = pmTlWrap?.parentElement;
@@ -3643,12 +4624,17 @@ function _pmRenderEventTable() {
         : !!(ev._pmShot || linkedMks[0]?.shotName);        // default: explicit shot only
     const isSkipped      = _pmEventActionsDisabled(ev);
     const isDisabledClip = !!(ev.disabled);  // clip disabled/muted in original timeline
+    // Needs-OCR: the event has a linked VFX marker but no confirmed shot name
+    // yet (OCR hasn't run or failed → we do NOT silently show the camera clip
+    // name as a real name). Surfaced as a visible row state the user can act on.
+    const needsOcr = _pmQs('vfxmarker') && linkCount > 0 && !linkedMks[0]?.shotName && !ev._pmShot;
     const rowClass = [
       'pm-row',
       isActive        ? 'pm-row-active'        : '',
       isSel           ? 'pm-row-selected'      : '',
       linkCount       ? 'pm-row-has-mk'        : '',
       hasName         ? 'pm-row-named'         : '',
+      needsOcr        ? 'pm-row-needs-ocr'     : '',
       isSkipped       ? 'pm-row-skipped'       : '',
       isDisabledClip  ? 'pm-row-disabled-clip' : '',
       diffChanged ? `pm-row-diff pm-row-diff-${diffType.toLowerCase()}` : '',
@@ -3672,6 +4658,15 @@ function _pmRenderEventTable() {
     const diffRiskBadge = diffChanged && (diffRisk === 'high' || diffRisk === 'med')
       ? `<span class="pm-diff-risk-badge pm-diff-risk-badge-${diffRisk}" title="${diffRisk === 'high' ? 'High' : 'Medium'} review suggested">${diffRisk === 'high' ? '⚠' : '!'}</span>`
       : '';
+    const vfxEditorState = _pmVfxEditorIssues(ev, i);
+    const vfxEditorRowHtml = linkCount > 0
+      ? `<span class="pm-ve-row pm-ve-row-${vfxEditorState.profile.stage}${vfxEditorState.attention ? ' needs-attention' : ''}" title="${esc(vfxEditorState.attention ? vfxEditorState.issues.join('\n') : 'VFX shot is ready for the next handoff')}"><b>${esc(vfxEditorState.profile.version || 'NO VER')}</b><span>${_PM_VE_STAGE_LABELS[vfxEditorState.profile.stage]}</span>${vfxEditorState.attention ? '<i>!</i>' : ''}</span>`
+      : '';
+    const vfxNameReviewHtml = linkCount > 0 && vfxEditorState.nameReview?.duplicate
+      ? '<span class="pm-name-review-badge is-duplicate" title="This VFX name is already used by another timeline event">DUPLICATE</span>'
+      : linkCount > 0 && vfxEditorState.nameReview?.pending
+        ? '<span class="pm-name-review-badge is-pending" title="Automatically suggested — review and approve in VFX Shot Control">REVIEW</span>'
+        : '';
 
     // CONFORM_ANALYSIS chip — shown for .prproj events (CornerCut-style per-clip analysis)
     const ppAnalysis = ev.sourceType === 'prproj' ? (() => {
@@ -3696,21 +4691,21 @@ function _pmRenderEventTable() {
       <td class="pm-col-reel${reelFixed ? ' pm-ale-fixed' : ''}" title="${reelFixed ? `ALE corrected: ${esc(aleMeta.Tape)} (EDL: ${esc(reelNorm)})` : esc(reelNorm)}${ev.clipName ? `\n${esc(ev.clipName)}` : ''}${aleComment ? `\n💬 ${esc(aleComment)}` : ''}">${esc(reelDisp)}${aleMeta ? '<span class="pm-ale-dot"></span>' : ''}${ppAnalysis}${diffBadge}${diffRiskBadge}${trBadge}${skipBadge}${disBadge}</td>
       <td class="pm-col-tc">${esc(ev.srcIn || '—')}</td>
       <td class="pm-col-dur">${dur}f</td>
-      <td class="pm-col-shot"><input class="pm-shot-input${shotLocked ? ' is-locked' : ''}" data-i="${i}" value="${displayShot}" placeholder="type shot name…" title="${shotLocked ? 'Shot name locked — unlock it in the layer inspector to edit' : 'VFX shot name — type here and press Enter to save'}" autocomplete="off" spellcheck="false" ${shotColor ? `style="color:${shotColor}"` : ''} ${isSkipped ? 'disabled' : ''} ${shotLocked ? 'readonly aria-readonly="true"' : ''}>${!isSkipped && !displayShot && !shotLocked ? `<button class="pm-shot-ai-btn" data-i="${i}" tabindex="-1" title="AI suggest shot name">✦</button>` : ''}${!isSkipped ? (() => { const h = ev._pmAiVfxHint; if (h?.needsVfx) { const src = h.source === 'claude' ? 'Claude vision' : 'heuristic'; const conf = h.confidence != null ? ` · ${h.confidence}%` : ''; const tip = esc(`Needs VFX · ${h.type} · ${src}${conf}\n${h.note || ''}\nClick to clear`); return `<span class="pm-vfx-hint pm-vfx-hint--yes" data-i="${i}" title="${tip}">VFX${h.confidence != null ? `<sub style="font-size:7px;opacity:.7">${h.confidence}%</sub>` : ''}</span>`; } return `<button class="pm-vfx-scan-btn" data-i="${i}" tabindex="-1" title="Scan this shot for VFX indicators">🎬</button>`; })() : ''}</td>
+      <td class="pm-col-shot"><input class="pm-shot-input${shotLocked ? ' is-locked' : ''}" data-i="${i}" value="${displayShot}" placeholder="${needsOcr && ev.clipName ? `needs OCR — ${esc(ev.clipName)}` : linkCount ? 'type shot name…' : 'mark VFX to suggest a name…'}" title="${shotLocked ? 'Shot name locked — unlock it in the layer inspector to edit' : needsOcr ? `No confirmed shot name yet — run OCR or type one.${ev.clipName ? `\nCamera clip: ${esc(ev.clipName)}` : ''}` : linkCount ? 'VFX shot name — type here and press Enter to save' : 'Click Mark VFX (+) to create one unique suggested name, then review it'}" autocomplete="off" spellcheck="false" ${shotColor ? `style="color:${shotColor}"` : ''} ${isSkipped ? 'disabled' : ''} ${shotLocked ? 'readonly aria-readonly="true"' : ''}>${vfxNameReviewHtml}${vfxEditorRowHtml}${needsOcr ? `<span class="pm-needs-ocr-badge" data-i="${i}" title="This shot has a VFX marker but no confirmed name. Run OCR on the slate or type a name.">NEEDS OCR</span>` : ''}${!isSkipped ? (() => { const h = ev._pmAiVfxHint; if (h?.needsVfx) { const src = h.source === 'claude' ? 'Claude vision' : 'heuristic'; const conf = h.confidence != null ? ` · ${h.confidence}%` : ''; const tip = esc(`Needs VFX · ${h.type} · ${src}${conf}\n${h.note || ''}\nClick to clear`); return `<span class="pm-vfx-hint pm-vfx-hint--yes" data-i="${i}" title="${tip}">VFX${h.confidence != null ? `<sub style="font-size:7px;opacity:.7">${h.confidence}%</sub>` : ''}</span>`; } return `<button class="pm-vfx-scan-btn" data-i="${i}" tabindex="-1" title="Scan this shot for VFX indicators">🎬</button>`; })() : ''}</td>
       <td class="pm-col-rt" >${isSkipped ? '' : (() => {
         const rtEffective = ev._pmRetime === true || (ev._pmRetime == null && !!ev._pmRetimeAuto);
         const rtAutoStr   = ev._pmRetimeAuto && ev._pmSpeedDisplay ? ` · auto: ${ev._pmSpeedDisplay}` : ev._pmRetimeAuto ? ' · auto-detected' : '';
         const rtUserStr   = ev._pmRetime === true ? ' · user ON' : ev._pmRetime === false ? ' · user OFF' : '';
         const rtTip = `Retime${rtAutoStr}${rtUserStr}\nClick to toggle · click again to restore auto`;
-        return `<span class="pm-flag-chip pm-flag-rt${rtEffective ? ' active' : ''}${ev._pmRetimeAuto ? ' auto-badge' : ''}" data-i="${i}" data-flag="retime" title="${esc(rtTip)}">RT</span>`;
+        return `<button type="button" class="pm-flag-chip pm-flag-rt${rtEffective ? ' active' : ''}${ev._pmRetimeAuto ? ' auto-badge' : ''}" data-i="${i}" data-flag="retime" aria-pressed="${rtEffective ? 'true' : 'false'}" title="${esc(rtTip)}">RT</button>`;
       })()}</td>
-      <td class="pm-col-st" >${isSkipped ? '' : `<span class="pm-flag-chip pm-flag-st${ev._pmStabilize ? ' active' : ''}" data-i="${i}" data-flag="stabilize" title="Stabilize">ST</span>`}</td>
+      <td class="pm-col-st" >${isSkipped ? '' : `<button type="button" class="pm-flag-chip pm-flag-st${ev._pmStabilize ? ' active' : ''}" data-i="${i}" data-flag="stabilize" aria-pressed="${ev._pmStabilize ? 'true' : 'false'}" title="Stabilize">ST</button>`}</td>
       <td class="pm-col-rs" >${isSkipped ? '' : (() => {
         const rsEffective = ev._pmResize === true || (ev._pmResize == null && !!ev._pmResizeAuto);
         const rsAutoStr   = ev._pmResizeAuto && ev._pmTransformDisplay ? ` · auto: ${ev._pmTransformDisplay}` : ev._pmResizeAuto ? ' · auto-detected' : '';
         const rsUserStr   = ev._pmResize === true ? ' · user ON' : ev._pmResize === false ? ' · user OFF' : '';
         const rsTip = `Resize/Transform${rsAutoStr}${rsUserStr}\nClick to toggle · click again to restore auto`;
-        return `<span class="pm-flag-chip pm-flag-rs${rsEffective ? ' active' : ''}${ev._pmResizeAuto ? ' auto-badge' : ''}" data-i="${i}" data-flag="resize" title="${esc(rsTip)}">RS</span>`;
+        return `<button type="button" class="pm-flag-chip pm-flag-rs${rsEffective ? ' active' : ''}${ev._pmResizeAuto ? ' auto-badge' : ''}" data-i="${i}" data-flag="resize" aria-pressed="${rsEffective ? 'true' : 'false'}" title="${esc(rsTip)}">RS</button>`;
       })()}</td>
       <td class="pm-col-hdl">${isSkipped ? '' : (() => {
         const hdlVal  = ev._pmHandle ?? '';
@@ -3731,7 +4726,7 @@ function _pmRenderEventTable() {
         return `<input class="${hdlCls}" data-i="${i}" value="${hdlVal}" placeholder="${hdlPh}" type="number" min="0" max="999" title="${esc(hdlTip)}">`;
       })()}</td>
       <td class="pm-col-link">${isSkipped ? '' : linkHtml + clipMatchBadge}</td>
-      <td class="pm-col-mk-add">${isSkipped ? '' : `${rmBtn}<button class="pm-mk-add-btn" data-i="${i}" title="Add VFX layer for this event">+</button>`}</td>
+      <td class="pm-col-mk-add">${isSkipped ? '' : `${rmBtn}<button class="pm-mk-add-btn" data-i="${i}" title="${linkCount ? 'Add another VFX layer' : 'Mark VFX shot — suggest one unique name for review'}" aria-label="${linkCount ? 'Add another VFX layer' : 'Mark VFX shot and suggest a unique name'}">+</button>`}</td>
     </tr>`;
   });
 
@@ -3837,6 +4832,7 @@ function _pmRenderEventTable() {
           if (_pmSelectedMarkerId === mkId) _pmRenderInspector(i);
         }
         if (_markerUpdated) _pmSaveClipMarkers();
+        _pmUpdateProWorkspace();
         window.MPS_markProjectDirty?.();
         return;
       }
@@ -3902,21 +4898,6 @@ function _pmRenderEventTable() {
         return;
       }
 
-      // .pm-shot-ai-btn — inline AI shot name suggestion
-      const aiShotBtn = e.target.closest('.pm-shot-ai-btn');
-      if (aiShotBtn) {
-        const i = parseInt(aiShotBtn.dataset.i, 10);
-        if (!Number.isFinite(i) || !_pmEvents[i]) return;
-        const ev = _pmEvents[i];
-        const suggested = _pmAutoShotName(ev, i);
-        if (!suggested) return;
-        ev._pmShot = suggested;
-        _pmSaveMeta(ev);
-        window.MPS_markProjectDirty?.();
-        _pmRenderEventTable();
-        return;
-      }
-
       // .pm-vfx-scan-btn — per-row AI frame scan for VFX work
       const vfxScanBtn = e.target.closest('.pm-vfx-scan-btn');
       if (vfxScanBtn) {
@@ -3938,7 +4919,7 @@ function _pmRenderEventTable() {
       }
 
       // .pm-row — seek / sync / vfx-marker (skip if click originated on a handled child)
-      if (e.target.closest('.pm-shot-input, .pm-status, .pm-mk-add-btn, .pm-flag-chip, .pm-hdl-input, .pm-shot-ai-btn, .pm-vfx-scan-btn, .pm-vfx-hint')) return;
+      if (e.target.closest('.pm-shot-input, .pm-status, .pm-mk-add-btn, .pm-flag-chip, .pm-hdl-input, .pm-shot-ai-btn, .pm-vfx-scan-btn, .pm-vfx-hint, .pm-name-review-badge')) return;
       const row = e.target.closest('.pm-row');
       if (!row) return;
       const i = parseInt(row.dataset.i, 10);
@@ -3978,7 +4959,7 @@ function _pmRenderEventTable() {
     // (with debounce), so we skip it here to avoid a duplicate call.
     pmEventBody.addEventListener('dblclick', (e) => {
       if (_pmQs('vfxmarker')) return;
-      if (e.target.closest('.pm-shot-input, .pm-status, .pm-mk-add-btn, .pm-flag-chip, .pm-hdl-input, .pm-shot-ai-btn, .pm-vfx-scan-btn, .pm-vfx-hint')) return;
+      if (e.target.closest('.pm-shot-input, .pm-status, .pm-mk-add-btn, .pm-flag-chip, .pm-hdl-input, .pm-shot-ai-btn, .pm-vfx-scan-btn, .pm-vfx-hint, .pm-name-review-badge')) return;
       const row = e.target.closest('.pm-row');
       if (!row) return;
       const i = parseInt(row.dataset.i, 10);
@@ -4120,9 +5101,11 @@ function _pmSaveMeta(ev) {
     stabilize:  ev._pmStabilize  != null ? ev._pmStabilize  : null,
     resize:     ev._pmResize     != null ? ev._pmResize     : null,
     vfxHint:    ev._pmAiVfxHint  != null ? ev._pmAiVfxHint  : null,
+    nameReview: ev._pmNameReview != null ? ev._pmNameReview : null,
+    nameSource: ev._pmNameSource != null ? ev._pmNameSource : null,
   };
   // Remove empty entries to keep storage small
-  if (!meta.shot && meta.handle == null && meta.retime == null && meta.stabilize == null && meta.resize == null && meta.vfxHint == null) {
+  if (!meta.shot && meta.handle == null && meta.retime == null && meta.stabilize == null && meta.resize == null && meta.vfxHint == null && meta.nameReview == null && meta.nameSource == null) {
     _pmMetaMap.delete(key);
   } else {
     _pmMetaMap.set(key, meta);
@@ -4140,24 +5123,39 @@ function _pmSaveMeta(ev) {
 function _pmExtractSpeedPercent(ev) {
   if (!ev) return null;
 
+  // A bare numeric field is only trusted as a speed when it lands in a sane
+  // retime range. Resolve OTIO can legitimately contain extreme overcranks
+  // (the BLR test timeline carries LinearTimeWarp 16.08x = 1608%). Keep a
+  // generous sanity ceiling so those shots retain frame-accurate OCF mapping,
+  // while still rejecting obvious frame-count leakage.
+  const PM_SPEED_MIN = 1;      // 1% (extreme slow-mo floor)
+  const PM_SPEED_MAX = 100000; // 1000×; above this is almost certainly corrupt metadata
   const normalizePct = (value) => {
     if (value == null || value === '') return null;
     const n = Number(value);
     if (!Number.isFinite(n)) return null;
     const abs = Math.abs(n);
-    if (abs > 0 && abs <= 10) return n * 100;
-    return n;
+    if (abs === 0) return null;
+    const pct = abs <= 10 ? n * 100 : n;
+    const pctAbs = Math.abs(pct);
+    if (pctAbs < PM_SPEED_MIN || pctAbs > PM_SPEED_MAX) return null; // misparsed frame count / garbage
+    return pct;
   };
 
+  const boundPct = (p) => {
+    if (p == null || !Number.isFinite(p)) return null;
+    const a = Math.abs(p);
+    return (a >= PM_SPEED_MIN && a <= PM_SPEED_MAX) ? p : null;
+  };
   const parseTextPct = (text) => {
     if (!text) return null;
     const s = String(text);
     let m = s.match(/(\d+(?:\.\d+)?)\s*%/);
-    if (m) return parseFloat(m[1]);
+    if (m) return boundPct(parseFloat(m[1]));
     m = s.match(/speed[_\s-]*(\d+(?:\.\d+)?)/i);
-    if (m) return parseFloat(m[1]);
+    if (m) return boundPct(parseFloat(m[1]));
     m = s.match(/(\d+(?:\.\d+)?)x/i);
-    if (m) return parseFloat(m[1]) * 100;
+    if (m) return boundPct(parseFloat(m[1]) * 100);
     return null;
   };
 
@@ -4334,6 +5332,22 @@ function _pmApplyMetaToEvents() {
     if (meta.stabilize != null) ev._pmStabilize = meta.stabilize;
     if (meta.resize    != null) ev._pmResize    = meta.resize;
     if (meta.vfxHint   != null) ev._pmAiVfxHint = meta.vfxHint;
+    if (meta.nameReview != null) ev._pmNameReview = meta.nameReview;
+    if (meta.nameSource != null) ev._pmNameSource = meta.nameSource;
+  }
+}
+
+function _pmClearManualMetaFromEvents() {
+  for (const ev of _pmEvents) {
+    if (!ev) continue;
+    delete ev._pmShot;
+    delete ev._pmHandle;
+    delete ev._pmRetime;
+    delete ev._pmStabilize;
+    delete ev._pmResize;
+    delete ev._pmNameReview;
+    delete ev._pmNameSource;
+    delete ev._pmAiVfxHint;
   }
 }
 
@@ -4391,6 +5405,7 @@ function _pmSetActiveRow(idx) {
   }
   _pmUpdateBanner(idx);
   _pmAnnotDraw();
+  try { _pmUpdateProWorkspace(); } catch {}
 }
 
 // ─── Now-playing banner — updates the strip below the video ──────────────────
@@ -4706,7 +5721,8 @@ let _pmConfRefreshMs = 0; // throttle: update confidence display every 2s during
 function _pmStartPlayRaf() {
   if (_pmPlayRafId) return;
   const loop = (ts) => {
-    if (!pmVideo || pmVideo.paused || pmVideo.ended) {
+    const nativePlaying = !!pmVideo?._pfxNativeEngine?.isPlaying;
+    if (!pmVideo || (!nativePlaying && (pmVideo.paused || pmVideo.ended))) {
       _pmPlayRafId = 0;
       _pmSyncFrame();
       try { window.__pmUpdateSyncDisplay?.(); } catch {} // final display refresh on stop
@@ -5177,7 +6193,8 @@ async function _pmCaptureThumbnailNative(mk, onDone, attempt = 0) {
   const _captureProjectKey = _pmCurrentProjectKey;
   const _captureAssetId    = _pmNativeAssetId;
   const ownAssetId = _pmNativeAssetId;
-  if (!_pmNativeAssetId || !thumbTc) {
+  const directEngine = pmVideo?._pfxNativeEngine;
+  if ((!_pmNativeAssetId && !directEngine) || !thumbTc) {
     console.warn('[PM] grabThumb skipped: assetId=', _pmNativeAssetId, 'tc=', thumbTc);
     if (onDone) onDone();
     return;
@@ -5189,9 +6206,73 @@ async function _pmCaptureThumbnailNative(mk, onDone, attempt = 0) {
   const isSeqFallback = mk.tcIn === mk.recIn;
   console.log('[PM] grabThumb assetId:', _pmNativeAssetId, 'tc:', thumbTc, 'seekMode:', isSeqFallback ? 'sequence_fallback' : 'source_tc', 'attempt:', attempt);
   try {
+    const fps = _pmFps || 24;
+    const absFrame = mk.recIn ? tcToFrames(mk.recIn, fps) : _pmReadVideoAbsFrame();
+    const frameInVideo = Math.max(0, Math.round(absFrame - _pmVidZero()));
+
+    // Desktop ProRes path: extract the requested marker frame from the active
+    // AVFoundation player. This keeps the monitor parked on the user's current
+    // frame and avoids the retired grabThumbnailAtTimecode router command.
+    if (directEngine?.captureFrameDataUrl) {
+      const directUrl = await withTimeout(
+        directEngine.captureFrameDataUrl(frameInVideo, 8500),
+        9000,
+        'AVFoundation thumbnail'
+      );
+      if (directUrl) {
+        if (_pmCurrentProjectKey !== _captureProjectKey) { if (onDone) onDone(); return; }
+        const liveMk = _pmClipMarkers.find(m => m.id === mk.id) || mk;
+        liveMk.thumb = directUrl;
+        delete liveMk._thumbError;
+        window.MPS_markProjectDirty?.();
+        if (onDone) onDone(); else _pmRenderInspector();
+        return;
+      }
+    }
+
+    // Shared-media fallback uses a supported desktop action and seeks by frame,
+    // preserving the source image dimensions returned by AVFoundation.
+    if (_pmNativeAssetId) {
+      const sharedResult = await withTimeout(
+        sharedMediaGetFrame(_pmNativeAssetId, frameInVideo, {
+          width: 320, height: 180, format: 'jpg', quality: 'half',
+        }),
+        9000,
+        'Shared-media thumbnail'
+      );
+      const sharedUrl = sharedResult?.data?.dataUrl || sharedResult?.data?.url ||
+        sharedResult?.imageDataUrl || sharedResult?.dataUrl || sharedResult?.url;
+      if (sharedUrl) {
+        if (_pmCurrentProjectKey !== _captureProjectKey) { if (onDone) onDone(); return; }
+        const liveMk = _pmClipMarkers.find(m => m.id === mk.id) || mk;
+        liveMk.thumb = sharedUrl;
+        delete liveMk._thumbError;
+        window.MPS_markProjectDirty?.();
+        if (onDone) onDone(); else _pmRenderInspector();
+        return;
+      }
+      if (sharedResult?.status === 'error') {
+        const sharedCode = sharedResult?.error?.code || '';
+        if (sharedCode === 'ASSET_NOT_FOUND' && attempt === 0 && _pmVideoFile?._nativePath) {
+          let reopenResp = null;
+          try { reopenResp = await sharedMediaOpen(_pmVideoFile._nativePath); } catch {}
+          const newId = reopenResp?.data?.sessionId || reopenResp?.data?.assetId;
+          if (newId) {
+            _pmNativeAssetId = newId;
+            return _pmCaptureThumbnailNative(mk, onDone, 1);
+          }
+        }
+      }
+    }
+
+    // Chrome-extension companion compatibility. Electron desktop never reaches
+    // this legacy action because it has the AVFoundation/shared-media paths above.
+    if (window.pfxPlatform?.media?.getStill) {
+      throw new Error('AVFoundation returned no thumbnail image');
+    }
     // Bound the companion seek so a hung/slow decode can't freeze the preview —
     // a timeout throws into the catch below, which clears the loading state.
-    const result = await withTimeout(nativeGrabThumbnailAtTimecode(_pmNativeAssetId, thumbTc, {
+    const result = await withTimeout(nativeGrabThumbnailAtTimecode(ownAssetId, thumbTc, {
       width: 320, height: 180, format: 'jpg', mode: 'fast',
       seekMode: isSeqFallback ? 'sequence_fallback' : 'source_tc',
     }), 9000, 'PM thumbnail');
@@ -5279,8 +6360,10 @@ async function _pmCaptureThumbnailNative(mk, onDone, attempt = 0) {
     }
     console.debug('[PM] companion thumb grab failed', msg);
     const liveMkErr = _pmClipMarkers.find(m => m.id === mk.id) || mk;
-    liveMkErr._thumbError = isTimeout(e) ? 'Thumbnail timed out — companion busy or offline'
-      : (e?.userMessage || e?.message || 'Companion thumbnail failed');
+    liveMkErr._thumbError = isTimeout(e) ? 'Thumbnail timed out — try again'
+      : (String(e?.message || '').includes('Unknown native action')
+          ? 'Thumbnail unavailable — click to retry'
+          : (e?.userMessage || e?.message || 'Thumbnail capture failed'));
     if (onDone) onDone(); else _pmRenderInspector();
   }
 }
@@ -5288,14 +6371,14 @@ async function _pmCaptureThumbnailNative(mk, onDone, attempt = 0) {
 function _pmCaptureThumbnail(mk, seekFirst, onDone) {
   const _canCaptureCurrentVideoFrame = () =>
     !!(pmVideo && pmVideo.readyState >= 2 && pmVideo.videoWidth && pmVideo.videoHeight);
-  const _captureCurrentFrameDataUrl = () => {
+  const _captureCurrentFrameCanvas = () => {
     const W = Math.min(pmVideo.videoWidth || 1920, 1920);
     const H = Math.round(W * (pmVideo.videoHeight || 1080) / Math.max(1, pmVideo.videoWidth || 1920));
     const offscreen = document.createElement('canvas');
     offscreen.width  = W;
     offscreen.height = H || Math.round(W * 9 / 16);
     offscreen.getContext('2d').drawImage(pmVideo, 0, 0, W, offscreen.height);
-    return offscreen.toDataURL('image/png');
+    return offscreen;
   };
   const _finish = () => {
     if (onDone) onDone();
@@ -5305,11 +6388,21 @@ function _pmCaptureThumbnail(mk, seekFirst, onDone) {
   // Primary path: HTML5 video element (H.264, H.265, VP9, etc.)
   if (_canCaptureCurrentVideoFrame()) {
     const fps = _pmFps || 24;
-    const doCapture = () => {
+    const doCapture = async () => {
       try {
-        mk.thumb = _captureCurrentFrameDataUrl();
-        delete mk._thumbError;
-        window.MPS_markProjectDirty?.();
+        // seekFirst path has already seeked the video to mk.recIn; current-position
+        // captures use the live playhead frame. Both map into the video's own timeline.
+        const targetF = (seekFirst && mk.recIn)
+          ? tcToFrames(mk.recIn, fps) - _pmVidZero()
+          : _pmReadVideoAbsFrame() - _pmVidZero();
+        const url = await _pmCanvasToDataUrlSafe(_captureCurrentFrameCanvas(), targetF);
+        if (url) {
+          mk.thumb = url;
+          delete mk._thumbError;
+          window.MPS_markProjectDirty?.();
+        } else {
+          mk._thumbError = 'Thumbnail capture failed';
+        }
       } catch (err) {
         console.warn('[PM] thumb capture failed', err);
         mk._thumbError = err?.message || 'Thumbnail capture failed';
@@ -5402,7 +6495,7 @@ async function _pmBatchCaptureEventThumbs(evIdx) {
       continue;
     }
     await new Promise(resolve => {
-      requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
         if (_pmCurrentProjectKey !== _batchKey || !pmVideo?.src || pmVideo.readyState < 2) { mk._thumbCapturing = false; resolve(); return; }
         try {
           const W = Math.min(pmVideo.videoWidth, 1920);
@@ -5410,9 +6503,17 @@ async function _pmBatchCaptureEventThumbs(evIdx) {
           const c = document.createElement('canvas');
           c.width = W; c.height = H;
           c.getContext('2d').drawImage(pmVideo, 0, 0, W, H);
-          mk.thumb = c.toDataURL('image/png');
-          delete mk._thumbError;
-          freshIds.add(mk.id);
+          // Video is already at this marker's recIn frame (gated above), so the native
+          // fallback grabs the same frame if the canvas is tainted.
+          const targetF = tcToFrames(mk.recIn, fps) - _pmVidZero();
+          const url = await _pmCanvasToDataUrlSafe(c, targetF);
+          if (url) {
+            mk.thumb = url;
+            delete mk._thumbError;
+            freshIds.add(mk.id);
+          } else {
+            mk._thumbError = 'Thumbnail capture failed';
+          }
         } catch (err) {
           console.warn('[PM] batch thumb capture failed', err);
           mk._thumbError = err?.message || 'Thumbnail capture failed';
@@ -6019,7 +7120,9 @@ function _pmEnterOcrCropMode(mkId) {
 
   bar.querySelector('.pm-ocr-test-ocr')?.addEventListener('click', async () => {
     if (!currentPct) return;
-    const vc = _pmCaptureCurrentVideoCanvas();
+    // Non-tainting capture: live <video> frame if readable, else a native still
+    // from the open session (cross-origin companion streams taint the canvas).
+    const vc = await _pmCaptureOcrSourceCanvas();
     if (!vc) { _pmToast('Cannot capture video frame', 'error'); return; }
     const btn = bar.querySelector('.pm-ocr-test-ocr');
     btn.disabled = true; btn.textContent = '…';
@@ -6739,7 +7842,7 @@ function _pmSeekAndCapture(absF, timeoutMs = 700) {
       if (timer) clearTimeout(timer);
       // Give one rAF for the seeked frame to actually paint to the element
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => resolve(_pmCaptureCurrentVideoCanvas()));
+        requestAnimationFrame(() => resolve(_pmCaptureOcrSourceCanvas()));
       });
     };
     const onSeeked = () => finish();
@@ -6765,8 +7868,10 @@ async function _pmOcrRecognizeMultiFrame({
   const pooled = [];
 
   // Center frame uses the existing robust runner so we still get the full
-  // 6-pass cross-pass voting at the actual marker frame.
-  const centerCanvas = _pmCaptureCurrentVideoCanvas();
+  // 6-pass cross-pass voting at the actual marker frame. Use the non-tainting
+  // capture so a cross-origin companion stream doesn't silently re-taint the
+  // canvas here (which would defeat the fix on the main OCR path).
+  const centerCanvas = await _pmCaptureOcrSourceCanvas();
   if (centerCanvas) {
     const cropData = _pmOcrCropAndScale(centerCanvas, roi);
     if (cropData) {
@@ -7534,6 +8639,116 @@ function _pmCaptureCurrentVideoCanvas() {
   try { c.getContext('2d').drawImage(pmVideo, 0, 0, W, H); return c; } catch { return null; }
 }
 
+// True when the canvas is tainted (cross-origin video with no CORS headers) and
+// therefore cannot be read via getImageData / exported via toDataURL — the exact
+// failure that silently kills OCR ("Tainted canvases may not be exported").
+function _pmCanvasIsTainted(canvas) {
+  if (!canvas) return true;
+  try { canvas.getContext('2d').getImageData(0, 0, 1, 1); return false; }
+  catch { return true; }
+}
+
+// Decode a same-origin image URL (data: / blob:) into a fresh, NON-tainted canvas.
+// http(s) companion URLs are fetched with the companion token first, then read as
+// a blob (data URLs are same-origin, so the resulting canvas is clean).
+async function _pmDecodeUrlToCleanCanvas(url) {
+  if (!url) return null;
+  let src = url;
+  if (/^https?:/i.test(src)) {
+    try {
+      const resp = await fetch(_pmTokenizedCompanionUrl(src), {
+        headers: window.__pfxCompanionHttpToken ? { 'X-PFX-Token': window.__pfxCompanionHttpToken } : {},
+      });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      src = await new Promise((res, rej) => {
+        const rd = new FileReader();
+        rd.onload = () => res(rd.result); rd.onerror = rej;
+        rd.readAsDataURL(blob);
+      });
+    } catch { return null; }
+  }
+  const img = await new Promise((res) => {
+    const im = new Image();
+    im.onload = () => res(im); im.onerror = () => res(null);
+    im.src = src;
+  });
+  if (!img || !img.naturalWidth) return null;
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  try { c.getContext('2d').drawImage(img, 0, 0); }
+  catch { return null; }
+  return c;
+}
+
+// Robust OCR frame capture. The <video> canvas is fast but becomes TAINTED when the
+// media source is a cross-origin companion stream without CORS headers — getImageData
+// and toDataURL then throw and OCR aborts. When that happens (or when the video isn't
+// Chromium-decodable), fall back to a native still from the SAME open media session
+// (sharedMediaGetFrame → decoded bytes, no canvas taint) and decode it into a clean
+// canvas at the video's native pixel dimensions so ROI math stays identical.
+async function _pmCaptureOcrSourceCanvas() {
+  // 1) Fast path — the live <video> frame, if we can actually read it back.
+  const direct = _pmCaptureCurrentVideoCanvas();
+  if (direct && !_pmCanvasIsTainted(direct)) return direct;
+
+  // 2) Native still fallback (clean bytes, no taint). Requires an open session.
+  if (_pmNativeAssetId) {
+    const W = (pmVideo?.videoWidth)  || 1920;
+    const H = (pmVideo?.videoHeight) || 1080;
+    const frameInVideo = Math.max(0, Math.round(_pmReadVideoAbsFrame() - _pmVidZero()));
+    try {
+      const r = await withTimeout(
+        sharedMediaGetFrame(_pmNativeAssetId, frameInVideo, { quality: 'full', format: 'png', width: W, height: H }),
+        9000, 'OCR frame');
+      if (r?.status !== 'error') {
+        const stillUrl = r?.data?.dataUrl || r?.data?.url;
+        const clean = await _pmDecodeUrlToCleanCanvas(stillUrl);
+        if (clean) return clean;
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 3) Last resort — return the (possibly tainted) direct canvas so callers can still
+  //    try; the crop/thumb paths already null-guard on getImageData/toDataURL throws.
+  return direct;
+}
+
+// Taint-safe export for thumbnail-grab sites. `drawnCanvas` is a canvas the caller has
+// already drawn the live <video> frame into. If that canvas is NOT tainted we export it
+// directly (fast path — zero native round-trip for same-origin/pfx-media videos). If it
+// IS tainted (cross-origin companion stream without CORS), toDataURL would throw
+// "Tainted canvases may not be exported", so we fall back to the SAME native clean-bytes
+// primitive the OCR path uses: sharedMediaGetFrame → decoded PNG → clean canvas → export.
+// The fallback canvas is built from decoded native bytes via an <img> (same-origin
+// data:/blob:), so it is guaranteed non-tainted — it can never re-enter this taint path.
+// Returns a PNG data URL, or null only when the canvas is tainted AND the native fallback
+// is unavailable or fails (both paths exhausted).
+async function _pmCanvasToDataUrlSafe(drawnCanvas, targetFrameInVideo) {
+  if (!drawnCanvas) return null;
+  // Fast path — clean canvas exports directly.
+  if (!_pmCanvasIsTainted(drawnCanvas)) {
+    try { return drawnCanvas.toDataURL('image/png'); } catch { return null; }
+  }
+  // Taint fallback — native clean bytes from the open session (mirrors _pmCaptureOcrSourceCanvas).
+  if (!_pmNativeAssetId) return null;
+  const W = drawnCanvas.width;
+  const H = drawnCanvas.height;
+  const f = Number.isFinite(targetFrameInVideo)
+    ? Math.max(0, Math.round(targetFrameInVideo))
+    : Math.max(0, Math.round(_pmReadVideoAbsFrame() - _pmVidZero()));
+  try {
+    const r = await withTimeout(
+      sharedMediaGetFrame(_pmNativeAssetId, f, { quality: 'full', format: 'png', width: W, height: H }),
+      9000, 'PM thumb');
+    if (r?.status !== 'error') {
+      const clean = await _pmDecodeUrlToCleanCanvas(r?.data?.dataUrl || r?.data?.url);
+      if (clean) return clean.toDataURL('image/png');
+    }
+  } catch { /* fall through to null */ }
+  return null;
+}
+
 // Parse OCR burn-in text into naming-template field values.
 // Handles common VFX burn-in formats: SHOW_EP_SEQ_SCENE, vendor prefixes, version suffixes.
 function _pmParseOcrTextToFields(text) {
@@ -7574,9 +8789,11 @@ async function _pmAutoOcrAndApply(mkId) {
   const settings = _pmGetOcrSettings();
   const evIdx    = mk._eventIdx ?? -1;
   const { roi, source: regionKey } = _pmGetEffectiveRoi(mkId, evIdx);
-  const videoCanvas = _pmCaptureCurrentVideoCanvas();
-  if (!videoCanvas) return; // no video — silently skip
+  // Claim the run guard BEFORE the (now async) capture so a second trigger can't
+  // slip in during the native-still await.
   _pmOcrRunning = true;
+  const videoCanvas = await _pmCaptureOcrSourceCanvas();
+  if (!videoCanvas) { _pmOcrRunning = false; return; } // no video — silently skip
   try {
     const cropData  = _pmOcrCropAndScale(videoCanvas, roi);
     if (!cropData) throw new Error('Crop failed');
@@ -7709,10 +8926,17 @@ async function _pmRunOcrOnMarker(mkId, triggerBtn) {
   const settings = _pmGetOcrSettings();
   const evIdx    = parseInt(pmInspector?.querySelector('.pm-insp-layers')?.dataset.evidx ?? '-1', 10);
   const { roi, source: regionKey } = _pmGetEffectiveRoi(mkId, evIdx);
-  const videoCanvas = _pmCaptureCurrentVideoCanvas();
-  if (!videoCanvas) { _pmToast('Cannot capture video frame. Is a video loaded?', 'error'); return; }
+  // Claim the run guard BEFORE the (now async) capture so a second trigger can't
+  // slip in during the native-still await.
   _pmOcrRunning = true;
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = '…'; }
+  const videoCanvas = await _pmCaptureOcrSourceCanvas();
+  if (!videoCanvas) {
+    _pmOcrRunning = false;
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'OCR'; }
+    _pmToast('Cannot capture video frame. Is a video loaded?', 'error');
+    return;
+  }
   try {
     const cropData = _pmOcrCropAndScale(videoCanvas, roi);
     if (!cropData) throw new Error('Crop failed');
@@ -8322,7 +9546,8 @@ async function _pmBatchOcr(evIdx) {
         }
         await new Promise(r => requestAnimationFrame(r));
       }
-      const vc = _pmCaptureCurrentVideoCanvas();
+      // Non-tainting capture — native still fallback for cross-origin streams.
+      const vc = await _pmCaptureOcrSourceCanvas();
       if (!vc) throw new Error('frame capture failed');
       const cropData = _pmOcrCropAndScale(vc, row.roi);
       if (!cropData) throw new Error('crop failed');
@@ -8792,6 +10017,7 @@ function _wireInspectorEvents() {
         _pmSaveMeta(_lev);
       }
       _pmRenderEventTable();     // refresh VFX chips in the pull list table row
+      _pmUpdateProWorkspace();   // refresh smart counts/filters immediately
       window.MPS_markProjectDirty?.();
     });
   });
@@ -10827,6 +12053,13 @@ function _wireVideoPlayer() {
     _pmLastSyncedF = -1;
     _pmOnVideoTimeUpdate();
   });
+  pmVideo.addEventListener('pfx-native-timeupdate', (e) => {
+    const fps = Number(e.detail?.fps) || _pmFps || 24;
+    const frame = Number(e.detail?.frame) || 0;
+    _pmRememberVideoMediaTimeSec(frame / fps);
+    _pmLastSyncedF = -1;
+    _pmOnVideoTimeUpdate();
+  });
 
   // play → start per-frame rAF loop; pause/ended → stop it
   pmVideo.addEventListener('play', () => {
@@ -10937,7 +12170,13 @@ function _wireVideoPlayer() {
   const _pmSetVideoSource = (videoEl, url) => {
     if (!videoEl) return;
     const src = String(url || '');
-    if (/^https?:\/\//i.test(src)) {
+    // http(s) companion streams AND the pfx-media:// custom protocol both return
+    // Access-Control-Allow-Origin:* — request them in CORS mode so the drawn canvas
+    // is NOT tainted. Without crossOrigin, pfx-media:// (a distinct origin from the
+    // file:// renderer) taints the canvas, so toDataURL()/getImageData() throw and
+    // thumbnail capture / OCR silently fail whenever there is no companion assetId
+    // for the native fallback (companion "Limited", last-resort pfx-media:// streaming).
+    if (/^https?:\/\//i.test(src) || /^pfx-media:\/\//i.test(src)) {
       videoEl.crossOrigin = 'anonymous';
     } else {
       try { videoEl.removeAttribute('crossorigin'); } catch {}
@@ -11058,6 +12297,21 @@ function _wireVideoPlayer() {
   // Browse button — uses companion native dialog when available (gives full path for ProRes support),
   // falls back to File System Access API or classic file input.
   const _pmBrowseVideo = async () => {
+    // The Electron picker is part of the app itself (not the optional companion)
+    // and always returns the native filesystem path required by AVFoundation.
+    // Browser File/FileSystemHandle pickers can lose that path, which makes a
+    // perfectly decodable ProRes .mov look browser-only and routes it to proxy.
+    if (window.pfxPlatform?.isMacApp && window.pfxPlatform?.pickFile && window.pfxPlatform?.media?.getStill) {
+      const filePath = await _pmWithPreviewSuppressed(() => window.pfxPlatform.pickFile({
+        title: 'Select reference movie',
+        filters: [{ name: 'Video', extensions: ['mov', 'mp4', 'mxf', 'avi', 'mts', 'm2t'] }],
+      }), 'desktop-video-picker');
+      if (!filePath) return;
+      const fname = filePath.split(/[/\\]/).pop() || 'reference.mov';
+      await _pmLoadVideo({ name: fname, type: /\.mov$/i.test(filePath) ? 'video/quicktime' : 'video/*', _nativePath: filePath }, null);
+      return;
+    }
+
     // eslint-disable-next-line no-use-before-define
     // ── Companion path (ProRes-capable) ─────────────────────────────────────────
     // Reset companion state first — if the user cancels or companion fails we
@@ -11078,6 +12332,20 @@ function _wireVideoPlayer() {
         if (pickResp?.data?.filePath) {
           const filePath = pickResp.data.filePath;
           console.log('[PM] openFile →', filePath);
+
+          // QuickTime references belong on the unified desktop playback path.
+          // In particular, ProRes .mov files are decoded directly by
+          // NativeAVPlayerEngine/AVFoundation. Sending them through the companion
+          // first reports `canPlay:false` and starts an unnecessary H.264 proxy,
+          // leaving the UI stuck on "Finalizing…" even though AVFoundation can
+          // already paint the source frames. The native path descriptor preserves
+          // the real file path without copying or transcoding the media.
+          if (/\.mov$/i.test(filePath) && window.pfxPlatform?.media?.getStill) {
+            const fname = filePath.split(/[/\\]/).pop() || 'reference.mov';
+            await _pmLoadVideo({ name: fname, type: 'video/quicktime', _nativePath: filePath }, null);
+            return;
+          }
+
           // Use shared media runtime — proper backend selection (ProRes VideoToolbox on macOS)
           const openResp = await sharedMediaOpen(filePath).catch(async (e) => {
             // Fall back to legacy openFile if shared runtime not yet available
@@ -12408,6 +13676,7 @@ function _wireQsRow() {
   // Options toggle — show/hide modifier buttons
   document.getElementById('pmQsOptionsToggle')?.addEventListener('click', () => {
     row.classList.toggle('pm-qs-expanded');
+    _pmUpdateQsButtons();
   });
 
   _pmWireOcfRelinkBtn();
@@ -12675,11 +13944,15 @@ function _pmUpdateQsButtons() {
     if (key === 'clear') return;
     const on = _PM_LOCAL_QS_KEYS.has(key) ? !!_pmLocalQs[key] : !!(qs?.[key]);
     btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   // Light up "all off" button when no other QS keys are active
   const anyOn = [...btns].some(b => b.getAttribute('data-key') !== 'clear' && b.classList.contains('active'));
   const clearBtn = row.querySelector('.pm-qs-btn[data-key="clear"]');
-  if (clearBtn) clearBtn.classList.toggle('active', !anyOn);
+  if (clearBtn) {
+    clearBtn.classList.toggle('active', !anyOn);
+    clearBtn.setAttribute('aria-pressed', !anyOn ? 'true' : 'false');
+  }
 
 
   // ── Sync pack mode to QS state ───────────────────────────────────────────────
@@ -12694,10 +13967,14 @@ function _pmUpdateQsButtons() {
   const _ocfLib    = document.getElementById('pmOcfLinkLibraryBtn');
   const _ocfBtn    = document.getElementById('pmOcfRelinkQuickBtn');
   const _ocfSum    = document.getElementById('pmOcfSummary');
-  if (_ocfSmart) _ocfSmart.style.display = _isVfxPull ? 'inline-flex' : 'none';
-  if (_ocfLib) _ocfLib.style.display = _isVfxPull ? 'inline-flex' : 'none';
-  if (_ocfBtn) _ocfBtn.style.display = _isVfxPull ? 'inline-flex' : 'none';
-  if (_ocfSum) _ocfSum.style.display = _isVfxPull ? 'inline-flex' : 'none';
+  const _showOcfTools = _isVfxPull && row.classList.contains('pm-qs-expanded');
+  // The guided workspace owns the primary Smart Link action. Keep only the
+  // two specialist relink paths behind + Options so the global toolbar does
+  // not repeat the same workflow and overwhelm non-technical users.
+  if (_ocfSmart) _ocfSmart.style.display = 'none';
+  if (_ocfLib) _ocfLib.style.display = _showOcfTools ? 'inline-flex' : 'none';
+  if (_ocfBtn) _ocfBtn.style.display = _showOcfTools ? 'inline-flex' : 'none';
+  if (_ocfSum) _ocfSum.style.display = _showOcfTools ? 'inline-flex' : 'none';
 
   // ── Apply mode classes + re-render table so displayShot updates ──────────────
   const pane = document.getElementById('main-prepmark');
@@ -12715,22 +13992,61 @@ function _pmUpdateQsButtons() {
   _pmApplyVfxWorkspace(!!_pmLocalQs.vfxmarker);
 }
 
-// Show/hide the VFX Pull Workspace as a full replacement for the normal pull
-// prep body. When on, .pm-body and .pm-timeline-strip are hidden and
-// #pmVfxWorkspace is shown. When off, they are restored.
-function _pmApplyVfxWorkspace(on) {
+// VFX Pull view mode — 'simple' keeps the standard Pull-Prep body (pull list +
+// marker editor + NLE timeline); 'advanced' swaps in the full VFX Pull Workspace
+// (shot list + OCF verify + QT/OCF compare). Persisted per-user in localStorage.
+const _PM_VFX_VIEWMODE_KEY = 'pfxVfxViewMode';
+function _pmGetVfxViewMode() {
+  try {
+    return localStorage.getItem(_PM_VFX_VIEWMODE_KEY) === 'simple' ? 'simple' : 'advanced';
+  } catch { return 'advanced'; }
+}
+
+// Low-level swap between the normal pull body and the VFX Pull Workspace.
+// When shown, .pm-body/.pm-timeline-strip are hidden (via pm-vfx-workspace-on)
+// and #pmVfxWorkspace is displayed; when hidden, the normal body is restored.
+function _pmSetVfxWorkspaceVisible(show) {
   const workspace = document.getElementById('pmVfxWorkspace');
   const pane      = document.getElementById('main-prepmark');
   if (!workspace) return;
-  // Add/remove class that collapses the grid to 3 rows and drops pm-body + timeline
-  if (pane) pane.classList.toggle('pm-vfx-workspace-on', on);
-  workspace.style.display = on ? '' : 'none';
-  if (on) {
+  if (pane) pane.classList.toggle('pm-vfx-workspace-on', show);
+  workspace.style.display = show ? '' : 'none';
+  if (show) {
     _pmVfxWorkspacePopulateShotList();
     _pmWireOcfDropZone();
     // Sprint 4: if this project was last linked from the media library, silently
     // restore those links (the matcher repopulates the list when it finishes).
     try { window._pmVfxRestoreLibraryLinks?.(); } catch {}
+  }
+}
+
+// Apply the Simple/Advanced choice. Only changes the layout while VFX Pull mode
+// is active; otherwise it just records the preference and updates the toggle chip.
+function _pmApplyVfxViewMode(mode, persist = true) {
+  const advanced = mode !== 'simple';
+  const btn = document.getElementById('pfxVfxModeToggle');
+  if (btn) {
+    btn.dataset.vfxmode = advanced ? 'advanced' : 'simple';
+    btn.classList.toggle('is-simple', !advanced);
+    const label = btn.querySelector('.pfx-vfx-mode-label');
+    if (label) label.textContent = advanced ? 'Advanced' : 'Simple';
+  }
+  if (_pmLocalQs.vfxmarker) _pmSetVfxWorkspaceVisible(advanced);
+  if (persist) { try { localStorage.setItem(_PM_VFX_VIEWMODE_KEY, advanced ? 'advanced' : 'simple'); } catch {} }
+}
+
+// Hard layout branch entry point — called when VFX Pull mode turns on/off.
+// The Simple|Advanced toggle is only visible in VFX Pull mode; the saved view
+// mode then decides body (simple) vs workspace (advanced).
+function _pmApplyVfxWorkspace(on) {
+  const toggle = document.getElementById('pfxVfxModeToggle');
+  if (toggle) toggle.style.display = 'none';
+  if (on) {
+    // VFX Pull now has one adaptive workspace. The old Simple/Advanced split
+    // duplicated controls and made the correct starting point unclear.
+    _pmSetVfxWorkspaceVisible(true);
+  } else {
+    _pmSetVfxWorkspaceVisible(false);
   }
 }
 
@@ -12943,18 +14259,85 @@ function _pmResolveVfxOcfState(ev, mk0) {
 
 function _pmVfxOcfSourceTcAt(ev, fallbackOcf = null, recordFrame = null) {
   const fps = _pmFps || 24;
+  const sourceFps = ev?.fps || fallbackOcf?.ocfFps || fallbackOcf?.fps || fps;
   if (recordFrame != null && ev?.srcIn && ev?.recIn) {
     try {
-      return sourceTcAtRecord({
-        srcIn: ev.srcIn,
-        recIn: ev.recIn,
+      // ONE trusted speed reader (bounds-checked; rejects misparsed frame counts
+      // like 1608). Keeps the VERIFY TC in lockstep with the OCF pane + player,
+      // which also read speed via _pmExtractSpeedPercent.
+      const speedPercent = Math.abs(_pmExtractSpeedPercent(ev) || 100);
+      const srcInF = tcToFrames(ev.srcIn, Math.round(sourceFps));
+      const recInF = tcToFrames(ev.recIn, Math.round(fps));
+      const srcF = sourceFrameAtRecord({
+        srcInF,
+        recInF,
         recordFrame,
-        sourceFps: ev.fps || fps,
-        timelineFps: fps,
+        speedPercent,
       });
+      // Under the _pmTcDebug flag, expose the two INDEPENDENTLY-rounded bases
+      // (srcInF on round(sourceFps), recInF on round(fps)) so any residual
+      // sub-frame drift between the burn-in overlay clock (23.976→24 TC) and the
+      // conformed srcIn base is observable. If confirmed, pin both conversions to
+      // one rounded base; matched-fps clips are unaffected (both round equally).
+      if (window._pmTcDebug) {
+        console.log('[OCF TC BASE] ' + _pmJ({
+          recordFrame, recInF, srcInF, srcF, sourceFps, fps, speedPercent,
+        }));
+      }
+      return framesToTC(srcF, Math.round(sourceFps));
     } catch (_) {}
   }
   return ev?.srcIn || fallbackOcf?.tcIn || '';
+}
+
+function _pmVfxOcfSourceFps(ev, fallbackOcf = null) {
+  const fps = Number(ev?.fps || fallbackOcf?.ocfFps || fallbackOcf?.fps || _pmFps || 24);
+  return Number.isFinite(fps) && fps > 0 ? fps : (_pmFps || 24);
+}
+
+function _pmVfxFormatFps(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const tcBase = Math.round(n);
+  const pretty = Math.abs(n - tcBase) < 0.001 ? String(tcBase) : n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return `${pretty} fps / ${tcBase} TC`;
+}
+
+function _pmVfxWorkspaceUpdateTimingPanelForRecord(ev, mk0, recordFrame = null) {
+  const tcEl  = document.getElementById('pfxVfxVfTcVal');
+  const fpsEl = document.getElementById('pfxVfxVfFpsVal');
+  if (!tcEl && !fpsEl) return;
+  const ocf = _pmResolveVfxOcfState(ev, mk0);
+  const fps = _pmFps || 24;
+  const sourceTc = ev?.srcIn
+    ? _pmVfxOcfSourceTcAt(ev, ocf, recordFrame != null ? recordFrame : (ev?.recIn ? tcToFrames(ev.recIn, fps) : null))
+    : (ocf?.tcIn || '');
+  if (tcEl) {
+    tcEl.textContent = sourceTc || '—';
+    tcEl.className = 'pfx-vfx-vf-val ' + (sourceTc ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-pending');
+    tcEl.title = 'OCF/source timecode at the current QT reference frame';
+  }
+  const sourceFps = _pmVfxOcfSourceFps(ev, ocf);
+  if (fpsEl) {
+    fpsEl.textContent = _pmVfxFormatFps(sourceFps);
+    fpsEl.className = 'pfx-vfx-vf-val ' + (sourceFps ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-pending');
+  }
+}
+
+function _pmNormalizeOcfPreviewResult(r, resolveConnected = false) {
+  if (!r || !resolveConnected) return r;
+  const err = String(r.error || '');
+  const staleNotRunning = r.resolveAvailable === false
+    || /resolve engine is not running|resolve.*not running|stage:\s*connect/i.test(err)
+    || r.stage === 'connect';
+  if (!staleNotRunning) return r;
+  return {
+    ...r,
+    requiresResolve: false,
+    resolveAvailable: true,
+    stage: r.stage === 'connect' ? 'resolve_retry' : (r.stage || 'resolve_retry'),
+    error: 'Resolve is connected, but this preview request used a stale engine state. Retry the OCF preview frame.',
+  };
 }
 
 let _pmVfxActiveStripAbort  = null; // cancellation token for in-flight strip gen
@@ -13100,17 +14483,20 @@ function _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0) {
     set('pfxVfxVfDurVal', ev?.recIn ? ev.recIn : '—');
   }
 
-  set('pfxVfxVfTcVal', ev?.recIn || '—', ev?.recIn ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-pending');
+  // Anchor VERIFY to the LIVE player position when the player is showing this
+  // event, falling back to the shot IN only before the player exists. Hard-coding
+  // recIn here (as before) clobbered the scrubbed TC the player wrote at
+  // _pfxPlrUpdateTc(), producing the constant (scrubbedRecF - recInF) offset the
+  // user saw as +621f — this fires after every OCF-preview promise resolves.
+  const _vfRecF = (_pfxPlr && _pfxPlr.ev === ev && Number.isFinite(_pfxPlr.currentRecF))
+    ? _pfxPlr.currentRecF
+    : (ev?.recIn ? tcToFrames(ev.recIn, fps) : null);
+  _pmVfxWorkspaceUpdateTimingPanelForRecord(ev, mk0, _vfRecF);
 
-  // speedFactor is stored as a number where 100 = normal (see parser note at the
-  // top of this file). Values ≤10 are legacy ratios (1.0 = normal) → ×100.
-  // The previous code multiplied the already-percentage value by 100 → "10000%".
-  const _spdRaw = ev?.speedFactor ?? ev?.speed;
-  let _spdPct = 100;
-  if (_spdRaw != null && Number.isFinite(Number(_spdRaw))) {
-    const v = Number(_spdRaw);
-    _spdPct = Math.abs(v) > 10 ? v : v * 100;
-  }
+  // Speed display uses the SAME trusted, bounds-checked reader as the record→
+  // source frame mapping so the panel can never show a misparsed value (e.g.
+  // "1608%") while the OCF pane maps by a different number.
+  const _spdPct = Math.abs(_pmExtractSpeedPercent(ev) || 100);
   const _spdOff = Math.abs(_spdPct - 100) > 0.5;
   set('pfxVfxVfSpeedVal', `${Math.round(_spdPct)}%`, _spdOff ? 'pfx-vfx-vf-warn' : 'pfx-vfx-vf-ok');
 
@@ -13119,6 +14505,20 @@ function _pmVfxWorkspaceUpdateVerifyPanel(ev, mk0) {
 
   const score = mk0?.matchScore != null ? `${Math.round(mk0.matchScore * 100)}%` : '—';
   set('pfxVfxVfScoreVal', score, mk0?.matchScore != null ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-pending');
+
+  // Live Visual Match (V1.4 regional matcher) — the async compute in
+  // _pmVfxComputeLiveVisualMatch overwrites this once both frames load. Show a
+  // previously-computed score on re-select, else Pending (linked) / — (unlinked).
+  const vm = mk0?._visualMatchConfidence;
+  if (!isLinked) {
+    set('pfxVfxVfVisualMatchVal', '—');
+  } else if (vm != null) {
+    const st = mk0._visualMatchStatus;
+    const lbl = st === 'OK' ? 'OK' : st === 'REVIEW' ? 'REVIEW' : 'NO MATCH';
+    set('pfxVfxVfVisualMatchVal', `${vm}% · ${lbl}`, st === 'OK' ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-warn');
+  } else {
+    set('pfxVfxVfVisualMatchVal', 'Pending', 'pfx-vfx-vf-pending');
+  }
 }
 
 function _ocfExtractorLabel(extractor, backend) {
@@ -13418,6 +14818,40 @@ async function _pmRunResolveStillDiagnostic(ev, mk0, slot) {
 }
 
 let _pmOcfPaneGen = 0;   // bumped each render; guards stale async OCF results
+
+// V1.4 picture-conform matcher applied to OCF verification: compute a LIVE,
+// burn-in-resilient regional-hash match between the QT Ref frame and the linked
+// OCF frame at the current position, and surface it in the VERIFY panel as a
+// confidence + OK / REVIEW / NO-MATCH tier. Unlike the stored `matchScore`
+// (filename/TC-derived at link time), this confirms pixel-for-pixel that the
+// linked camera original is actually the shot on screen — catching mislinks a
+// name/timecode match can't. Guarded by the OCF pane generation so a slow
+// previous-shot result never paints onto the current shot.
+async function _pmVfxComputeLiveVisualMatch(qtSrc, ocfSrc, paneGen, mk0) {
+  if (!qtSrc || !ocfSrc) return;
+  const el = document.getElementById('pfxVfxVfVisualMatchVal');
+  const load = (src) => new Promise((res) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => res(null);
+    im.src = src;
+  });
+  try {
+    const [qi, oi] = await Promise.all([load(qtSrc), load(ocfSrc)]);
+    if (paneGen !== _pmOcfPaneGen) return;           // superseded by a newer render
+    if (!qi || !oi) return;
+    const dist   = regionalDistance(regionalHash(qi), regionalHash(oi));
+    const conf   = distanceToConfidence(dist);        // 0..100 (higher = better)
+    const status = confidenceStatus(dist);            // OK | REVIEW | NO_MATCH
+    if (mk0) { mk0._visualMatchConfidence = conf; mk0._visualMatchStatus = status; }
+    if (!el) return;
+    const tone  = status === 'OK' ? 'pfx-vfx-vf-ok' : 'pfx-vfx-vf-warn';
+    const label = status === 'OK' ? 'OK' : status === 'REVIEW' ? 'REVIEW' : 'NO MATCH';
+    el.textContent = `${conf}% · ${label}`;
+    el.className = 'pfx-vfx-vf-val ' + tone;
+  } catch { /* taint / decode error → leave the row at its prior value */ }
+}
+
 function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
   const wrap        = document.getElementById('pfxVfxViewerWrap');
   const placeholder = document.getElementById('pfxVfxViewerPlaceholder');
@@ -13485,9 +14919,22 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
     }
     viewer.innerHTML = html;
 
+    // V1.4 live visual OCF verification — when both the QT Ref and OCF frames are
+    // in hand, score their burn-in-resilient regional-hash match into VERIFY.
+    if (qtDataUrl && ocfDataUrl) {
+      _pmVfxComputeLiveVisualMatch(qtDataUrl, ocfDataUrl, _paneGen, mk0);
+    }
+
     // Async OCF fetch — only when the OCF slot is visible and not yet filled.
     if (isLinked && ocf.sourcePath && !ocfDataUrl && (activeMode === 'ocf' || activeMode === 'sidebyside')) {
-      const tcStr = _pmVfxOcfSourceTcAt(ev, ocf);
+      // Seek the big OCF pane to the SAME moment the QT pane is showing. Feeding
+      // the live player record frame (not the default ev.srcIn) stops the pane
+      // from perpetually landing on the head-of-shot slate while the QT pane is
+      // mid-shot.
+      const _paneRecF = (_pfxPlr && _pfxPlr.ev === ev && Number.isFinite(_pfxPlr.currentRecF))
+        ? _pfxPlr.currentRecF
+        : (ev?.recIn ? tcToFrames(ev.recIn, _pmFps || 24) : null);
+      const tcStr = _pmVfxOcfSourceTcAt(ev, ocf, _paneRecF) || ev?.srcIn || ocf?.tcIn || '';
       console.log('[VFX Pull Resolve State]', {
         resolveStatus: window.PFX_RESOLVE_STATUS,
         resolveConnected,
@@ -13503,7 +14950,8 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
       window._pmGetOcfStillPreview?.({ ocfPath: ocf.sourcePath, sourceTc: tcStr,
                                         sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || 0,
                                         resolveConnected, width: 960 })
-        .then(r => {
+        .then(rawResult => {
+          const r = _pmNormalizeOcfPreviewResult(rawResult, resolveConnected);
           // Bail if the user moved to another shot while this decode was in flight —
           // otherwise this (now-stale) frame would overwrite the current viewer.
           if (_paneGen !== _pmOcfPaneGen) return;
@@ -13654,8 +15102,9 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
     // isn't left blank. _renderViewer still fetches the OCF side internally.
     const qtPath = _pmQtSourcePath(ev, ocf);
     const _fps   = _pmFps || 24;
+    const refZero = _pmVidZero();  // reference <video> is indexed in its own timeline domain
     // Frame of the shot's In within the loaded reference movie (timeline-relative).
-    const qtFrame = (ev?.recIn ? tcToFrames(ev.recIn, _fps) : _pmVidZero()) - _pmVidZero();
+    const qtFrame = (ev?.recIn ? tcToFrames(ev.recIn, _fps) : refZero) - refZero;
     const qtTc    = ev?.srcIn || ocf?.tcIn || '00:00:00:00';   // RAW-fallback hint
 
     // Last-resort QT via the wizard's proven path; then thumb; then placeholder.
@@ -13687,11 +15136,32 @@ function _pmVfxWorkspaceShowQtRefFrame(ev, mk0) {
   }
 
   const fps = _pmFps || 24;
-  const doCapture = () => { _renderViewer(_captureQtFrame(), null); };
+  const refZero = _pmVidZero();  // reference <video> is indexed in its own timeline domain
+  const doCapture = () => {
+    if (_paneGen !== _pmOcfPaneGen) return;
+    _renderViewer(_captureQtFrame(), null);
+  };
+  const qtPathForTc = _pmQtSourcePath(ev, ocf);
+  const selectedRecF = ev?.recIn ? tcToFrames(ev.recIn, fps) : refZero;
+  const selectedSrcTc = _pmVfxOcfSourceTcAt(ev, ocf, selectedRecF) || ev?.srcIn || ocf?.tcIn || '';
+  const selectedFrameInVideo = selectedRecF - refZero;
+  if (qtPathForTc && selectedSrcTc && _pmVfxQtPathLooksLikeSource(qtPathForTc, ev, ocf)) {
+    _pmNativeQtStill(qtPathForTc, selectedFrameInVideo, selectedSrcTc, 1280, { preferSourceTc: true })
+      .then(d => {
+        if (_paneGen !== _pmOcfPaneGen) return;
+        if (d) _renderViewer(d, null);
+        else requestAnimationFrame(doCapture);
+      })
+      .catch(() => {
+        if (_paneGen !== _pmOcfPaneGen) return;
+        requestAnimationFrame(doCapture);
+    });
+    return;
+  }
 
   if (ev?.recIn) {
     const targetF = tcToFrames(ev.recIn, fps);
-    const targetT = Math.max(0, (targetF - _pmVidZero()) / fps);
+    const targetT = Math.max(0, (targetF - refZero) / fps);
     const threshold = 0.5 / Math.max(1, fps);
     if (!pmVideo.seeking && Math.abs(Number(pmVideo.currentTime || 0) - targetT) <= threshold) {
       requestAnimationFrame(doCapture);
@@ -13752,13 +15222,41 @@ function _pmQtSourcePath(ev, ocf) {
   return p;
 }
 
+function _pmVfxPathBase(p) {
+  return String(p || '').split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
+}
+
+function _pmVfxQtPathLooksLikeSource(qtPath, ev, ocf) {
+  const q = _pmVfxPathBase(qtPath);
+  if (!q) return false;
+  return [ev?.clipName, ev?.srcFile, ev?.reel, ev?.sourcePath, ocf?.sourcePath]
+    .map(_pmVfxPathBase)
+    .filter(Boolean)
+    .some(v => v === q);
+}
+
 // Extract a QT-REF still natively. The reference movie is indexed by the loaded
 // player's timeline (frameInVideo = absF − _pmVidZero()), so we extract by FRAME via
 // AVFoundation — which opens ALL QuickTime codecs (ProRes/H.264/HEVC) with no proxy.
 // Camera-RAW references (rare) fall back to the Resolve 3-tier by timecode.
-async function _pmNativeQtStill(qtPath, frameInVideo, sourceTc, width) {
+async function _pmNativeQtStill(qtPath, frameInVideo, sourceTc, width, opts = {}) {
   if (!qtPath) return null;
   const f = Math.max(0, Math.round(Number(frameInVideo) || 0));
+  const preferSourceTc = !!opts.preferSourceTc;
+  const bySourceTc = async () => {
+    if (!sourceTc || typeof window._pmGetOcfStillPreview !== 'function') return null;
+    const r = await window._pmGetOcfStillPreview({
+      ocfPath: qtPath, sourceTc, width,
+      resolveConnected: !!(window._pmVfxPullResolveConnected?.()),
+    });
+    return r?.dataUrl || null;
+  };
+  if (preferSourceTc) {
+    try {
+      const d = await bySourceTc();
+      if (d) return d;
+    } catch { /* fall through to frame-based extraction */ }
+  }
   // 1) AVFoundation by frame — correct for the loaded reference movie, no proxy/Resolve.
   try {
     if (window.pfxPlatform?.media?.getStill) {
@@ -13771,13 +15269,7 @@ async function _pmNativeQtStill(qtPath, frameInVideo, sourceTc, width) {
   } catch { /* fall through to Resolve tier */ }
   // 2) Resolve 3-tier by timecode (camera-RAW reference that AVFoundation can't decode).
   try {
-    if (sourceTc && typeof window._pmGetOcfStillPreview === 'function') {
-      const r = await window._pmGetOcfStillPreview({
-        ocfPath: qtPath, sourceTc, width,
-        resolveConnected: !!(window._pmVfxPullResolveConnected?.()),
-      });
-      return r?.dataUrl || null;
-    }
+    return await bySourceTc();
   } catch { /* fall through */ }
   return null;
 }
@@ -13842,8 +15334,9 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
   // OCF strip below (they are independent). The QT capture IIFE waits for the
   // video itself and falls back to "No video" only if it never becomes ready.
 
+  const refZero = _pmVidZero();  // reference <video> is indexed in its own timeline domain
   const _captureAt = absF => new Promise(resolve => {
-    const targetT = Math.max(0, (absF - _pmVidZero()) / fps);
+    const targetT = Math.max(0, (absF - refZero) / fps);
     const threshold = 0.5 / Math.max(1, fps);
     const doCapture = () => {
       try {
@@ -13875,6 +15368,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
       // <video> can't decode this codec (ProRes / camera RAW) — extract the QT-ref
       // stills natively (AVFoundation → Resolve), no proxy. Opens all QuickTime codecs.
       const qtPath = _pmQtSourcePath(ev, ocf);
+      const refZero = _pmVidZero();  // reference <video> is indexed in its own timeline domain
       const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, fps) : 0;
       const qcells = qtContainer.querySelectorAll('.pfx-vfx-strip-frame');
       for (let idx = 0; idx < POSITIONS.length; idx++) {
@@ -13882,7 +15376,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
         const pos     = POSITIONS[idx];
         // Reference movie is indexed by the player timeline → frame in the loaded
         // media. The camera-source TC is only the RAW-fallback hint.
-        const frameIn = pos.absF - _pmVidZero();
+        const frameIn = pos.absF - refZero;
         const srcTc   = framesToTC(Math.max(0, srcInF + (pos.absF - recInF)), fps);
         const data    = qtPath ? await _pmNativeQtStill(qtPath, frameIn, srcTc, 320) : null;
         if (token.cancelled) return;
@@ -13921,7 +15415,8 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
     // Map absolute record-frame position to the NATIVE source frame, scaled by the
     // editorial retime speed (100% == 1:1) so a retimed shot's OCF frames line up
     // with the QT reference instead of drifting.
-    const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, fps) : 0;
+    const sourceFps = _pmVfxOcfSourceFps(ev, ocf);
+    const srcInF = ev?.srcIn ? tcToFrames(ev.srcIn, sourceFps) : 0;
     const _spdPct = _pmExtractSpeedPercent(ev) || 100;
     (async () => {
       const ocfCells = ocfContainer.querySelectorAll('.pfx-vfx-strip-frame');
@@ -13952,7 +15447,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
             const ratio2 = POSITIONS.length > 1 ? POSITIONS.indexOf(pos) / (POSITIONS.length - 1) : 0;
             return useFrames
               ? { label: pos.label, frame: Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio2))) }
-              : { label: pos.label, sourceTc: framesToTC(srcF, fps) };
+              : { label: pos.label, sourceTc: framesToTC(srcF, sourceFps) };
           });
           const br = await window._pmVfxResolveStillBatch(ocf.sourcePath, picks,
               { width: 320, sourceStartTc: ocf.ocfStartTc || '' })
@@ -13980,11 +15475,11 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
         if (token.cancelled) return;
         const pos      = POSITIONS[idx];
         const srcF     = sourceFrameAtRecord({ srcInF, recInF, recordFrame: pos.absF, speedPercent: _spdPct });
-        const srcTc    = framesToTC(srcF, fps);
+        const srcTc    = framesToTC(srcF, sourceFps);
         const ratio    = POSITIONS.length > 1 ? idx / (POSITIONS.length - 1) : 0;
         const fileFrame = useFrames
           ? Math.min(fileFrames - 1, Math.max(0, Math.round(fileFrames * ratio))) : -1;
-        const r = await window._pmGetOcfStillPreview(
+        const rawResult = await window._pmGetOcfStillPreview(
           useFrames
             ? { ocfPath: ocf.sourcePath, sourceFrame: fileFrame, width: 320, height: 180, resolveConnected }
             : { ocfPath: ocf.sourcePath, sourceTc: srcTc,
@@ -13993,6 +15488,7 @@ function _pmVfxWorkspaceGenerateFrameStrip(ev, mk0) {
         ).catch(e => ({ dataUrl: null, error: e?.message || String(e), decoder: 'Unsupported',
                          extractor: 'none', backend: '', requiresResolve: false, resolveAvailable: true,
                          ocfPath: ocf.sourcePath, sourceTc: srcTc }));
+        const r = _pmNormalizeOcfPreviewResult(rawResult, resolveConnected);
         if (token.cancelled) return;
         const cell = ocfCells[idx];
         if (!cell) continue;
@@ -14171,7 +15667,7 @@ window._pmGetQtRefStill = async function (ev, { width = 480 } = {}) {
 
 const _pfxPlr = {
   ev: null, mk0: null,
-  recInF: 0, recOutF: 0, srcInF: 0, fps: 24,
+  recInF: 0, recOutF: 0, srcInF: 0, fps: 24, sourceFps: 24,
   currentRecF: 0,
   speed: 1,        // 0 = step mode
   playing: false,
@@ -14180,6 +15676,12 @@ const _pfxPlr = {
   scrubTimer: null,
   genAbort: null,
   heroIdx: 1,      // index into POSITIONS array currently highlighted (default: 'In')
+  // Full-range OCF proxy (Problem 2): { videoEl, fps, hdlStFrame, hdlEndFrame } once a
+  // background render finishes. When present, the OCF pane becomes a real scrub/play
+  // video and the transport spans the whole HdlSt→HdlEnd range (handles included).
+  ocfProxy: null,
+  proxyAbort: null,   // cancellation token for an in-flight proxy render
+  hdlStF: 0, hdlEndF: 0,   // handle-inclusive transport bounds (set at init)
 };
 
 function _pfxPlrActiveMode() {
@@ -14187,8 +15689,18 @@ function _pfxPlrActiveMode() {
   return toolbar?.querySelector('.pfx-vfx-cmp-btn.active')?.dataset?.mode || 'qtref';
 }
 
+// Transport bounds. Once a full-range proxy is loaded the player can scrub the
+// WHOLE HdlSt→HdlEnd range (handles included) instead of only recIn→recOut; before
+// then it stays clamped to the shot body so a scrub never runs off the sampled window.
+function _pfxPlrBoundLo() {
+  return _pfxPlr.ocfProxy ? _pfxPlr.hdlStF : _pfxPlr.recInF;
+}
+function _pfxPlrBoundHi() {
+  return _pfxPlr.ocfProxy ? _pfxPlr.hdlEndF : _pfxPlr.recOutF;
+}
+
 function _pfxPlrClamp(f) {
-  return Math.max(_pfxPlr.recInF, Math.min(_pfxPlr.recOutF, f));
+  return Math.max(_pfxPlrBoundLo(), Math.min(_pfxPlrBoundHi(), f));
 }
 
 function _pfxPlrRecToSrc(recF) {
@@ -14203,16 +15715,19 @@ function _pfxPlrRecToSrc(recF) {
 // Update TC display + slider position
 function _pfxPlrUpdateTc(recF) {
   const fps = _pfxPlr.fps || 24;
+  const sourceFps = _pfxPlr.sourceFps || fps;
   const recTcEl  = document.getElementById('pfxVfxPlrRecTc');
   const srcTcEl  = document.getElementById('pfxVfxPlrSrcTc');
   const frameEl  = document.getElementById('pfxVfxPlrFrame');
   const sliderEl = document.getElementById('pfxVfxPlrSlider');
   if (recTcEl)  recTcEl.textContent  = framesToTC(recF, fps);
-  if (srcTcEl)  srcTcEl.textContent  = framesToTC(Math.max(0, _pfxPlrRecToSrc(recF)), fps);
+  if (srcTcEl)  srcTcEl.textContent  = framesToTC(Math.max(0, _pfxPlrRecToSrc(recF)), sourceFps);
   if (frameEl)  frameEl.textContent  = String(recF);
-  const range = _pfxPlr.recOutF - _pfxPlr.recInF;
+  _pmVfxWorkspaceUpdateTimingPanelForRecord(_pfxPlr.ev, _pfxPlr.mk0, recF);
+  const lo = _pfxPlrBoundLo();
+  const range = _pfxPlrBoundHi() - lo;
   if (sliderEl && range > 0) {
-    const pct = ((recF - _pfxPlr.recInF) / range) * 1000;
+    const pct = ((recF - lo) / range) * 1000;
     sliderEl.value = String(Math.round(pct));
     sliderEl.style.setProperty('--pfx-pct', (pct / 10).toFixed(2) + '%');
   }
@@ -14231,8 +15746,11 @@ function _pfxPlrUpdatePlayBtn() {
   if (!playBtn) return;
   const isOcf = _pfxPlrActiveMode() === 'ocf';
   const isStep = _pfxPlr.speed === 0;
-  playBtn.disabled = isOcf || isStep;
-  if (isOcf) playBtn.title = 'OCF does not support realtime playback';
+  // OCF mode can play once a full-range proxy <video> is loaded (Problem 2);
+  // without one there's only a sampled still carousel, so play stays disabled.
+  const ocfNoProxy = isOcf && !_pfxPlr.ocfProxy;
+  playBtn.disabled = ocfNoProxy || isStep;
+  if (ocfNoProxy) playBtn.title = 'OCF playback needs the full proxy — click Generate OCF Preview';
   else if (isStep) playBtn.title = 'Disable Step mode to enable play';
   else playBtn.title = 'Play / Pause [Space]';
 }
@@ -14282,7 +15800,16 @@ function _pfxPlrUpdateOcfSlot(r) {
   if (!wrap) return;
   if (r?.dataUrl) {
     const existing = wrap.querySelector('.pfx-vfx-viewer-ocf');
-    if (existing) {
+    if (existing && existing.tagName === 'VIDEO') {
+      // The live proxy <video> is showing; a still capture must replace it with an
+      // <img> so setting .src to a JPEG data URL doesn't break the video element.
+      const img = document.createElement('img');
+      img.className = 'pfx-vfx-viewer-img pfx-vfx-viewer-ocf';
+      img.alt = 'OCF';
+      img.src = r.dataUrl;
+      existing.replaceWith(img);
+      img.closest('.pfx-vfx-viewer-ocf-wrap')?.classList.remove('pfx-vfx-plr-loading');
+    } else if (existing) {
       existing.src = r.dataUrl;
       existing.closest('.pfx-vfx-viewer-ocf-wrap')?.classList.remove('pfx-vfx-plr-loading');
     } else {
@@ -14304,6 +15831,76 @@ function _pfxPlrUpdateOcfSlot(r) {
   }
 }
 
+// ── Full-range OCF proxy: record frame → proxy <video> time ──
+// The proxy is rendered NATIVE (100%); editorial retime is applied here at
+// playback by mapping the record frame through the speed-aware _pfxPlrRecToSrc,
+// then subtracting the proxy's first source frame (hdlStFrame) so a genuine
+// overcrank still lines the OCF proxy up with the retimed QT reference.
+function _pfxPlrProxyTimeAt(recF) {
+  const p = _pfxPlr.ocfProxy;
+  if (!p || !(p.fps > 0)) return 0;
+  const srcF = _pfxPlrRecToSrc(recF);
+  return Math.max(0, (srcF - p.hdlStFrame) / p.fps);
+}
+
+// Paint the proxy <video> at the given record frame into the OCF pane. While
+// playing we show the live <video>; while scrubbing/paused we canvas-capture the
+// seeked frame into the existing OCF img slot so side-by-side stays a still pair.
+function _pfxPlrSeekProxy(recF, { live = false } = {}) {
+  const p = _pfxPlr.ocfProxy;
+  if (!p?.videoEl) return false;
+  const v = p.videoEl;
+  const t = _pfxPlrProxyTimeAt(recF);
+  if (live) {
+    _pfxPlrShowOcfVideo();
+    try { if (Math.abs((v.currentTime || 0) - t) > (0.5 / (p.fps || 24))) v.currentTime = t; } catch {}
+    return true;
+  }
+  const capture = () => {
+    try {
+      const W = Math.min(v.videoWidth || 960, 960);
+      const H = Math.round(W * v.videoHeight / Math.max(1, v.videoWidth)) || Math.round(W * 9 / 16);
+      const cvs = document.createElement('canvas');
+      cvs.width = W; cvs.height = H;
+      cvs.getContext('2d').drawImage(v, 0, 0, cvs.width, cvs.height);
+      _pfxPlrUpdateOcfSlot({ dataUrl: cvs.toDataURL('image/jpeg', 0.85),
+                             decoder: 'Resolve Engine', extractor: 'resolve' });
+    } catch (_) {}
+  };
+  if (Math.abs((v.currentTime || 0) - t) <= (0.5 / (p.fps || 24)) && v.readyState >= 2) {
+    requestAnimationFrame(capture);
+  } else {
+    let settled = false;
+    const onSeeked = () => { if (settled) return; settled = true; clearTimeout(timer); capture(); };
+    const timer = setTimeout(onSeeked, 1200);
+    v.addEventListener('seeked', onSeeked, { once: true });
+    try { v.currentTime = t; } catch { onSeeked(); }
+  }
+  return true;
+}
+
+// Show the live proxy <video> element in the OCF pane (used during playback).
+function _pfxPlrShowOcfVideo() {
+  const p = _pfxPlr.ocfProxy;
+  const wrap = document.getElementById('pfxVfxViewerWrap');
+  if (!p?.videoEl || !wrap) return;
+  const v = p.videoEl;
+  v.className = 'pfx-vfx-viewer-img pfx-vfx-viewer-ocf';
+  const existing = wrap.querySelector('.pfx-vfx-viewer-ocf');
+  if (existing === v) return;
+  if (existing && existing.tagName === 'IMG') {
+    existing.replaceWith(v);
+    return;
+  }
+  const slot = wrap.querySelector('.pfx-vfx-viewer-no-ocf, #pfxVfxViewerOcfSlot');
+  if (slot?.parentElement) {
+    const wrapEl = document.createElement('div');
+    wrapEl.className = 'pfx-vfx-viewer-ocf-wrap';
+    wrapEl.appendChild(v);
+    slot.parentElement.replaceChild(wrapEl, slot);
+  }
+}
+
 // ── Debounced OCF still request (cancellable via scrubSeq) ──
 function _pfxPlrScheduleOcfSeek(recF) {
   clearTimeout(_pfxPlr.scrubTimer);
@@ -14317,7 +15914,8 @@ function _pfxPlrScheduleOcfSeek(recF) {
     const ocf = _pmResolveVfxOcfState(ev, mk0);
     if (ocf.status === 'unlinked' || !ocf.sourcePath) return;
     const fps    = _pfxPlr.fps || 24;
-    const srcTc  = framesToTC(Math.max(0, _pfxPlrRecToSrc(recF)), fps);
+    const sourceFps = _pfxPlr.sourceFps || fps;
+    const srcTc  = framesToTC(Math.max(0, _pfxPlrRecToSrc(recF)), sourceFps);
     const resConn = !!(window._pmVfxPullResolveConnected?.());
     try {
       const r = await window._pmGetOcfStillPreview?.({
@@ -14326,7 +15924,7 @@ function _pfxPlrScheduleOcfSeek(recF) {
         width: 960, height: 0, resolveConnected: resConn,
       });
       if (_pfxPlr.scrubSeq !== seq) return;
-      _pfxPlrUpdateOcfSlot(r);
+      _pfxPlrUpdateOcfSlot(_pmNormalizeOcfPreviewResult(r, resConn));
     } catch (err) {
       if (_pfxPlr.scrubSeq !== seq) return;
       _pfxPlrUpdateOcfSlot({ error: `OCF scrub: ${err?.message || err}` });
@@ -14363,18 +15961,56 @@ function _pfxPlrSeek(recF) {
     }
   }
 
-  if (needOcf) _pfxPlrScheduleOcfSeek(recF);
+  if (needOcf) {
+    // Full-range proxy loaded → seek the real OCF <video>; else the sampled still.
+    if (_pfxPlr.ocfProxy) _pfxPlrSeekProxy(recF, { live: _pfxPlr.playing });
+    else _pfxPlrScheduleOcfSeek(recF);
+  }
 }
 
-// ── Play / Pause (QT Ref only) ──
+// ── Play / Pause ──
+// QT Ref / side-by-side plays the reference <video>. In OCF mode with a full-range
+// proxy loaded (Problem 2) we play the proxy <video> instead, applying editorial
+// retime at playback (proxy is native 100%).
 function _pfxPlrPlay() {
   const mode = _pfxPlrActiveMode();
-  if (mode === 'ocf' || _pfxPlr.speed === 0 || !pmVideo) return;
+  if (_pfxPlr.speed === 0) return;
+
+  // OCF mode: play the proxy video when one is loaded.
+  if (mode === 'ocf') {
+    const p = _pfxPlr.ocfProxy;
+    if (!p?.videoEl) return;
+    _pfxPlr.playing = true;
+    const playBtn = document.getElementById('pfxVfxPlrPlay');
+    if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('pfx-vfx-plr-playing'); }
+    _pfxPlrShowOcfVideo();
+    const v = p.videoEl;
+    // Retime applied at play: proxy is native, so speedPct/100 gives the editorial rate.
+    v.playbackRate = Math.max(0.1, (_pfxPlr.speedPct || 100) / 100) * (_pfxPlr.speed || 1);
+    try { v.currentTime = _pfxPlrProxyTimeAt(_pfxPlr.currentRecF); } catch {}
+    v.play().catch(() => {});
+    const endF = _pfxPlrBoundHi();
+    const tickOcf = () => {
+      if (!_pfxPlr.playing) return;
+      // Map proxy time back to a record frame (inverse of _pfxPlrProxyTimeAt).
+      const srcF = p.hdlStFrame + Number(v.currentTime || 0) * (p.fps || 24);
+      const pct  = (_pfxPlr.speedPct || 100) / 100;
+      const recF = Math.round(_pfxPlr.recInF + (srcF - _pfxPlr.srcInF) / (pct || 1));
+      if (recF !== _pfxPlr.currentRecF) { _pfxPlr.currentRecF = recF; _pfxPlrUpdateTc(recF); }
+      if (recF >= endF || v.ended) { _pfxPlrPause(); return; }
+      _pfxPlr.playRafId = requestAnimationFrame(tickOcf);
+    };
+    _pfxPlr.playRafId = requestAnimationFrame(tickOcf);
+    return;
+  }
+
+  if (!pmVideo) return;
   _pfxPlr.playing = true;
   const playBtn = document.getElementById('pfxVfxPlrPlay');
   if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('pfx-vfx-plr-playing'); }
   pmVideo.playbackRate = _pfxPlr.speed || 1;
   pmVideo.play().catch(() => {});
+  const fps = _pfxPlr.fps || 24;
   // RAF loop: keep TC in sync while playing
   const tick = () => {
     if (!_pfxPlr.playing) return;
@@ -14382,21 +16018,24 @@ function _pfxPlrPlay() {
     if (recF !== _pfxPlr.currentRecF) { _pfxPlr.currentRecF = recF; _pfxPlrUpdateTc(recF); }
     _pfxPlr.playRafId = requestAnimationFrame(tick);
   };
-  const fps = _pfxPlr.fps || 24;
   _pfxPlr.playRafId = requestAnimationFrame(tick);
 }
 
 function _pfxPlrPause() {
-  if (!_pfxPlr.playing && pmVideo?.paused) return;
+  const proxyV = _pfxPlr.ocfProxy?.videoEl;
+  if (!_pfxPlr.playing && pmVideo?.paused && (!proxyV || proxyV.paused)) return;
   _pfxPlr.playing = false;
   cancelAnimationFrame(_pfxPlr.playRafId);
   if (pmVideo && !pmVideo.paused) pmVideo.pause();
+  if (proxyV && !proxyV.paused) proxyV.pause();
   const playBtn = document.getElementById('pfxVfxPlrPlay');
   if (playBtn) { playBtn.textContent = '▶'; playBtn.classList.remove('pfx-vfx-plr-playing'); }
 }
 
 function _pfxPlrTogglePlay() {
-  if (_pfxPlrActiveMode() === 'ocf' || _pfxPlr.speed === 0) return;
+  if (_pfxPlr.speed === 0) return;
+  // OCF mode only toggles when a full-range proxy is loaded.
+  if (_pfxPlrActiveMode() === 'ocf' && !_pfxPlr.ocfProxy) return;
   if (_pfxPlr.playing) _pfxPlrPause(); else _pfxPlrPlay();
 }
 
@@ -14469,6 +16108,90 @@ function _pfxPlrOnHeroClick(idx) {
   _pfxPlrSeek(positions[idx].absF);
 }
 
+// ── Full-range OCF proxy render (Problem 2) ──
+// Renders the WHOLE HdlSt→HdlEnd range to a cached .mp4 in the background, then
+// loads it into a hidden <video> and hands it to the transport so the entire shot
+// (handles included) can be scrubbed/played. Non-blocking; reports progress into
+// #pfxVfxPlrOcfProg. Falls back silently to the 7-still carousel on failure.
+async function _pfxPlrEnsureOcfProxy(ev, mk0) {
+  if (!ev || typeof window._pmGetOcfProxy !== 'function') return;
+  const ocf = _pmResolveVfxOcfState(ev, mk0);
+  if (ocf.status === 'unlinked' || !ocf.sourcePath) return;
+  if (!window._pmVfxPullResolveConnected?.()) return;   // RAW proxy needs Resolve
+  // Already have a proxy for this exact shot? Don't re-render.
+  if (_pfxPlr.ocfProxy && _pfxPlr.ev === ev) return;
+
+  // Guard against overlapping renders across shot switches.
+  if (_pfxPlr.proxyAbort) _pfxPlr.proxyAbort.cancelled = true;
+  const token = { cancelled: false };
+  _pfxPlr.proxyAbort = token;
+
+  const fps       = _pfxPlr.fps || 24;
+  const sourceFps = _pfxPlr.sourceFps || fps;
+  const positions = _pfxPlrHeroPositions();
+  const hdlStAbsF  = positions[0].absF;                    // HdlSt
+  const hdlEndAbsF = positions[positions.length - 1].absF; // HdlEnd
+  // Proxy is rendered NATIVE (100%): request the source range at native speed so
+  // playback retime maps record→proxy time correctly (matches the stills).
+  // NOTE: hdlStSrcF/hdlEndSrcF are ABSOLUTE source-TC frames (the same domain as
+  // _pfxPlr.srcInF and _pfxPlrRecToSrc). We keep hdlStSrcF locally and store it on
+  // the proxy so _pfxPlrProxyTimeAt maps (srcF − hdlStSrcF)/fps → proxy-relative
+  // time. We do NOT rely on meta.hdlStFrame: the companion path never returns it and
+  // the bridge path returns a CLIP-RELATIVE frame (Start-TC subtracted), so either
+  // would misplace every seek by the clip's ~600k-frame free-run start TC.
+  const hdlStSrcF  = Math.max(0, sourceFrameAtRecord({
+    srcInF: _pfxPlr.srcInF, recInF: _pfxPlr.recInF, recordFrame: hdlStAbsF, speedPercent: 100 }));
+  const hdlEndSrcF = Math.max(0, sourceFrameAtRecord({
+    srcInF: _pfxPlr.srcInF, recInF: _pfxPlr.recInF, recordFrame: hdlEndAbsF, speedPercent: 100 }));
+  const hdlStTc  = framesToTC(hdlStSrcF,  sourceFps);
+  const hdlEndTc = framesToTC(hdlEndSrcF, sourceFps);
+
+  const progEl = document.getElementById('pfxVfxPlrOcfProg');
+  const _prog = (msg) => { if (progEl && !token.cancelled) { progEl.hidden = false; progEl.textContent = msg; } };
+  _prog('Rendering full OCF proxy… 0%');
+
+  let meta;
+  try {
+    meta = await window._pmGetOcfProxy(
+      { ocfPath: ocf.sourcePath, hdlStTc, hdlEndTc,
+        sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || sourceFps, width: 960 },
+      { onProgress: (pct) => _prog(`Rendering full OCF proxy… ${Math.round(pct)}%`) });
+  } catch (e) {
+    meta = { error: e?.message || String(e) };
+  }
+  if (token.cancelled || _pfxPlr.ev !== ev) return;
+  if (!meta || meta.error || !meta.proxyPath) {
+    _prog(`Full OCF proxy unavailable — using sampled frames.${meta?.error ? ' (' + meta.error + ')' : ''}`);
+    return;
+  }
+
+  // Build the hidden proxy <video> and hand it to the transport.
+  const srcUrl = window.pfxPlatform?.media?.srcUrl?.(meta.proxyPath);
+  if (!srcUrl) { _prog('Full OCF proxy: cannot build media URL.'); return; }
+  const vid = document.createElement('video');
+  vid.id = 'pfxVfxOcfProxyVideo';
+  vid.muted = true;
+  vid.preload = 'auto';
+  vid.playsInline = true;
+  vid.src = srcUrl;
+  try { vid.load(); } catch {}
+
+  _pfxPlr.ocfProxy = {
+    videoEl:    vid,
+    fps:        Number(meta.fps) || sourceFps,
+    // ABSOLUTE source frame of the proxy's first frame (HdlSt), computed in the
+    // renderer's own source-TC domain — NOT meta.hdlStFrame (see note above).
+    hdlStFrame: hdlStSrcF,
+    hdlEndFrame: hdlEndSrcF,
+    frameCount: Number(meta.frameCount) || 0,
+    proxyPath:  meta.proxyPath,
+  };
+  _prog('Full OCF proxy ready — scrub/play the whole shot.');
+  // Transport now spans the full range + OCF play is enabled; refresh the current frame.
+  _pfxPlrUpdatePlayBtn();
+  try { _pfxPlrSeek(_pfxPlr.currentRecF); } catch {}
+}
+
 // ── Generate all hero OCF preview frames ──
 async function _pfxPlrGenOcfFrames() {
   const ev  = _pfxPlr.ev;
@@ -14499,6 +16222,7 @@ async function _pfxPlrGenOcfFrames() {
   _pfxPlr.genAbort = token;
 
   const fps       = _pfxPlr.fps || 24;
+  const sourceFps = _pfxPlr.sourceFps || fps;
   const positions = _pfxPlrHeroPositions();
   // Surface the OCF's native fps + the editorial speed applied, so a retimed shot's
   // QT-vs-OCF frame difference reads as expected (QT retimed, OCF native) not a bug.
@@ -14512,13 +16236,14 @@ async function _pfxPlrGenOcfFrames() {
 
   for (const pos of positions) {
     if (token.cancelled) break;
-    const srcTc = framesToTC(Math.max(0, _pfxPlrRecToSrc(pos.absF)), fps);
+    const srcTc = framesToTC(Math.max(0, _pfxPlrRecToSrc(pos.absF)), sourceFps);
     try {
-      await window._pmGetOcfStillPreview?.({
+      const r = await window._pmGetOcfStillPreview?.({
         ocfPath: ocf.sourcePath, sourceTc: srcTc,
         sourceStartTc: ocf.ocfStartTc || '', fps: ocf.ocfFps || fps,
         width: 320, height: 180, resolveConnected: true,
       });
+      _pmNormalizeOcfPreviewResult(r, true);
     } catch (_) {}
     if (token.cancelled) break;
     ready++;
@@ -14528,22 +16253,42 @@ async function _pfxPlrGenOcfFrames() {
   if (!token.cancelled) {
     if (progEl) progEl.textContent = `OCF Preview: ${ready}/${positions.length} frames ready — Done`;
     setTimeout(() => _pmVfxWorkspaceGenerateFrameStrip(ev, mk0), 100);
+    // Now that the fast stills are up, render the FULL-DURATION proxy in the
+    // background so the OCF pane can scrub/play the whole shot (Problem 2).
+    _pfxPlrEnsureOcfProxy(ev, mk0).catch(() => {});
   }
 }
 
 // ── Initialize player for a newly selected shot ──
 function _pfxPlrInit(ev, mk0) {
   const fps = _pmFps || 24;
+  const ocf = _pmResolveVfxOcfState(ev, mk0);
   _pfxPlr.ev      = ev;
   _pfxPlr.mk0     = mk0;
   _pfxPlr.fps     = fps;
+  _pfxPlr.sourceFps = _pmVfxOcfSourceFps(ev, ocf);
   _pfxPlr.recInF  = ev?.recIn  ? tcToFrames(ev.recIn,  fps) : 0;
   _pfxPlr.recOutF = ev?.recOut ? tcToFrames(ev.recOut, fps) : _pfxPlr.recInF + 1;
-  _pfxPlr.srcInF  = ev?.srcIn  ? tcToFrames(ev.srcIn,  fps) : 0;
+  _pfxPlr.srcInF  = ev?.srcIn  ? tcToFrames(ev.srcIn,  _pfxPlr.sourceFps || fps) : 0;
   // Editorial retime speed (percent, 100 == native) — used to map record→native
   // source frame for the OCF preview so a retimed shot's frames line up.
   _pfxPlr.speedPct = _pmExtractSpeedPercent(ev) || 100;
   _pfxPlr.currentRecF = _pfxPlr.recInF;
+
+  // Handle-inclusive transport bounds (HdlSt → HdlEnd), used once a full-range
+  // proxy is loaded so the whole shot including handles scrubs (Problem 2).
+  const _hp = _pfxPlrHeroPositions();
+  _pfxPlr.hdlStF  = _hp[0].absF;
+  _pfxPlr.hdlEndF = _hp[_hp.length - 1].absF;
+
+  // Reset any prior shot's full-range proxy (abort in-flight render, detach video).
+  if (_pfxPlr.proxyAbort) { _pfxPlr.proxyAbort.cancelled = true; _pfxPlr.proxyAbort = null; }
+  if (_pfxPlr.ocfProxy?.videoEl) {
+    try { _pfxPlr.ocfProxy.videoEl.pause(); } catch {}
+    try { _pfxPlr.ocfProxy.videoEl.removeAttribute('src'); _pfxPlr.ocfProxy.videoEl.load(); } catch {}
+    try { _pfxPlr.ocfProxy.videoEl.remove(); } catch {}
+  }
+  _pfxPlr.ocfProxy = null;
 
   const sliderEl = document.getElementById('pfxVfxPlrSlider');
   if (sliderEl) { sliderEl.min = '0'; sliderEl.max = '1000'; sliderEl.value = '0'; sliderEl.style.setProperty('--pfx-pct', '0%'); }
@@ -14559,7 +16304,6 @@ function _pfxPlrInit(ev, mk0) {
   // Auto-check Resolve and start OCF hero frame generation in background
   const resolveConnected = !!(window._pmVfxPullResolveConnected?.());
   if (resolveConnected) {
-    const ocf = _pmResolveVfxOcfState(ev, mk0);
     if (ocf.status !== 'unlinked' && ocf.sourcePath) {
       setTimeout(() => _pfxPlrGenOcfFrames(), 400);
     }
@@ -14583,7 +16327,8 @@ function _pfxPlrWire() {
   if (slider) {
     slider.addEventListener('input', () => {
       const pct  = parseInt(slider.value, 10) / 1000;
-      const recF = _pfxPlr.recInF + Math.round(pct * (_pfxPlr.recOutF - _pfxPlr.recInF));
+      const lo   = _pfxPlrBoundLo();
+      const recF = lo + Math.round(pct * (_pfxPlrBoundHi() - lo));
       _pfxPlrSeek(recF);
     });
   }
@@ -14790,6 +16535,16 @@ function _wireVfxWorkspace() {
       }
     });
   }
+
+  // Simple / Advanced view-mode toggle — single smart button that flips modes.
+  const modeToggle = document.getElementById('pfxVfxModeToggle');
+  if (modeToggle) {
+    modeToggle.addEventListener('click', () => {
+      const cur = modeToggle.dataset.vfxmode === 'simple' ? 'simple' : 'advanced';
+      _pmApplyVfxViewMode(cur === 'simple' ? 'advanced' : 'simple');
+    });
+  }
+  _pmApplyVfxViewMode('advanced', false);
 
   _pfxPlrWire();
 }
@@ -15307,6 +17062,20 @@ function _wireControls() {
   if (pmPlayBtn) {
     pmPlayBtn.addEventListener('click', () => {
       if (!pmVideo) return;
+      const native = pmVideo._pfxNativeEngine;
+      if (native) {
+        if (native.isPlaying) {
+          native.pause();
+          pmPlayBtn.textContent = '▶';
+          _pmStopPlayRaf();
+          _pmSyncFrame();
+        } else {
+          native.play();
+          pmPlayBtn.textContent = '⏸';
+          _pmStartPlayRaf();
+        }
+        return;
+      }
       if (pmVideo.paused) {
         _pmTlPack ? _pmPackPlay() : pmVideo.play().catch(() => {});
       } else {
@@ -16518,67 +18287,59 @@ function _pmPlateDropdownHtml(selectedValue) {
 // ─── Auto shot name from EDL event ───────────────────────────────────────────
 // ─── VFX auto shot name — uses Markers tab naming engine when available ───────
 function _pmAutoShotName(ev, idx) {
-  // NOTE: do NOT short-circuit on ev._pmShot here.
-  // The call site (line ~3906) already returns ev._pmShot when vfxrename mode is active.
-  // Short-circuiting here would bypass the naming template for events that have a
-  // stale _pmShot from saved metadata or a previous session.
-
-  // ── Primary: naming_template.js settings (localStorage-backed) ──
-  // Mirrors buildShotName() logic in naming_template.js — respects all *_on toggle flags.
+  // A name is derived from timeline position, never from a mutable preview
+  // counter. Calling this function repeatedly for the same event always returns
+  // the same candidate unless another shot has reserved that name.
+  const eventIndex = Math.max(0, Number(idx) || 0);
+  const template = {
+    show: 'BLR', episode: '101', sequence: '', scene: '', project: _pmCurrentProjectKey,
+    showOn: true, episodeOn: true, sequenceOn: false, sceneOn: false,
+    start: 10, step: 10, pad: 3,
+  };
   try {
     const showOn  = localStorage.getItem('pfx_sm_show_on')  !== '0';
     const epOn    = localStorage.getItem('pfx_sm_ep_on')    !== '0';
     const startOn = localStorage.getItem('pfx_sm_start_on') !== '0';
     const stepOn  = localStorage.getItem('pfx_sm_step_on')  !== '0';
     const padOn   = localStorage.getItem('pfx_sm_pad_on')   !== '0';
-    const smShow  = String(localStorage.getItem('pfx_sm_show_val') || '').trim();
-    const smSq    = String(localStorage.getItem('pfx_sm_sq_val')   || '').trim();
-
-    // Only use template when at least one prefix component is configured and enabled.
-    // This matches buildShotName() — avoids bare counters when template is unconfigured.
-    const hasTemplate = (showOn && smShow) || (epOn && smSq);
-    if (hasTemplate) {
-      const smStart = startOn ? (parseInt(localStorage.getItem('pfx_sm_start_val') || '60', 10) || 60) : 1;
-      const smStep  = stepOn  ? (parseInt(localStorage.getItem('pfx_sm_step_val')  || '10', 10) || 10) : 1;
-      const smPad   = padOn   ? Math.max(2, Math.min(6, parseInt(localStorage.getItem('pfx_sm_pad_val') || '3', 10) || 3)) : 1;
-
-      if (!Number.isFinite(window.__smShotCounter)) window.__smShotCounter = smStart;
-      const counter = window.__smShotCounter;
-      window.__smShotCounter = counter + smStep;
-
-      const sceneOn  = localStorage.getItem('pfx_sm_scene_on') === '1';
-      const smScene  = String(localStorage.getItem('pfx_sm_scene_val') || '').trim();
-
-      const parts = [];
-      if (showOn  && smShow)  parts.push(smShow);
-      if (epOn    && smSq)    parts.push(String(parseInt(smSq,    10) || 0).padStart(3, '0'));
-      if (sceneOn && smScene) parts.push(String(parseInt(smScene, 10) || 0).padStart(3, '0'));
-      parts.push(String(counter).padStart(smPad, '0'));
-      return parts.join('_');
-    }
+    const storedShow = String(localStorage.getItem('pfx_sm_show_val') || 'BLR').trim() || 'BLR';
+    const smShow  = storedShow.toUpperCase() === 'MMBLR' ? 'BLR' : storedShow;
+    const smSq    = String(localStorage.getItem('pfx_sm_sq_val')   || '101').trim() || '101';
+    template.show = smShow;
+    template.episode = smSq;
+    template.sequence = String(localStorage.getItem('pfx_sm_seq_val') || '').trim();
+    template.scene = String(localStorage.getItem('pfx_sm_scene_val') || '').trim();
+    template.showOn = showOn && !!smShow;
+    template.episodeOn = epOn && !!smSq;
+    template.sequenceOn = localStorage.getItem('pfx_sm_seq_on') === '1' && !!template.sequence;
+    template.sceneOn = localStorage.getItem('pfx_sm_scene_on') === '1' && !!template.scene;
+    template.start = startOn ? (parseInt(localStorage.getItem('pfx_sm_start_val') || '10', 10) || 10) : 10;
+    template.step = stepOn ? (parseInt(localStorage.getItem('pfx_sm_step_val') || '10', 10) || 10) : 10;
+    template.pad = padOn ? Math.max(2, Math.min(6, parseInt(localStorage.getItem('pfx_sm_pad_val') || '3', 10) || 3)) : 3;
   } catch {}
 
-  // ── Fallback: derive from reel / clip name ────────────────────────────────
-  if (!ev) return `SHOT_${String((idx||0)+1).padStart(3,'0')}`;
-  const base = (ev.reel || ev.clipName || ev.clip || '')
-    .replace(/\.[a-z0-9]+$/i,'').replace(/[^a-zA-Z0-9_]/g,'_').slice(0,16).toUpperCase();
-  const seq = String((idx||0)+1).padStart(3,'0');
-  return base ? `${base}_${seq}` : `SHOT_${seq}`;
+  return buildTimelineVfxName({
+    event: ev || {},
+    index: eventIndex,
+    template,
+    occupiedNames: _pmVfxOccupiedNames([eventIndex]),
+  });
 }
 
 function _pmReadNamingTemplateQuickState(mk, ev, idx, layerOrderIndex = null, totalLayers = null) {
-  let show = 'SHOW', sq = '101', seq = '', scene = '', task = '', vendor = '', ver = '';
+  let show = 'BLR', sq = '101', seq = '', scene = '', task = '', vendor = '', ver = 'v001';
   let showOn = true, epOn = true, seqOn = false, sceneOn = false, padOn = true, taskOn = false, vendorOn = false, verOn = false;
-  let start = 60, pad = 3;
+  let start = 60, step = 10, pad = 3;
 
   try {
-    show = String(localStorage.getItem('pfx_sm_show_val') || 'LMP').trim() || 'SHOW';
+    show = String(localStorage.getItem('pfx_sm_show_val') || 'BLR').trim() || 'BLR';
+    if (show.toUpperCase() === 'MMBLR') show = 'BLR';
     sq = String(localStorage.getItem('pfx_sm_sq_val') || '101').trim() || '101';
     seq = String(localStorage.getItem('pfx_sm_seq_val') || '').trim();
     scene = String(localStorage.getItem('pfx_sm_scene_val') || '').trim();
     task = String(localStorage.getItem('pfx_sm_task_val') || '').trim();
     vendor = String(localStorage.getItem('pfx_sm_vendor_val') || '').trim();
-    ver = String(localStorage.getItem('pfx_sm_ver_val') || '').trim();
+    ver = String(localStorage.getItem('pfx_sm_ver_val') || 'v001').trim() || 'v001';
     showOn = localStorage.getItem('pfx_sm_show_on') !== '0';
     epOn = localStorage.getItem('pfx_sm_ep_on') !== '0';
     seqOn = localStorage.getItem('pfx_sm_seq_on') === '1';
@@ -16588,12 +18349,12 @@ function _pmReadNamingTemplateQuickState(mk, ev, idx, layerOrderIndex = null, to
     vendorOn = localStorage.getItem('pfx_sm_vendor_on') === '1';
     verOn = localStorage.getItem('pfx_sm_ver_on') === '1';
     start = parseInt(localStorage.getItem('pfx_sm_start_val') || '60', 10) || 60;
+    step = parseInt(localStorage.getItem('pfx_sm_step_val') || '10', 10) || 10;
     pad = Math.max(2, Math.min(6, parseInt(localStorage.getItem('pfx_sm_pad_val') || '3', 10) || 3));
   } catch {}
 
   const hasTemplate = (showOn && show) || (epOn && sq);
-  const counterRaw = Number(window.__smShotCounter);
-  const counter = Number.isFinite(counterRaw) ? counterRaw : start;
+  const counter = start + (Math.max(0, Number(idx) || 0) * step);
   const shotNum = String(counter).padStart(padOn ? pad : 1, '0');
   const sceneToken = /^\d+$/.test(scene) ? String(parseInt(scene, 10) || 0).padStart(3, '0') : _pmSanitizeNameToken(scene);
   const epToken = /^\d+$/.test(sq) ? String(parseInt(sq, 10) || 0).padStart(3, '0') : _pmSanitizeNameToken(sq);
@@ -16653,13 +18414,13 @@ function _pmReadNamingTemplateQuickState(mk, ev, idx, layerOrderIndex = null, to
   ).trim();
   const plateVer = String(
     explicitPlate
-      ? (plateDefaults.ver || persistedPlateVer || '')
-      : (persistedPlateVer || '')
-  ).trim();
+      ? (plateDefaults.ver || persistedPlateVer || 'v001')
+      : (persistedPlateVer || 'v001')
+  ).trim() || 'v001';
   const plateTokens = [plateCode.toUpperCase(), plateNum]
     .concat(plateTask ? [plateTask] : [])
     .concat(plateVendor ? [plateVendor] : [])
-    .concat([plateVer || 'none']);
+    .concat([plateVer]);
 
   return {
     shotParts,
@@ -16850,8 +18611,8 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
     tcOut = recOut;
   }
 
-  // Shot name — compute naming-template base ONCE to avoid double counter increment
-  // when the comp-batch path also needs it.
+  // Compute the deterministic naming-template base once so the single-marker
+  // and comp-batch paths show exactly the same suggestion.
   const _pmShotBase = _pmAutoShotName(ev, evIdx);
 
   // Capture the padded shot number from the template result so mk.template.shot is
@@ -16869,17 +18630,19 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
     return '';
   })();
 
+  const hadExistingShotName = !!String(ev?._pmShot || '').trim();
   let shotName;
-  if (ev?._pmShot && _pmQs('vfxrename')) {
-    shotName = ev._pmShot;
-  } else if (ev?._pmShot) {
-    shotName = ev._pmShot;
+  if (ev?._pmShot) {
+    shotName = buildNetflixPlateName(ev._pmShot);
   } else {
     if (!Number.isFinite(window.__pmPlateSeq) || window.__pmPlateSeq < 1) window.__pmPlateSeq = 1;
     const plateNum = String(window.__pmPlateSeq).padStart(2, '0');
     window.__pmPlateSeq++;
-    shotName = `${_pmShotBase}_PL${plateNum}`;
+    shotName = buildNetflixPlateName(_pmShotBase, `PL${plateNum}`, 'v001');
   }
+  const uniqueShotName = nextUniqueVfxName(shotName, _pmVfxOccupiedNames(evIdx >= 0 ? [evIdx] : []), { step: 10, pad: 3 });
+  const shotNameWasDeduped = canonicalVfxName(uniqueShotName) !== canonicalVfxName(shotName);
+  shotName = uniqueShotName;
 
   // ── Comp-shot batch: when pinned to an event, detect sibling comp layers by
   // shared shot base name and mark all unlinked layers in one action.
@@ -16889,7 +18652,7 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
     if (compIdxs.length > 1) {
       _pmSlySnapshot('Add comp-batch markers');
       const compBase  = _pmGetShotBase(_pmEvents[evIdx]?.clipName || _pmEvents[evIdx]?.reel || '');
-      // Reuse already-computed base (avoids calling _pmAutoShotName again and double-incrementing counter)
+      // Reuse the already-computed deterministic base across every comp layer.
       const templateBase = _pmShotBase;
       const alreadyLinkedEvs = new Set(_pmLinkMap.values());
       let   lastMk = null;
@@ -16916,13 +18679,28 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
         }
         // Layer name: naming-template base + layer suffix (e.g. "DLF_101_060_BG01")
         // Use existing shot name if set; otherwise derive suffix from clip name last segment
+        const hadExistingLayerName = !!String(cEv?._pmShot || '').trim();
         const layerSuffix = (cEv?.clipName || cEv?.reel || '').split('_').pop() || '';
-        const cShotName   = cEv?._pmShot || (layerSuffix ? `${templateBase}_${layerSuffix}` : templateBase);
-        if (cEv && !cEv._pmShot) {
+        const existingLayer = splitVfxPlateName(cEv?._pmShot || '');
+        const suggestedLayerPlate = /^[A-Za-z][A-Za-z0-9]*\d{1,3}$/.test(layerSuffix)
+          ? layerSuffix
+          : `PL${String(compIdxs.indexOf(cIdx) + 1).padStart(2, '0')}`;
+        let cShotName = buildNetflixPlateName(
+          cEv?._pmShot || templateBase,
+          existingLayer.plateId || suggestedLayerPlate,
+          existingLayer.version || 'v001',
+        );
+        const uniqueLayerName = nextUniqueVfxName(cShotName, _pmVfxOccupiedNames([cIdx]), { step: 10, pad: 3 });
+        const layerNameWasDeduped = canonicalVfxName(uniqueLayerName) !== canonicalVfxName(cShotName);
+        cShotName = uniqueLayerName;
+        if (cEv && (!cEv._pmShot || layerNameWasDeduped)) {
           cEv._pmShot = cShotName;
+          cEv._pmNameReview = 'pending';
+          cEv._pmNameSource = layerNameWasDeduped ? 'auto-dedupe' : 'auto';
           _pmSaveMeta(cEv);
         }
 
+        const cPlate = splitVfxPlateName(cShotName);
         const mk = {
           id: (typeof crypto !== 'undefined' && crypto.randomUUID)
                 ? crypto.randomUUID()
@@ -16937,6 +18715,12 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
           vendor: '', scopeOfWork: '', scopeOfWorkList: [],
           note: '', noteType: '', noteTypeGroup: '',
           thumb: '', thumbAnn: '', annoStrokes: null,
+          _pmNameReview: layerNameWasDeduped ? 'pending' : (cEv?._pmNameReview || (hadExistingLayerName ? 'approved' : 'pending')),
+          _pmNameSource: layerNameWasDeduped ? 'auto-dedupe' : (cEv?._pmNameSource || (hadExistingLayerName ? 'existing' : 'auto')),
+          _pmNameSuggested: (layerNameWasDeduped || !hadExistingLayerName) ? cShotName : undefined,
+          _pmPlateCode: String(cPlate.plateId || 'PL01').replace(/\d+$/, ''),
+          _pmPlateNum: (String(cPlate.plateId || 'PL01').match(/\d+$/)?.[0] || '01').padStart(2, '0'),
+          _pmPlateVer: cPlate.version || 'v001',
           _fromPrepMark: true,
           _compBase: compBase,      // group tag — all layers of same comp share this
           _eventIdx: cIdx,
@@ -16955,27 +18739,41 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
         if (pmCtxMarkers) pmCtxMarkers.textContent = `${_pmClipMarkers.length} marker${_pmClipMarkers.length === 1 ? '' : 's'}`;
         _pmScheduleDraw();
         if (pmVideo && pmVideo.readyState >= 2 && pmVideo.videoWidth) {
-          try {
-            const W = Math.min(pmVideo.videoWidth || 1920, 1920);
-            const H = Math.round(W * (pmVideo.videoHeight || 1080) / Math.max(1, pmVideo.videoWidth || 1920));
-            const c = document.createElement('canvas');
-            c.width = W;
-            c.height = H || Math.round(W * 9 / 16);
-            c.getContext('2d').drawImage(pmVideo, 0, 0, c.width, c.height);
-            const dataUrl = c.toDataURL('image/png');
-            batchMarkers.forEach(m => {
-              if (!m.thumb) m.thumb = dataUrl;
-              m._thumbCapturing = false;
-              delete m._thumbError;
-            });
-          } catch (err) {
-            console.warn('[PM] immediate comp batch thumb capture failed', err);
-            batchMarkers.forEach(m => {
-              m._thumbCapturing = false;
-              m._thumbError = err?.message || 'Thumbnail capture failed';
-            });
-          }
-          _pmSaveClipMarkers();
+          const W = Math.min(pmVideo.videoWidth || 1920, 1920);
+          const H = Math.round(W * (pmVideo.videoHeight || 1080) / Math.max(1, pmVideo.videoWidth || 1920));
+          const c = document.createElement('canvas');
+          c.width = W;
+          c.height = H || Math.round(W * 9 / 16);
+          try { c.getContext('2d').drawImage(pmVideo, 0, 0, c.width, c.height); } catch {}
+          const targetF = _pmReadVideoAbsFrame() - _pmVidZero();
+          // Fire-and-forget: the native taint fallback is async. Keep marker creation
+          // synchronous; re-render the inspector/table when the clean thumb lands.
+          (async () => {
+            try {
+              const dataUrl = await _pmCanvasToDataUrlSafe(c, targetF);
+              if (dataUrl) {
+                batchMarkers.forEach(m => {
+                  if (!m.thumb) m.thumb = dataUrl;
+                  m._thumbCapturing = false;
+                  delete m._thumbError;
+                });
+              } else {
+                batchMarkers.forEach(m => {
+                  m._thumbCapturing = false;
+                  m._thumbError = 'Thumbnail capture failed';
+                });
+              }
+            } catch (err) {
+              console.warn('[PM] immediate comp batch thumb capture failed', err);
+              batchMarkers.forEach(m => {
+                m._thumbCapturing = false;
+                m._thumbError = err?.message || 'Thumbnail capture failed';
+              });
+            }
+            _pmSaveClipMarkers();
+            _pmRenderInspector();
+            _pmRenderEventTable();
+          })();
         } else {
           batchMarkers.forEach(m => {
             m._thumbCapturing = false;
@@ -17014,6 +18812,7 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
     }
   }
 
+  const shotPlate = splitVfxPlateName(shotName);
   const marker = {
     id: (typeof crypto !== 'undefined' && crypto.randomUUID)
           ? crypto.randomUUID()
@@ -17036,6 +18835,12 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
     thumb:     '',
     thumbAnn:  '',
     annoStrokes: null,
+    _pmNameReview: shotNameWasDeduped ? 'pending' : (ev?._pmNameReview || (hadExistingShotName ? 'approved' : 'pending')),
+    _pmNameSource: shotNameWasDeduped ? 'auto-dedupe' : (ev?._pmNameSource || (hadExistingShotName ? 'existing' : 'auto')),
+    _pmNameSuggested: (shotNameWasDeduped || ev?._pmNameReview === 'pending' || !hadExistingShotName) ? shotName : undefined,
+    _pmPlateCode: String(shotPlate.plateId || 'PL01').replace(/\d+$/, ''),
+    _pmPlateNum: (String(shotPlate.plateId || 'PL01').match(/\d+$/)?.[0] || '01').padStart(2, '0'),
+    _pmPlateVer: shotPlate.version || 'v001',
     _thumbCapturing: true,
     _fromPrepMark: true,
     _eventIdx: evIdx >= 0 ? evIdx : undefined,  // clip binding — used by _pmRunAutoLink
@@ -17043,8 +18848,10 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
 
   _pmSlySnapshot('Add marker');
   _pmClipMarkers.push(marker);
-  if (ev && !ev._pmShot) {
+  if (ev && (!ev._pmShot || shotNameWasDeduped)) {
     ev._pmShot = shotName;
+    ev._pmNameReview = 'pending';
+    ev._pmNameSource = shotNameWasDeduped ? 'auto-dedupe' : 'auto';
     _pmSaveMeta(ev);
   }
   _pmSaveClipMarkers();
@@ -17057,21 +18864,28 @@ function _pmAddMarker(forceEventIdx, forceFrame) {
   // Reuse the currently displayed video frame immediately after add-marker so the
   // inspector does not need to kick off a second async capture for the same image.
   if (pmVideo && pmVideo.readyState >= 2 && pmVideo.videoWidth) {
-    try {
-      const W = Math.min(pmVideo.videoWidth || 1920, 1920);
-      const H = Math.round(W * (pmVideo.videoHeight || 1080) / Math.max(1, pmVideo.videoWidth || 1920));
-      const c = document.createElement('canvas');
-      c.width = W;
-      c.height = H || Math.round(W * 9 / 16);
-      c.getContext('2d').drawImage(pmVideo, 0, 0, c.width, c.height);
-      marker.thumb = c.toDataURL('image/png');
-      delete marker._thumbError;
-    } catch (err) {
-      console.warn('[PM] immediate marker thumb capture failed', err);
-      marker._thumbError = err?.message || 'Thumbnail capture failed';
-    }
-    marker._thumbCapturing = false;
-    _pmSaveClipMarkers();
+    const W = Math.min(pmVideo.videoWidth || 1920, 1920);
+    const H = Math.round(W * (pmVideo.videoHeight || 1080) / Math.max(1, pmVideo.videoWidth || 1920));
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H || Math.round(W * 9 / 16);
+    try { c.getContext('2d').drawImage(pmVideo, 0, 0, c.width, c.height); } catch {}
+    const targetF = _pmReadVideoAbsFrame() - _pmVidZero();
+    // Fire-and-forget: the native taint fallback is async. Keep marker creation
+    // synchronous; re-render the inspector when the clean thumb lands.
+    (async () => {
+      try {
+        const url = await _pmCanvasToDataUrlSafe(c, targetF);
+        if (url) { marker.thumb = url; delete marker._thumbError; }
+        else { marker._thumbError = 'Thumbnail capture failed'; }
+      } catch (err) {
+        console.warn('[PM] immediate marker thumb capture failed', err);
+        marker._thumbError = err?.message || 'Thumbnail capture failed';
+      }
+      marker._thumbCapturing = false;
+      _pmSaveClipMarkers();
+      _pmRenderInspector();
+    })();
   } else {
     marker._thumbCapturing = false;
     _pmSaveClipMarkers();
@@ -20431,7 +22245,7 @@ async function _pmCaptureThumbsForExport() {
       await new Promise(resolve => {
         let done = false;
         const finish = () => { if (!done) { done = true; resolve(); } };
-        const capture = () => {
+        const capture = async () => {
           try {
             // ctx.drawImage is synchronous — captures the exact decoded frame at seeked time,
             // avoiding a race where an async createImageBitmap could resolve after the video
@@ -20441,10 +22255,12 @@ async function _pmCaptureThumbsForExport() {
             const c = document.createElement('canvas');
             c.width = W; c.height = H;
             c.getContext('2d').drawImage(pmVideo, 0, 0, W, H);
-            mk.thumb = c.toDataURL('image/png');
-            freshIds.add(mk.id);
+            // Video was just seeked to this marker's recIn, so the native fallback frame matches.
+            const targetF = tcToFrames(mk.recIn, fps) - _pmVidZero();
+            const url = await _pmCanvasToDataUrlSafe(c, targetF);
+            if (url) { mk.thumb = url; freshIds.add(mk.id); }
           } catch {}
-          finish();
+          finally { finish(); }
         };
         pmVideo.addEventListener('seeked', capture, { once: true });
         setTimeout(finish, 2500);
@@ -22747,7 +24563,9 @@ function _pmShowAleToast(msg) {
 }
 
 function _csvCell(v) {
-  const s = String(v == null ? '' : v);
+  let s = String(v == null ? '' : v);
+  // PFX_CSV_FORMULA_GUARD: keep user-authored names/notes inert in spreadsheets.
+  if (/^[=+\-@\t\r\n]/.test(s)) s = `'${s}`;
   return s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')
     ? `"${s.replace(/"/g, '""')}"`
     : s;
@@ -22978,6 +24796,14 @@ function _pmCompositeThumb(mk, annDataUrl, onDone) {
       const ctx = c.getContext('2d');
       ctx.drawImage(base, 0, 0, W, H);
       ctx.drawImage(ann,  0, 0, W, H);
+      // No live video source to re-grab here (base/ann are Images). If the composite
+      // canvas is tainted (rare cross-origin edge), skip the overwrite so the existing
+      // clean base thumb survives rather than throwing on toDataURL.
+      if (_pmCanvasIsTainted(c)) {
+        console.warn('[PM] composite thumb skipped — tainted canvas');
+        if (onDone) onDone();
+        return;
+      }
       mk.thumb = c.toDataURL('image/png');
     } catch (e) { console.warn('[PM] composite thumb failed', e); }
     if (onDone) onDone();
@@ -23102,8 +24928,43 @@ async function _pmOpenAnnotateModal(initialTool = 'pen', syncMk = null, syncEvId
   const _videoReady = pmVideo && pmVideo.readyState >= 2 &&
                       !pmVideo.seeking && pmVideo.videoWidth > 0 && pmVideo.videoHeight > 0;
   let _srcIsPlaceholder = false;
+  const _nativeCanvas = pmVideo?._pfxNativeCanvas;
+  const _nativeEngine = pmVideo?._pfxNativeEngine;
+  const _nativeFrameReady = !!_nativeEngine &&
+    _nativeCanvas && _nativeCanvas.width > 0 && _nativeCanvas.height > 0;
 
-  if (syncMk?.thumb?.startsWith('data:') && (_pmCompanionMode || !_videoReady)) {
+  if (_nativeFrameReady) {
+    // AVFoundation paints the real ProRes frame into this canvas while the
+    // Chromium <video> stays intentionally empty/hidden. Treat the canvas as a
+    // first-class annotation source instead of falling through to the branded
+    // "Preview unavailable" placeholder.
+    try {
+      // Annotation is a still-frame operation. Pause first, then ask the
+      // AVFoundation engine for a fresh decode of the exact current frame.
+      // Canvas capture remains a fallback, but is not authoritative because a
+      // layout resize clears its pixels just as the modal opens.
+      _nativeEngine.pause();
+      _pmStopPlayRaf();
+      _pmSyncFrame();
+      srcDataUrl = await Promise.race([
+        _nativeEngine.captureCurrentFrameDataUrl?.(8000),
+        new Promise(resolve => setTimeout(() => resolve(null), 8500)),
+      ]);
+      if (!srcDataUrl) srcDataUrl = _nativeCanvas.toDataURL('image/jpeg', 0.92);
+      srcVideoTime = Number(_nativeEngine.currentTime) || 0;
+      srcVideoCurrentFrame = Math.max(0, Number(_nativeEngine.currentFrame) || 0);
+      if (Number.isFinite(annotClipInAbs) && Number.isFinite(annotClipOutAbs) && annotClipOutAbs > annotClipInAbs) {
+        srcVideoClipStartFrame = Math.max(0, annotClipInAbs - _pmVidZero());
+        srcVideoClipEndFrame = Math.max(srcVideoClipStartFrame + 1, annotClipOutAbs - _pmVidZero());
+      }
+    } catch {
+      srcDataUrl = null;
+    }
+  }
+
+  if (srcDataUrl) {
+    _srcIsPlaceholder = false;
+  } else if (syncMk?.thumb?.startsWith('data:') && (_pmCompanionMode || !_videoReady)) {
     // Prefer stored marker thumbnail when video isn't drawable
     srcDataUrl = syncMk.thumb;
   } else if (_videoReady) {
@@ -23265,6 +25126,7 @@ async function _pmOpenAnnotateModal(initialTool = 'pen', syncMk = null, syncEvId
   openAnnotateModal({
     srcDataUrl,
     srcVideoUrl,
+    mediaPlaceholder: _srcIsPlaceholder,
     videoCurrentTime: srcVideoTime,
     videoAutoPlay: srcVideoAutoPlay,
     videoFps: _pmFps || 24,
@@ -24208,6 +26070,9 @@ function _pmSlyRestoreSnapshot(snap) {
     if (metaObj !== null) {
       _pmMetaMap.clear();
       for (const [k, v] of Object.entries(metaObj)) _pmMetaMap.set(k, v);
+      // A missing field in an older snapshot means "no manual override". Clear
+      // the live overrides first so Undo can genuinely restore that state.
+      _pmClearManualMetaFromEvents();
       try { _pmApplyMetaToEvents(); } catch {}
       try {
         const obj = {};
@@ -24492,10 +26357,8 @@ function _pmSlyAiRecommend(clusters, linked, totalEvents, warns) {
 function _pmSlySmartAutoName() {
   if (!_pmClipMarkers.length) { _pmSlyToast('No markers to name'); return; }
   _pmSlySnapshot('Smart Auto-Name');
-  window.__smShotCounter = null; // reset counter so naming restarts from template start
 
   let renamed = 0;
-  const linkedIdxSet = new Set([..._pmLinkMap.values()]);
 
   for (let i = 0; i < _pmClipMarkers.length; i++) {
     const mk    = _pmClipMarkers[i];
@@ -24509,11 +26372,20 @@ function _pmSlySmartAutoName() {
 
     const seq       = _pmClipMarkers.slice(0, i).filter(m => m._plateCode === code).length + 1;
     const newName   = _pmSlyGenerateShotName(ev, mk, seq);
-    if (newName && newName !== mk.shotName) { mk.shotName = newName; renamed++; }
+    if (!newName || canonicalVfxName(newName) === canonicalVfxName(mk.shotName)) continue;
+    const commit = _pmCommitShotNameChange({
+      name: newName,
+      eventIndices: evIdx >= 0 ? [evIdx] : [],
+      markerIds: [mk.id],
+      source: 'template',
+      markerNameMode: 'plate',
+      snapshot: false,
+    });
+    if (commit.ok) renamed++;
   }
 
   try { _pmSaveClipMarkers(); _pmRefreshData(); } catch {}
-  _pmSlyToast(renamed > 0 ? `✓ ${renamed} shot names updated` : 'All names already current');
+  _pmSlyToast(renamed > 0 ? `✓ ${renamed} names suggested — review before approval` : 'All names already current');
 }
 
 // ── Generate shot name for a single marker ─────────────────────────────────────
@@ -24614,11 +26486,8 @@ function _pmSlyBatchMark(prefix, plateCode) {
 
     const frame = tcToFrames(timing.recIn || '00:00:00:00', fps);
 
-    // ── Netflix VFX auto-naming: use the naming template (SHOW_EP_SHOTNUM) ──
-    // _pmAutoShotName reads pfx_sm_* localStorage keys (show code, episode,
-    // shot start/step/pad) and increments the global shot counter each call,
-    // producing names like LMP_101_060, LMP_101_070, LMP_101_080 …
-    // Falls back to raw clip name when no template is configured.
+    // Netflix VFX auto-naming uses the configured template and timeline index.
+    // The suggestion stays stable across previews and repeated renders.
     let baseName, isTemplateNamed;
     try {
       const tName = _pmAutoShotName(ev, evIdx);
@@ -24634,8 +26503,10 @@ function _pmSlyBatchMark(prefix, plateCode) {
     // the plate number is always 01 — the base already uniquely identifies the shot.
     // When falling back to clip name (all shots in cluster share same base), increment.
     const plateSeq = isTemplateNamed ? 1 : seqNum;
-    const suffix   = `_${code}${String(plateSeq).padStart(2, '0')}`;
-    const shotName = baseName.endsWith(suffix) ? baseName : baseName + suffix;
+    const plateId = `${code}${String(plateSeq).padStart(2, '0')}`;
+    const requestedShotName = buildNetflixPlateName(baseName, plateId, 'v001');
+    const shotName = nextUniqueVfxName(requestedShotName, _pmVfxOccupiedNames([evIdx]), { step: 10, pad: 3 });
+    const nameWasDeduped = canonicalVfxName(shotName) !== canonicalVfxName(requestedShotName);
 
     const marker = {
       id:              crypto.randomUUID?.() ?? `pm_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -24661,10 +26532,21 @@ function _pmSlyBatchMark(prefix, plateCode) {
       _thumbCapturing: false,
       _fromPrepMark:   true,
       _plateCode:      code,
+      _pmPlateCode:    code,
+      _pmPlateNum:     String(plateSeq).padStart(2, '0'),
+      _pmPlateVer:     'v001',
       _eventIdx:       evIdx,
+      _pmNameReview:   'pending',
+      _pmNameSource:   nameWasDeduped ? 'auto-dedupe' : 'auto',
+      _pmNameSuggested: shotName,
     };
 
     _pmClipMarkers.push(marker);
+    ev._pmShot = shotName;
+    ev.shotName = shotName;
+    ev._pmNameReview = 'pending';
+    ev._pmNameSource = nameWasDeduped ? 'auto-dedupe' : 'auto';
+    _pmSaveMeta(ev);
     seqNum++;
   }
 
@@ -24722,27 +26604,16 @@ function _pmSlyRefreshSmartAuto() {
   const { clusters, unknown } = _pmSlyBuildClusters();
   const markerCount    = _pmClipMarkers.length;
   const passingMarkers = Math.max(0, markerCount - _pmSlyCountWarnMarkers());
+  const linkedIdxSet   = new Set([..._pmLinkMap.values()]);
 
-  // ── Name preview — show what the next generated name will look like ──────
-  // Peeks at the naming template without incrementing the global counter.
-  function _pmSlyPreviewNextName(plateCode) {
+  // ── Name preview — derive the same stable name the create action will use ──
+  function _pmSlyPreviewNextName(plateCode, eventIndex) {
     try {
-      const showOn  = localStorage.getItem('pfx_sm_show_on')  !== '0';
-      const epOn    = localStorage.getItem('pfx_sm_ep_on')    !== '0';
-      const startOn = localStorage.getItem('pfx_sm_start_on') !== '0';
-      const padOn   = localStorage.getItem('pfx_sm_pad_on')   !== '0';
-      const smShow  = String(localStorage.getItem('pfx_sm_show_val') || '').trim();
-      const smSq    = String(localStorage.getItem('pfx_sm_sq_val')   || '').trim();
-      const hasTemplate = (showOn && smShow) || (epOn && smSq);
-      if (!hasTemplate) return null;
-      const smStart = startOn ? (parseInt(localStorage.getItem('pfx_sm_start_val') || '60', 10) || 60) : 1;
-      const smPad   = padOn   ? Math.max(2, Math.min(6, parseInt(localStorage.getItem('pfx_sm_pad_val') || '3', 10) || 3)) : 1;
-      const counter = Number.isFinite(Number(window.__smShotCounter)) ? Number(window.__smShotCounter) : smStart;
-      const parts = [];
-      if (showOn && smShow) parts.push(smShow);
-      if (epOn && smSq) parts.push(String(parseInt(smSq, 10) || 0).padStart(3, '0'));
-      parts.push(String(counter).padStart(smPad, '0'));
-      return `${parts.join('_')}_${plateCode || 'PL'}01`;
+      if (!Number.isFinite(Number(eventIndex)) || !_pmEvents[Number(eventIndex)]) return null;
+      const base = _pmAutoShotName(_pmEvents[Number(eventIndex)], Number(eventIndex));
+      if (!base) return null;
+      const requested = `${base}_${plateCode || 'PL'}01`;
+      return nextUniqueVfxName(requested, _pmVfxOccupiedNames([Number(eventIndex)]), { step: 10, pad: 3 });
     } catch { return null; }
   }
 
@@ -24755,7 +26626,8 @@ function _pmSlyRefreshSmartAuto() {
 
   const firstUnmarked = unmarkable[0];
   const previewCode   = firstUnmarked ? _pmSlySuggestType(firstUnmarked) : 'PL';
-  const previewName   = _pmSlyPreviewNextName(previewCode);
+  const previewEventIdx = firstUnmarked?.idxs?.find(i => !linkedIdxSet.has(i));
+  const previewName   = _pmSlyPreviewNextName(previewCode, previewEventIdx);
   const remaining     = unmarkable.reduce((s,c)=>s+c.count-c.linked, 0);
 
   let html = '';
@@ -24901,10 +26773,13 @@ function _pmSlySelectMarkerById(id) {
 }
 
 // Type labels for display
+// Canonical plate-code labels are owned by smartExrNamingEngine (window.__pfxPlateLabels).
+// These are the fallback (module not yet loaded) + extra element codes; the shared
+// codes (BS/GS/CC/LG…) are kept in sync with the canonical map so labels never diverge.
 const _SLY_TYPE_LABELS = {
   PL: 'Pull Plate', CP: 'Clean Plate', BG: 'Background', FG: 'Foreground',
-  EL: 'Element', RF: 'Reference', BS: 'Beauty Shot', GS: 'Green Screen',
-  CC: 'Color Card', LG: 'Logo', smoke: 'Smoke', snowfall: 'Snowfall',
+  EL: 'Element', RF: 'Reference', BS: 'Bluescreen', GS: 'Greenscreen',
+  CC: 'Color Chart', LG: 'Lens Grid', smoke: 'Smoke', snowfall: 'Snowfall',
   fire: 'Fire', rain: 'Rain', muzzleFlash: 'Muzzle Flash',
 };
 
@@ -24930,7 +26805,7 @@ function _pmSlyRefreshMarkerCard() {
 
     // Build type options
     const typeOpts = (_PM_PLATE_CODES || ['PL','CP','BG','FG','EL','RF']).map(c =>
-      `<option value="${esc(c)}"${c === code ? ' selected' : ''}>${esc(c)} — ${esc(_SLY_TYPE_LABELS[c] || c)}</option>`
+      `<option value="${esc(c)}"${c === code ? ' selected' : ''}>${esc(c)} — ${esc((window.__pfxPlateLabels && window.__pfxPlateLabels[c]) || _SLY_TYPE_LABELS[c] || c)}</option>`
     ).join('');
 
     // Handle value
@@ -24946,7 +26821,7 @@ function _pmSlyRefreshMarkerCard() {
       <div class="pm-sly-mk-field">
         <label class="pm-sly-mk-lbl">SHOT NAME</label>
         <div class="pm-sly-mk-name-row">
-          <input class="pm-sly-mk-name-inp" id="pmSlyMkNameInp" value="${esc(sel.shotName || '')}" placeholder="e.g. SH0010_PL01" spellcheck="false" />
+          <input class="pm-sly-mk-name-inp" id="pmSlyMkNameInp" value="${esc(sel.shotName || '')}" placeholder="e.g. BLR_103_067_0010_PL01_v001" spellcheck="false" />
           <button class="pm-sly-mk-name-ok" id="pmSlyMkNameOk" title="Apply (Enter)">✓</button>
         </div>
       </div>
@@ -27344,7 +29219,7 @@ function _pmSlyLocalAiAnswer(q, { clusters, totalEvents, linked, mkCount, pct, w
       : 'No stabilisation flags set. Add them via the Stab toggle in the event inspector if you know shots need it.';
 
   if (/name|naming|convention|format|stem/.test(ql))
-    return `Standard VFX naming: {CameraRoll}_{PlateType}{nn} — e.g. A_0068_PL01, A_0068_CP02. Click Smart Auto-Name to apply across all ${mkCount} markers, or say "auto name" by voice.`;
+    return `Netflix VFX naming uses Show_Episode_Scene_Shot_Plate_Version — for example BLR_103_067_0010_PL01_v001. Camera roll stays as source metadata and is not the VFX shot name. Review the suggested BLR name before approval; PostFlowX prevents duplicate plate suffixes across all ${mkCount} markers.`;
 
   if (/handle|frame|extra|padding/.test(ql))
     return `Standard handles are 8-16fr per side. Use 8fr minimum, 16fr for normal VFX, 24fr+ for retimed/stabilised shots. Set in Shot Marker → Hdl field. ${retimeCount > 0 ? `You have ${retimeCount} retimed shot${retimeCount>1?'s':''} — those need 24fr+.` : ''}`;
@@ -27638,13 +29513,21 @@ async function _pmSlyShowAiPanel(e) {
           if (match) {
             const names = JSON.parse(match[0]);
             let applied = 0;
-            unnamed.forEach(({ ev }, j) => {
+            unnamed.forEach(({ i }, j) => {
               const name = typeof names[j] === 'string' ? names[j].trim().replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 40) : null;
-              if (name) { ev._pmShot = name; _pmSaveMeta(ev); applied++; }
+              if (!name) return;
+              const commit = _pmCommitShotNameChange({
+                name,
+                eventIndices: [i],
+                source: 'ai',
+                markerNameMode: 'shot',
+                snapshot: false,
+              });
+              if (commit.ok) applied++;
             });
             window.MPS_markProjectDirty?.();
             _pmRefreshData();
-            _pmSlyToast(`✦ ${applied} shot names suggested by Claude`);
+            _pmSlyToast(`✦ ${applied} AI names suggested — review before approval`);
             return;
           }
         }
@@ -27656,11 +29539,19 @@ async function _pmSlyShowAiPanel(e) {
     let applied = 0;
     unnamed.forEach(({ ev, i }) => {
       const name = _pmAutoShotName(ev, i);
-      if (name) { ev._pmShot = name; _pmSaveMeta(ev); applied++; }
+      if (!name) return;
+      const commit = _pmCommitShotNameChange({
+        name,
+        eventIndices: [i],
+        source: 'template',
+        markerNameMode: 'shot',
+        snapshot: false,
+      });
+      if (commit.ok) applied++;
     });
     window.MPS_markProjectDirty?.();
     _pmRefreshData();
-    _pmSlyToast(`✦ ${applied} shot names applied`);
+    _pmSlyToast(`✦ ${applied} names suggested — review before approval`);
   });
 
   document.getElementById('pmSlyAiSoW')?.addEventListener('click', async () => {

@@ -146,14 +146,22 @@
         const val = backendSel.value;
         localStorage.setItem(LS.RENDER_BACKEND, val);
         if (window.PFX_RENDER_WORKER) {
-          window.PFX_RENDER_WORKER.setMockMode(val === 'mock');
+          const mockEnabled = window.PFX_RENDER_WORKER.setMockMode(val === 'mock');
+          if (val === 'mock' && mockEnabled !== true) {
+            backendSel.value = 'local_http';
+            localStorage.setItem(LS.RENDER_BACKEND, 'local_http');
+          }
         }
         _refreshWorkerStatus();
       });
 
       // Restore mock mode from settings
       if (backendSel.value === 'mock' && window.PFX_RENDER_WORKER) {
-        window.PFX_RENDER_WORKER.setMockMode(true);
+        const restored = window.PFX_RENDER_WORKER.setMockMode(true);
+        if (restored !== true) {
+          backendSel.value = 'local_http';
+          localStorage.setItem(LS.RENDER_BACKEND, 'local_http');
+        }
       }
     }
 

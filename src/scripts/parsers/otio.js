@@ -383,9 +383,73 @@ export function parseOTIO(jsonInput) {
         return null;
       };
 
+      // Resolve OTIO uses a different metadata contract from Premiere:
+      // `Parameter ID`, `Parameter Value`, and a keyed `Key Frames` object.
+      // Keep this local to transform extraction so generic OTIO parsing stays
+      // adapter-neutral.
+      const readResolveParam = (params, parameterId) => {
+        const p = params.find(param => String(param?.['Parameter ID'] || '') === parameterId);
+        if (!p) return null;
+        const keyed = p['Key Frames'];
+        const entries = keyed && typeof keyed === 'object'
+          ? Object.entries(keyed).sort((a, b) => Number(a[0]) - Number(b[0]))
+          : [];
+        const values = entries.map(([, key]) => key?.Value).filter(value => value != null);
+        if (values.length) return { values, animated: values.length > 1 };
+        if (p['Parameter Value'] != null) return { values: [p['Parameter Value']], animated: false };
+        return null;
+      };
+
+      const finiteValues = (param) => (param?.values || []).map(Number).filter(Number.isFinite);
+
       for (const e of effs) {
         if (String(e?.OTIO_SCHEMA || '') !== 'Effect.1') continue;
         const pp = e?.metadata?.PremierePro_OTIO;
+        const resolve = e?.metadata?.Resolve_OTIO;
+
+        if (resolve && resolve.Enabled !== false && resolve['Effect Name'] === 'Transform') {
+          const params = resolve.Parameters || [];
+          const zoomX = readResolveParam(params, 'transformationZoomX');
+          const zoomY = readResolveParam(params, 'transformationZoomY');
+          const xVals = finiteValues(zoomX);
+          const yVals = finiteValues(zoomY);
+          const xMin = xVals.length ? Math.min(...xVals) : 1;
+          const xMax = xVals.length ? Math.max(...xVals) : 1;
+          const yMin = yVals.length ? Math.min(...yVals) : 1;
+          const yMax = yVals.length ? Math.max(...yVals) : 1;
+          if (Math.abs(xMax - 1) > 0.005 || Math.abs(yMax - 1) > 0.005 || zoomX?.animated || zoomY?.animated) {
+            out.scaleX = xMax;
+            out.scaleY = yMax;
+            if (zoomX?.animated || zoomY?.animated) {
+              animated.scale = true;
+              summaryParts.push(`Scale ${Math.round(Math.min(xMin, yMin) * 100)}–${Math.round(Math.max(xMax, yMax) * 100)}%↗`);
+            } else {
+              summaryParts.push(`Scale ${Math.round(Math.max(xMax, yMax) * 100)}%`);
+            }
+          }
+
+          const pan = readResolveParam(params, 'transformationPan');
+          const tilt = readResolveParam(params, 'transformationTilt');
+          const panVals = finiteValues(pan);
+          const tiltVals = finiteValues(tilt);
+          const panValue = panVals[0] || 0;
+          const tiltValue = tiltVals[0] || 0;
+          if (Math.abs(panValue) > 0.0001 || Math.abs(tiltValue) > 0.0001 || pan?.animated || tilt?.animated) {
+            out.position = [panValue, tiltValue];
+            if (pan?.animated || tilt?.animated) animated.position = true;
+            summaryParts.push((pan?.animated || tilt?.animated) ? 'Position↗' : 'Position');
+          }
+
+          const rot = readResolveParam(params, 'transformationRotationAngle');
+          const rotVals = finiteValues(rot);
+          const rotValue = rotVals[0] || 0;
+          if (Math.abs(rotValue) > 0.01 || rot?.animated) {
+            out.rotation = rotValue;
+            if (rot?.animated) animated.rotation = true;
+            summaryParts.push(rot?.animated ? `Rotation ${rotValue.toFixed(1)}°↗` : `Rotation ${rotValue.toFixed(1)}°`);
+          }
+        }
+
         if (!pp) continue;
 
         if (pp.MatchName === 'AE.ADBE Motion') {

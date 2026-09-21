@@ -471,6 +471,8 @@ export function createCutDiff2Feature(deps = {}) {
           });
           const file = await handle.getFile();
           await _vcSaveHandle(which, handle);
+          if (_vcLoadGen[which] > myGen) return; // superseded while the picker was open
+          _vcLoadGen[which] = myGen;
           _vcLoad(which, file);
           return;
         } catch (err) {

@@ -1069,7 +1069,16 @@ function _pssWireSection(container) {
   // Text/number inputs
   container.querySelectorAll('input[type=text][data-pss], input[type=number][data-pss]').forEach(el => {
     el.addEventListener('input', () => {
-      const raw = el.type === 'number' ? (parseFloat(el.value) || 0) : el.value;
+      let raw;
+      if (el.type === 'number') {
+        const v = parseFloat(el.value);
+        if (!Number.isFinite(v)) return; // blank/invalid: don't overwrite stored value
+        const min = el.min !== '' ? Number(el.min) : -Infinity;
+        const max = el.max !== '' ? Number(el.max) : Infinity;
+        raw = Math.min(max, Math.max(min, v));
+      } else {
+        raw = el.value;
+      }
       _pssSetPath(_pssSettings, el.dataset.pss, raw);
       _pssMarkDirty();
       _pssUpdateHeaderDot();
@@ -1784,8 +1793,11 @@ export async function autoConnectResolveOnBoot({ force = false } = {}) {
       const det = await helper.nativeResolveDetect();
       const info = det?.result || {};
       if (!det?.ok || !info.found) {
-        _reBroadcastStatus('error', 'Resolve: Not found',
-          info.reason || det?.error?.message || 'DaVinci Resolve not detected');
+        // Resolve is OPTIONAL — a missing install is not an error. Match the manual
+        // "Check Setup" path (idle / "Resolve optional") so the boot heartbeat
+        // doesn't settle on an error state that raises a false "Fix issues" alarm.
+        _reBroadcastStatus('idle', 'Resolve optional',
+          info.reason || det?.error?.message || 'DaVinci Resolve was not found. PostFlowX IMF Validation can continue.');
         return;
       }
 

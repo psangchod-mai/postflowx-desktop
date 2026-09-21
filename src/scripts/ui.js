@@ -30,6 +30,7 @@ import { setIconButton, setTimelineFitToggleButton } from "./core/iconButtons.js
 import { createZoomModeControl, ZOOM_MODE } from "./core/zoomModeMenu.js";
 import { createRadialMenu, RadialIcons } from "./components/radialMenu/index.js";
 import { applyPfxIconTheme } from "./core/pfxIconTheme.js";
+import { isValidNetflixVfxName } from "./core/vfxNameReview.js";
 import {
   listShortcutActions,
   getShortcutsConfig,
@@ -3284,11 +3285,17 @@ function locatorKey(ev){
 // Helpers (UI / layout)
 // -------------------------------------------------------------
 function showError(msg){
-  // Display lives in core/errorBanner.js. This used to look up an element with
-  // id="errors" and return early when it was null — which it always was, since
-  // no page has ever contained one. See that file for the history.
-  showErrorBanner(msg || "");
+  // Humanize raw exception text into a plain-language, actionable message.
+  // Conservative: already-friendly strings pass through unchanged.
+  let text = msg || "";
+  if (text) { try { text = window.pfxFriendlyText ? window.pfxFriendlyText(text) : text; } catch(_){} }
+  // Display lives in core/errorBanner.js. This used to read $("#errors") and
+  // return early when it was null — which it always was, so every call here
+  // was a no-op. See that file for the history.
+  showErrorBanner(text);
 }
+// Expose so guarded callers (e.g. window.showError?.(…)) reach the real banner.
+try { if (typeof window !== 'undefined') window.showError = showError; } catch(_){}
 
 function setInnerTab(key){
   const wantInput = key === "input";
@@ -4422,94 +4429,11 @@ function hasIllegalMarkerChars(name){
 }
 
 function isValidNetflixShotOrPlateName(name){
-  const s = String(name || "").trim();
-  if (!s) return false;
-  // No whitespace
-  if (/[\s]/.test(s)) return false;
-  if (hasIllegalMarkerChars(s)) return false;
-  // Allowed chars: letters/digits/underscore/dot only (no hyphens, plus, equals, etc.)
-  if (!/^[A-Za-z0-9._]+$/.test(s)) return false;
-  // Netflix shot/plate naming uses underscores
-  if (!s.includes("_")) return false;
-
-  const SHOW = "[A-Za-z][A-Za-z0-9]{1,5}"; // show ID (2–6 chars, starts with letter)
-  const EP   = "\\d{3}";                 // episode (3 digits)
-  const SEQ  = "[A-Za-z0-9]{2,3}";        // sequence (2–3 chars)
-  const SCN  = "\\d{3}";                 // scene (3 digits)
-  const SHOT = "\\d{3,4}";               // shot (3–4 digits)
-
-  const SHOT_BASE = `(?:` +
-    `${SHOW}_${EP}_${SCN}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SCN}_${SHOT}` +
-  `)`;
-
-  const reShotBase  = new RegExp(`^${SHOT_BASE}$`);
-
-  // Plate designator examples: PL01, BG01, FG01, smoke01, EL028, or split form EL_028
-  const PLATE_ONE   = "(?:PL\\d{2}|[A-Za-z]{2,}\\d{2,3})";
-  const rePlateA    = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}(?:_v\\d{3,4})?$`, "i");
-  const rePlateB    = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}(?:_v\\d{3,4})?$`, "i");
-  // Allow optional frame number / extension tail if user pasted a full filename
-  const rePlateAFile = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-  const rePlateBFile = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-
-  return (
-    reShotBase.test(s) ||
-    rePlateA.test(s) || rePlateB.test(s) ||
-    rePlateAFile.test(s) || rePlateBFile.test(s)
-  );
+  return isValidNetflixVfxName(name);
 }
 
 function isValidNetflixVfxMarkerName(name){
-  const s = String(name || "").trim();
-  if (!s) return false;
-  // No whitespace
-  if (/[\s]/.test(s)) return false;
-  if (hasIllegalMarkerChars(s)) return false;
-  // Allowed chars: letters/digits/underscore/dot only
-  if (!/^[A-Za-z0-9._]+$/.test(s)) return false;
-  // Netflix naming uses underscores
-  if (!s.includes("_")) return false;
-
-  const SHOW = "[A-Za-z][A-Za-z0-9]{1,5}"; // show ID (2–6 chars, starts with letter)
-  const EP   = "\\d{3}";                 // episode (3 digits)
-  const SEQ  = "[A-Za-z0-9]{2,3}";        // sequence (2–3 chars)
-  const SCN  = "\\d{3}";                 // scene (3 digits)
-  const SHOT = "\\d{3,4}";               // shot (3–4 digits)
-
-  const SHOT_BASE = `(?:` +
-    `${SHOW}_${EP}_${SCN}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SCN}_${SHOT}` +
-  `)`;
-
-  const reShotBase  = new RegExp(`^${SHOT_BASE}$`);
-
-  // Version naming: add task/vendor segments then _v###
-  // e.g. LMP_101_010_020_comp_vendor_v001
-  const reVersion = new RegExp(`^${SHOT_BASE}(?:_[A-Za-z0-9]+){2,}_v\\d{3,4}$`, "i");
-
-  // Plate naming: append plate designator and optional version
-  const PLATE_ONE   = "(?:PL\\d{2}|[A-Za-z]{2,}\\d{2,3})";
-  const rePlateA    = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}(?:_v\\d{3,4})?$`, "i");
-  const rePlateB    = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}(?:_v\\d{3,4})?$`, "i");
-  // Allow optional frame number / extension tail if user pasted a full filename
-  const rePlateAFile = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-  const rePlateBFile = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-
-  return (
-    reShotBase.test(s) ||
-    reVersion.test(s) ||
-    rePlateA.test(s) || rePlateB.test(s) ||
-    rePlateAFile.test(s) || rePlateBFile.test(s)
-  );
+  return isValidNetflixVfxName(name);
 }
 
 // Shot-like marker name examples we want to hide in VFX Marker mode:
@@ -17193,7 +17117,9 @@ function _mpsAuditToCSV(){
     'iso','project','type','intent','count','qs','timelineFP','ocioHash','amfHashShort','files','note','qsFlags'
   ];
   const esc = (v) => {
-    const s = String(v ?? '');
+    let s = String(v ?? '');
+    // PFX_CSV_FORMULA_GUARD: keep user-authored audit values inert in spreadsheets.
+    if (/^[=+\-@\t\r\n]/.test(s)) s = `'${s}`;
     if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
     return s;
   };
@@ -18556,13 +18482,32 @@ function wireTopAuxTabs(){
 
   let _funActive = null;
 
+  // Lazy iframe lifecycle for Fun box slots. Cross-origin embeds (e.g. Apple
+  // Music) are declared with data-src and only get a real src while their slot
+  // is open — otherwise the browser loads them at boot as out-of-process iframes
+  // whose GPU layer composites through the login overlay's backdrop-filter,
+  // painting the embed's artwork over the sign-in card.
+  const _hydrateSlotFrames = (slotEl) => {
+    if (!slotEl) return;
+    slotEl.querySelectorAll('iframe[data-src]').forEach((f) => {
+      if (!f.getAttribute('src')) f.setAttribute('src', f.getAttribute('data-src'));
+    });
+  };
+  const _teardownSlotFrames = (slotEl) => {
+    if (!slotEl) return;
+    // Drop src so the frame is destroyed and can't linger/composite when hidden.
+    slotEl.querySelectorAll('iframe[data-src]').forEach((f) => {
+      if (f.getAttribute('src')) f.removeAttribute('src');
+    });
+  };
+
   const closeFunPopup = () => {
     if (!funPopup) return;
     funPopup.hidden = true;
     funPopup.removeAttribute('data-funid');
     if (_funActive) {
       const prevSlot = document.getElementById(FUN_ITEMS[_funActive]?.slot);
-      if (prevSlot) prevSlot.hidden = true;
+      if (prevSlot) { _teardownSlotFrames(prevSlot); prevSlot.hidden = true; }
       const prevItem = document.querySelector(`.fun-launcher-item[data-funid="${_funActive}"]`);
       if (prevItem) prevItem.classList.remove('fb-active');
     }
@@ -18576,7 +18521,7 @@ function wireTopAuxTabs(){
     // hide previous slot
     if (_funActive && _funActive !== id) {
       const prevSlot = document.getElementById(FUN_ITEMS[_funActive]?.slot);
-      if (prevSlot) prevSlot.hidden = true;
+      if (prevSlot) { _teardownSlotFrames(prevSlot); prevSlot.hidden = true; }
       const prevItem = document.querySelector(`.fun-launcher-item[data-funid="${_funActive}"]`);
       if (prevItem) prevItem.classList.remove('fb-active');
     }
@@ -18598,9 +18543,9 @@ function wireTopAuxTabs(){
     funPopup.style.top  = '';
     funPopup.style.right = '';
 
-    // show slot
+    // show slot (hydrate any deferred cross-origin iframes now that it's opening)
     const slot = document.getElementById(cfg.slot);
-    if (slot) slot.hidden = false;
+    if (slot) { slot.hidden = false; _hydrateSlotFrames(slot); }
 
     // mark launcher item active
     const item = document.querySelector(`.fun-launcher-item[data-funid="${id}"]`);

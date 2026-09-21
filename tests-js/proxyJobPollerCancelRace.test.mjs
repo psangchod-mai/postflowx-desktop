@@ -10,6 +10,14 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '../src/scripts/core/proxyJobPoller.js'),
   'utf8',
 );
+const WORKER_SRC = fs.readFileSync(
+  path.join(__dirname, '../src/scripts/workers/renderWorkerClient.js'),
+  'utf8',
+);
+const SETTINGS_SRC = fs.readFileSync(
+  path.join(__dirname, '../src/scripts/core/markerProxySettings.js'),
+  'utf8',
+);
 
 // A deferred promise so the test can control exactly when an `await` inside
 // the poller's tick resolves, and run cancelWatch() while the tick is
@@ -108,4 +116,18 @@ test('an uncancelled tick still commits normally on done', async () => {
   assert.equal(swiUpdateCalls.length, 1, 'a non-cancelled done tick must commit exactly one SWI update');
   assert.equal(dispatchedEvents.length, 1, 'a non-cancelled done tick must dispatch pfx_proxy_committed');
   assert.deepEqual(Array.from(ctx.window.PFX_JOB_POLLER.getActiveWatchers()), []);
+});
+
+test('offline render operations fail closed instead of reporting mock success', () => {
+  assert.match(WORKER_SRC, /function _workerUnavailable\(operation, extra = \{\}\)/);
+  assert.match(WORKER_SRC, /code: 'render_worker_offline'/);
+  assert.match(WORKER_SRC, /if \(!_online\) return _workerUnavailable\('build-proxy'/);
+  assert.doesNotMatch(WORKER_SRC, /Worker offline — using mock stub/);
+});
+
+test('mock rendering requires an explicit test-only capability', () => {
+  assert.match(WORKER_SRC, /window\.__PFX_ALLOW_RENDER_MOCKS__ === true/);
+  assert.match(WORKER_SRC, /Mock render mode is disabled in production builds/);
+  assert.match(SETTINGS_SRC, /mockEnabled !== true/);
+  assert.match(SETTINGS_SRC, /localStorage\.setItem\(LS\.RENDER_BACKEND, 'local_http'\)/);
 });

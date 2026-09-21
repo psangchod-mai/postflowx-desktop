@@ -379,7 +379,7 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   }
 
   const fps = cpl.editRate || 0;
-  const validFPS = [23.976, 24, 25, 29.97, 30, 47.952, 48, 50, 59.94, 60];
+  const validFPS = [23.976, 24, 25, 29.97, 30, 47.952, 48, 50, 59.94, 60, 96, 120];
   const fpsFuzzy = validFPS.find(f => Math.abs(f - fps) < 0.01);
   if (fpsFuzzy) {
     results.push(result(SEV.PASS, 'PIC007', `Frame rate: ${fpsFuzzy} fps (standard)`));
@@ -620,21 +620,32 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   if (videoResources.length && audioResources.length) {
     const vidFrames = videoResources.reduce((n, r) =>
       n + (r.sourceDuration || r.intrinsicDuration || 0) * (r.repeatCount || 1), 0);
-    const audFrames = (cpl.pcmAudioResources || audioResources.filter(r =>
-      !((cpl.iabResources || []).some(x => x.trackFileId === r.trackFileId))))
-      .reduce((n, r) => {
-        const frames = (r.sourceDuration || r.intrinsicDuration || 0) * (r.repeatCount || 1);
-        const scale  = r.editRate && cpl.editRate ? r.editRate / cpl.editRate : 1;
-        return n + Math.round(frames * scale);
-      }, 0);
-    const diff = Math.abs(vidFrames - audFrames);
-    if (audFrames > 0 && diff > 2) {
-      results.push(result(SEV.FAIL, 'CPL018',
-        `A/V duration mismatch: video ${vidFrames.toLocaleString()} frames vs audio ${audFrames.toLocaleString()} frames`,
-        `Difference: ${diff} frame${diff !== 1 ? 's' : ''} — check EntryPoint/SourceDuration across all audio tracks`));
-    } else if (audFrames > 0) {
-      results.push(result(SEV.PASS, 'CPL018',
-        `A/V duration balanced: ${vidFrames.toLocaleString()} video frames / ${audFrames.toLocaleString()} audio frames`));
+    const pcmRes = (cpl.pcmAudioResources || audioResources.filter(r =>
+      !((cpl.iabResources || []).some(x => x.trackFileId === r.trackFileId))));
+    const trackTotals = new Map();
+    for (const r of pcmRes) {
+      // Group by virtual TRACK (trackId), which is stable across segments. A single
+      // audio track spanning multiple segments keeps one trackId but a different
+      // trackFileId per segment, so keying on trackFileId would split it into
+      // partial groups and false-FAIL well-formed segmented compositions.
+      const key = r.trackId || r.seqId || r.trackFileId || 'audio';
+      const frames = (r.sourceDuration || r.intrinsicDuration || 0) * (r.repeatCount || 1);
+      const scale  = r.editRate && cpl.editRate ? r.editRate / cpl.editRate : 1;
+      trackTotals.set(key, (trackTotals.get(key) || 0) + Math.round(frames * scale));
+    }
+    const totals = [...trackTotals.values()].filter(t => t > 0);
+    if (totals.length) {
+      const worst = totals.reduce((a, t) =>
+        Math.abs(t - vidFrames) > Math.abs(a - vidFrames) ? t : a, totals[0]);
+      const diff = Math.abs(vidFrames - worst);
+      if (diff > 2) {
+        results.push(result(SEV.FAIL, 'CPL018',
+          `A/V duration mismatch: video ${vidFrames.toLocaleString()} frames vs an audio track of ${worst.toLocaleString()} frames`,
+          `Difference: ${diff} frame${diff !== 1 ? 's' : ''} — one audio virtual track does not span the full program; check its EntryPoint/SourceDuration`));
+      } else {
+        results.push(result(SEV.PASS, 'CPL018',
+          `A/V duration balanced: ${vidFrames.toLocaleString()} video frames across ${totals.length} audio track(s)`));
+      }
     }
   }
 
@@ -893,7 +904,7 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
 
   // ── Audio conformance (ST 2067-2 §5.3) ──────────────────────────────────────
   // AUD007: PCM audio sample rate (48000 or 96000 Hz only)
-  const audioDescs = (cpl.descriptors || []).filter(d => !d.isPicture && !d.isIAB && d.audioSampleRate != null);
+  const audioDescs = (cpl.descriptors || []).filter(d => !d.isPicture && !d.isImmersive && d.audioSampleRate != null);
   if (audioDescs.length) {
     const badRates = audioDescs.filter(d => d.audioSampleRate !== 48000 && d.audioSampleRate !== 96000);
     if (badRates.length) {
@@ -909,7 +920,7 @@ export function validateStructure(assetMap, pkl, cpl, fileMap) {
   }
 
   // AUD008: PCM audio bit depth (24-bit only per ST 2067-2 §5.3.2.3)
-  const audioDescsWithBit = (cpl.descriptors || []).filter(d => !d.isPicture && !d.isIAB && d.audioQuantBits != null);
+  const audioDescsWithBit = (cpl.descriptors || []).filter(d => !d.isPicture && !d.isImmersive && d.audioQuantBits != null);
   if (audioDescsWithBit.length) {
     const non24 = audioDescsWithBit.filter(d => d.audioQuantBits !== 24);
     if (non24.length) {
@@ -1555,13 +1566,16 @@ export function validateTimeline(cpl) {
 
   // TL003 — coverage vs declared total frames (video track).
   if (cpl.totalFrames > 0 && videoSequences.length) {
-    const vidTotal = videoSequences.reduce((n, seq) => {
+    const trackTotals = new Map();
+    for (const seq of videoSequences) {
+      const key = seq.trackId || seq.seqId || 'video';
       let t = 0;
       for (const r of (seq.resources || [])) {
         t += (num(r.sourceDuration) || num(r.intrinsicDuration)) * (num(r.repeatCount) || 1);
       }
-      return Math.max(n, t);
-    }, 0);
+      trackTotals.set(key, (trackTotals.get(key) || 0) + t);
+    }
+    const vidTotal = trackTotals.size ? Math.max(...trackTotals.values()) : 0;
     const diff = Math.abs(Math.round(vidTotal) - Math.round(cpl.totalFrames));
     if (vidTotal > 0 && diff > 1) {
       results.push(result(SEV.FAIL, 'TL003',

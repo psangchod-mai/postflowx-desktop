@@ -18,8 +18,8 @@ export const APP2E_PRESET = {
       description: 'CPL shall include ApplicationIdentification referencing App #2E UL',
       severity: 'fail',
       check(cpl) {
-        const appId = cpl?.applicationIdentification || cpl?.applicationId || '';
-        return appId.includes('2067-21') || appId.includes('060e2b34.04010105.0e090602.01000000');
+        const av = String(cpl?.appVersion || '');
+        return /2067-21/.test(av) || /app\s*#?\s*2e/i.test(av);
       },
     },
     {
@@ -29,7 +29,7 @@ export const APP2E_PRESET = {
       description: 'CPL shall contain at least one ContentVersion element',
       severity: 'fail',
       check(cpl) {
-        return !!(cpl?.contentVersionId || (Array.isArray(cpl?.contentVersionList) && cpl.contentVersionList.length > 0));
+        return Array.isArray(cpl?.contentVersions) && cpl.contentVersions.length > 0;
       },
     },
     {
@@ -39,7 +39,7 @@ export const APP2E_PRESET = {
       description: 'CPL shall include EssenceDescriptorList with one descriptor per unique MXF track',
       severity: 'fail',
       check(cpl) {
-        return !!cpl?.essenceDescriptorList;
+        return Array.isArray(cpl?.descriptors) && cpl.descriptors.length > 0;
       },
     },
     {
@@ -62,15 +62,14 @@ export const APP2E_PRESET = {
       description: 'App #2E restricts video resolutions to approved sizes (e.g. 1920×1080, 3840×2160, 2048×1080, 4096×2160)',
       severity: 'warn',
       check(cpl) {
-        const ed = cpl?.essenceDescriptorList;
-        if (!ed) return null;
-        // Check if any video descriptor has a recognized resolution
+        const ds = cpl?.descriptors;
+        if (!Array.isArray(ds) || !ds.length) return null;
         const approved = [[1920,1080],[3840,2160],[2048,1080],[4096,2160],[1280,720],[2048,858],[4096,1716]];
-        const videoDesc = Array.isArray(ed) ? ed.find(d => d.storedWidth || d.width) : null;
-        if (!videoDesc) return null;
-        const w = videoDesc.storedWidth || videoDesc.width || 0;
-        const h = videoDesc.storedHeight || videoDesc.height || 0;
-        return approved.some(([aw, ah]) => aw === w && ah === h);
+        const pic = ds.find(d => d.isPicture) || ds.find(d => parseInt(d.w,10) > 0);
+        if (!pic) return null;
+        const w = parseInt(pic.w,10) || 0, h = parseInt(pic.h,10) || 0;
+        if (!w || !h) return null;
+        return approved.some(([aw,ah]) => aw === w && ah === h);
       },
     },
     {
@@ -80,12 +79,12 @@ export const APP2E_PRESET = {
       description: 'App #2E requires audio essence bit depth of 24 bits',
       severity: 'warn',
       check(cpl) {
-        const ed = cpl?.essenceDescriptorList;
-        if (!ed) return null;
-        const audioDesc = Array.isArray(ed) ? ed.find(d => d.audioSamplingRate || d.quantizationBits) : null;
-        if (!audioDesc) return null;
-        const bits = audioDesc.quantizationBits || audioDesc.bitDepth || 0;
-        return bits === 24 || bits === 0; // 0 = unknown = skip
+        const ds = cpl?.descriptors;
+        if (!Array.isArray(ds) || !ds.length) return null;
+        const a = ds.find(d => d.audioQuantBits);
+        if (!a) return null;
+        const bits = a.audioQuantBits || 0;
+        return bits === 24 || bits === 0;
       },
     },
     {
@@ -95,11 +94,11 @@ export const APP2E_PRESET = {
       description: 'App #2E requires audio essence sampling rate of 48000 Hz',
       severity: 'warn',
       check(cpl) {
-        const ed = cpl?.essenceDescriptorList;
-        if (!ed) return null;
-        const audioDesc = Array.isArray(ed) ? ed.find(d => d.audioSamplingRate) : null;
-        if (!audioDesc) return null;
-        const sr = audioDesc.audioSamplingRate || 0;
+        const ds = cpl?.descriptors;
+        if (!Array.isArray(ds) || !ds.length) return null;
+        const a = ds.find(d => d.audioSampleRate);
+        if (!a) return null;
+        const sr = a.audioSampleRate || 0;
         return sr === 48000 || sr === 0;
       },
     },
@@ -110,7 +109,7 @@ export const APP2E_PRESET = {
       description: 'CPL should contain a TimecodeTrack (required in App #2 / recommended in App #2E)',
       severity: 'warn',
       check(cpl) {
-        return !!cpl?.timecodeTrack;
+        return !!cpl?.compositionTimecode;
       },
     },
     {

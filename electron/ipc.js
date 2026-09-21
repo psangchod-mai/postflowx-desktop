@@ -22,7 +22,7 @@
  *   pfx:getManifest       → {} → manifest object
  */
 
-const { ipcMain, dialog, shell, app } = require('electron');
+const { ipcMain, dialog, shell, app, clipboard } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 
@@ -54,6 +54,14 @@ const imfProvider     = optionalRequire('./imf/imf_frame_provider');
 const imfDirectEngine = optionalRequire('./imf/imf_direct_engine');
 const imfPhoton       = optionalRequire('./imf/imf_photon');
 const imfFfmpegBackend = optionalRequire('./imf/imf_ffmpeg_backend');
+
+// The IPC handlers are process-global (ipcMain.handle) and must be registered
+// exactly once. register() can be called again when the window is reopened
+// (macOS dock activate → createWindow); re-invoking ipcMain.handle for an
+// already-registered channel throws, so we guard registration with a flag and
+// keep a live reference to the current window that handlers read at call time.
+let _activeWindow  = null;
+let _ipcRegistered = false;
 
 // ── OCF metadata probe (timecode / UMID / duration) ──────────────────────────
 // Camera RAW (Sony X-OCN, ARRIRAW, RED) cannot be DECODED by ffmpeg, but its MXF
@@ -161,6 +169,12 @@ function _loadManifest(appRoot) {
 }
 
 function register(mainWindow, appRoot) {
+  // Always track the current window so already-bound handlers target it.
+  _activeWindow = mainWindow;
+  // Register process-global handlers/listeners only once.
+  if (_ipcRegistered) return;
+  _ipcRegistered = true;
+
   const manifest = _loadManifest(appRoot);
 
   // Wire native router to companion so Resolve actions can proxy through it.
@@ -202,7 +216,7 @@ function register(mainWindow, appRoot) {
   // ── File pickers ─────────────────────────────────────────────────────────
 
   ipcMain.handle('pfx:pickFile', async (_e, { options = {} } = {}) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    const { canceled, filePaths } = await dialog.showOpenDialog(_activeWindow, {
       properties: ['openFile'],
       title: options.title || 'Select File',
       filters: options.filters || [],
@@ -212,7 +226,7 @@ function register(mainWindow, appRoot) {
   });
 
   ipcMain.handle('pfx:pickFiles', async (_e, { options = {} } = {}) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    const { canceled, filePaths } = await dialog.showOpenDialog(_activeWindow, {
       properties: ['openFile', 'multiSelections'],
       title: options.title || 'Select Files',
       filters: options.filters || [],
@@ -222,7 +236,7 @@ function register(mainWindow, appRoot) {
   });
 
   ipcMain.handle('pfx:pickFolder', async (_e, { options = {} } = {}) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    const { canceled, filePaths } = await dialog.showOpenDialog(_activeWindow, {
       properties: ['openDirectory', 'createDirectory'],
       title: options.title || 'Select Folder',
       defaultPath: options.defaultPath,
@@ -230,8 +244,26 @@ function register(mainWindow, appRoot) {
     return canceled ? null : (filePaths[0] || null);
   });
 
+  ipcMain.handle('pfx:listMediaFolder', async (_e, { folderPath, extensions = ['.mov'] } = {}) => {
+    if (!folderPath) return [];
+    try {
+      const allowed = new Set((extensions || []).map(ext => String(ext).toLowerCase()));
+      return fs.readdirSync(folderPath, { withFileTypes: true })
+        .filter(entry => entry.isFile() && !entry.name.startsWith('.') && allowed.has(path.extname(entry.name).toLowerCase()))
+        .map(entry => {
+          const absolutePath = path.join(folderPath, entry.name);
+          const stat = fs.statSync(absolutePath);
+          return { name: entry.name, absolutePath, size: stat.size, lastModified: stat.mtimeMs };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    } catch (err) {
+      console.warn('[IPC] listMediaFolder failed:', err.message);
+      return [];
+    }
+  });
+
   ipcMain.handle('pfx:saveFile', async (_e, { defaultPath, data, encoding = 'utf8' } = {}) => {
-    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    const { canceled, filePath } = await dialog.showSaveDialog(_activeWindow, {
       defaultPath,
       properties: ['createDirectory'],
     });
@@ -509,13 +541,41 @@ function register(mainWindow, appRoot) {
       }
     }
 
+    // Build a browser-playable proxy directly from a native filesystem path.
+    // mediaOpenFile above is owned by the Electron AVFoundation engine, whose
+    // playerId is not known to the Python companion.  Re-open the same path in
+    // the companion before asking it to build the cached H.264 proxy; this
+    // avoids uploading/copying multi-GB ProRes files through the renderer.
+    if (type === 'buildMediaProxy' && payload?.path) {
+      if (!companion?.isReady) {
+        return { ok: false, error: { code: 'COMPANION_UNAVAILABLE', message: 'Native companion is not running' } };
+      }
+      try {
+        const opened = await companion.call({ action: 'openFile', path: payload.path }, timeoutMs);
+        if (opened?.status === 'error' || opened?.error) {
+          const e = opened.error || {};
+          throw new Error(e.message || e.userMessage || 'Companion could not open the media path');
+        }
+        const companionAssetId = opened?.data?.assetId;
+        if (!companionAssetId) throw new Error('Companion returned no media asset ID');
+        const built = await companion.call({ action: 'buildMediaProxy', assetId: companionAssetId }, timeoutMs);
+        if (built?.status === 'error' || built?.error) {
+          const e = built.error || {};
+          throw new Error(e.message || e.userMessage || 'Companion could not start the proxy');
+        }
+        return { ok: true, result: built?.data || {} };
+      } catch (err) {
+        return { ok: false, error: { code: 'PROXY_BUILD_ERROR', message: err.message } };
+      }
+    }
+
     // ── OCF folder picker ─────────────────────────────────────────────────────
     // nativePickOcfFolder() in native_helper_client.js sends 'ocfPickFolder'.
     // Show a native directory picker and return { path } so _nativePayload()
     // unwraps correctly in vfxPullPanel.js _chooseAndRelinkOcf().
     if (type === 'ocfPickFolder') {
       try {
-        const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        const { canceled, filePaths } = await dialog.showOpenDialog(_activeWindow, {
           properties: ['openDirectory', 'createDirectory'],
           title: payload?.title || 'Select OCF Root Folder',
           defaultPath: payload?.defaultPath,
@@ -683,6 +743,53 @@ function register(mainWindow, appRoot) {
 
   ipcMain.handle('pfx:getManifest', () => manifest);
 
+  // Policy calls run in the trusted main process. The renderer keeps
+  // webSecurity enabled and never needs a CORS exception for Apps Script.
+  ipcMain.handle('pfx:policy-request', async (_e, { path: route, method = 'GET', params = {}, body = null } = {}) => {
+    // Keep this list in sync with every route exposed by policyApi.js. The
+    // renderer cannot call Apps Script directly in Electron (CORS/webSecurity),
+    // so omitting a route here silently turns a valid backend feature into a
+    // network-looking failure. The allowlist remains explicit so arbitrary
+    // renderer-controlled paths can never be proxied by the trusted process.
+    const allowedRoutes = new Set([
+      'health',
+      'licenseCheck',
+      'registerOrPingUser',
+      'requestLink',
+      'checkLink',
+      'featureFlags',
+      'annotateCatalog',
+      'annotateTrack',
+      'request',
+      'logEvent',
+      'auth/logout',
+    ]);
+    const routeName = String(route || '').trim();
+    if (!allowedRoutes.has(routeName)) return { ok: false, status: 400, error: 'unsupported_policy_route' };
+    const baseUrl = _getPostflowxAuthApiUrl();
+    if (!baseUrl || !baseUrl.startsWith('https://')) return { ok: false, status: 503, error: 'policy_service_not_configured' };
+    try {
+      const url = new URL(baseUrl);
+      if (url.hostname === 'script.google.com') url.searchParams.set('path', routeName);
+      else url.pathname = `${url.pathname.replace(/\/$/, '')}/${routeName}`;
+      for (const [key, value] of Object.entries(params || {})) {
+        if (value !== undefined && value !== null && String(value) !== '') url.searchParams.set(key, String(value));
+      }
+      const requestMethod = String(method || 'GET').toUpperCase();
+      const response = await fetch(url, {
+        method: requestMethod,
+        headers: requestMethod === 'GET' ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: requestMethod === 'GET' ? undefined : JSON.stringify(body || {}),
+        redirect: 'follow',
+        signal: AbortSignal.timeout(12000),
+      });
+      const data = await response.json().catch(() => null);
+      return { ok: response.ok, status: response.status, data };
+    } catch (error) {
+      return { ok: false, status: 0, error: error?.name === 'TimeoutError' ? 'policy_timeout' : 'policy_unreachable' };
+    }
+  });
+
   // ── Downloads (chrome.downloads.download shim) ───────────────────────────
 
   // Real chrome.downloads.download() defaults conflictAction to 'uniquify'
@@ -713,14 +820,14 @@ function register(mainWindow, appRoot) {
           fs.writeFileSync(finalPath, Buffer.from(b64, 'base64'));
           return { ok: true, filePath: finalPath };
         }
-        mainWindow.webContents.downloadURL(url);
+        _activeWindow.webContents.downloadURL(url);
         return { ok: true, filePath: defaultPath };
       } catch (e) {
         return { ok: false, error: e.message };
       }
     }
 
-    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, { defaultPath });
+    const { canceled, filePath } = await dialog.showSaveDialog(_activeWindow, { defaultPath });
     // `canceled` rides along with ok:false. Without it the renderer cannot tell
     // "the user closed the dialog" from "the write threw", and the save cascade
     // in reviews / visual QC responded to the former by opening another dialog
@@ -735,7 +842,7 @@ function register(mainWindow, appRoot) {
         shell.showItemInFolder(filePath);
         return { ok: true, filePath };
       }
-      mainWindow.webContents.downloadURL(url);
+      _activeWindow.webContents.downloadURL(url);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -1061,7 +1168,7 @@ function register(mainWindow, appRoot) {
         if (cplCopy.sourcePackageIdList instanceof Set) cplCopy.sourcePackageIdList = [...cplCopy.sourcePackageIdList];
         let missingVideo = 0;
         for (const res of (cpl.videoResources || [])) {
-          if (res.fileId && !idx.assetMap.has(res.fileId)) missingVideo++;
+          if (res.trackFileId && !idx.assetMap.has(res.trackFileId)) missingVideo++;
         }
         return {
           key: cpl.id,
@@ -1238,6 +1345,69 @@ function register(mainWindow, appRoot) {
     return !!(cid && cid.includes('.apps.googleusercontent.com'));
   }
 
+  // Meechum / Edward OAuth configuration. Public desktop builds intentionally
+  // contain no client secret: PKCE is used for the authorization-code exchange.
+  function _getMeechumConfig() {
+    const nodePath = require('path');
+    let userCfg = {};
+    try {
+      userCfg = _tryReadJson(nodePath.join(app.getPath('userData'), 'pfx-auth-config.json')) || {};
+    } catch {}
+    const runtimeCfg = _getRuntimeConfig();
+    const loopbackEnv = process.env.POSTFLOWX_MEECHUM_LOOPBACK_REDIRECTS;
+    return {
+      clientId: process.env.POSTFLOWX_MEECHUM_CLIENT_ID
+        || userCfg.meechumClientId || runtimeCfg.meechumClientId || '',
+      issuer: process.env.POSTFLOWX_MEECHUM_ISSUER
+        || userCfg.meechumIssuer || runtimeCfg.meechumIssuer
+        || 'https://meechum.prod.netflix.net/',
+      redirectUri: process.env.POSTFLOWX_MEECHUM_REDIRECT_URI
+        || userCfg.meechumRedirectUri || runtimeCfg.meechumRedirectUri || '',
+      scopes: process.env.POSTFLOWX_MEECHUM_SCOPES
+        || userCfg.meechumScopes || runtimeCfg.meechumScopes || 'openid profile default',
+      // Meechum/Edward auth strategy. 'NetflixPartnerLogin' (prod) or
+      // 'NetflixPartnerTestLogin' (test) admits partner (Pandora-managed)
+      // accounts; empty = workforce-only. Must match the Edward client config
+      // (go/edward) — this is only the request-level hint. See docs/PARTNER_AUTH.md.
+      authStrategy: process.env.POSTFLOWX_MEECHUM_AUTH_STRATEGY
+        || userCfg.meechumAuthStrategy || runtimeCfg.meechumAuthStrategy || '',
+      // Disabled by default because Edward exact-matches loopback callback URLs.
+      // Enable only after every fixed callback below is registered on the client.
+      loopbackRedirects: loopbackEnv !== undefined
+        ? loopbackEnv === 'true'
+        : userCfg.meechumLoopbackRedirects === true
+          || runtimeCfg.meechumLoopbackRedirects === true,
+      // Optional for local testing only. Never put this value in authConfig.json
+      // or another file shipped inside the application bundle.
+      clientSecret: process.env.POSTFLOWX_MEECHUM_CLIENT_SECRET
+        || userCfg.meechumClientSecret || '',
+    };
+  }
+
+  function _isMeechumConfigured(cfg = _getMeechumConfig()) {
+    if (!cfg.clientId || !cfg.redirectUri) return false;
+    try {
+      const issuer = new URL(cfg.issuer);
+      const redirect = new URL(cfg.redirectUri);
+      return issuer.protocol === 'https:' && redirect.protocol === 'https:';
+    } catch { return false; }
+  }
+
+  function _meeEndpoint(cfg, endpoint) {
+    return new URL(endpoint, cfg.issuer).toString();
+  }
+
+  function _saveMeechumToken(tokenJson) {
+    try {
+      const { safeStorage } = require('electron');
+      const nodePath = require('path');
+      const nodeFs = require('fs');
+      if (!safeStorage.isEncryptionAvailable()) return;
+      const enc = safeStorage.encryptString(JSON.stringify(tokenJson));
+      nodeFs.writeFileSync(nodePath.join(app.getPath('userData'), 'pfx-meechum-token.enc'), enc);
+    } catch {}
+  }
+
   // Dev auth bypass — active when config/env enables it.
   // Production safety: build-renderer.js always writes devAuthBypass:false in CI authConfig.json.
   function _isDevAuthBypassEnabled() {
@@ -1284,9 +1454,71 @@ function register(mainWindow, appRoot) {
     } catch {}
   }
 
+  // ── PFX desktop session (role/permissions/token) — safeStorage-encrypted ──
+  // Mirrors the Google-token pattern above, but with a read/clear path too,
+  // since the renderer needs this back on every boot (unlike the Google token,
+  // which the renderer never reads directly).
+  function _sessionEncPath() {
+    const { app } = require('electron');
+    const nodePath = require('path');
+    return nodePath.join(app.getPath('userData'), 'pfx-session.enc');
+  }
+
+  function _saveSessionEnc(sessionJson) {
+    try {
+      const { safeStorage } = require('electron');
+      const nodeFs = require('fs');
+      if (!safeStorage.isEncryptionAvailable()) return false;
+      const enc = safeStorage.encryptString(JSON.stringify(sessionJson));
+      nodeFs.writeFileSync(_sessionEncPath(), enc);
+      return true;
+    } catch { return false; }
+  }
+
+  function _loadSessionEnc() {
+    try {
+      const { safeStorage } = require('electron');
+      const nodeFs = require('fs');
+      const p = _sessionEncPath();
+      if (!nodeFs.existsSync(p)) return null;
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      const enc = nodeFs.readFileSync(p);
+      return JSON.parse(safeStorage.decryptString(enc));
+    } catch { return null; }
+  }
+
+  function _clearSessionEnc() {
+    try {
+      const nodeFs = require('fs');
+      const p = _sessionEncPath();
+      if (nodeFs.existsSync(p)) nodeFs.unlinkSync(p);
+    } catch {}
+  }
+
   // Reports whether a valid client ID is present (used by renderer to show/hide button).
   ipcMain.handle('pfx:is-google-auth-configured', () => {
     return { configured: _isGoogleClientIdValid(_getGoogleClientId()) };
+  });
+
+  ipcMain.handle('pfx:is-enterprise-auth-configured', () => {
+    return { configured: _isMeechumConfigured() };
+  });
+
+  ipcMain.handle('pfx:enterprise-auth-debug', () => {
+    const cfg = _getMeechumConfig();
+    return {
+      configured: _isMeechumConfigured(cfg),
+      provider: 'Meechum',
+      clientId: cfg.clientId,
+      issuer: cfg.issuer,
+      redirectUri: cfg.redirectUri,
+      scopes: cfg.scopes,
+      authStrategy: cfg.authStrategy || null,
+      partnerLoginEnabled: /partner/i.test(cfg.authStrategy || ''),
+      isPackaged: app.isPackaged,
+      devBypassEnabled: _isDevAuthBypassEnabled(),
+      postflowxApiConfigured: _isPostflowxApiConfigured(),
+    };
   });
 
   // Debug info for login screen / admin diagnostics — safe to call from renderer.
@@ -1330,6 +1562,19 @@ function register(mainWindow, appRoot) {
     event.returnValue = _isDevAuthBypassEnabled();
   });
 
+  // Synchronous PFX session storage — boot-guard.js reads/writes this on its
+  // no-await Electron boot path, so these must stay sync (mirrors the channel above).
+  ipcMain.on('pfx:session-load-sync', (event) => {
+    event.returnValue = _loadSessionEnc();
+  });
+  ipcMain.on('pfx:session-save-sync', (event, sessionJson) => {
+    event.returnValue = _saveSessionEnc(sessionJson);
+  });
+  ipcMain.on('pfx:session-clear-sync', (event) => {
+    _clearSessionEnc();
+    event.returnValue = true;
+  });
+
   // Dev-only sign-in bypass — returns a synthetic user without any Google OAuth.
   // Returns { ok: false, error: 'DEV_AUTH_BYPASS_DISABLED' } in packaged/production builds.
   ipcMain.handle('pfx:dev-auth-bypass', () => {
@@ -1343,6 +1588,382 @@ function register(mainWindow, appRoot) {
       picture:     '',
       accessToken: 'dev-bypass',
     };
+  });
+
+  // Netflix Team Workspaces authentication. That app uses Netflix's supported
+  // nflx-access SDK instead of owning an Edward client/callback. Use the same SDK
+  // and registered `nflxaccess-client-prod` flow, but keep PostFlowX credentials
+  // isolated inside PostFlowX's own userData directory.
+  function _loadNflxAccess() {
+    const candidates = [
+      'nflx-access',
+      '/Applications/Netflix Team Workspaces.app/Contents/Resources/app.asar/node_modules/nflx-access',
+    ];
+    for (const candidate of candidates) {
+      try { return require(candidate); } catch {}
+    }
+    return null;
+  }
+
+  function _postflowxNflxAccessCredentialsPath() {
+    const nodePath = require('path');
+    return process.env.POSTFLOWX_NFLX_ACCESS_CERTS_PATH
+      || nodePath.join(app.getPath('userData'), 'nflxaccess');
+  }
+
+  function _nflxAccessCredentialsAreValid(info) {
+    if (!info?.notBefore || !info?.notAfter) return false;
+    const now = Date.now();
+    return new Date(info.notBefore).getTime() <= now
+      && now < new Date(info.notAfter).getTime();
+  }
+
+  async function _runTeamWorkspacesAuthentication() {
+    const certsPath = _postflowxNflxAccessCredentialsPath();
+    process.env.NFLX_ACCESS_CERTS_PATH = certsPath;
+    try { fs.mkdirSync(certsPath, { recursive: true }); } catch {}
+
+    // Set the isolated path before loading nflx-access. The SDK reads this
+    // environment variable during module initialization; loading it first
+    // makes it fall back to Team Workspaces' credential store.
+    const nflxAccess = _loadNflxAccess();
+    if (!nflxAccess) return { ok: false, error: 'NFLX_ACCESS_UNAVAILABLE' };
+
+    try {
+      let credentials = await nflxAccess.getCredentialsInfo(certsPath);
+      if (!_nflxAccessCredentialsAreValid(credentials)) {
+        await nflxAccess.renewCredentials({
+          targetPath: certsPath,
+          skipClearMetatronCertificates: true,
+          env: 'prod',
+          authStrategy: 'NetflixPartnerLogin',
+          // Let nflx-access open Meechum itself. Returning false here
+          // suppresses its browser launch and leaves the app on the login card.
+          authUrlCallback: () => true,
+        });
+        credentials = await nflxAccess.getCredentialsInfo(certsPath);
+      }
+      if (!_nflxAccessCredentialsAreValid(credentials)) {
+        return { ok: false, error: 'Netflix authentication completed without valid client credentials.' };
+      }
+
+      // Team Workspaces maps the authenticated Netflix certificate to the local
+      // managed macOS account. Keep that behavior identical for interoperability.
+      const userName = String(process.env.USER || '').trim();
+      if (!userName) return { ok: false, error: 'Unable to determine the managed Netflix account on this Mac.' };
+      const email = userName.includes('@') ? userName.toLowerCase() : `${userName.toLowerCase()}@netflix.com`;
+      const user = { email, name: userName, picture: '' };
+
+      const apiUrl = _getPostflowxAuthApiUrl();
+      if (!_isPostflowxApiConfigured()) {
+        return { ok: false, error: 'PostFlowX access policy service is not configured for this build.' };
+      }
+      const policyUrl = new URL(apiUrl);
+      policyUrl.searchParams.set('path', 'licenseCheck');
+      policyUrl.searchParams.set('email', email);
+      const policyResponse = await fetch(policyUrl, { headers: { Accept: 'application/json' } });
+      const policy = await policyResponse.json().catch(() => ({}));
+      if (!policyResponse.ok || !policy.ok) {
+        // A previously approved user can continue during a policy-service
+        // outage/deployment mismatch, but only with the encrypted session that
+        // is already on this Mac, only when it belongs to the same account, and
+        // only until its original expiry. Never synthesize access here.
+        if (policy.error === 'not_found' || policy.status === 'not_found') {
+          const cached = _loadSessionEnc();
+          const cachedEmail = String(cached?.user?.email || '').trim().toLowerCase();
+          const cachedExpiry = new Date(cached?.session?.expiresAt || cached?.expiresAt || 0).getTime();
+          if (cached?.ok && cachedEmail === email && cachedExpiry > Date.now()) {
+            return {
+              ok: true,
+              email,
+              name: userName,
+              picture: '',
+              accessToken: '',
+              pfxSession: cached,
+              policyWarning: 'PostFlowX policy service is unavailable; using your existing unexpired session.',
+            };
+          }
+        }
+        // Normalize the "no active access for this email" result to a clean
+        // status the login card can present as a friendly, localized message.
+        // A legacy `error:'not_found'` and the current `status:'pending'` both
+        // mean the same thing — this account is not provisioned — so surface
+        // that, never the raw `not_found` token (which used to leak to the UI).
+        const rawStatus = String(policy.status || '').trim().toLowerCase();
+        const rawError  = String(policy.error  || '').trim().toLowerCase();
+        if (rawStatus === 'pending' || rawStatus === 'not_found' || rawError === 'not_found') {
+          return { ok: false, status: 'pending' };
+        }
+        if (rawStatus === 'disabled' || rawError === 'account_disabled') {
+          return { ok: false, status: 'disabled' };
+        }
+        return {
+          ok: false,
+          status: policy.status || '',
+          error: policy.error || `PostFlowX access policy HTTP ${policyResponse.status}`,
+        };
+      }
+
+      const certExpiry = new Date(credentials.notAfter).toISOString();
+      return {
+        ok: true,
+        email,
+        name: userName,
+        picture: '',
+        accessToken: '',
+        pfxSession: {
+          ok: true,
+          status: 'active',
+          user,
+          role: policy.role || 'viewer',
+          permissions: {
+            tabs: policy.allowedTabs || policy.permissions?.tabs || [],
+            actions: policy.allowedActions || policy.permissions?.actions || [],
+          },
+          featureFlags: policy.featureFlags || {},
+          session: {
+            token: '',
+            expiresAt: policy.expiresAt || certExpiry,
+          },
+        },
+      };
+    } catch (error) {
+      return { ok: false, error: `Netflix Team Workspaces sign-in failed: ${error.message}` };
+    }
+  }
+
+  async function _runMeechumSystemBrowserOAuth(mainWindow, cfg) {
+    const crypto = require('crypto');
+    const http   = require('http');
+    const apiUrl = _getPostflowxAuthApiUrl();
+    if (!_isPostflowxApiConfigured()) {
+      const forPartners = /partner/i.test(cfg.authStrategy || '');
+      return {
+        ok: false,
+        error: forPartners
+          ? 'Partner sign-in is enabled but the PostFlowX auth service (postflowxAuthApiUrl) that exchanges Meechum tokens is not configured for this build. Ask your PostFlowX admin to set postflowxAuthApiUrl, and confirm the Edward client uses the NetflixPartnerLogin auth strategy.'
+          : 'Netflix sign-in needs the PostFlowX auth service to exchange the Meechum token, but postflowxAuthApiUrl is not set for this build. Ask your PostFlowX admin to configure it (see docs/PARTNER_AUTH.md).',
+      };
+    }
+
+    const verifier = crypto.randomBytes(32).toString('base64url');
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const state = crypto.randomBytes(24).toString('base64url');
+
+    // Loopback (127.0.0.1) redirect — matches Netflix Team Workspaces and the
+    // Google flow above. A short-lived local HTTP server catches the auth-code
+    // redirect automatically, so the user never copies/pastes anything.
+    //
+    // FIXED ports (not ephemeral): Edward exact-matches the callback URL INCLUDING
+    // the port, so a random port can never be in the allow-list (that was the
+    // `unauthorized_client — Callback URL mismatch` error). We bind the first free
+    // port from this fixed set; register EVERY one of these as an allowed redirect
+    // URI on the Edward client (go/edward) — see docs/PARTNER_AUTH.md:
+    //   http://127.0.0.1:51900/oauth2/callback
+    //   http://127.0.0.1:8477/oauth2/callback
+    //   http://127.0.0.1:8478/oauth2/callback
+    //   http://127.0.0.1:8479/oauth2/callback
+    let resolveCode, rejectCode;
+    const codePromise = new Promise((res, rej) => { resolveCode = res; rejectCode = rej; });
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url, 'http://127.0.0.1');
+      if (u.pathname !== '/oauth2/callback') { res.writeHead(404); res.end(); return; }
+      const returnedState = u.searchParams.get('state');
+      const code  = u.searchParams.get('code');
+      const error = u.searchParams.get('error_description') || u.searchParams.get('error');
+      if (error || !code || returnedState !== state) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><body style="font:16px system-ui,sans-serif;text-align:center;padding:60px 40px;color:#e8eaf0;background:#0e0f13"><h2 style="margin:0 0 8px">&#x274C; Netflix sign-in failed</h2><p style="color:#888;margin:0">You can close this browser tab and try again.</p></body></html>');
+        if (error) { rejectCode(new Error(error)); }
+        else if (returnedState !== state) { rejectCode(new Error('The sign-in response did not match this PostFlowX request. Please start again.')); }
+        else { rejectCode(new Error('Invalid OAuth response')); }
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><body style="font:16px system-ui,sans-serif;text-align:center;padding:60px 40px;color:#e8eaf0;background:#0e0f13"><h2 style="margin:0 0 8px">&#x2713; Signed in to PostFlowX</h2><p style="color:#888;margin:0">You can close this browser tab.</p></body></html>');
+      resolveCode(code);
+    });
+    // 51900 is the callback registered on the existing PostFlowX Edward client.
+    // Keep the newer fallback ports for environments where they are also allowed.
+    const MEE_LOOPBACK_PORTS = [51900, 8477, 8478, 8479];
+    let boundPort = 0;
+    for (const p of MEE_LOOPBACK_PORTS) {
+      try {
+        await new Promise((res, rej) => {
+          const onErr = (e) => { server.removeListener('error', onErr); rej(e); };
+          server.once('error', onErr);
+          server.listen(p, '127.0.0.1', () => { server.removeListener('error', onErr); res(); });
+        });
+        boundPort = p;
+        break;
+      } catch { /* port busy — try the next fixed port */ }
+    }
+    if (!boundPort) {
+      try { server.close(); } catch {}
+      return { ok: false, error: `Netflix sign-in needs one of these local ports free: ${MEE_LOOPBACK_PORTS.join(', ')}. Close whatever is using it and try again.` };
+    }
+    const port        = boundPort;
+    const redirectUri = `http://127.0.0.1:${port}/oauth2/callback`;
+
+    const authParams = {
+      client_id: cfg.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: cfg.scopes,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state,
+    };
+    // Request the partner login experience when configured. The authoritative
+    // control is the Edward client's auth_strategy (go/edward); this hint just
+    // asks Meechum to surface the partner IdP handoff for this authorization
+    // request. Omitted entirely when unset, so workforce-only is unchanged.
+    if (cfg.authStrategy) authParams.auth_strategy = cfg.authStrategy;
+    const authorizationUrl = _meeEndpoint(cfg, '/as/authorization.oauth2') + '?' + new URLSearchParams(authParams);
+
+    // Registered HTTPS redirect (already allow-listed on the Edward client) for the
+    // paste fallback — lets sign-in work before the loopback URLs are added to Edward.
+    const httpsRedirect = cfg.redirectUri || 'https://postflowx.netflix.net/oauth2/callback';
+    const buildHttpsAuthUrl = () => {
+      const p = { client_id: cfg.clientId, redirect_uri: httpsRedirect, response_type: 'code',
+        scope: cfg.scopes, code_challenge: challenge, code_challenge_method: 'S256', state };
+      if (cfg.authStrategy) p.auth_strategy = cfg.authStrategy;
+      return _meeEndpoint(cfg, '/as/authorization.oauth2') + '?' + new URLSearchParams(p);
+    };
+    // Parse a pasted callback URL → authorization code (origin-agnostic; checks state).
+    const parsePastedCallback = (raw) => {
+      let u;
+      try { u = new URL(String(raw || '').trim()); }
+      catch { throw new Error('That is not a valid URL. Copy the full address from the browser after signing in.'); }
+      const err = u.searchParams.get('error_description') || u.searchParams.get('error');
+      if (err) throw new Error(err);
+      if (u.searchParams.get('state') !== state) throw new Error('The sign-in response did not match this request. Please start again.');
+      const c = u.searchParams.get('code');
+      if (!c) throw new Error('That URL has no authorization code — finish Netflix sign-in first, then copy the full address.');
+      return c;
+    };
+
+    // Workforce and partner IdP handoffs need a full browser — never an embedded
+    // webview. The registered HTTPS callback is the safe default. Only offer the
+    // seamless loopback method when an administrator explicitly confirms that all
+    // fixed callbacks are registered in Edward; otherwise it produces the exact
+    // `unauthorized_client — Callback URL mismatch` page this fallback avoids.
+    const pick = cfg.loopbackRedirects
+      ? await dialog.showMessageBox(mainWindow, {
+          type: 'question',
+          title: 'Sign in to Netflix',
+          message: 'How do you want to finish Netflix sign-in?',
+          detail: `Automatic returns to PostFlowX by itself. Paste callback URL uses the registered HTTPS callback.`,
+          buttons: ['Automatic', 'Paste callback URL', 'Cancel'],
+          defaultId: 0, cancelId: 2, noLink: true,
+        })
+      : { response: 1 };
+    if (pick.response === 2) { try { server.close(); } catch {} return { ok: false, error: 'Sign-in cancelled' }; }
+
+    let code;
+    let usedRedirect = redirectUri;
+    if (pick.response === 0) {
+      // ── Automatic: the loopback server above captures the code ──
+      shell.openExternal(authorizationUrl);
+      try {
+        code = await Promise.race([
+          codePromise,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Netflix sign-in timed out (5 min). If the browser showed "unauthorized_client", add the loopback URLs to Edward or use Paste callback URL.')), 300_000)),
+        ]);
+      } catch (e) { try { server.close(); } catch {} return { ok: false, error: e.message }; }
+      try { server.close(); } catch {}
+    } else {
+      // ── Paste fallback: registered HTTPS redirect + manual copy-paste ──
+      try { server.close(); } catch {}   // loopback not used in this path
+      usedRedirect = httpsRedirect;
+      await shell.openExternal(buildHttpsAuthUrl());
+      code = '';
+      let lastError = '';
+      for (let attempt = 0; attempt < 3 && !code; attempt += 1) {
+        const choice = await dialog.showMessageBox(mainWindow, {
+          type: lastError ? 'warning' : 'info',
+          title: 'Paste the callback URL',
+          message: lastError || 'Sign in using the browser that just opened.',
+          detail: 'After you sign in, the browser tries to open a page that will not load — that is expected. Copy the FULL address from the browser address bar, come back here, and click Paste callback URL.',
+          buttons: ['Paste callback URL', 'Open browser again', 'Cancel'],
+          defaultId: 0, cancelId: 2, noLink: true,
+        });
+        if (choice.response === 2) return { ok: false, error: 'Sign-in cancelled' };
+        if (choice.response === 1) { await shell.openExternal(buildHttpsAuthUrl()); attempt -= 1; lastError = ''; continue; }
+        try { code = parsePastedCallback(clipboard.readText()); }
+        catch (err) { lastError = err.message; }
+      }
+      if (!code) return { ok: false, error: lastError || 'No valid callback URL was pasted.' };
+    }
+
+    try {
+      const exchangeUrl = new URL(apiUrl);
+      exchangeUrl.searchParams.set('path', 'auth/meechum');
+      const exchangeResponse = await fetch(exchangeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ code, codeVerifier: verifier, redirectUri: usedRedirect }),
+      });
+      const result = await exchangeResponse.json().catch(() => ({}));
+      if (!exchangeResponse.ok || !result.ok) {
+        return {
+          ok: false,
+          status: result.status || '',
+          error: result.error || `PostFlowX auth service HTTP ${exchangeResponse.status}`,
+        };
+      }
+      const user = result.user || {};
+      const pfxSession = {
+        ok: true,
+        status: 'active',
+        user,
+        role: result.role || 'viewer',
+        permissions: result.permissions || { tabs: [], actions: [] },
+        featureFlags: result.featureFlags || {},
+        session: {
+          token: result.sessionToken || '',
+          expiresAt: result.expiresAt || new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
+        },
+      };
+      return {
+        ok: true,
+        email: user.email || '',
+        name: user.name || '',
+        picture: user.picture || '',
+        accessToken: '',
+        pfxSession,
+      };
+    } catch (error) {
+      return { ok: false, error: `Secure sign-in exchange failed: ${error.message}` };
+    }
+  }
+
+  ipcMain.handle('pfx:meechum-oauth', async () => {
+    const cfg = _getMeechumConfig();
+
+    // nflx-access client certificates prove that this Mac has a valid Netflix
+    // credential, but they do not expose the Pandora/Meechum email that was
+    // authenticated. The Team Workspaces compatibility path therefore maps the
+    // local macOS username to @netflix.com and cannot safely identify a partner.
+    // A partner-enabled Edward client must always use browser OAuth so the
+    // backend returns the verified userinfo email (workforce or partner).
+    const partnerLoginEnabled = /partner/i.test(cfg.authStrategy || '');
+    if (partnerLoginEnabled) {
+      if (!_isMeechumConfigured(cfg)) {
+        return { ok: false, error: 'MEECHUM_DESKTOP_CLIENT_MISSING' };
+      }
+      return _runMeechumSystemBrowserOAuth(_activeWindow, cfg);
+    }
+
+    // Workforce-only builds may keep the Team Workspaces certificate shortcut.
+    const workspaceResult = await _runTeamWorkspacesAuthentication();
+    if (workspaceResult.ok || workspaceResult.error !== 'NFLX_ACCESS_UNAVAILABLE') {
+      return workspaceResult;
+    }
+    if (!_isMeechumConfigured(cfg)) {
+      return { ok: false, error: 'MEECHUM_DESKTOP_CLIENT_MISSING' };
+    }
+    return _runMeechumSystemBrowserOAuth(_activeWindow, cfg);
   });
 
   ipcMain.handle('pfx:google-oauth', async (_e, { clientId } = {}) => {
@@ -1457,7 +2078,13 @@ function register(mainWindow, appRoot) {
           clearTimeout(tid);
           const bd = await br.json().catch(() => ({}));
           if (!br.ok || !bd.ok) {
-            return { ok: false, error: bd.error || `Backend HTTP ${br.status}` };
+            // Pass through the backend status (e.g. 'pending' / 'disabled') so the
+            // renderer can show the right message instead of a raw "Backend HTTP 200".
+            return {
+              ok:     false,
+              status: bd.status,
+              error:  bd.error || (bd.status ? undefined : `Backend HTTP ${br.status}`),
+            };
           }
           const pfxSession = {
             ok:           true,
@@ -1497,8 +2124,8 @@ function register(mainWindow, appRoot) {
 
   // ── Push a message to the renderer (used by companion events) ────────────
   companion.on('message', (msg) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('pfx:fromMain', msg);
+    if (_activeWindow && !_activeWindow.isDestroyed()) {
+      _activeWindow.webContents.send('pfx:fromMain', msg);
     }
   });
 }

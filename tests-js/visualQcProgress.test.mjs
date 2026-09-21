@@ -84,15 +84,15 @@ test('no setProgress call is handed a bare English literal', () => {
 
   const offenders = [];
   for (const arg of calls) {
-    // Strip every interpolation and every translate('…') / friendlyStatus(…) /
-    // saveNotice(…).text / notice.text producer. Whatever prose survives is a
-    // literal that i18n.js will never see.
-    const stripped = arg
-      .replace(/translate\(\s*(['"`])(?:\\.|(?!\1)[\s\S])*\1\s*\)/g, '')
-      .replace(/friendlyStatus|saveNotice|notice/g, '')
-      .replace(/\$\{[\s\S]*?\}/g, '')
-      .replace(/[`'"(){}.\s\d/+*—:,-]/g, '');
-    if (/[A-Za-z]{3,}/.test(stripped)) offenders.push(arg.trim().slice(0, 90));
+    // Look only at the STRING LITERALS in the argument, and only at the ones
+    // that are not already the argument of a translate() call. An expression
+    // with no literals in it (saveNotice(outcome).text, notice.text) produces
+    // its own translated prose and is somebody else's gate; an expression with
+    // a bare literal in it is this file's problem.
+    const withoutTranslated = arg.replace(/translate\(\s*(['"`])(?:\\.|(?!\1)[\s\S])*?\1\s*\)/g, '');
+    const literals = [...withoutTranslated.matchAll(/(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g)]
+      .map((m) => m[2].replace(/\$\{[\s\S]*?\}/g, ''));
+    if (literals.some((s) => /[A-Za-z]{3,}/.test(s))) offenders.push(arg.trim().slice(0, 90));
   }
   assert.deepEqual(offenders, [],
     `untranslated English handed to the progress strip:\n  ${offenders.join('\n  ')}`);

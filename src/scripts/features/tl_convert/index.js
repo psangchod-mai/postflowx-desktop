@@ -204,8 +204,7 @@
     // online rooms that still require strict 8-char reel/tape names.
     const opts = (reelParam && typeof reelParam === 'object') ? reelParam : {};
     const legacyMode = (typeof reelParam === 'string') ? reelParam : null;
-    const r = _rateInfo(fps);
-    const lines = [`TITLE: ${getProjectName()}`, `FCM: ${r.ntsc ? 'DROP FRAME' : 'NON-DROP FRAME'}`, ''];
+    const lines = [`TITLE: ${getProjectName()}`, `FCM: ${(_isDropFrameCapable(fps) && _hasDropFrameTC(events)) ? 'DROP FRAME' : 'NON-DROP FRAME'}`, ''];
     let cut = 1;
     for (const ev of _sortedEvents(events, fps)) {
       if (_eventType(ev) !== 'video') continue;
@@ -812,6 +811,7 @@
     const ntsc = r.ntsc ? 'TRUE' : 'FALSE';
     const projName = xmlEsc(getProjectName());
     const bounds = _timelineBounds(events, fps);
+    const df = _isDropFrameCapable(fps) && _hasDropFrameTC(events);
     const L = [];
     L.push(`<?xml version="1.0" encoding="UTF-8"?>`);
     L.push(`<!DOCTYPE xmeml>`);
@@ -820,7 +820,7 @@
     L.push(`    <name>${projName}</name>`);
     L.push(`    <duration>${bounds.duration}</duration>`);
     L.push(`    <rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate>`);
-    L.push(`    <timecode><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><string>${framesToTC(bounds.start, fps, r.ntsc)}</string><frame>${bounds.start}</frame><displayformat>${r.ntsc ? 'DF' : 'NDF'}</displayformat></timecode>`);
+    L.push(`    <timecode><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><string>${framesToTC(bounds.start, fps, df)}</string><frame>${bounds.start}</frame><displayformat>${df ? 'DF' : 'NDF'}</displayformat></timecode>`);
     L.push(`    <media>`);
     L.push(`      <video>`);
     L.push(`        <format><samplecharacteristics><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><width>1920</width><height>1080</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></format>`);
@@ -850,7 +850,7 @@
         L.push(`              <name>${xmlEsc(reel)}</name>`);
         L.push(`              <pathurl>${xmlEsc(pathurl)}</pathurl>`);
         L.push(`              <rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate>`);
-        L.push(`              <timecode><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><string>${ev.srcIn || '00:00:00:00'}</string><frame>${srcInF}</frame><displayformat>${r.ntsc ? 'DF' : 'NDF'}</displayformat></timecode>`);
+        L.push(`              <timecode><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><string>${ev.srcIn || '00:00:00:00'}</string><frame>${srcInF}</frame><displayformat>${df ? 'DF' : 'NDF'}</displayformat></timecode>`);
         L.push(`              <media><video><samplecharacteristics><rate><timebase>${fpsInt}</timebase><ntsc>${ntsc}</ntsc></rate><width>1920</width><height>1080</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video></media>`);
         L.push(`            </file>`);
         const markers = ev.markers || ev._markers || [];
@@ -873,6 +873,15 @@
   // ── Modal state ──────────────────────────────────────────────────────────
 
   const FORMATS    = ['edl32','otio','fcpxml','fcpxmld','xml','aaf_nle_linked','aaf_protools_audio'];
+  const FORMAT_LABELS = {
+    edl32: 'EDL32',
+    otio: 'OTIO',
+    fcpxml: 'FCPXML',
+    fcpxmld: 'FCPXMLD',
+    xml: 'FCP7 XML',
+    aaf_nle_linked: 'AAF NLE',
+    aaf_protools_audio: 'Pro Tools AAF',
+  };
   const FORMAT_EXT = { edl32:'edl', otio:'otio', fcpxml:'fcpxml', fcpxmld:'fcpxmld', xml:'xml', aaf_nle_linked:'aaf', aaf_protools_audio:'aaf' };
 
   let _mode         = 'export'; // 'export' | 'import'
@@ -1654,20 +1663,43 @@ Write-Host "  3. Click Re-check Helper."
   function _renderExport() {
     const preview  = document.getElementById('tlcPreview');
     const aafPanel = document.getElementById('tlcAafPanel');
+    const exportPane = document.getElementById('tlcExportPane');
+    const emptyState = document.getElementById('tlcEmptyExport');
     const dlBtn    = document.getElementById('tlcDownloadBtn');
     const copyBtn  = document.getElementById('tlcCopyBtn');
     const counter  = document.getElementById('tlcEventCount');
     const events   = getEvents();
+    const eventCount = events.filter(e => e.recIn || e.recOut).length;
+    const hasEvents = eventCount > 0;
+    const formatLabel = FORMAT_LABELS[_activeFormat] || _activeFormat.toUpperCase();
 
     // Persist settings every time the export pane renders
     _saveSettings();
 
-    if (counter) counter.textContent = `${events.filter(e => e.recIn || e.recOut).length} events`;
+    if (counter) counter.textContent = `${eventCount} event${eventCount === 1 ? '' : 's'}`;
+
+    // Smart at-a-glance context for non-technical users.
+    const projectEl = document.getElementById('tlcSummaryProject');
+    const targetEl = document.getElementById('tlcSummaryTarget');
+    const eventsEl = document.getElementById('tlcSummaryEvents');
+    const fpsEl = document.getElementById('tlcSummaryFps');
+    const healthEl = document.getElementById('tlcSummaryHealth');
+    const outputTitle = document.getElementById('tlcOutputTitle');
+    const previewMeta = document.getElementById('tlcPreviewMeta');
+    if (projectEl) projectEl.textContent = hasEvents ? getProjectName() : 'No timeline';
+    if (targetEl) targetEl.textContent = formatLabel;
+    if (eventsEl) eventsEl.textContent = String(eventCount);
+    if (fpsEl) fpsEl.textContent = String(Number(getFps().toFixed(3)));
+    if (outputTitle) outputTitle.textContent = `${formatLabel} preview`;
+    exportPane?.classList.toggle('tlc-is-empty', !hasEvents);
+    if (emptyState) emptyState.style.display = hasEvents ? 'none' : 'flex';
+    if (copyBtn) copyBtn.disabled = !hasEvents;
+    if (dlBtn) dlBtn.disabled = !hasEvents;
 
     const isAAFNative = _activeFormat === 'aaf_nle_linked' || _activeFormat === 'aaf_protools_audio';
 
-    if (preview)  preview.style.display  = isAAFNative ? 'none' : '';
-    if (aafPanel) aafPanel.style.display = isAAFNative ? ''     : 'none';
+    if (preview)  preview.style.display  = (!hasEvents || isAAFNative) ? 'none' : '';
+    if (aafPanel) aafPanel.style.display = (hasEvents && isAAFNative) ? '' : 'none';
     if (dlBtn)    dlBtn.style.display    = isAAFNative ? 'none' : '';
     if (copyBtn)  copyBtn.style.display  = isAAFNative ? 'none' : '';
 
@@ -1692,7 +1724,8 @@ Write-Host "  3. Click Re-check Helper."
     }
 
     if (!isAAFNative) {
-      if (preview) preview.value = _generate();
+      const generated = hasEvents ? _generate() : '';
+      if (preview) preview.value = generated;
       // Preflight row above the preview textarea
       const pf = _tlcPreflight(events, getFps(), _activeFormat);
       const pfHtml = _preflightHtml(pf.errors, pf.warnings);
@@ -1708,13 +1741,27 @@ Write-Host "  3. Click Re-check Helper."
       } else if (pfRow) {
         pfRow.style.display = 'none';
       }
+      if (healthEl) {
+        const issueCount = pf.errors.length + pf.warnings.length;
+        healthEl.className = `tlc-health ${!hasEvents ? 'is-idle' : issueCount ? 'is-warn' : 'is-ready'}`;
+        healthEl.innerHTML = `<i></i>${!hasEvents ? 'Import a timeline' : issueCount ? `${issueCount} item${issueCount === 1 ? '' : 's'} to check` : 'Ready to deliver'}`;
+      }
+      if (previewMeta) {
+        const lines = generated ? generated.split(/\r?\n/).length : 0;
+        previewMeta.textContent = hasEvents ? `${lines} lines · read-only validation preview` : 'Waiting for a timeline';
+      }
       _setExportStatus('');
     } else {
       const pfRow = document.getElementById('tlcPreflightRow');
       if (pfRow) pfRow.style.display = 'none';
       _setExportStatus('');
+      if (healthEl) {
+        healthEl.className = `tlc-health ${hasEvents ? 'is-ready' : 'is-idle'}`;
+        healthEl.innerHTML = `<i></i>${hasEvents ? 'Ready to configure' : 'Import a timeline'}`;
+      }
+      if (previewMeta) previewMeta.textContent = hasEvents ? 'Configure media and export settings below' : 'Waiting for a timeline';
       if (!_aafHelperStatus.checked) _checkAAFHelperStatus();
-      else _renderAAFPanel();
+      else if (hasEvents) _renderAAFPanel();
     }
   }
 
@@ -1910,8 +1957,14 @@ Write-Host "  3. Click Re-check Helper."
   function _setImportStatus(msg, ok) {
     const el = document.getElementById('tlcImportStatus');
     if (!el) return;
-    el.textContent = msg;
-    el.style.color = ok === false ? '#ff6b6b' : ok === true ? '#4caf80' : 'rgba(255,255,255,.5)';
+    let label = el.querySelector('span');
+    if (!label) {
+      label = document.createElement('span');
+      el.replaceChildren(document.createElement('i'), label);
+    }
+    label.textContent = msg;
+    el.classList.toggle('is-ok', ok === true);
+    el.classList.toggle('is-error', ok === false);
   }
 
   function _handleImportFiles(files) {
@@ -2438,6 +2491,7 @@ Write-Host "  3. Click Re-check Helper."
     if (modeImp) modeImp.addEventListener('click', () => {
       _mode === 'import' ? (_setMode('export'), _renderExport()) : _setMode('import');
     });
+    document.getElementById('tlcEmptyImportBtn')?.addEventListener('click', () => _setMode('import'));
 
     // How to Use
     const helpBtn = document.getElementById('tlcHelpBtn');

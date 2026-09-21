@@ -22,7 +22,7 @@ const PFX_AUTH = (() => {
 
   // ── PostFlowX Backend ────────────────────────────────────────────────────
   // ⚙️  Replace with your real backend URL. Change in boot-guard.js too.
-  const PFX_BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxUaExYv2zcGN55XBbToXx6bFmBjWx4VSxYmW4K3T-sFg08qm_pOzAArsZva7-rOncF/exec';
+  const PFX_BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxhdc-5B2q-YYs_og7BU7fpJHz3VAcGKzDVu422XViMvZndXhy1ytGjTgJmNwKLSXgS/exec';
   const PFX_SESSION_KEY = 'postflowxSession';
 
   // Plan → allowed feature keys
@@ -153,11 +153,14 @@ const PFX_AUTH = (() => {
           ...payload,
           session: {
             ...payload.session,
-            // Always set a long expiry for desktop (30 days).
-            expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+            // Honor the backend-provided expiry (mirrors the sheet's expires_at)
+            // so revocation/expiry actually takes effect. Only fall back to a
+            // SHORT default TTL (8h, matching ipc.js) when the backend gives none.
+            expiresAt: payload.session?.expiresAt
+              || new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
           },
         };
-        localStorage.setItem('pfx_desktop_session.v1', JSON.stringify(desktop));
+        window.PFX_SESSION_STORE?.save(desktop);
       } catch {}
     }
   }
@@ -167,7 +170,7 @@ const PFX_AUTH = (() => {
     if (window.PFX_PERMISSIONS?.setSession) window.PFX_PERMISSIONS.setSession(null);
     await chrome.storage.local.remove(PFX_SESSION_KEY);
     if (window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop') {
-      try { localStorage.removeItem('pfx_desktop_session.v1'); } catch {}
+      window.PFX_SESSION_STORE?.clear();
     }
   }
 
@@ -275,6 +278,83 @@ const PFX_AUTH = (() => {
 
   function getPfxSession()  { return _pfxSession; }
   function getPfxRole()     { return _pfxSession?.role || null; }
+
+  /**
+   * Re-check access without starting a second OAuth flow.
+   *
+   * This deliberately reuses only the identity already verified by Meechum /
+   * Google and requires a fresh REMOTE policy response before restoring access.
+   * It must never accept an email typed by the user or unlock from policy cache.
+   */
+  async function recheckAccess() {
+    const isDesktop = window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop';
+    let current = _pfxSession;
+    if (isDesktop) {
+      current = window.PFX_SESSION_STORE?.load?.() || current;
+    } else if (!current) {
+      const stored = await chrome.storage.local.get(PFX_SESSION_KEY).catch(() => ({}));
+      current = stored[PFX_SESSION_KEY] || null;
+    }
+
+    const email = String(current?.user?.email || '').trim().toLowerCase();
+    const token = current?.session?.token || '';
+    const expiresAt = new Date(current?.session?.expiresAt || 0).getTime();
+
+    // Do not keep rechecking a synthetic development identity in a packaged
+    // build. Clear both renderer and encrypted desktop copies so the next
+    // action starts the real Meechum/Google sign-in flow.
+    if (isDesktop && !window.pfxPlatform?.devBypass &&
+        (token === 'dev-bypass' || email === 'local-dev@postflowx.local')) {
+      await _pfxClear();
+      return { state: 'needs_sign_in' };
+    }
+
+    if (!email || !expiresAt || expiresAt <= Date.now()) {
+      return { state: 'needs_sign_in' };
+    }
+
+    const flow = window.pfxBootPolicyFlow;
+    if (!flow?.run) return { state: 'error' };
+    const result = await flow.run({
+      email,
+      name: current?.user?.name || email.split('@')[0],
+      pfxToken: token,
+      version: chrome.runtime?.getManifest?.()?.version || '',
+    });
+
+    // A cached allow is not sufficient to lift a deny overlay.
+    if (result?.ok && result.policy && result.source === 'remote') {
+      const policy = result.policy;
+      const payload = {
+        ...current,
+        ok: true,
+        status: policy.status || 'active',
+        request_status: policy.request_status || 'approved',
+        user: { ...current.user, email },
+        role: policy.role || current.role || 'viewer',
+        permissions: {
+          tabs: policy.allowedTabs || [],
+          actions: policy.allowedActions || [],
+        },
+        featureFlags: policy.featureFlags || {},
+        session: {
+          ...current.session,
+          token,
+          expiresAt: policy.expiresAt || current.session.expiresAt,
+        },
+      };
+      await _pfxSave(payload);
+      _notify('access_rechecked');
+      return { state: 'active', payload };
+    }
+
+    const status = String(result?.policy?.status || '').trim().toLowerCase();
+    if (status === 'pending' || status === 'disabled' || status === 'expired') {
+      return { state: status };
+    }
+    return { state: 'error' };
+  }
+
   function isReadOnly() {
     if (window.PFX_PERMISSIONS) return window.PFX_PERMISSIONS.isReadOnly();
     const p = _pfxPermissions();
@@ -344,6 +424,66 @@ const PFX_AUTH = (() => {
       : new Promise(r => _readyResolvers.push(r));
   }
 
+  /** Sign in desktop workforce and partner users through Edward/Meechum. */
+  async function signInWithEnterprise() {
+    const isDesktop = window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop';
+    if (!isDesktop || !window.pfxPlatform?.enterpriseSignIn) {
+      return signInWithGoogle();
+    }
+
+    // Preserve the explicit local-development bypass without sending the user
+    // through a real enterprise login window.
+    let bypass = null;
+    try { bypass = await window.pfxPlatform?.devAuthBypass?.(); } catch {}
+    if (bypass?.ok && bypass.accessToken === 'dev-bypass') {
+      const synth = {
+        ok: true,
+        user: { email: bypass.email, name: bypass.name, picture: '' },
+        role: 'admin',
+        permissions: { tabs: ['*'], actions: ['*'] },
+        featureFlags: {},
+        session: {
+          token: 'dev-bypass',
+          expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+        },
+      };
+      await _pfxSave(synth);
+      _notify('signed_in');
+      return synth;
+    }
+
+    const oauthResult = await window.pfxPlatform.enterpriseSignIn();
+    if (!oauthResult?.ok) {
+      const status = String(oauthResult?.status || '').trim().toLowerCase();
+      const rawErr = oauthResult?.error || 'Netflix sign-in failed';
+      // A legacy backend expresses "email not provisioned" as `not_found`;
+      // treat it exactly like `pending` so the user sees the friendly
+      // "registered, pending approval" message rather than a raw error code.
+      if (status === 'pending' || status === 'not_found' || rawErr === 'not_found') {
+        throw new Error('Your account has been registered, but access is still pending approval.');
+      }
+      if (status === 'disabled') {
+        throw new Error('Your PostFlowX access is currently disabled.');
+      }
+      throw new Error(rawErr === 'MEECHUM_DESKTOP_CLIENT_MISSING'
+        ? 'Netflix sign-in is not configured for this build. Contact your administrator.'
+        : rawErr);
+    }
+
+    if (oauthResult.pfxSession) {
+      await _pfxSave(oauthResult.pfxSession);
+      _notify('signed_in');
+      return oauthResult.pfxSession;
+    }
+
+    // The Electron preload exposes the verified Meechum identity through the
+    // chrome.identity compatibility shim. Reuse the existing PostFlowX access
+    // policy service to resolve roles, feature flags, and permissions.
+    const payload = await _signInWithBackendPolicy();
+    _notify('signed_in');
+    return payload;
+  }
+
   /** Sign in with Google via Supabase OAuth PKCE + chrome.identity.launchWebAuthFlow. */
   async function signInWithGoogle() {
     // On Electron, trigger the Google OAuth popup first to populate _googleProfile.
@@ -351,6 +491,15 @@ const PFX_AUTH = (() => {
     if ((window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop') && window.pfxPlatform?.googleSignIn) {
       const oauthResult = await window.pfxPlatform.googleSignIn();
       if (!oauthResult?.ok) {
+        // Backend policy status (pending/disabled) is passed through by ipc.js —
+        // map it to a user-facing message rather than surfacing a raw error.
+        const status = String(oauthResult?.status || '').trim().toLowerCase();
+        if (status === 'pending') {
+          throw new Error('Your account has been registered, but access is still pending approval.');
+        }
+        if (status === 'disabled') {
+          throw new Error('Your PostFlowX access is currently disabled.');
+        }
         const rawErr = oauthResult?.error || 'Google sign-in failed';
         throw new Error(rawErr === 'GOOGLE_DESKTOP_CLIENT_ID_MISSING'
           ? 'Google sign-in is not configured for this build. Contact your administrator.'
@@ -445,6 +594,85 @@ const PFX_AUTH = (() => {
     return session;
   }
 
+  // ── Email magic-link sign-in (poll-based, primary desktop flow) ────────────
+  // No Google Cloud / OAuth client / deep-link — pure renderer↔Apps Script HTTP.
+  // The SECRET token lives only in the emailed link; the app only ever holds the
+  // public pollId returned here.
+
+  /**
+   * Request a magic-link email. Returns { ok:true, pollId, email } on success.
+   * Throws a user-facing Error for invalid email / rate-limit / network failure.
+   */
+  async function signInWithEmailLink(email) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) throw new Error('Please enter your email address.');
+    const res = await window.pfxPolicyApi?.requestLink?.({ email: e });
+    if (res == null) {
+      // Network error — fail without locking anyone out; the user can retry.
+      throw new Error('We could not reach the sign-in service. Check your connection and try again.');
+    }
+    if (!res.ok) {
+      if (res.error === 'invalid_email') throw new Error('That does not look like a valid email address.');
+      if (res.error === 'rate_limited') throw new Error('A sign-in link was just sent. Please wait a minute before requesting another.');
+      throw new Error('Could not send a sign-in link. Please try again in a moment.');
+    }
+    return { ok: true, pollId: res.pollId, email: e };
+  }
+
+  /**
+   * Poll ONCE for magic-link confirmation. The caller (login-ui) owns the interval,
+   * timeout, and Resend button. On the ACTIVE result this persists the session via
+   * _pfxSave (same path as Google sign-in) and fires 'signed_in'.
+   *
+   * Poll with no `code` to detect the confirmed→needsCode transition; pass the
+   * 6-digit `code` on the Verify step. The session is only minted server-side once
+   * the code the clicker saw is submitted (defeats login-CSRF).
+   *
+   * Returns { state, payload?, badCode? } where state is one of:
+   *   'waiting'  — link not clicked yet (keep polling)
+   *   'needsCode'— clicked; the app must collect + submit the code (badCode:true when
+   *                a submitted code was wrong)
+   *   'active'   — signed in; session persisted
+   *   'pending' | 'disabled' — authz decision (stop polling, show message)
+   *   'expired'  — link/poll no longer valid (stop polling, offer Resend)
+   *   'error'    — transient/network (caller may keep polling)
+   */
+  async function pollEmailLink(pollId, email, code) {
+    const res = await window.pfxPolicyApi?.checkLink?.({ pollId, code });
+    if (res == null) return { state: 'error' }; // transient — keep polling, never lock out
+    if (res.ok && res.waiting) return { state: 'waiting' };
+    if (res.ok && res.needsCode) return { state: 'needsCode', badCode: !!res.badCode };
+    if (res.ok && res.permissions) {
+      const em = String(email || '').trim().toLowerCase();
+      const payload = {
+        ok: true,
+        status: 'active',
+        request_status: 'approved',
+        user: { email: em, name: em ? em.split('@')[0] : 'PostFlowX User', picture: null },
+        role: res.role || 'viewer',
+        permissions: {
+          tabs: res.permissions.tabs || [],
+          actions: res.permissions.actions || [],
+        },
+        featureFlags: res.featureFlags || {},
+        session: {
+          token: res.sessionToken || null,
+          // Honor the backend expiry (mirrors AccessControl.expires_at); fall back
+          // to a SHORT default only when the backend gives none.
+          expiresAt: res.expiresAt || new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
+        },
+      };
+      await _pfxSave(payload);
+      _notify('signed_in');
+      return { state: 'active', payload };
+    }
+    const status = String(res.status || '').trim().toLowerCase();
+    if (status === 'pending')  return { state: 'pending' };
+    if (status === 'disabled') return { state: 'disabled' };
+    if (status === 'expired')  return { state: 'expired' };
+    return { state: 'error' };
+  }
+
   /** Sign out and clear session. */
   async function signOut() {
     if (_session?.access_token) {
@@ -521,10 +749,11 @@ const PFX_AUTH = (() => {
   }, 10 * 60 * 1000);
 
   return {
-    init, ready, signInWithGoogle, signOut, refreshSession,
+    init, ready, signInWithEnterprise, signInWithGoogle, signInWithEmailLink, pollEmailLink, signOut, refreshSession,
     getSession, getUser, getPlan, isSignedIn, canUse, onChange,
     // PostFlowX RBAC
-    getPfxSession, getPfxRole, canAccessTab, canDoAction, isReadOnly,
+    getPfxSession, getPfxRole, recheckAccess, canAccessTab, canDoAction, isReadOnly,
+    applyPolicySession: _pfxSave,
     PLAN_FEATURES, PLAN_DISPLAY,
   };
 })();

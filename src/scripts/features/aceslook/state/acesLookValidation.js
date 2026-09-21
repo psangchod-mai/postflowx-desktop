@@ -60,7 +60,7 @@ export function validate(state) {
     if (typeof sat === 'number' && sat < 0) errors.push('CDL Saturation must be ≥ 0.');
   }
 
-  for (const item of state.lookStack) {
+  for (const item of (state.lookStack || [])) {
     if (!item.enabled) continue;
     if ((item.kind === 'clf' || item.kind === 'lut') && !item.file && !item.transformId) {
       errors.push(`Look item "${item.label}" is enabled but has no file path or transform ID.`);

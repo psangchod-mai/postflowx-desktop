@@ -20,6 +20,16 @@ ok(tokenizeCompanionUrl('http://h/f.jpg?token=abc', 'xyz') === 'http://h/f.jpg?t
 ok(tokenizeCompanionUrl('http://h/f.jpg', 'a b/c+d') === `http://h/f.jpg?token=${encodeURIComponent('a b/c+d')}`,
   'token is URL-encoded');
 
+// Token is inserted before a URL fragment, not buried inside it.
+ok(tokenizeCompanionUrl('http://x/frame?f=10#seg', 'T') === 'http://x/frame?f=10&token=T#seg',
+  'inserts &token= before the #fragment');
+ok(tokenizeCompanionUrl('http://x/frame#seg', 'T') === 'http://x/frame?token=T#seg',
+  'inserts ?token= before the #fragment when no query');
+
+// A 'token=' living only in the fragment is NOT treated as already tokenized.
+ok(tokenizeCompanionUrl('http://x/frame#token=fake', 'T') === 'http://x/frame?token=T#token=fake',
+  'fragment token= does not trip the idempotency guard');
+
 // No token or no URL → unchanged.
 ok(tokenizeCompanionUrl('http://h/f.jpg', '') === 'http://h/f.jpg', 'no token → url unchanged');
 ok(tokenizeCompanionUrl('', 'abc') === '', 'no url → unchanged');

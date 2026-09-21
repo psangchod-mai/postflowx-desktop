@@ -160,3 +160,25 @@ test('the Timeline Convert tab maps to the Timeline Convert tutorial', () => {
   assert.equal(modal !== null, true, '#tlcTutorialModal is gone');
   assert.match(modal.getAttribute('aria-label') || '', /Timeline Convert/i);
 });
+
+test('Timeline Convert has a guided empty state and one smart output workspace', () => {
+  const { document } = parseHTML(readFileSync(join(ROOT, 'src/index.html'), 'utf8'));
+  const required = [
+    'tlcSummaryProject', 'tlcSummaryTarget', 'tlcSummaryEvents', 'tlcSummaryFps',
+    'tlcSummaryHealth', 'tlcOutputTitle', 'tlcPreviewMeta', 'tlcEmptyExport',
+    'tlcEmptyImportBtn', 'tlcDropZone', 'tlcImportStatus', 'tlcPreview',
+  ];
+  for (const id of required) {
+    assert.equal(document.querySelectorAll(`#${id}`).length, 1, `#${id} must exist exactly once`);
+  }
+
+  assert.match(document.getElementById('tlcEmptyExport').textContent, /Start with your timeline/i);
+  assert.match(document.getElementById('tlcImportPane').textContent, /three simple steps/i);
+  assert.match(document.getElementById('tlcImportPane').textContent, /does not replace your Pull Prep project/i);
+
+  const feature = readFileSync(join(ROOT, 'src/scripts/features/tl_convert/index.js'), 'utf8');
+  assert.match(feature, /copyBtn\.disabled\s*=\s*!hasEvents/,
+    'Copy must stay disabled until there is a real timeline');
+  assert.match(feature, /tlcEmptyImportBtn[^\n]+_setMode\('import'\)/,
+    'the contextual empty-state action must open the existing import flow');
+});

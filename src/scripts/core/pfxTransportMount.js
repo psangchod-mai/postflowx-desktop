@@ -46,14 +46,24 @@ function makeDelegatingAdapter(cfg) {
   const B = cfg.btn || {};
   const btn = (k) => (B[k] ? qs(B[k]) : null);
   const video = () => {
+    const candidates = [];
     for (const id of (cfg.video || [])) {
       const v = document.getElementById(id);
-      if (v && v.tagName === 'VIDEO') return v;
+      if (v && v.tagName === 'VIDEO') candidates.push(v);
     }
-    return null;
+    // A workspace may keep a dormant comparison <video> before the active
+    // program monitor in its config (Pulls Prep does this with pmSlyCmpVideo
+    // before pmVideo). Direct AVFoundation playback lives on the latter via
+    // _pfxNativeEngine, so choosing the first DOM video made Stop/Pause target
+    // the empty comparison element while the ProRes movie kept playing.
+    return candidates.find(v => v._pfxNativeEngine)
+      || candidates.find(v => v.currentSrc || v.src)
+      || candidates[0]
+      || null;
   };
   const slider = () => (cfg.slider ? qs(cfg.slider) : null);
-  const getFps = () => num(cfg.fps && cfg.fps(), 24) || 24;
+  const nativeEngine = () => video()?._pfxNativeEngine || null;
+  const getFps = () => num(nativeEngine()?.fps, num(cfg.fps && cfg.fps(), 24)) || 24;
   // Range-input value/max via IDL property, falling back to the attribute (some
   // players drive the slider by attribute; some DOM impls don't reflect IDL).
   const sliderVal = (s) => num(s.value !== '' && s.value != null ? s.value : s.getAttribute('value'), 0);
@@ -70,6 +80,8 @@ function makeDelegatingAdapter(cfg) {
     getFps,
     getFrame() {
       const v = video();
+      const ne = nativeEngine();
+      if (ne) return Math.max(0, Math.round(ne.currentFrame || 0));
       // Same readiness gate as getDuration() so frame + duration never mix
       // video-frames with slider-units (e.g. duration finite-but-0 at load).
       // FLOOR (not round): seekToFrame writes currentTime=(f+0.5)/fps, and
@@ -81,6 +93,8 @@ function makeDelegatingAdapter(cfg) {
     },
     getDuration() {
       const v = video();
+      const ne = nativeEngine();
+      if (ne && Number.isFinite(ne.duration) && ne.duration > 0) return Math.round(ne.duration * (ne.fps || getFps()));
       if (v && Number.isFinite(v.duration) && v.duration > 0) return Math.round(v.duration * getFps()) + 1;
       const s = slider();
       return s ? Math.round(sliderMax(s)) + 1 : 0;
@@ -89,7 +103,10 @@ function makeDelegatingAdapter(cfg) {
       const last = Math.max(0, adapter.getDuration() - 1);
       const f = clamp(Math.round(absF), 0, last);
       const v = video();
-      if (v && Number.isFinite(v.duration)) {
+      const ne = nativeEngine();
+      if (ne) {
+        try { ne.seekFrame(f); } catch {}
+      } else if (v && Number.isFinite(v.duration)) {
         try { v.currentTime = clamp((f + 0.5) / getFps(), 0, v.duration); } catch {}
       } else {
         const s = slider();
@@ -106,6 +123,8 @@ function makeDelegatingAdapter(cfg) {
     // titles like "Play / Pause" must NOT be sniffed — see detectPlaying).
     isPlaying() {
       if (revRaf) return true;
+      const ne = nativeEngine();
+      if (ne) return !!ne.isPlaying;
       const v = video();
       if (v) return !v.paused && !v.ended;
       return detectPlaying(null, btn('play'));
@@ -131,6 +150,12 @@ function makeDelegatingAdapter(cfg) {
         return;
       }
       stopReverse();
+      const ne = nativeEngine();
+      if (ne) {
+        try { ne.play(); } catch {}
+        emit('play');
+        return;
+      }
       // Start via the player's own toggle button so its canvas/sync loop runs.
       if (!adapter.isPlaying()) { btn('play')?.click(); }
       const v = video();
@@ -140,7 +165,10 @@ function makeDelegatingAdapter(cfg) {
     pause() {
       stopReverse();
       const v = video();
-      if (v) {
+      const ne = nativeEngine();
+      if (ne) {
+        try { ne.pause(); } catch {}
+      } else if (v) {
         // IMPORTANT: do NOT call btn('play')?.click() when a <video> is present.
         // That button is a toggle — if called while paused it starts playback, and
         // even when called while playing it stops the AVFoundation canvas render
@@ -209,6 +237,8 @@ function makeDelegatingAdapter(cfg) {
     canLoop() { return !!B.loop || ((cfg.video || []).length > 0); },
     canPlay() {
       if (typeof cfg.canPlay === 'function') return cfg.canPlay({ video: video(), btn });
+      const ne = nativeEngine();
+      if (ne) return Number.isFinite(ne.duration) && ne.duration > 0;
       const v = video();
       if (v) return Number.isFinite(v.duration) && v.duration > 0;
       const s = slider();
@@ -220,7 +250,8 @@ function makeDelegatingAdapter(cfg) {
       const o = { signal: ac.signal };
       const v = video();
       if (v) {
-        ['timeupdate', 'play', 'pause', 'seeked', 'loadedmetadata', 'durationchange', 'emptied', 'ended']
+        ['timeupdate', 'play', 'pause', 'seeked', 'loadedmetadata', 'durationchange', 'emptied', 'ended',
+         'pfx-native-ready', 'pfx-native-timeupdate']
           .forEach(ev => v.addEventListener(ev, () => emit(ev), o));
       }
       const s = slider();

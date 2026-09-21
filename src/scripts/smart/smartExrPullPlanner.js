@@ -74,7 +74,7 @@ function framesToTc(frames, fps = 24) {
 //   • event.speedKeys        — array of {tc/frame, speed} keyframes → dynamic ramp
 //   • event.freeze           — explicit freeze-frame flag (or {frame})
 //   • event.speedReversed    — explicit reverse flag
-//   • event.speedFactor      — numeric speed multiplier (1.0 = 100%)
+//   • event.speedFactor      — parser speed value (ratio or percent)
 //   • event.speedPercent     — same as factor but in percent (100 = 1.0)
 //   • event.speed            — generic catch-all (treated as percent OR factor
 //                              depending on magnitude — see below)
@@ -108,8 +108,13 @@ export function detectSpeedChange(event = {}) {
   let factor = 1.0;
   let percent = 100;
   if (Number.isFinite(event.speedFactor)) {
-    factor  = Number(event.speedFactor);
-    percent = factor * 100;
+    // Parser contracts are mixed: OTIO/EDL/XML expose speedFactor as a
+    // percentage (1608 = 16.08x), while a few direct integrations expose a
+    // ratio (2 = 2x). Match the canonical pullRange heuristic so the planner
+    // never multiplies an already-percent value a second time.
+    const s = Number(event.speedFactor);
+    if (Math.abs(s) > 10) { percent = s; factor = s / 100; }
+    else                  { factor = s; percent = s * 100; }
   } else if (Number.isFinite(event.speedPercent)) {
     percent = Number(event.speedPercent);
     factor  = percent / 100;
@@ -242,7 +247,11 @@ export function buildExrJob({
   cfg.retime = { ...DEFAULT_CONFIG.retime, ...(config.retime || {}) };
 
   const fps = Number(event.fps || cfg.fps || 24);
-  const baseHandles = Number(cfg.handleFrames ?? 8);
+  // Preserve the nullish default (null/undefined → 8) AND guard non-finite
+  // (NaN/'abc' → 8) so bad overrides never poison downstream frame counts,
+  // while a real 0/positive value is respected. (null must NOT become 0 handles.)
+  const _hf = Number(cfg.handleFrames ?? 8);
+  const baseHandles = Number.isFinite(_hf) ? Math.max(0, _hf) : 8;
   // A dissolve/wipe overlaps neighbouring clips — its frames must be inside the
   // pull or compositors have to re-pull by hand. Extend handles by the transition
   // duration (both sides, since the event may be the incoming or outgoing clip).

@@ -35,6 +35,7 @@ export function shotRiskScore(inputs = {}) {
   add(visual,   1.5, 70, p => `Visual match ${p}%`);
   add(color,    1.0, 60, p => `Color match ${p}%`);
   if (reframe != null && Number.isFinite(Number(reframe))) signals.push({ v: Number(reframe) * 100, w: 0.5 });
+  if (!signals.length && status !== 'failed') reasons.push('Not yet verified');
 
   let health = 100;
   if (signals.length) {

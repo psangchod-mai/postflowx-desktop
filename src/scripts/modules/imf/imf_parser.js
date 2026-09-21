@@ -97,7 +97,7 @@ export function parsePKL(xmlText) {
   for (const asset of findAll(doc, 'Asset')) {
     const id   = deepText(asset, 'Id').replace('urn:uuid:', '');
     const size = parseInt(deepText(asset, 'Size') || '0', 10);
-    const hash = deepText(asset, 'Hash');
+    const hash = deepText(asset, 'Hash').replace(/\s+/g, '');
     const type = deepText(asset, 'Type');
     const file = deepText(asset, 'OriginalFileName') ||
                  deepText(asset, 'AnnotationText')   || '';
@@ -311,10 +311,18 @@ export function parseCPL(xmlText) {
   const allNS   = Array.from(rootEl.attributes).map(a => a.value).join(' ').toLowerCase();
   const appId   = deepText(doc, 'ApplicationIdentification').toLowerCase();
   const combined = allNS + ' ' + appId;
-  if (combined.includes('2067-21') || combined.includes('app#2e') || combined.includes('2e '))
+  // Match the part number exactly: "2067-21" NOT followed by another digit, so
+  // the App#2E part (2067-21) is not confused with IAB (2067-201) and a malformed
+  // namespace lacking the "/YEAR" suffix is still classified (avoids a false-PASS
+  // where App#2E-specific checks would be silently skipped).
+  if (/2067-21(?!\d)/.test(combined) || combined.includes('app#2e'))
     appVersion = 'App#2E (Netflix HDR)';
-  else if (combined.includes('2067-20') || combined.includes('app#2'))
+  else if (/2067-20(?!\d)/.test(combined) || combined.includes('app#2'))
     appVersion = 'App#2';
+  else if (/2067-50(?!\d)/.test(combined) || combined.includes('app#5'))
+    appVersion = 'App#5 (ACES)';
+  else if (/2067-40(?!\d)/.test(combined) || combined.includes('app#4'))
+    appVersion = 'App#4 (Cinema Mezzanine)';
   else if (combined.includes('2067'))
     appVersion = 'SMPTE ST 2067';
 
@@ -352,7 +360,7 @@ export function parseCPL(xmlText) {
   const compositionTimecode = tcEl ? {
     startAddress: deepText(tcEl, 'TimecodeStartAddress') || deepText(tcEl, 'StartTimecode') || '',
     rate:         parseInt(deepText(tcEl, 'TimecodeRate') || '0', 10),
-    dropFrame:    deepText(tcEl, 'TimecodeDropFrame') === 'true' || deepText(tcEl, 'DropFrame') === '1',
+    dropFrame:    (() => { const df = (deepText(tcEl, 'TimecodeDropFrame') || deepText(tcEl, 'DropFrame') || '').trim().toLowerCase(); return df === 'true' || df === '1'; })(),
   } : null;
 
   // ContentVersionList

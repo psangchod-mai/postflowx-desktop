@@ -3,6 +3,13 @@
 // Format: {SHOW}_{EP}_{SCENE}_{SHOT}_{PLATE_ID}_{VERSION}.{FRAME}.exr
 // Example: TST_101_067_0000_BG01_v001.1001.exr
 
+import {
+  associatedVfxShotName,
+  buildNetflixPlateName,
+  nextUniqueVfxName,
+  normalizeVfxName,
+} from '../core/vfxNameReview.js';
+
 const ALLOWED = /[^A-Za-z0-9_\-.]/g;
 
 export const PLATE_TYPES = {
@@ -12,12 +19,14 @@ export const PLATE_TYPES = {
   BG: 'Background',
   EL: 'Element',
   RF: 'Reference',
-  BS: 'Beauty Shot',
-  GS: 'Green Screen',
-  CC: 'Colour Chart',
+  BS: 'Bluescreen',
+  GS: 'Greenscreen',
+  CC: 'Color Chart',
   LG: 'Lens Grid',
   CH: 'Chromeball',
 };
+
+try { if (typeof window !== 'undefined') window.__pfxPlateLabels = PLATE_TYPES; } catch {}
 
 export function sanitize(str) {
   return String(str || '').replace(/\s+/g, '_').replace(ALLOWED, '').replace(/__+/g, '_').replace(/^_+|_+$/g, '');
@@ -48,7 +57,6 @@ export function nextVersion(existingVersions = []) {
 // Legacy 4-arg form:  buildPlateName(shot, 'BG',    '01', '001') — still supported for
 //                     callers that haven't migrated to a full plate ID string.
 export function buildPlateName(shotName, plateIdOrType = 'PL01', versionOrNum = '001', legacyVersion) {
-  const shot = sanitize(shotName);
   let pid, ver;
   if (legacyVersion !== undefined) {
     // Legacy: (shot, 'PL', '01', '001')
@@ -61,7 +69,7 @@ export function buildPlateName(shotName, plateIdOrType = 'PL01', versionOrNum = 
     pid = sanitize(String(plateIdOrType));
     ver = String(versionOrNum).replace(/^v/i, '').padStart(3, '0');
   }
-  return `${shot}_${pid}_v${ver}`;
+  return buildNetflixPlateName(shotName, pid, `v${ver}`);
 }
 
 // Build a single EXR filename: plateName.frameNum.exr
@@ -88,11 +96,11 @@ export function buildEXRPattern(plateName) {
 export function deriveShotName(event = {}, marker = {}, projectNaming = {}) {
   // Levels 1–2: fully-formatted names — return immediately without reconstruction.
   // event._pmShot is set by prep_mark.js only when the naming template has been applied.
-  if (event._pmShot)    return sanitize(event._pmShot);
-  if (marker?.shotName) return sanitize(marker.shotName);
+  if (event._pmShot)    return associatedVfxShotName(event._pmShot);
+  if (marker?.shotName) return associatedVfxShotName(marker.shotName);
 
   // Levels 3–5: reconstruct SHOW_EP_SCENE_SHOT from structured fields.
-  const show  = sanitize(event._pfxShow  || projectNaming.show  || event.show   || event.project  || '');
+  const show  = normalizeVfxName(event._pfxShow  || projectNaming.show  || event.show   || event.project  || '');
   const ep    = sanitize(event._pfxEp    || projectNaming.ep    || event.ep     || event.episode  ||
                           event.seq      || event.sequence      || '');
   const scene = sanitize(event._pfxScene || projectNaming.scene || event.scene  || '');
@@ -100,24 +108,24 @@ export function deriveShotName(event = {}, marker = {}, projectNaming = {}) {
 
   if (show || ep || scene || shot) {
     const parts = [];
-    if (show)  parts.push(show.toUpperCase());
+    if (show)  parts.push(show.toUpperCase() === 'MMBLR' ? 'BLR' : show.toUpperCase());
     if (ep)    parts.push(String(ep).padStart(3, '0'));
     if (scene) parts.push(String(scene).padStart(3, '0'));
     if (shot)  parts.push(String(shot).padStart(4, '0'));
     if (parts.length) return parts.join('_');
   }
 
-  // Level 6: clip/reel fallback.
-  const fallback = sanitize(event.shotName || event.clipName || event.reel || event.name || '');
-  return fallback || `SHOT${String(event.eventNumber || '001').padStart(3, '0')}`;
+  // Level 6: never turn a camera roll into a VFX shot name. Use the approved
+  // BLR show ID and a deterministic event number until the user reviews it.
+  const fallbackNumber = String(Number(event.eventNumber || 1)).padStart(3, '0');
+  return `BLR_101_${fallbackNumber}`;
 }
 
 // Check for duplicate names in a set; returns deduplicated name with suffix bump.
 export function dedupName(name, usedNames = new Set()) {
   if (!usedNames.has(name)) { usedNames.add(name); return name; }
-  let i = 2;
-  while (usedNames.has(`${name}_${i}`)) i++;
-  const deduped = `${name}_${i}`;
+  const deduped = nextUniqueVfxName(name, usedNames, { step: 10, pad: 3 })
+    .replace(/_V(\d{3,4})$/, '_v$1');
   usedNames.add(deduped);
   return deduped;
 }

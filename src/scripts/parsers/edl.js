@@ -115,8 +115,11 @@ export function parseEDL(edlText, filename = "") {
           ? t3 + tokens[4]
           : t3;
 
-        // keep only video tracks
-        if (!/^V/i.test(trackTok)) {
+        // keep only video-bearing tracks. CMX3600 combined picture+sound codes
+        // (B = both, AA/V, A2/V …) carry video too, so treat any token containing
+        // 'V', or the literal 'B', as video-bearing.
+        const isVideoTrack = /V/i.test(trackTok) || trackTok.toUpperCase() === 'B';
+        if (!isVideoTrack) {
           pushCur();
           cur = null;
           continue;

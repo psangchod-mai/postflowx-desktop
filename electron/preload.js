@@ -202,7 +202,7 @@ const __pfxChrome = {
     lastError: null,   // dynamically updated via getter below
     getManifest() {
       // Synchronous — return cached value set during preload init
-      return window.__pfxManifest || { name: 'PostFlowX', version: '2026.6.1' };
+      return window.__pfxManifest || { name: 'PostFlowX', version: '2026.8.1' };
     },
     id: 'postflowx-desktop',
     onMessage: {
@@ -287,8 +287,8 @@ Object.defineProperty(__pfxChrome.runtime, 'lastError', {
 contextBridge.exposeInMainWorld('__PFX_IS_ELECTRON', true);
 
 // Expose __PFX_TARGET__ via contextBridge so boot-guard.js and ui.js get it
-// reliably. The inline <script> injected by build-renderer.js is blocked by CSP
-// (no 'unsafe-inline' in script-src), so this is the authoritative source.
+// reliably. The renderer also carries inert build metadata on <html>, but the
+// preload value is authoritative for the live desktop process.
 contextBridge.exposeInMainWorld('__PFX_TARGET__', 'desktop');
 
 contextBridge.exposeInMainWorld('__pfxChrome', __pfxChrome);
@@ -296,7 +296,9 @@ contextBridge.exposeInMainWorld('__pfxChrome', __pfxChrome);
 // pfxPlatform: a cleaner native API for new code that doesn't need chrome shim
 const _osUser = (() => { try { const os = require('os'); const u = os.userInfo(); return { username: u.username || '' }; } catch { return { username: '' }; } })();
 
-// Cached Google OAuth profile — set after successful sign-in via googleSignIn()
+// Cached identity profile — populated by Meechum or Google desktop sign-in.
+// The chrome.identity compatibility shim reads this value for the existing
+// PostFlowX policy and permissions flow.
 let _googleProfile = null;
 
 contextBridge.exposeInMainWorld('pfxPlatform', {
@@ -309,12 +311,33 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
   // true only when !app.isPackaged AND devAuthBypass is enabled in config/env.
   devBypass: process.argv.includes('--pfx-dev-bypass'),
 
+  // Synchronous PFX session storage (role/permissions/token), backed by
+  // Electron safeStorage on the main-process side. Sync because boot-guard's
+  // Electron path has no awaits (see boot-guard.js) — same constraint as devBypass above.
+  session: {
+    load:  ()      => ipcRenderer.sendSync('pfx:session-load-sync'),
+    save:  (value) => ipcRenderer.sendSync('pfx:session-save-sync', value),
+    clear: ()      => ipcRenderer.sendSync('pfx:session-clear-sync'),
+  },
+
   // Returns { configured: bool } — whether a Google OAuth client ID is set.
   isGoogleAuthConfigured: () => invoke('pfx:is-google-auth-configured'),
   // Returns { configured, source, clientIdPreview, isPackaged, devBypassEnabled } — safe debug info.
   googleAuthDebug: () => invoke('pfx:google-auth-debug'),
   // Dev-only sign-in bypass. Returns { ok, email, name, ... } or { ok: false, error } in production.
   devAuthBypass: () => invoke('pfx:dev-auth-bypass'),
+
+  // Netflix workforce + partner authentication through Edward/Meechum.
+  isEnterpriseAuthConfigured: () => invoke('pfx:is-enterprise-auth-configured'),
+  enterpriseAuthDebug: () => invoke('pfx:enterprise-auth-debug'),
+  policyRequest: (args) => invoke('pfx:policy-request', args),
+  enterpriseSignIn: async () => {
+    const result = await invoke('pfx:meechum-oauth');
+    if (result?.ok) {
+      _googleProfile = { email: result.email, name: result.name, picture: result.picture, accessToken: result.accessToken };
+    }
+    return result;
+  },
 
   // Opens Google sign-in in the system browser, returns { ok, email, name, picture, accessToken }
   googleSignIn: async (clientId) => {
@@ -328,6 +351,7 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
   pickFile:    (opts)  => invoke('pfx:pickFile',   { options: opts }),
   pickFiles:   (opts)  => invoke('pfx:pickFiles',  { options: opts }),
   pickFolder:  (opts)  => invoke('pfx:pickFolder', { options: opts }),
+  listMediaFolder: (folderPath, extensions = ['.mov']) => invoke('pfx:listMediaFolder', { folderPath, extensions }),
   saveFile:    (args)  => invoke('pfx:saveFile',   args),
   readFile:    (args)  => invoke('pfx:readFile',   args),
   writeFile:   (args)  => invoke('pfx:writeFile',  args),         // silent write to a path (no dialog)
@@ -416,6 +440,9 @@ contextBridge.exposeInMainWorld('pfxPlatform', {
     getStill(payload)        { return this._call('media.getStill',      payload, 30000); },
     getHeroFrames(payload)   { return this._call('media.getHeroFrames', payload,120000); },
     getOcfStill(payload)     { return this._call('media.getOcfStill',   payload, 90000); },
+    // Full-range OCF proxy (Problem 2): start a background render + poll its status.
+    getOcfProxy(payload)       { return this._call('media.getOcfProxy',       payload, 300000); },
+    getOcfProxyStatus(payload) { return this._call('media.getOcfProxyStatus', payload,  15000); },
     diagnostics()            { return this._call('media.diagnostics',   {},      10000); },
     ffprobeInfo(payload)     { return this._call('media.ffprobeInfo',   payload, 15000); },
 

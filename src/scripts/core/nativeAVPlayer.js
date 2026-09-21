@@ -42,6 +42,8 @@ export class NativeAVPlayerEngine {
     this._rafId       = null;
     this._lastTick    = 0;
     this._busy        = false;
+    this._lastRenderedFrame = -1;
+    this._opening     = false;
     // Native engine session — null means fall back to legacy avf_bridge getStill
     this._sessionId   = null;
     this._useNativeEngine = false;
@@ -62,58 +64,75 @@ export class NativeAVPlayerEngine {
   get decoder()       { return this._useNativeEngine ? 'PFXNativeEngine' : 'avf_bridge'; }
 
   async open(filePath) {
-    this._filePath          = filePath;
-    this._frame             = 0;
-    this._playing           = false;
-    this._sessionId         = null;
-    this._useNativeEngine   = false;
+    this._opening = true;
+    try {
+      this._filePath          = filePath;
+      this._frame             = 0;
+      this._playing           = false;
+      this._sessionId         = null;
+      this._useNativeEngine   = false;
 
-    this._opts.onStatus?.('Opening media…');
+      this._opts.onStatus?.('Opening media…');
+
+      // Pulls Prep/Trailer reference playback can explicitly prefer the
+      // one-shot AVFoundation bridge. It is slower than the session service but
+      // has fewer moving parts and is the reliable path for direct ProRes on
+      // machines where the persistent service is installed yet not responding.
+      if (this._opts.preferBridge && window.pfxPlatform?.media?.getInfo) {
+        try {
+          return await this._openBridge(filePath);
+        } catch (err) {
+          console.warn('[NativeAVPlayer] direct AVFoundation bridge failed, trying session engine:', err.message);
+        }
+      }
 
     // Try native engine first (session-cached AVAsset, no spawn overhead)
-    const ne = window.pfxPlatform?.nativeEngine;
-    if (ne) {
-      try {
-        const session = await ne.open(filePath);
-        this._sessionId       = session.sessionId;
-        this._useNativeEngine = true;
-        this._info            = session;
-        this._fps             = parseFloat(session.fps)      || 24;
-        this._totalFrames     = Math.max(1, session.frameCount || Math.round((session.duration || 0) * this._fps));
-        this._opts.onStatus?.('HW Decode (AVFoundation)');
+      const ne = window.pfxPlatform?.nativeEngine;
+      if (ne) {
+        try {
+          const session = await ne.open(filePath);
+          this._sessionId       = session.sessionId;
+          this._useNativeEngine = true;
+          this._info            = session;
+          this._fps             = parseFloat(session.fps)      || 24;
+          this._totalFrames     = Math.max(1, session.frameCount || Math.round((session.duration || 0) * this._fps));
+          this._opts.onStatus?.('HW Decode (AVFoundation)');
 
-        // Trigger proxy creation for 4K+/ProRes/high-bitrate if needed
-        if (session.needsProxy && session.sessionId) {
-          ne.proxyCreate(session.sessionId, { width: 960 }).catch(() => {});
+          // Verify the first frame actually paints — if it can't, reject so the
+          // caller can fall back to the legacy direct AVFoundation bridge instead of showing a
+          // silent black canvas.
+          if (!(await this._verifyFrame(0))) throw new Error('AVFoundation rendered no first frame');
+          return { ok: true, info: session, decoder: this.decoder, hwDecode: this._useNativeEngine };
+        } catch (err) {
+          console.warn('[NativeAVPlayer] native engine open failed, falling back:', err.message);
+          this._sessionId       = null;
+          this._useNativeEngine = false;
         }
-        // Verify the first frame actually paints — if it can't, reject so the
-        // caller can fall back to the Chromium/proxy path instead of showing a
-        // silent black canvas.
-        if (!(await this._renderFrame(0))) throw new Error('AVFoundation rendered no first frame');
-        return { ok: true, info: session, decoder: this.decoder, hwDecode: this._useNativeEngine };
-      } catch (err) {
-        console.warn('[NativeAVPlayer] native engine open failed, falling back:', err.message);
-        this._sessionId       = null;
-        this._useNativeEngine = false;
       }
-    }
 
-    // Legacy avf_bridge fallback
-    this._opts.onStatus?.('Probing ProRes…');
-    const info = await window.pfxPlatform.media.getInfo({ path: filePath });
-    // Throw on a null/failed probe (bridge returned nothing) or an explicit ok:false.
-    // A plain info object with no `ok` field is still treated as success.
-    if (!info || info.ok === false) {
-      throw new Error(info?.error || 'avf_bridge getInfo failed');
+      // Legacy avf_bridge fallback
+      return await this._openBridge(filePath);
+    } finally {
+      this._opening = false;
     }
-    this._info        = info;
-    this._fps         = parseFloat(info?.fps)      || 24;
-    const dur         = parseFloat(info?.duration) || 0;
-    this._totalFrames = Math.max(1, Math.round(this._fps * dur));
+  }
 
-    this._opts.onStatus?.('Direct Playback');
-    if (!(await this._renderFrame(0))) throw new Error('avf_bridge rendered no first frame');
-    return { ok: true, info, decoder: 'avf_bridge' };
+  async _openBridge(filePath) {
+      this._opts.onStatus?.('Probing ProRes…');
+      const info = await window.pfxPlatform.media.getInfo({ path: filePath });
+      // Throw on a null/failed probe (bridge returned nothing) or an explicit ok:false.
+      // A plain info object with no `ok` field is still treated as success.
+      if (!info || info.ok === false) {
+        throw new Error(info?.error || 'avf_bridge getInfo failed');
+      }
+      this._info        = info;
+      this._fps         = parseFloat(info?.fps)      || 24;
+      const dur         = parseFloat(info?.duration) || 0;
+      this._totalFrames = Math.max(1, Math.round(this._fps * dur));
+
+      this._opts.onStatus?.('Direct Playback');
+      if (!(await this._verifyFrame(0))) throw new Error('avf_bridge rendered no first frame');
+      return { ok: true, info, decoder: 'avf_bridge' };
   }
 
   play() {
@@ -136,7 +155,13 @@ export class NativeAVPlayerEngine {
   }
 
   // Re-paint the current frame (used after a canvas resize wipes the bitmap).
-  repaint() { if (this._filePath) this._renderFrame(this._frame); }
+  repaint() {
+    // ResizeObserver can fire while open() is verifying frame 0. Starting a
+    // second render in that narrow window used to make open() see `_busy` and
+    // treat the valid ProRes decode as a failure. Repaint is opportunistic, so
+    // let the in-flight render finish instead of competing with it.
+    if (this._filePath && !this._opening && !this._busy) this._renderFrame(this._frame);
+  }
 
   async seekTime(seconds) {
     await this.seekFrame(Math.round(seconds * this._fps));
@@ -148,6 +173,30 @@ export class NativeAVPlayerEngine {
 
   async stepBack(n = 1) {
     await this.seekFrame(this._frame - n);
+  }
+
+  // Return a freshly decoded image for consumers that need an immutable still
+  // (notably Annotate). Reading canvas.toDataURL() is layout-sensitive because
+  // ResizeObserver clears the bitmap whenever the monitor resizes; decoding the
+  // current frame through AVFoundation guarantees the modal receives the real
+  // ProRes picture even if its opening layout repaints the player underneath.
+  async captureCurrentFrameDataUrl(timeoutMs = 8000) {
+    const frame = Math.max(0, Math.min(Math.round(this._frame), this._totalFrames - 1));
+    return await this.captureFrameDataUrl(frame, timeoutMs);
+  }
+
+  // Decode an immutable still for an explicit media frame without moving the
+  // monitor playhead. Pull Prep uses this for marker thumbnails, so reviewing a
+  // shot never makes the Program Monitor jump to a background capture position.
+  async captureFrameDataUrl(frame, timeoutMs = 8000) {
+    if (!this._filePath) return null;
+    const deadline = Date.now() + Math.max(250, Number(timeoutMs) || 8000);
+    while (this._busy && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 16));
+    }
+    if (this._busy) throw new Error('AVFoundation frame capture timed out');
+    const f = Math.max(0, Math.min(Math.round(Number(frame) || 0), this._totalFrames - 1));
+    return await this._extractFrame(f);
   }
 
   close() {
@@ -162,6 +211,7 @@ export class NativeAVPlayerEngine {
     this._totalFrames     = 0;
     this._sessionId       = null;
     this._useNativeEngine = false;
+    this._lastRenderedFrame = -1;
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────────
@@ -200,6 +250,23 @@ export class NativeAVPlayerEngine {
     return r?.imageDataUrl || r?.dataUrl || null;
   }
 
+  // open() must distinguish "another render is already painting frame 0" from
+  // "the decoder produced no image". The canvas ResizeObserver can request a
+  // repaint immediately after the engine is attached, before open() reaches its
+  // own first-frame check. Wait for that one render, accept it when it painted
+  // the requested frame, otherwise perform the explicit verification render.
+  async _verifyFrame(frame, timeoutMs = 35000) {
+    if (this._busy) {
+      const deadline = Date.now() + timeoutMs;
+      while (this._busy && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 16));
+      }
+      if (this._lastRenderedFrame === frame) return true;
+    }
+    const drawn = await this._renderFrame(frame);
+    return drawn || this._lastRenderedFrame === frame;
+  }
+
   // Render `frame` to the canvas. Returns true only if a pixel actually landed.
   // Self-heals: if the fast native-engine path yields nothing (or throws), it
   // drops to the avf_bridge spawn path and retries the SAME frame — previously a
@@ -232,6 +299,7 @@ export class NativeAVPlayerEngine {
       if (seq !== undefined && seq !== this._loadSeq) return false;
 
       if (url) drawn = await this._drawDataUrl(url);
+      if (drawn) this._lastRenderedFrame = frame;
       if (!drawn) this._opts.onError?.(`Frame ${frame}: decoder produced no renderable image`);
       this._opts.onTimeUpdate?.(frame, this._fps);
     } catch (e) {
@@ -258,7 +326,27 @@ export class NativeAVPlayerEngine {
       img.onload = () => {
         const cw = this._canvas.width, ch = this._canvas.height;
         if (!(cw > 0 && ch > 0)) { finish(false); return; }
-        try { ctx.drawImage(img, 0, 0, cw, ch); finish(true); }
+        const iw = Number(img.naturalWidth || img.width || 0);
+        const ih = Number(img.naturalHeight || img.height || 0);
+        if (!(iw > 0 && ih > 0)) { finish(false); return; }
+        // Canvas ignores CSS object-fit. Calculate a real contain rectangle so
+        // 2.39:1, 1.85:1, 16:9, and portrait sources retain their native aspect
+        // ratio inside the NLE monitor, with clean black letter/pillar boxing.
+        const scale = Math.min(cw / iw, ch / ih);
+        const dw = Math.max(1, Math.round(iw * scale));
+        const dh = Math.max(1, Math.round(ih * scale));
+        const dx = Math.round((cw - dw) / 2);
+        const dy = Math.round((ch - dh) / 2);
+        try {
+          ctx.save?.();
+          ctx.fillStyle = '#000';
+          ctx.fillRect?.(0, 0, cw, ch);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, dx, dy, dw, dh);
+          ctx.restore?.();
+          finish(true);
+        }
         catch { finish(false); }
       };
       img.onerror = () => finish(false);

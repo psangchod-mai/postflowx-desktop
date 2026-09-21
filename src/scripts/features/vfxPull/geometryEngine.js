@@ -103,19 +103,24 @@ export function extractGeometry(event = {}, projectConfig = {}) {
   const outRes  = _parseRes(event.outputResolution    || tfm.outputResolution   || projectConfig.outputResolution || projectConfig.targetResolution, 0, 0);
 
   // Transform values — try multiple NLE field name conventions
-  const scale    = _num(tfm.scale     ?? tfm.zoomX    ?? tfm.zoom     ?? event.scale,    1.0);
-  const posX     = _num(tfm.positionX ?? tfm.offsetX  ?? tfm.panX     ?? event.positionX, 0);
-  const posY     = _num(tfm.positionY ?? tfm.offsetY  ?? tfm.panY     ?? event.positionY, 0);
+  const scaleX   = _num(tfm.scaleX ?? tfm.scale ?? tfm.zoomX ?? tfm.zoom ?? event.scale, 1.0);
+  const scaleY   = _num(tfm.scaleY ?? tfm.scale ?? tfm.zoomY ?? tfm.zoom ?? event.scale, scaleX);
+  // The current bake matrix is uniform; retain the stronger axis for the
+  // render plan and keep both axes in the sidecar/UI for audit.
+  const scale    = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+  const position = Array.isArray(tfm.position) ? tfm.position : [];
+  const posX     = _num(tfm.positionX ?? tfm.posX ?? tfm.offsetX ?? tfm.panX ?? position[0] ?? event.positionX, 0);
+  const posY     = _num(tfm.positionY ?? tfm.posY ?? tfm.offsetY ?? tfm.panY ?? position[1] ?? event.positionY, 0);
   const anchorX  = _num(tfm.anchorX   ?? tfm.pivotX,  0.5);
   const anchorY  = _num(tfm.anchorY   ?? tfm.pivotY,  0.5);
   const rotation = _num(tfm.rotation  ?? tfm.rotate   ?? event.rotation, 0);
   const pixelAR  = _num(event.pixelAspect ?? tfm.pixelAspect ?? 1, 1);
 
   // Crop — normalised pixels; field names vary across NLEs
-  const cropL = _num(crop.left   ?? crop.l ?? crop.cropLeft   ?? 0);
-  const cropR = _num(crop.right  ?? crop.r ?? crop.cropRight  ?? 0);
-  const cropT = _num(crop.top    ?? crop.t ?? crop.cropTop    ?? 0);
-  const cropB = _num(crop.bottom ?? crop.b ?? crop.cropBottom ?? 0);
+  const cropL = _num(tfm.cropL ?? crop.left   ?? crop.l ?? crop.cropLeft   ?? 0);
+  const cropR = _num(tfm.cropR ?? crop.right  ?? crop.r ?? crop.cropRight  ?? 0);
+  const cropT = _num(tfm.cropT ?? crop.top    ?? crop.t ?? crop.cropTop    ?? 0);
+  const cropB = _num(tfm.cropB ?? crop.bottom ?? crop.b ?? crop.cropBottom ?? 0);
 
   const resizeModeRaw = String(
     resize.mode   || resize.resizeMode  ||
@@ -128,7 +133,7 @@ export function extractGeometry(event = {}, projectConfig = {}) {
   else if (/stretch|distort/.test(resizeModeRaw))     resizeMode = RESIZE_MODE.STRETCH;
   else if (/none|original|native/.test(resizeModeRaw)) resizeMode = RESIZE_MODE.NONE;
 
-  const g = { scale, positionX: posX, positionY: posY, anchorX, anchorY, rotation, cropL, cropR, cropT, cropB };
+  const g = { scale, scaleX, scaleY, positionX: posX, positionY: posY, anchorX, anchorY, rotation, cropL, cropR, cropT, cropB };
   const hasGeometry = !_isIdentity(g) || resizeMode !== RESIZE_MODE.SCALE_TO_FIT || pixelAR !== 1;
 
   // Build ffmpeg crop/scale strings for the companion vf chain
@@ -167,6 +172,8 @@ export function extractGeometry(event = {}, projectConfig = {}) {
     timelineResolution: tlRes.w  ? `${tlRes.w}x${tlRes.h}`   : '',
     outputResolution:   outRes.w ? `${outRes.w}x${outRes.h}` : '',
     scale,
+    scaleX,
+    scaleY,
     positionX: posX,
     positionY: posY,
     anchorX,

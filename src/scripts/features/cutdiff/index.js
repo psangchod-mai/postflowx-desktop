@@ -694,9 +694,9 @@ export function createCutDiffFeature(deps = {}){
     let trackCount = 0;
     const evRe = new RegExp('^\\s*\\d{3,}\\b');
     for (const line of lines){
-      const trimmed = String(line || '').replace(/\\r/g, '').trim();
+      const trimmed = String(line || '').replace(/\r/g, '').trim();
       if (!evRe.test(trimmed)) continue;
-      const parts = trimmed.split(/\\s+/);
+      const parts = trimmed.split(/\s+/);
       if (parts.length < 3) continue;
       const trackTok = String(parts[2] || '').toUpperCase();
       if (trackTok.indexOf('A') === -1) continue;
@@ -7143,7 +7143,9 @@ export function createCutDiffFeature(deps = {}){
   }
 
   function _cdCsvEscape(v){
-    const s = (v == null) ? '' : String(v);
+    let s = (v == null) ? '' : String(v);
+    // PFX_CSV_FORMULA_GUARD: keep user-authored names/notes inert in spreadsheets.
+    if (s.length && '=+-@\t\r\n'.indexOf(s[0]) !== -1) s = "'" + s;
     // Quote CSV field if it contains comma, quote, or newlines.
     // (Avoid regex literals here to prevent rare parsing issues that can freeze the UI.)
     if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1 || s.indexOf('\r') !== -1){

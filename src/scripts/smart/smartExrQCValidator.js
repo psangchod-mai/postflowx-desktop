@@ -21,9 +21,9 @@ export function validateExrResult(job = {}, result = {}) {
     return { passed: false, issues };
   }
 
-  const exp  = Number(job.expectedFrameCount || 0);
+  const exp  = Number(job.expectedRenderedFrameCount || job.frameCount || job.expectedFrameCount || 0);
   const got  = Number(result.framesExported || 0);
-  const fs   = Number(job.frameStart || 1001);
+  const fs   = Number.isFinite(Number(job.frameStart)) ? Number(job.frameStart) : 1001;
   const rfs  = Number(result.firstFrame);
   const rls  = Number(result.lastFrame);
   const missing = Array.isArray(result.missingFrames) ? result.missingFrames : [];
@@ -36,6 +36,13 @@ export function validateExrResult(job = {}, result = {}) {
       `Expected ${exp} frames, got ${got}`,
       `Delta: ${Math.abs(exp - got)} frames`,
     ));
+  }
+
+  // Empty export with NO expected count: helper reported success but produced 0
+  // frames. (When exp > 0, FRAME_COUNT_MISMATCH above already covers got === 0,
+  // so gating on exp <= 0 avoids a redundant double-error on the same condition.)
+  if (got === 0 && exp <= 0) {
+    issues.push(issue(SEVERITY.ERROR, 'NO_FRAMES', 'Export reported success but produced 0 frames'));
   }
 
   // Missing frames

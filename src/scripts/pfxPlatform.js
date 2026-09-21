@@ -19,6 +19,25 @@
  */
 
 (function () {
+  // Build metadata is carried by inert <html data-*> attributes so the desktop
+  // Content-Security-Policy can keep blocking executable inline scripts. The
+  // renderer build replaces these values for desktop/extension packages; the
+  // Electron preload remains authoritative for the live desktop target.
+  const buildMeta = document.documentElement?.dataset || {};
+  if (!window.__PFX_TARGET__) {
+    window.__PFX_TARGET__ = buildMeta.pfxTarget || (window.pfxPlatform?.isMacApp ? 'desktop' : 'extension');
+  }
+  if (!window.__PFX_BUILD_TIME__) {
+    window.__PFX_BUILD_TIME__ = buildMeta.pfxBuildTime || 'development';
+  }
+  if (!window.__PFX_BUILD_VERSION__) {
+    const packagedVersion = buildMeta.pfxBuildVersion;
+    const runtimeVersion = window.chrome?.runtime?.getManifest?.()?.version;
+    window.__PFX_BUILD_VERSION__ = packagedVersion && packagedVersion !== '0.0.0'
+      ? packagedVersion
+      : (runtimeVersion || '—');
+  }
+
   // Activate desktop CSS (mac-titlebar, mac-workspace-toolbar rules) as early as possible.
   // preload.js sets pfxPlatform.isMacApp = true before any renderer scripts run.
   if (window.pfxPlatform?.isMacApp) {

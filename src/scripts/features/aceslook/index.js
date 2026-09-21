@@ -315,7 +315,7 @@ function _buildShell(root) {
         <div class="al2-viewer-wrap" id="al2-viewer-wrap">
           <div id="al2-viewer-inner"
                style="flex:1;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
-            <span style="color:var(--al-text-muted);font-size:12px">Drop a source file to preview</span>
+            <span style="color:var(--al-text-muted);font-size:12px">Drag a source clip here to preview and grade it.</span>
           </div>
           <div class="al2-viewer-overlay-wrap" id="al2-viewer-overlay-wrap">
             <div class="al2-viewer-badge" id="al2-proxy-badge" style="display:none">PROXY</div>
@@ -1901,7 +1901,7 @@ function _updateViewer(state) {
     _viewerSourceName = null;
     _stopHistogram();
     wrap.style.cssText = 'flex:1;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;';
-    wrap.innerHTML = '<span style="color:var(--al-text-muted);font-size:12px">Drop a source file to preview</span>';
+    wrap.innerHTML = '<span style="color:var(--al-text-muted);font-size:12px">Drag a source clip here to preview and grade it.</span>';
     const emptyVideo = document.createElement('video');
     emptyVideo.style.cssText = 'display:none;';
     emptyVideo.setAttribute('aria-hidden', 'true');

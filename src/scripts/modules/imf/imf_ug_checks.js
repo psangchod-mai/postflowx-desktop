@@ -14,9 +14,10 @@ function skip(id, label, detail = '') { return { id, label, status: 'skip', deta
 export function checkTimecode(cpl) {
   if (!cpl) return skip('TC', 'Timecode Track', 'No CPL loaded');
 
-  const hasTimecodeTrack = !!cpl.timecodeTrack;
+  const tc = cpl.compositionTimecode || null;
+  const hasTimecodeTrack = !!tc;
   const editRate  = cpl.editRate || cpl.compositionEditRate;
-  const frameRate = cpl.frameRate;
+  const frameRate = tc?.rate;
 
   const issues = [];
 
@@ -24,19 +25,24 @@ export function checkTimecode(cpl) {
     issues.push('No TimecodeTrack found in CPL — required by SMPTE ST 2067-2 §9');
   }
 
-  if (editRate && frameRate && String(editRate) !== String(frameRate)) {
+  // Tolerant compare: EditRate is the exact fraction (e.g. 24000/1001 = 23.976…)
+  // while FrameRate/TimecodeRate is the integer nominal (24). They "match" for
+  // all common fractional delivery rates, so compare numerically with tolerance
+  // rather than by string (which spuriously WARNed on every 23.976/29.97 package).
+  const _er = Number(editRate), _fr = Number(frameRate);
+  if (Number.isFinite(_er) && Number.isFinite(_fr) && Math.abs(_er - _fr) > 0.5) {
     issues.push(`EditRate (${editRate}) ≠ FrameRate (${frameRate}) — must match per IMF UG Timecode BP`);
   }
 
-  if (cpl.dropFrame === true) {
+  if (tc?.dropFrame === true) {
     issues.push('Drop-Frame timecode detected — IMF UG recommends Non-Drop-Frame for content above 30fps');
   }
 
-  if (cpl.timecodeTrack?.startTimecode) {
-    const tc = cpl.timecodeTrack.startTimecode;
-    const isAligned = tc === '00:00:00:00' || tc.startsWith('01:00:00');
+  if (tc?.startAddress) {
+    const tcStr = String(tc.startAddress);
+    const isAligned = tcStr === '00:00:00:00' || tcStr.startsWith('01:00:00');
     if (!isAligned) {
-      issues.push(`Start timecode "${tc}" — IMF UG recommends 00:00:00:00 or 01:00:00:00`);
+      issues.push(`Start timecode "${tcStr}" — IMF UG recommends 00:00:00:00 or 01:00:00:00`);
     }
   }
 
@@ -136,25 +142,19 @@ export function checkCplConstraints(cpl) {
   const issues = [];
 
   // ContentVersionList: required by SMPTE ST 2067-3
-  if (!cpl.contentVersionId && !cpl.contentVersionList?.length) {
+  if (!cpl.contentVersions?.length) {
     issues.push('ContentVersionList missing — required by SMPTE ST 2067-3 §8.6');
   }
 
   // ApplicationIdentification: should reference an IMF Application
-  const appId = cpl.applicationIdentification || cpl.applicationId || '';
-  if (!appId) {
+  const appId = cpl.appVersion || '';
+  if (!appId || appId === '–') {
     issues.push('ApplicationIdentification missing — required by SMPTE ST 2067-21 for App #2E compliance');
-  } else {
-    const knownApps = ['2067-20', '2067-21', '2067-50', '2067-100'];
-    const recognized = knownApps.some(a => appId.includes(a));
-    if (!recognized) {
-      issues.push(`ApplicationIdentification "${appId.slice(0, 60)}" — not a recognized IMF Application UL`);
-    }
   }
 
   // EditRate sanity: must be a recognized frame rate
   const er = cpl.editRate;
-  const validRates = [24, 25, 30, 48, 50, 60, 23.976, 29.97, 47.952, 59.94];
+  const validRates = [24, 25, 30, 48, 50, 60, 23.976, 29.97, 47.952, 59.94, 96, 120];
   if (er && !validRates.some(r => Math.abs(er - r) < 0.01)) {
     issues.push(`EditRate ${er} fps — not a recognized IMF frame rate`);
   }
@@ -165,7 +165,7 @@ export function checkCplConstraints(cpl) {
   }
 
   // EssenceDescriptor reference check (structural)
-  const hasEssenceDescList = !!cpl.essenceDescriptorList;
+  const hasEssenceDescList = Array.isArray(cpl.descriptors) && cpl.descriptors.length > 0;
   if (!hasEssenceDescList) {
     issues.push('EssenceDescriptorList missing — required by SMPTE ST 2067-3 for App #2E');
   }

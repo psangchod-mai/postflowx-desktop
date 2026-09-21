@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import struct
 import sys
 import tempfile
@@ -59,6 +60,29 @@ SUPPORTED_SOURCE_EXTENSIONS = frozenset({
     ".mov", ".mp4", ".mxf", ".avi", ".mkv", ".m4v",
     ".r3d", ".arx", ".braw", ".dng", ".ari", ".crm",
 })
+
+
+# Picture Conform v1.4 visual matcher constants.
+# 4x4 regional dHash survives burn-ins/watermarks by scoring only the best
+# cells. Distances are on a 0..640 scale, lower is better.
+VIS_GRID = 4
+VIS_HASH_SIZE = 8
+VIS_BEST_CELLS = 10
+VIS_CELL_BITS = VIS_HASH_SIZE * VIS_HASH_SIZE
+VIS_MAX_DISTANCE = VIS_BEST_CELLS * VIS_CELL_BITS
+VIS_THRESH_OK = 80
+VIS_THRESH_REVIEW = 200
+VIS_SKIP_REFINE = VIS_THRESH_REVIEW + 100
+VIS_REFINE_WINDOW = 32
+VIS_SAMPLE_FPS = 10.0
+
+VIS_SCALE_W = VIS_GRID * (VIS_HASH_SIZE + 1) * 4
+VIS_SCALE_H = VIS_GRID * VIS_HASH_SIZE * 4
+VIS_CELL_W = VIS_SCALE_W // VIS_GRID
+VIS_CELL_H = VIS_SCALE_H // VIS_GRID
+VIS_BIN_W = VIS_CELL_W // (VIS_HASH_SIZE + 1)
+VIS_BIN_H = VIS_CELL_H // VIS_HASH_SIZE
+VIS_FRAME_BYTES = VIS_SCALE_W * VIS_SCALE_H
 
 
 # ── Session helpers ────────────────────────────────────────────────────────────
@@ -651,6 +675,305 @@ def _duration_score(event_frames: int, src_duration_frames: int, fps: float = 24
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PICTURE CONFORM v1.4 VISUAL MATCHING
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _visual_status(distance: int | None) -> str:
+    if distance is None:
+        return "UNKNOWN"
+    if distance <= VIS_THRESH_OK:
+        return "OK"
+    if distance <= VIS_THRESH_REVIEW:
+        return "REVIEW"
+    return "NO_MATCH"
+
+
+def _visual_score(distance: int | None) -> float:
+    """Map v1.4 0..640 distance to existing 0..1 UI confidence scale."""
+    if distance is None:
+        return 0.0
+    return round(max(0.0, min(1.0, 1.0 - (distance / VIS_MAX_DISTANCE))), 3)
+
+
+def _regional_hash_from_gray(frame: bytes) -> tuple[int, ...] | None:
+    """Compute v1.4 4x4 regional dHash from a scaled gray raw frame.
+
+    The caller supplies a VIS_SCALE_W x VIS_SCALE_H gray frame. Each 36x32
+    cell is averaged down to 9x8 samples, then converted to an 8x8 dHash.
+    Returns 16 integer hashes, one per cell.
+    """
+    if not frame or len(frame) < VIS_FRAME_BYTES:
+        return None
+
+    hashes: list[int] = []
+    for cy in range(VIS_GRID):
+        for cx in range(VIS_GRID):
+            base_x = cx * VIS_CELL_W
+            base_y = cy * VIS_CELL_H
+            small: list[list[float]] = []
+            for by in range(VIS_HASH_SIZE):
+                row: list[float] = []
+                y0 = base_y + by * VIS_BIN_H
+                for bx in range(VIS_HASH_SIZE + 1):
+                    x0 = base_x + bx * VIS_BIN_W
+                    total = 0
+                    for yy in range(y0, y0 + VIS_BIN_H):
+                        off = yy * VIS_SCALE_W + x0
+                        total += sum(frame[off:off + VIS_BIN_W])
+                    row.append(total / (VIS_BIN_W * VIS_BIN_H))
+                small.append(row)
+
+            bits = 0
+            for row in small:
+                for bx in range(VIS_HASH_SIZE):
+                    bits = (bits << 1) | (1 if row[bx + 1] > row[bx] else 0)
+            hashes.append(bits)
+
+    return tuple(hashes)
+
+
+def _regional_distance(a: tuple[int, ...] | None, b: tuple[int, ...] | None) -> int:
+    if not a or not b or len(a) != VIS_GRID * VIS_GRID or len(b) != VIS_GRID * VIS_GRID:
+        return VIS_MAX_DISTANCE
+    per_cell = [(a[i] ^ b[i]).bit_count() for i in range(VIS_GRID * VIS_GRID)]
+    per_cell.sort()
+    return int(sum(per_cell[:VIS_BEST_CELLS]))
+
+
+def _ffmpeg_bin() -> str | None:
+    try:
+        from ..media_engine.engine_status import find_ffmpeg
+        return find_ffmpeg()
+    except Exception:
+        return None
+
+
+def _run_ffmpeg_gray_frames(
+    path: str,
+    vf: str,
+    max_frames: int | None = None,
+    timeout: int = 180,
+) -> list[bytes]:
+    """Decode scaled gray frames as rawvideo using bundled ffmpeg."""
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg or not path or not Path(path).exists():
+        return []
+
+    cmd = [
+        ffmpeg, "-hide_banner", "-v", "error",
+        "-i", path,
+        "-an",
+        "-vf", vf,
+        "-vsync", "0",
+        "-pix_fmt", "gray",
+        "-f", "rawvideo",
+    ]
+    if max_frames is not None:
+        cmd.extend(["-frames:v", str(max(1, int(max_frames)))])
+    cmd.append("-")
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0 or not proc.stdout:
+        return []
+
+    out = proc.stdout
+    n = len(out) // VIS_FRAME_BYTES
+    return [out[i * VIS_FRAME_BYTES:(i + 1) * VIS_FRAME_BYTES] for i in range(n)]
+
+
+def _hash_frame(path: str, frame_idx: int, timeout: int = 90) -> tuple[int, ...] | None:
+    frame_idx = max(0, int(frame_idx))
+    vf = f"select=eq(n\\,{frame_idx}),scale={VIS_SCALE_W}:{VIS_SCALE_H},format=gray"
+    frames = _run_ffmpeg_gray_frames(path, vf, max_frames=1, timeout=timeout)
+    return _regional_hash_from_gray(frames[0]) if frames else None
+
+
+def _hash_frame_window(path: str, lo: int, hi: int, timeout: int = 120) -> list[tuple[int, tuple[int, ...]]]:
+    lo = max(0, int(lo))
+    hi = max(lo, int(hi))
+    vf = f"select=between(n\\,{lo}\\,{hi}),scale={VIS_SCALE_W}:{VIS_SCALE_H},format=gray"
+    frames = _run_ffmpeg_gray_frames(path, vf, max_frames=(hi - lo + 1), timeout=timeout)
+    out: list[tuple[int, tuple[int, ...]]] = []
+    for i, raw in enumerate(frames):
+        h = _regional_hash_from_gray(raw)
+        if h:
+            out.append((lo + i, h))
+    return out
+
+
+def _build_visual_index(proxy: dict) -> dict:
+    """Build a sampled v1.4 visual index for one rendered proxy."""
+    path = str(proxy.get("proxyFile") or "")
+    fps = float(proxy.get("fps") or 24.0)
+    frame_count = int(proxy.get("durationFrames") or 0)
+    stride = max(1, int(round(fps / VIS_SAMPLE_FPS))) if fps > 0 else 1
+    if not path or not Path(path).exists():
+        return {"path": path, "stride": stride, "frameIndices": [], "hashes": []}
+
+    vf = f"select=not(mod(n\\,{stride})),scale={VIS_SCALE_W}:{VIS_SCALE_H},format=gray"
+    frames = _run_ffmpeg_gray_frames(path, vf, timeout=240)
+    frame_indices: list[int] = []
+    hashes: list[tuple[int, ...]] = []
+    for i, raw in enumerate(frames):
+        frame_idx = i * stride
+        if frame_count and frame_idx >= frame_count:
+            break
+        h = _regional_hash_from_gray(raw)
+        if h:
+            frame_indices.append(frame_idx)
+            hashes.append(h)
+    return {
+        "path": path,
+        "stride": stride,
+        "frameCount": frame_count,
+        "frameIndices": frame_indices,
+        "hashes": hashes,
+    }
+
+
+def _best_visual_sample(query_hash: tuple[int, ...] | None, index: dict) -> tuple[int, int]:
+    """Return (sample_idx, distance) for the best sampled frame in an index."""
+    hashes = index.get("hashes") or []
+    if not query_hash or not hashes:
+        return -1, VIS_MAX_DISTANCE
+    best_idx = -1
+    best_dist = VIS_MAX_DISTANCE + 1
+    for i, h in enumerate(hashes):
+        d = _regional_distance(query_hash, h)
+        if d < best_dist:
+            best_idx = i
+            best_dist = d
+    return best_idx, best_dist
+
+
+def _best_match_in_window(
+    path: str,
+    target_hash: tuple[int, ...] | None,
+    center_frame: int,
+    half_window: int,
+    frame_count: int = 0,
+) -> tuple[int, int]:
+    if not target_hash:
+        return max(0, int(center_frame)), VIS_MAX_DISTANCE
+    lo = max(0, int(center_frame) - int(half_window))
+    hi = int(center_frame) + int(half_window)
+    if frame_count > 0:
+        hi = min(frame_count - 1, hi)
+    if hi < lo:
+        hi = lo
+    best_frame = lo
+    best_dist = VIS_MAX_DISTANCE + 1
+    for frame_idx, h in _hash_frame_window(path, lo, hi):
+        d = _regional_distance(target_hash, h)
+        if d < best_dist:
+            best_frame = frame_idx
+            best_dist = d
+    if best_dist > VIS_MAX_DISTANCE:
+        return best_frame, VIS_MAX_DISTANCE
+    return best_frame, int(best_dist)
+
+
+def _refine_visual_boundaries(
+    ref_hashes: dict,
+    source_index: dict,
+    sample_idx: int,
+    event_frames: int,
+) -> dict:
+    """Frame-refine source in/out using v1.4 first/mid/last hash matching."""
+    frame_indices = source_index.get("frameIndices") or []
+    if sample_idx < 0 or sample_idx >= len(frame_indices):
+        return {}
+
+    path = str(source_index.get("path") or "")
+    stride = int(source_index.get("stride") or 1)
+    frame_count = int(source_index.get("frameCount") or 0)
+    shot_len = max(1, int(event_frames or 1))
+    coarse_frame = int(frame_indices[sample_idx])
+    half_shot = shot_len // 2
+    expected_start = coarse_frame - half_shot
+    expected_end = coarse_frame + (shot_len - half_shot - 1)
+    buf = max(stride, VIS_REFINE_WINDOW)
+
+    start_frame, d_start = _best_match_in_window(
+        path, ref_hashes.get("first"), expected_start, buf, frame_count
+    )
+    end_frame, d_end = _best_match_in_window(
+        path, ref_hashes.get("last"), expected_end, buf, frame_count
+    )
+    if end_frame < start_frame:
+        end_frame = start_frame + shot_len - 1
+        if frame_count > 0:
+            end_frame = min(frame_count - 1, end_frame)
+
+    center = (start_frame + end_frame) // 2
+    mid_hash = _hash_frame(path, center)
+    d_mid = _regional_distance(ref_hashes.get("mid"), mid_hash) if mid_hash else d_start
+    distance = int((d_start + d_mid + d_end) // 3)
+    return {
+        "sourceStartFrame": int(start_frame),
+        "sourceEndFrame": int(end_frame),
+        "visualDistance": distance,
+        "visualStatus": _visual_status(distance),
+        "visualScore": _visual_score(distance),
+    }
+
+
+def _record_offset_frames(events: list[ConformEvent], fps: float) -> int:
+    for e in events:
+        if getattr(e, "rec_in", ""):
+            return _tc_to_frames(str(e.rec_in), fps)
+    return 0
+
+
+def _event_ref_positions(
+    event: ConformEvent,
+    record_offset: int,
+    cumulative_start: int,
+    fps: float,
+) -> tuple[int, int, int]:
+    duration = max(1, int(getattr(event, "duration_frames", 0) or 1))
+    if getattr(event, "rec_in", ""):
+        start = max(0, _tc_to_frames(str(event.rec_in), fps) - record_offset)
+    else:
+        start = max(0, cumulative_start)
+    end = max(start, start + duration - 1)
+    mid = (start + end) // 2
+    return start, mid, end
+
+
+def _fingerprint_reference_events(
+    events: list[ConformEvent],
+    ref_proxy: dict,
+    session_id: str,
+) -> list[dict]:
+    """Read first/mid/last frame hashes from the reference QT proxy."""
+    ref_path = str(ref_proxy.get("proxyFile") or "")
+    fps = float(ref_proxy.get("fps") or (events[0].fps if events else 24.0) or 24.0)
+    record_offset = _record_offset_frames(events, fps)
+    out: list[dict] = []
+    cumulative = 0
+    total = len(events)
+    for i, event in enumerate(events):
+        pct = ANALYZE_STEPS["correlate"] + int(4 * i / max(1, total))
+        _upd(session_id, "correlate", pct,
+             f"Fingerprinting reference event {i+1}/{total}: {event.clip_name}…")
+        first, mid, last = _event_ref_positions(event, record_offset, cumulative, fps)
+        out.append({
+            "firstFrame": first,
+            "midFrame": mid,
+            "lastFrame": last,
+            "first": _hash_frame(ref_path, first),
+            "mid": _hash_frame(ref_path, mid),
+            "last": _hash_frame(ref_path, last),
+        })
+        cumulative += max(1, int(getattr(event, "duration_frames", 0) or 1))
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RESOLVE PROXY / WAV GENERATION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1015,6 +1338,28 @@ def _match_events(
             env, _ = _read_wav_envelope(px["wavFile"], frame_sec=1.0)
         src_envelopes.append(env)
 
+    # Picture Conform v1.4 visual fingerprints. These use the already-rendered
+    # analysis proxies, not the full-res masters, so the extra pass is cheap and
+    # keeps the workflow local/offline.
+    visual_available = bool(ref_proxy.get("proxyFile")) and bool(proxy_info)
+    ref_visual: list[dict] = []
+    src_visual_indexes: list[dict] = []
+    if visual_available and _ffmpeg_bin():
+        _upd(session_id, "correlate", ANALYZE_STEPS["correlate"],
+             "Fingerprinting reference with Picture Conform v1.4 logic…")
+        ref_visual = _fingerprint_reference_events(events, ref_proxy, session_id)
+        total_src = len(proxy_info)
+        for si, px in enumerate(proxy_info):
+            pct = ANALYZE_STEPS["correlate"] + 4 + int(8 * si / max(1, total_src))
+            _upd(session_id, "correlate", pct,
+                 f"Indexing visual proxy {si+1}/{total_src}: {Path(str(px.get('inputFile') or '')).name}…")
+            src_visual_indexes.append(_build_visual_index(px))
+        visual_available = any((idx.get("hashes") for idx in src_visual_indexes)) and any(
+            (rv.get("mid") for rv in ref_visual)
+        )
+    else:
+        visual_available = False
+
     matches: list[dict] = []
     total = len(events)
 
@@ -1044,12 +1389,39 @@ def _match_events(
                     ref_env, ref_start_sec, dur_sec, src_envelopes[si]
                 )
 
-            # Weighted confidence
-            if ref_env and src_envelopes[si]:
+            visual_distance: int | None = None
+            visual_sample_idx = -1
+            visual_source_frame = 0
+            visual_status = "UNKNOWN"
+            visual_score = 0.0
+            if visual_available and si < len(src_visual_indexes) and ei < len(ref_visual):
+                visual_sample_idx, visual_distance = _best_visual_sample(
+                    ref_visual[ei].get("mid"), src_visual_indexes[si]
+                )
+                idx_frames = src_visual_indexes[si].get("frameIndices") or []
+                if visual_sample_idx >= 0 and visual_sample_idx < len(idx_frames):
+                    visual_source_frame = int(idx_frames[visual_sample_idx])
+                visual_status = _visual_status(visual_distance)
+                visual_score = _visual_score(visual_distance)
+
+            # Weighted confidence. When visual hashes exist, they become the
+            # dominant signal and audio/name/duration break ties. Without visual
+            # hashes, keep the legacy scoring behavior.
+            if visual_available:
+                confidence = (
+                    visual_score * 0.70 +
+                    audio_score * 0.15 +
+                    fn_score * 0.10 +
+                    dur_score * 0.05
+                )
+            elif ref_env and src_envelopes[si]:
                 confidence = (fn_score * 0.35 + dur_score * 0.25 + audio_score * 0.40)
             else:
                 confidence = (fn_score * 0.55 + dur_score * 0.45)
 
+            suggested_frame = visual_source_frame if visual_available else int(
+                round(audio_offset_sec * max(1.0, event.fps))
+            )
             candidates.append({
                 "sourceIndex": si,
                 "sourceFile": px["inputFile"],
@@ -1058,20 +1430,73 @@ def _match_events(
                     "filename": round(fn_score, 3),
                     "duration": round(dur_score, 3),
                     "audio": round(audio_score, 3),
+                    "visual": round(visual_score, 3),
                 },
-                # audio_offset_sec is in SECONDS (1 fps RMS envelope); convert to
-                # frames before formatting as timecode, else the suggestion is off by ~fps×.
-                "suggestedSourceIn": _frames_to_tc(int(round(audio_offset_sec * max(1.0, event.fps))), event.fps),
+                "suggestedSourceIn": _frames_to_tc(suggested_frame, event.fps),
+                "suggestedSourceFrame": int(suggested_frame),
                 "sourceDurationFrames": px.get("durationFrames", 0),
+                "visualDistance": visual_distance,
+                "visualStatus": visual_status,
+                "visualSampleIndex": visual_sample_idx,
             })
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
+
+        # Refine the most plausible candidates frame-by-frame with the v1.4
+        # +/-32 frame boundary search. Skip obviously terrible visual hits.
+        if visual_available and ei < len(ref_visual):
+            for c in candidates[:5]:
+                dist = c.get("visualDistance")
+                if dist is None or dist > VIS_SKIP_REFINE:
+                    continue
+                si = int(c.get("sourceIndex", -1))
+                if si < 0 or si >= len(src_visual_indexes):
+                    continue
+                refined = _refine_visual_boundaries(
+                    ref_visual[ei],
+                    src_visual_indexes[si],
+                    int(c.get("visualSampleIndex", -1)),
+                    int(event.duration_frames or 1),
+                )
+                if not refined:
+                    continue
+                c.update(refined)
+                c["suggestedSourceFrame"] = int(refined["sourceStartFrame"])
+                c["suggestedSourceIn"] = _frames_to_tc(int(refined["sourceStartFrame"]), event.fps)
+                c["suggestedSourceOut"] = _frames_to_tc(int(refined["sourceEndFrame"]) + 1, event.fps)
+                c["breakdown"]["visual"] = refined["visualScore"]
+                if ref_env and src_envelopes[si]:
+                    c["confidence"] = round(
+                        refined["visualScore"] * 0.70 +
+                        c["breakdown"]["audio"] * 0.15 +
+                        c["breakdown"]["filename"] * 0.10 +
+                        c["breakdown"]["duration"] * 0.05,
+                        3,
+                    )
+                else:
+                    c["confidence"] = round(
+                        refined["visualScore"] * 0.80 +
+                        c["breakdown"]["filename"] * 0.12 +
+                        c["breakdown"]["duration"] * 0.08,
+                        3,
+                    )
+            candidates.sort(key=lambda c: c["confidence"], reverse=True)
+
         top = candidates[:5]  # keep top 5 for review UI
 
         # Auto-accept if top candidate is unambiguous
         auto_accept = len(top) > 0 and top[0]["confidence"] >= 0.75
+        if visual_available and top:
+            auto_accept = auto_accept and top[0].get("visualStatus") == "OK"
         if len(top) > 1:
             auto_accept = auto_accept and (top[0]["confidence"] - top[1]["confidence"] >= 0.15)
+
+        if not top:
+            status = "no_match"
+        elif visual_available and top[0].get("visualStatus") == "NO_MATCH":
+            status = "no_match"
+        else:
+            status = "auto" if auto_accept else "manual"
 
         matches.append({
             "eventIndex": event.index,
@@ -1079,7 +1504,12 @@ def _match_events(
             "candidates": top,
             "accepted": auto_accept,
             "acceptedSourceIndex": top[0]["sourceIndex"] if auto_accept and top else None,
-            "status": "auto" if auto_accept else ("manual" if top else "no_match"),
+            "acceptedSourceFile": top[0]["sourceFile"] if auto_accept and top else "",
+            "acceptedSourceIn": top[0].get("suggestedSourceIn", "") if auto_accept and top else "",
+            "acceptedSourceOut": top[0].get("suggestedSourceOut", "") if auto_accept and top else "",
+            "visualStatus": top[0].get("visualStatus", "UNKNOWN") if top else "NO_MATCH",
+            "visualDistance": top[0].get("visualDistance") if top else None,
+            "status": status,
         })
 
     return matches
@@ -1483,6 +1913,15 @@ def _export_edl(match_list: list[dict], fps: float) -> str:
         lines.append(f"{idx:03d}  {reel:<8}  V  C  {src_in} {src_out} {rec_in} {rec_out}")
         if src_file:
             lines.append(f"* FROM CLIP NAME: {Path(src_file).name}")
+        cands = m.get("candidates", [])
+        if cands:
+            c0 = cands[0]
+            vd = c0.get("visualDistance")
+            vs = c0.get("visualStatus") or m.get("visualStatus") or ""
+            lines.append(
+                f"* CONFIDENCE: {c0.get('confidence', 0):.3f}"
+                + (f"  VISUAL: {vs} {vd}/{VIS_MAX_DISTANCE}" if vd is not None else "")
+            )
         lines.append("")
     return "\n".join(lines)
 
@@ -1557,11 +1996,16 @@ def _export_csv(match_list: list[dict]) -> str:
     writer.writerow([
         "EventIndex", "ClipName", "Reel", "RecIn", "RecOut",
         "SourceFile", "SourceIn", "SourceOut", "Confidence", "Status",
+        "VisualStatus", "VisualDistance",
     ])
     for m in sorted(match_list, key=lambda x: x.get("eventIndex", 0)):
         ev = m.get("event", {})
         cands = m.get("candidates", [])
         conf = cands[0]["confidence"] if cands else 0
+        visual_status = m.get("visualStatus") or (cands[0].get("visualStatus") if cands else "")
+        visual_distance = m.get("visualDistance")
+        if visual_distance is None and cands:
+            visual_distance = cands[0].get("visualDistance")
         writer.writerow([
             m.get("eventIndex", ""),
             ev.get("clip_name", ""),
@@ -1573,6 +2017,8 @@ def _export_csv(match_list: list[dict]) -> str:
             m.get("acceptedSourceOut", ""),
             f"{conf:.3f}",
             m.get("status", ""),
+            visual_status or "",
+            "" if visual_distance is None else visual_distance,
         ])
     return buf.getvalue()
 

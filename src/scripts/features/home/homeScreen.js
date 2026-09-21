@@ -3,10 +3,17 @@
 // ES2022 module, no build step required.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { initOnboarding, openSetupGuide } from "./setupWizard.js";
+import { initAppTour, startTour } from "./appTour.js";
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 const STORAGE_KEY_RECENTS = 'recentProjects:pull_prep';
 const STORAGE_KEY_CURRENT = 'currentProjectName:pull_prep';
 const MAX_RECENTS = 8;
+
+// One-time guard for the live Resolve-status subscription (see onHomeScreenActivated).
+let _hsResolveSub = false;
+let _heroRecentProject = null;
 
 // ── Workspace definitions ─────────────────────────────────────────────────────
 const WORKSPACES = [
@@ -14,6 +21,7 @@ const WORKSPACES = [
     id:       'pull-prep',
     title:    'Pull Prep',
     subtitle: 'Build VFX pull packages from EDL/timeline',
+    tag:      'VFX EDITOR',
     tabKey:   'prepmark',
     event:    null,
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -27,6 +35,7 @@ const WORKSPACES = [
     id:       'vfx-pull',
     title:    'VFX Pull',
     subtitle: 'Workspace for reviewing and exporting OCF pulls',
+    tag:      'OCF',
     tabKey:   'prepmark',
     event:    'pfx:open-vfx-pull',
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -39,6 +48,7 @@ const WORKSPACES = [
     id:       'cut-diff',
     title:    'Cut Diff',
     subtitle: 'Compare timeline versions, detect changes',
+    tag:      'COMPARE',
     tabKey:   'cutdiff2',
     event:    null,
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -51,6 +61,7 @@ const WORKSPACES = [
     id:       'imf',
     title:    'IMF Validation',
     subtitle: 'Validate IMF packages, compliance checks',
+    tag:      'DELIVERY',
     tabKey:   'imf',
     event:    null,
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -63,6 +74,7 @@ const WORKSPACES = [
     id:       'render-queue',
     title:    'Render Queue',
     subtitle: 'Manage and monitor render jobs',
+    tag:      'OUTPUT',
     tabKey:   'renderq',
     event:    null,
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -75,6 +87,7 @@ const WORKSPACES = [
     id:       'settings',
     title:    'Settings',
     subtitle: 'App preferences, integrations, shortcuts',
+    tag:      'SYSTEM',
     tabKey:   'about',
     event:    null,
     icon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -88,9 +101,13 @@ const WORKSPACES = [
 function _buildHTML(version) {
   const workspaceCards = WORKSPACES.map(ws => `
     <button class="hs-card" data-ws-id="${ws.id}" title="${ws.title}">
-      <span class="hs-card-icon">${ws.icon}</span>
+      <span class="hs-card-top">
+        <span class="hs-card-icon">${ws.icon}</span>
+        <span class="hs-card-tag">${ws.tag}</span>
+      </span>
       <span class="hs-card-title">${ws.title}</span>
       <span class="hs-card-sub">${ws.subtitle}</span>
+      <span class="hs-card-open">Open workspace <span aria-hidden="true">&#8594;</span></span>
     </button>
   `).join('');
 
@@ -99,8 +116,8 @@ function _buildHTML(version) {
   #hs-root {
     height: 100%;
     overflow-y: auto;
-    background: #1a1a1a;
-    color: #e4ebff;
+    background: #000;
+    color: #f5f5f1;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     box-sizing: border-box;
   }
@@ -125,17 +142,17 @@ function _buildHTML(version) {
     font-size: 26px;
     font-weight: 700;
     letter-spacing: -0.3px;
-    color: #e4ebff;
+    color: #f5f5f1;
   }
   #hs-hero p {
     margin: 0;
     font-size: 13.5px;
-    color: #8a96b0;
+    color: #b3b3b3;
   }
   #hs-hero .hs-version {
     margin-top: 4px;
     font-size: 11.5px;
-    color: #4e5a72;
+    color: #737373;
     letter-spacing: 0.3px;
   }
 
@@ -145,7 +162,7 @@ function _buildHTML(version) {
     font-weight: 700;
     letter-spacing: 0.9px;
     text-transform: uppercase;
-    color: #4e5a72;
+    color: #737373;
     margin: 0 0 12px;
   }
 
@@ -160,10 +177,10 @@ function _buildHTML(version) {
     align-items: center;
     gap: 7px;
     padding: 7px 14px;
-    background: #222;
-    border: 1px solid #2e3447;
+    background: #181818;
+    border: 1px solid rgba(255,255,255,.2);
     border-radius: 6px;
-    color: #c8d1e8;
+    color: #b3b3b3;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -171,18 +188,18 @@ function _buildHTML(version) {
     white-space: nowrap;
   }
   .hs-btn:hover {
-    border-color: #37b573;
-    background: #1e2b23;
-    color: #e4ebff;
+    border-color: #e50914;
+    background: #2a1113;
+    color: #f5f5f1;
   }
   .hs-btn:active {
-    background: #1a2620;
+    background: #220b0d;
   }
   .hs-btn svg {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-    color: #37b573;
+    color: #f6121d;
   }
 
   /* ── Workspace grid ── */
@@ -202,8 +219,8 @@ function _buildHTML(version) {
     align-items: flex-start;
     gap: 8px;
     padding: 18px 18px 20px;
-    background: #222;
-    border: 1px solid #2a2e3d;
+    background: #141414;
+    border: 1px solid rgba(255,255,255,.11);
     border-radius: 8px;
     cursor: pointer;
     text-align: left;
@@ -211,12 +228,12 @@ function _buildHTML(version) {
     transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   }
   .hs-card:hover {
-    border-color: #37b573;
-    background: #1e2b23;
-    box-shadow: 0 0 0 1px #37b57330, 0 4px 16px #00000040;
+    border-color: #e50914;
+    background: #211113;
+    box-shadow: 0 0 0 1px rgba(229,9,20,.22), 0 4px 16px #00000055;
   }
   .hs-card:active {
-    background: #1a2620;
+    background: #220b0d;
   }
   .hs-card-icon {
     display: flex;
@@ -224,9 +241,9 @@ function _buildHTML(version) {
     justify-content: center;
     width: 32px;
     height: 32px;
-    background: #1a1a1a;
+    background: #181818;
     border-radius: 6px;
-    color: #37b573;
+    color: #f6121d;
     margin-bottom: 2px;
   }
   .hs-card-icon svg {
@@ -236,12 +253,12 @@ function _buildHTML(version) {
   .hs-card-title {
     font-size: 13.5px;
     font-weight: 600;
-    color: #e4ebff;
+    color: #f5f5f1;
     line-height: 1.2;
   }
   .hs-card-sub {
     font-size: 11.5px;
-    color: #606880;
+    color: #737373;
     line-height: 1.4;
   }
 
@@ -277,22 +294,22 @@ function _buildHTML(version) {
     flex-shrink: 0;
     background: #4e5a72;
   }
-  .hs-status-dot.ok     { background: #37b573; }
-  .hs-status-dot.warn   { background: #e8a940; }
-  .hs-status-dot.error  { background: #e05252; }
+  .hs-status-dot.ok     { background: #46d38f; }
+  .hs-status-dot.warn   { background: #e2b656; }
+  .hs-status-dot.error  { background: #ef6b72; }
   .hs-status-dot.idle   { background: #4e5a72; }
   .hs-status-label {
-    color: #8a96b0;
+    color: #b3b3b3;
     min-width: 120px;
     flex-shrink: 0;
   }
   .hs-status-value {
-    color: #c8d1e8;
+    color: #f5f5f1;
     font-variant-numeric: tabular-nums;
   }
-  .hs-status-value.ok    { color: #37b573; }
-  .hs-status-value.warn  { color: #e8a940; }
-  .hs-status-value.error { color: #e05252; }
+  .hs-status-value.ok    { color: #46d38f; }
+  .hs-status-value.warn  { color: #e2b656; }
+  .hs-status-value.error { color: #ef6b72; }
 
   /* ── Recent projects ── */
   #hs-recents-list {
@@ -318,7 +335,7 @@ function _buildHTML(version) {
     transition: background 0.12s;
   }
   .hs-recent-row:hover {
-    background: #242835;
+    background: #232323;
   }
   .hs-recent-info {
     flex: 1;
@@ -330,21 +347,21 @@ function _buildHTML(version) {
   .hs-recent-name {
     font-size: 13px;
     font-weight: 500;
-    color: #d4dcf2;
+    color: #f5f5f1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .hs-recent-meta {
     font-size: 11px;
-    color: #4e5a72;
+    color: #737373;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .hs-recent-date {
     font-size: 11px;
-    color: #4e5a72;
+    color: #737373;
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
@@ -356,17 +373,17 @@ function _buildHTML(version) {
     background: transparent;
     border: 1px solid #2e3447;
     border-radius: 4px;
-    color: #8a96b0;
+    color: #b3b3b3;
     cursor: pointer;
     transition: border-color 0.12s, color 0.12s;
   }
   .hs-recent-open:hover {
-    border-color: #37b573;
-    color: #37b573;
+    border-color: #e50914;
+    color: #f6121d;
   }
   .hs-empty-state {
     font-size: 12.5px;
-    color: #4e5a72;
+    color: #737373;
     padding: 10px 2px;
     line-height: 1.5;
   }
@@ -384,8 +401,8 @@ function _buildHTML(version) {
     align-items: center;
     gap: 18px;
     padding: 18px 22px;
-    background: #1f2533;
-    border: 1px solid #2a3148;
+    background: #141414;
+    border: 1px solid rgba(255,255,255,.11);
     border-radius: 8px;
   }
   #hs-site-card-icon {
@@ -394,9 +411,9 @@ function _buildHTML(version) {
     justify-content: center;
     width: 36px;
     height: 36px;
-    background: #161d2b;
+    background: #211113;
     border-radius: 7px;
-    color: #37b573;
+    color: #f6121d;
     flex-shrink: 0;
   }
   #hs-site-card-icon svg {
@@ -410,18 +427,18 @@ function _buildHTML(version) {
   #hs-site-card-title {
     font-size: 13.5px;
     font-weight: 600;
-    color: #e4ebff;
+    color: #f5f5f1;
     margin: 0 0 2px;
   }
   #hs-site-card-desc {
     font-size: 11.5px;
-    color: #606880;
+    color: #737373;
     margin: 0 0 3px;
     line-height: 1.4;
   }
   #hs-site-card-url {
     font-size: 10.5px;
-    color: #2e3a50;
+    color: #667482;
     font-family: "SF Mono", "Fira Mono", monospace;
   }
   #hs-btn-open-site {
@@ -430,10 +447,10 @@ function _buildHTML(version) {
     align-items: center;
     gap: 6px;
     padding: 7px 15px;
-    background: #1e2b23;
-    border: 1px solid #37b573;
+    background: rgba(229,9,20,.14);
+    border: 1px solid rgba(246,18,29,.5);
     border-radius: 6px;
-    color: #37b573;
+    color: #ff8b91;
     font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
@@ -441,17 +458,474 @@ function _buildHTML(version) {
     white-space: nowrap;
   }
   #hs-btn-open-site:hover {
-    background: #223328;
-    border-color: #4fcf89;
-    color: #e4ebff;
+    background: #321013;
+    border-color: #f6121d;
+    color: #f5f5f1;
   }
   #hs-btn-open-site:active {
-    background: #1a2a1e;
+    background: #220b0d;
   }
   #hs-btn-open-site svg {
     width: 13px;
     height: 13px;
     flex-shrink: 0;
+  }
+  /* Netflix interaction accent must win older global icon-theme rules. */
+  #hs-root .hs-btn svg,
+  #hs-root .hs-card-icon,
+  #hs-root #hs-site-card-icon {
+    color: #f6121d !important;
+  }
+  #hs-root .hs-card-icon,
+  #hs-root #hs-site-card-icon {
+    background: #211113 !important;
+  }
+
+  /* ── Home 3.0 · Netflix command center ─────────────────────────────── */
+  #hs-root {
+    --hs-red: #e50914;
+    --hs-red-bright: #ff2533;
+    --hs-panel: rgba(20,20,20,.92);
+    --hs-panel-2: rgba(28,28,28,.9);
+    --hs-stroke: rgba(255,255,255,.11);
+    --hs-muted: #9b9b9b;
+    background:
+      radial-gradient(circle at 86% 3%, rgba(229,9,20,.16), transparent 28%),
+      radial-gradient(circle at 10% 82%, rgba(86,34,39,.10), transparent 32%),
+      #080808;
+  }
+  #hs-inner {
+    max-width: 1240px;
+    padding: 28px 36px 42px;
+    gap: 22px;
+  }
+  .hs-section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .hs-section-head .hs-section-title { margin: 0; }
+  .hs-section-hint {
+    color: #666;
+    font-size: 10.5px;
+  }
+
+  /* Hero: one strong starting point, with a visual workflow map. */
+  #hs-hero {
+    position: relative;
+    min-height: 208px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(310px, .65fr);
+    align-items: stretch;
+    gap: 26px;
+    padding: 28px 30px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px;
+    background:
+      linear-gradient(112deg, rgba(34,8,10,.96) 0%, rgba(18,18,18,.98) 48%, rgba(11,11,11,.98) 100%);
+    box-shadow: 0 18px 55px rgba(0,0,0,.32);
+  }
+  #hs-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, rgba(229,9,20,.72) 0 3px, transparent 3px),
+      radial-gradient(circle at 20% 10%, rgba(229,9,20,.14), transparent 42%);
+  }
+  #hs-hero-copy {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-width: 0;
+  }
+  .hs-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+    color: #ff7078;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 1.55px;
+    text-transform: uppercase;
+  }
+  .hs-eyebrow::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--hs-red-bright);
+    box-shadow: 0 0 14px rgba(229,9,20,.65);
+  }
+  #hs-hero h1 {
+    max-width: 650px;
+    font-size: clamp(27px, 3vw, 42px);
+    line-height: 1.05;
+    letter-spacing: -1.2px;
+    font-weight: 760;
+  }
+  #hs-hero p {
+    max-width: 630px;
+    margin-top: 10px;
+    color: #b8b8b8;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  #hs-hero .hs-version {
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+    color: #6d6d6d;
+    font-size: 9.5px;
+  }
+  #hs-hero-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .hs-hero-btn {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 6px;
+    color: #f5f5f1;
+    background: rgba(255,255,255,.08);
+    font-size: 12.5px;
+    font-weight: 680;
+    cursor: pointer;
+    transition: transform .16s ease, background .16s ease, border-color .16s ease;
+  }
+  .hs-hero-btn svg { width: 16px; height: 16px; }
+  .hs-hero-btn:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.13); }
+  #hs-root #hs-btn-new-project {
+    color: #fff;
+    background: linear-gradient(135deg, #ff2533, var(--hs-red)) !important;
+    background-color: var(--hs-red) !important;
+    background-image: linear-gradient(135deg, #ff2533, var(--hs-red)) !important;
+    border-color: #ff3440 !important;
+    box-shadow: 0 8px 24px rgba(229,9,20,.22);
+  }
+  #hs-root #hs-btn-new-project svg { color: #fff !important; stroke: currentColor !important; }
+  #hs-root #hs-btn-new-project:hover {
+    background: linear-gradient(135deg, #ff4350, #f20d19) !important;
+    background-color: #f20d19 !important;
+    background-image: linear-gradient(135deg, #ff4350, #f20d19) !important;
+    border-color: #ff6570 !important;
+    box-shadow: 0 10px 30px rgba(229,9,20,.34);
+  }
+  #hs-btn-import-timeline {
+    border-color: rgba(92,139,255,.32);
+    background: linear-gradient(135deg, rgba(53,91,180,.20), rgba(255,255,255,.06));
+  }
+  #hs-btn-import-timeline svg { color: #7da2ff !important; }
+
+  #hs-flow-visual {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: 18px;
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 11px;
+    background: rgba(0,0,0,.23);
+  }
+  .hs-flow-title {
+    color: #737373;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1.25px;
+    text-transform: uppercase;
+  }
+  .hs-flow-row { display: flex; align-items: center; gap: 8px; }
+  .hs-flow-step {
+    flex: 1;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 7px;
+    background: rgba(255,255,255,.035);
+  }
+  .hs-flow-step strong {
+    display: block;
+    color: #f5f5f1;
+    font-size: 11.5px;
+    line-height: 1.2;
+  }
+  .hs-flow-step small { display: block; margin-top: 3px; color: #686868; font-size: 9.5px; }
+  .hs-flow-step.is-active { border-color: rgba(229,9,20,.55); background: rgba(229,9,20,.1); }
+  .hs-flow-num {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    margin-bottom: 7px;
+    border-radius: 50%;
+    color: #fff;
+    background: #343434;
+    font-size: 9px;
+    font-weight: 800;
+  }
+  .hs-flow-step.is-active .hs-flow-num { background: var(--hs-red); }
+  .hs-flow-step:nth-of-type(2) {
+    border-color: rgba(35,194,255,.18);
+    background: linear-gradient(145deg, rgba(35,194,255,.07), rgba(255,255,255,.025));
+  }
+  .hs-flow-step:nth-of-type(2) .hs-flow-num { background: #167da8; }
+  .hs-flow-step:nth-of-type(3) {
+    border-color: rgba(70,211,143,.18);
+    background: linear-gradient(145deg, rgba(70,211,143,.07), rgba(255,255,255,.025));
+  }
+  .hs-flow-step:nth-of-type(3) .hs-flow-num { background: #168456; }
+  .hs-flow-arrow { color: #414141; font-size: 12px; }
+  .hs-flow-foot {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #777;
+    font-size: 10px;
+  }
+  .hs-flow-foot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #46d38f; }
+
+  /* Secondary actions stay available without competing with the main CTA. */
+  #hs-quick-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--hs-stroke);
+    border-radius: 9px;
+    background: rgba(17,17,17,.78);
+  }
+  #hs-quick-bar .hs-section-title {
+    flex: 0 0 auto;
+    margin: 0 4px 0 2px;
+    color: #868686;
+  }
+  #hs-quick-actions { flex: 1; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+  .hs-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    border-color: transparent;
+    background: transparent;
+    color: #a7a7a7;
+    font-size: 11.5px;
+  }
+  .hs-btn:hover { border-color: rgba(229,9,20,.55); background: rgba(229,9,20,.10); color: #fff; }
+  .hs-btn svg { width: 17px; height: 17px; }
+  #hs-root #hs-btn-open-project svg { color: #ff4150 !important; stroke: #ff4150 !important; }
+  #hs-root #hs-btn-open-vfx-pull svg { color: #31c9ff !important; stroke: #31c9ff !important; }
+  #hs-root #hs-btn-tl-convert svg { color: #f7aa35 !important; stroke: #f7aa35 !important; }
+  #hs-root #hs-btn-setup-guide svg { color: #b784ff !important; stroke: #b784ff !important; }
+  #hs-root #hs-btn-tour svg { color: #50d89a !important; stroke: #50d89a !important; }
+  #hs-btn-open-project:hover { border-color: rgba(255,65,80,.42); background: rgba(255,65,80,.09); }
+  #hs-btn-open-vfx-pull:hover { border-color: rgba(49,201,255,.42); background: rgba(49,201,255,.09); }
+  #hs-btn-tl-convert:hover { border-color: rgba(247,170,53,.42); background: rgba(247,170,53,.09); }
+  #hs-btn-setup-guide:hover { border-color: rgba(183,132,255,.42); background: rgba(183,132,255,.09); }
+  #hs-btn-tour:hover { border-color: rgba(80,216,154,.42); background: rgba(80,216,154,.09); }
+
+  /* Workspace cards carry purpose, category and an explicit action. */
+  #hs-workspace-grid { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; }
+  .hs-card {
+    --card-accent: #e50914;
+    --card-rgb: 229,9,20;
+    position: relative;
+    min-height: 148px;
+    gap: 5px;
+    padding: 15px 16px 13px;
+    overflow: hidden;
+    background:
+      linear-gradient(145deg, rgba(var(--card-rgb),.085), transparent 46%),
+      linear-gradient(145deg, rgba(28,28,28,.96), rgba(17,17,17,.96));
+    border-color: rgba(255,255,255,.10);
+    border-radius: 9px;
+    transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+  }
+  .hs-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    opacity: .72;
+    background: linear-gradient(90deg, var(--card-accent), rgba(var(--card-rgb),.08) 72%, transparent);
+  }
+  .hs-card::after {
+    content: "";
+    position: absolute;
+    inset: auto -26px -40px auto;
+    width: 95px;
+    height: 95px;
+    border-radius: 50%;
+    background: rgba(var(--card-rgb),.10);
+    transition: transform .2s ease, background .2s ease;
+  }
+  .hs-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--card-accent);
+    background:
+      linear-gradient(145deg, rgba(var(--card-rgb),.15), transparent 58%),
+      linear-gradient(145deg, rgba(31,31,31,.98), rgba(18,18,18,.98));
+    box-shadow: 0 10px 28px rgba(0,0,0,.30), 0 0 24px rgba(var(--card-rgb),.08);
+  }
+  .hs-card:hover::after { transform: scale(1.18); background: rgba(var(--card-rgb),.18); }
+  .hs-card-top { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+  .hs-card-icon {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid rgba(var(--card-rgb),.24);
+    border-radius: 12px;
+    color: var(--card-accent) !important;
+    background: rgba(var(--card-rgb),.13) !important;
+    box-shadow:
+      inset 0 0 18px rgba(var(--card-rgb),.08),
+      0 0 0 1px rgba(0,0,0,.28);
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease, background .2s ease;
+  }
+  .hs-card-icon::after {
+    content: "";
+    position: absolute;
+    inset: -35%;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.34) 50%, transparent 65%);
+    transform: translateX(-120%) rotate(8deg);
+  }
+  .hs-card .hs-card-icon svg {
+    position: relative;
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    color: var(--card-accent) !important;
+    stroke: currentColor;
+    filter: drop-shadow(0 0 5px rgba(var(--card-rgb),.24));
+    transition: transform .2s ease, filter .2s ease;
+  }
+  .hs-card:hover .hs-card-icon,
+  .hs-card:focus-visible .hs-card-icon {
+    transform: translateY(-2px) scale(1.07);
+    border-color: rgba(var(--card-rgb),.72);
+    background: rgba(var(--card-rgb),.20) !important;
+    box-shadow:
+      inset 0 0 22px rgba(var(--card-rgb),.15),
+      0 7px 18px rgba(var(--card-rgb),.18),
+      0 0 0 1px rgba(var(--card-rgb),.14);
+  }
+  .hs-card:hover .hs-card-icon svg,
+  .hs-card:focus-visible .hs-card-icon svg {
+    transform: scale(1.08);
+    filter: drop-shadow(0 0 8px rgba(var(--card-rgb),.52));
+  }
+  .hs-card:hover .hs-card-icon::after,
+  .hs-card:focus-visible .hs-card-icon::after {
+    animation: hs-icon-sweep .55s ease-out both;
+  }
+  @keyframes hs-icon-sweep {
+    0% { opacity: 0; transform: translateX(-120%) rotate(8deg); }
+    24% { opacity: .65; }
+    100% { opacity: 0; transform: translateX(120%) rotate(8deg); }
+  }
+  .hs-card-tag {
+    color: var(--card-accent);
+    font-size: 8.5px;
+    font-weight: 800;
+    letter-spacing: 1px;
+  }
+  .hs-card-title { font-size: 14px; }
+  .hs-card-sub { max-width: 86%; color: #818181; font-size: 10.7px; line-height: 1.35; }
+  .hs-card-open {
+    z-index: 1;
+    margin-top: auto;
+    color: #858585;
+    font-size: 9.8px;
+    font-weight: 650;
+    opacity: .76;
+  }
+  .hs-card:hover .hs-card-open { color: var(--card-accent); opacity: 1; }
+
+  /* Colour is functional: each workspace keeps one accent everywhere. */
+  .hs-card[data-ws-id="pull-prep"]   { --card-accent: #ff3f5f; --card-rgb: 255,63,95; }
+  .hs-card[data-ws-id="vfx-pull"]    { --card-accent: #32c9ff; --card-rgb: 50,201,255; }
+  .hs-card[data-ws-id="cut-diff"]    { --card-accent: #ffb23e; --card-rgb: 255,178,62; }
+  .hs-card[data-ws-id="imf"]         { --card-accent: #b987ff; --card-rgb: 185,135,255; }
+  .hs-card[data-ws-id="render-queue"]{ --card-accent: #4edb96; --card-rgb: 78,219,150; }
+  .hs-card[data-ws-id="settings"]    { --card-accent: #75a5ff; --card-rgb: 117,165,255; }
+
+  /* Continue + health are the operational bottom of the dashboard. */
+  #hs-bottom {
+    grid-template-columns: minmax(0, 1.45fr) minmax(330px, .55fr);
+    gap: 10px;
+  }
+  .hs-ops-card {
+    min-height: 132px;
+    padding: 15px 17px;
+    border: 1px solid var(--hs-stroke);
+    border-radius: 9px;
+    background: rgba(18,18,18,.86);
+  }
+  .hs-ops-card .hs-section-title { margin-bottom: 10px; }
+  #hs-recents-list { max-height: 104px; }
+  .hs-recent-row { padding: 6px 7px; }
+  .hs-empty-state { margin: 0; padding: 8px 1px; }
+  .hs-empty-state a { color: #ff777f; text-decoration: none; }
+  #hs-system-resource { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  #hs-hero > #hs-system-resource {
+    position: relative;
+    z-index: 1;
+    align-self: stretch;
+    min-height: 0;
+  }
+  #hs-bottom > #hs-flow-visual {
+    min-height: 132px;
+  }
+  #hs-status-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .hs-status-row { gap: 7px; font-size: 11px; min-width: 0; }
+  .hs-status-label { min-width: 0; color: #777; }
+  .hs-status-value { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #hs-site-card {
+    gap: 11px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(24,24,24,.82);
+  }
+  #hs-site-card-icon { width: 30px; height: 30px; border-radius: 6px; }
+  #hs-site-card-icon svg { width: 16px; height: 16px; }
+  #hs-site-card-title { font-size: 11.5px; }
+  #hs-site-card-desc { margin: 0; font-size: 9.7px; }
+  #hs-site-card-url { display: none; }
+  #hs-btn-open-site { min-height: 28px; padding: 0 10px; font-size: 10.5px; }
+  #hs-build-stamp { color: #383838; padding-top: 0; }
+
+  @media (max-width: 900px) {
+    #hs-inner { padding: 22px 24px 34px; }
+    #hs-hero { grid-template-columns: 1fr; }
+    #hs-quick-actions { flex-wrap: wrap; }
+    #hs-workspace-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    #hs-bottom { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hs-card, .hs-card::after, .hs-hero-btn { transition: none; }
+    .hs-card-icon, .hs-card-icon::after, .hs-card-icon svg {
+      transition: none !important;
+      animation: none !important;
+    }
   }
 </style>
 
@@ -460,78 +934,28 @@ function _buildHTML(version) {
 
   <!-- Hero -->
   <div id="hs-hero">
-    <h1>PostFlowX</h1>
-    <p>Smart post workflow for VFX pull, QC, timeline, and delivery.</p>
-    <span class="hs-version">v${version}</span>
-  </div>
-
-  <!-- Quick actions -->
-  <div>
-    <p class="hs-section-title">Quick Actions</p>
-    <div id="hs-quick-actions">
-      <button class="hs-btn" id="hs-btn-new-project">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-        New Project
-      </button>
-      <button class="hs-btn" id="hs-btn-open-project">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Open Project
-      </button>
-      <button class="hs-btn" id="hs-btn-import-timeline">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-        Import Timeline
-      </button>
-      <button class="hs-btn" id="hs-btn-open-vfx-pull">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>
-        Open VFX Pull Workspace
-      </button>
-      <button class="hs-btn" id="hs-btn-tl-convert">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="3.5" rx="1"/><line x1="2" y1="10.5" x2="13" y2="10.5"/><line x1="2" y1="15.5" x2="11" y2="15.5"/><polyline points="15,13 18.5,16.5 22,13"/><line x1="18.5" y1="16.5" x2="18.5" y2="8"/></svg>
-        TL Convert
-      </button>
-    </div>
-  </div>
-
-  <!-- Workspaces -->
-  <div>
-    <p class="hs-section-title">Workspaces</p>
-    <div id="hs-workspace-grid">
-      ${workspaceCards}
-    </div>
-  </div>
-
-  <!-- PostFlowX Site -->
-  <div>
-    <p class="hs-section-title">Resources</p>
-    <div id="hs-site-card">
-      <div id="hs-site-card-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-        </svg>
+    <div id="hs-hero-copy">
+      <span class="hs-eyebrow">PostFlowX command center</span>
+      <h1>From locked cut to final delivery, in one flow.</h1>
+      <p>Prepare VFX pulls, compare editorial changes, review source media, and deliver with confidence.</p>
+      <span class="hs-version">v${version}</span>
+      <div id="hs-hero-actions">
+        <button class="hs-hero-btn hs-hero-btn-primary" id="hs-btn-new-project">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span id="hs-primary-action-label">Start a project</span>
+        </button>
+        <button class="hs-hero-btn" id="hs-btn-import-timeline">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Import a timeline
+        </button>
       </div>
-      <div id="hs-site-card-body">
-        <p id="hs-site-card-title">PostFlowX Home</p>
-        <p id="hs-site-card-desc">Official documentation, updates, guides, and release notes.</p>
-        <span id="hs-site-card-url">sites.google.com/netflix.com/postflowx/home</span>
-      </div>
-      <button id="hs-btn-open-site">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-          <polyline points="15 3 21 3 21 9"/>
-          <line x1="10" y1="14" x2="21" y2="3"/>
-        </svg>
-        Open PostFlowX Site
-      </button>
     </div>
-  </div>
-
-  <!-- Bottom: status + recents -->
-  <div id="hs-bottom">
-
-    <!-- System Status -->
-    <div>
-      <p class="hs-section-title">System Status</p>
+    <div id="hs-system-resource" class="hs-ops-card">
+      <div class="hs-section-head">
+        <p class="hs-section-title">System health</p>
+        <button id="hs-status-fix" type="button" hidden
+          style="background:none;border:1px solid var(--pfx-accent,#2172E3);color:var(--pfx-accent,#2172E3);border-radius:100px;font-size:11px;font-weight:600;padding:2px 10px;cursor:pointer;">Fix issues</button>
+      </div>
       <div id="hs-status-list">
         <div class="hs-status-row">
           <span class="hs-status-dot idle" id="hs-dot-resolve"></span>
@@ -554,14 +978,98 @@ function _buildHTML(version) {
           <span class="hs-status-value" id="hs-val-cache">—</span>
         </div>
       </div>
+
+      <div id="hs-site-card">
+        <div id="hs-site-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+        </div>
+        <div id="hs-site-card-body">
+          <p id="hs-site-card-title">Guides &amp; release notes</p>
+          <p id="hs-site-card-desc">Open the official PostFlowX site.</p>
+          <span id="hs-site-card-url">sites.google.com/netflix.com/postflowx/home</span>
+        </div>
+        <button id="hs-btn-open-site">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          Open site
+        </button>
+      </div>
     </div>
+  </div>
+
+  <!-- Secondary quick actions -->
+  <div id="hs-quick-bar">
+    <p class="hs-section-title">Quick tools</p>
+    <div id="hs-quick-actions">
+      <button class="hs-btn" id="hs-btn-new-project-secondary" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        New Project
+      </button>
+      <button class="hs-btn" id="hs-btn-open-project">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Open Project
+      </button>
+      <button class="hs-btn" id="hs-btn-open-vfx-pull">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>
+        VFX Pull
+      </button>
+      <button class="hs-btn" id="hs-btn-tl-convert">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="3.5" rx="1"/><line x1="2" y1="10.5" x2="13" y2="10.5"/><line x1="2" y1="15.5" x2="11" y2="15.5"/><polyline points="15,13 18.5,16.5 22,13"/><line x1="18.5" y1="16.5" x2="18.5" y2="8"/></svg>
+        TL Convert
+      </button>
+      <button class="hs-btn" id="hs-btn-setup-guide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Setup Guide
+      </button>
+      <button class="hs-btn" id="hs-btn-tour">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>
+        How to Use
+      </button>
+    </div>
+  </div>
+
+  <!-- Workspaces -->
+  <div>
+    <div class="hs-section-head">
+      <p class="hs-section-title">Choose a workspace</p>
+      <span class="hs-section-hint">Purpose-built tools for each stage of post</span>
+    </div>
+    <div id="hs-workspace-grid">
+      ${workspaceCards}
+    </div>
+  </div>
+
+  <!-- Bottom: continue working + workflow -->
+  <div id="hs-bottom">
 
     <!-- Recent Projects -->
-    <div>
-      <p class="hs-section-title">Recent Projects</p>
+    <div class="hs-ops-card">
+      <div class="hs-section-head">
+        <p class="hs-section-title">Continue working</p>
+        <span class="hs-section-hint">Recent projects</span>
+      </div>
       <div id="hs-recents-list">
         <p class="hs-empty-state">Loading…</p>
       </div>
+    </div>
+
+    <!-- Workflow overview -->
+    <div id="hs-flow-visual" class="hs-ops-card" aria-label="PostFlowX workflow: import, review, deliver">
+      <span class="hs-flow-title">Your workflow</span>
+      <div class="hs-flow-row">
+        <div class="hs-flow-step is-active"><span class="hs-flow-num">1</span><strong>Import</strong><small>EDL · XML · OTIO</small></div>
+        <span class="hs-flow-arrow" aria-hidden="true">&#8594;</span>
+        <div class="hs-flow-step"><span class="hs-flow-num">2</span><strong>Review</strong><small>Picture · OCF · QC</small></div>
+        <span class="hs-flow-arrow" aria-hidden="true">&#8594;</span>
+        <div class="hs-flow-step"><span class="hs-flow-num">3</span><strong>Deliver</strong><small>Pulls · Reports · IMF</small></div>
+      </div>
+      <span class="hs-flow-foot">Native macOS media workflow ready</span>
     </div>
 
   </div>
@@ -624,7 +1132,7 @@ function _storageGet(keys) {
 }
 
 // ── Status refresh ────────────────────────────────────────────────────────────
-function _setStatusRow(dotId, valId, state, label) {
+function _setStatusRow(dotId, valId, state, label, title) {
   const dot = document.getElementById(dotId);
   const val = document.getElementById(valId);
   if (!dot || !val) return;
@@ -633,6 +1141,18 @@ function _setStatusRow(dotId, valId, state, label) {
   dot.className = `hs-status-dot ${state}`;
   val.className = `hs-status-value ${state}`;
   val.textContent = label;
+  if (title) { val.title = title; } else { val.removeAttribute('title'); }
+  _updateFixButton();
+}
+
+// Show a "Fix issues" affordance whenever a real dependency error is present.
+// Optional/idle states (e.g. Resolve not connected) don't count as broken.
+function _updateFixButton() {
+  const btn = document.getElementById('hs-status-fix');
+  if (!btn) return;
+  const list = document.getElementById('hs-status-list');
+  const hasError = !!list?.querySelector('.hs-status-dot.error');
+  btn.hidden = !hasError;
 }
 
 async function _refreshStatus() {
@@ -646,47 +1166,62 @@ async function _refreshStatus() {
   }
 
   // ── Resolve Engine ────────────────────────────────────────────────────────
-  // First try reading the existing pill DOM element
-  const pill = document.getElementById('pfxResolvePill');
-  let resolveState = 'idle';
-  let resolveLabel = 'Not connected';
-
-  if (pill) {
-    const pillText  = pill.textContent?.trim() || '';
-    const pillClass = pill.className || '';
-    if (pillClass.includes('connected') || pillClass.includes('ok') || pillText.toLowerCase().includes('connect')) {
-      resolveState = 'ok';
-      resolveLabel = 'Connected';
-    } else if (pillClass.includes('warn') || pillText.toLowerCase().includes('warn')) {
-      resolveState = 'warn';
-      resolveLabel = pillText || 'Warning';
-    } else if (pillClass.includes('error') || pillText.toLowerCase().includes('error')) {
-      resolveState = 'error';
-      resolveLabel = 'Error';
-    } else if (pillText) {
-      resolveLabel = pillText;
-    }
-    _setStatusRow('hs-dot-resolve', 'hs-val-resolve', resolveState, resolveLabel);
+  // Prefer the authoritative status object; the pill DOM / companion check are
+  // only fallbacks for when it has not been published yet.
+  const rs = (typeof window !== 'undefined' && window.PFX_RESOLVE_STATUS) || null;
+  if (rs && rs.state) {
+    const map = {
+      connected: ['ok',       'Connected'],
+      checking:  ['checking', 'Checking…'],
+      error:     ['error',    rs.label || 'Error'],
+      warn:      ['warn',     rs.label || 'Warning'],
+      idle:      ['idle',     rs.label || 'Not connected'],
+    };
+    const [st, lbl] = map[rs.state] || ['idle', rs.label || 'Not connected'];
+    _setStatusRow('hs-dot-resolve', 'hs-val-resolve', st, lbl);
   } else {
-    // Fall back to companion check
-    _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Checking…');
-    try {
-      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        chrome.runtime.sendMessage({ type: 'COMPANION_CHECK' }, result => {
-          void chrome.runtime?.lastError;
-          if (result?.resolveConnected) {
-            _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'ok', 'Connected');
-          } else if (result?.ok) {
-            _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'warn', 'Companion ready');
-          } else {
-            _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Not connected');
-          }
-        });
-      } else {
+    // First try reading the existing pill DOM element
+    const pill = document.getElementById('pfxResolvePill');
+    let resolveState = 'idle';
+    let resolveLabel = 'Not connected';
+
+    if (pill) {
+      const pillText  = pill.textContent?.trim() || '';
+      const pillClass = pill.className || '';
+      if (pillClass.includes('connected') || pillClass.includes('ok') || pillText.toLowerCase().includes('connect')) {
+        resolveState = 'ok';
+        resolveLabel = 'Connected';
+      } else if (pillClass.includes('warn') || pillText.toLowerCase().includes('warn')) {
+        resolveState = 'warn';
+        resolveLabel = pillText || 'Warning';
+      } else if (pillClass.includes('error') || pillText.toLowerCase().includes('error')) {
+        resolveState = 'error';
+        resolveLabel = 'Error';
+      } else if (pillText) {
+        resolveLabel = pillText;
+      }
+      _setStatusRow('hs-dot-resolve', 'hs-val-resolve', resolveState, resolveLabel);
+    } else {
+      // Fall back to companion check
+      _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Checking…');
+      try {
+        if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+          chrome.runtime.sendMessage({ type: 'COMPANION_CHECK' }, result => {
+            void chrome.runtime?.lastError;
+            if (result?.resolveConnected) {
+              _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'ok', 'Connected');
+            } else if (result?.ok) {
+              _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'warn', 'Companion ready');
+            } else {
+              _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Not connected');
+            }
+          });
+        } else {
+          _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Not connected');
+        }
+      } catch {
         _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Not connected');
       }
-    } catch {
-      _setStatusRow('hs-dot-resolve', 'hs-val-resolve', 'idle', 'Not connected');
     }
   }
 
@@ -696,16 +1231,16 @@ async function _refreshStatus() {
     try {
       const diag = await window.pfxPlatform.media.diagnostics();
       if (diag?.avfBridgeReady) {
-        _setStatusRow('hs-dot-media', 'hs-val-media', 'ok', 'Ready');
+        _setStatusRow('hs-dot-media', 'hs-val-media', 'ok', 'Ready — full quality');
       } else if (diag?.ffmpegAvailable) {
-        _setStatusRow('hs-dot-media', 'hs-val-media', 'warn', 'FFmpeg only');
+        _setStatusRow('hs-dot-media', 'hs-val-media', 'warn', 'Working (basic)', 'Full-quality decoding needs the helper — run the installer from Settings › Resolve Engine.');
       } else {
-        _setStatusRow('hs-dot-media', 'hs-val-media', 'warn', 'Limited');
+        _setStatusRow('hs-dot-media', 'hs-val-media', 'error', 'Needs setup', 'Run the installer from Settings › Resolve Engine to enable media decoding.');
       }
-      // Cache path
+      // Cache path — show a plain label; keep the raw path as a hover tooltip.
       if (diag?.avfBridgePath) {
         const cachePath = diag.avfBridgePath.replace(/\/[^/]+$/, '') || diag.avfBridgePath;
-        _setStatusRow('hs-dot-cache', 'hs-val-cache', 'ok', cachePath);
+        _setStatusRow('hs-dot-cache', 'hs-val-cache', 'ok', 'Ready', cachePath);
       } else {
         _setStatusRow('hs-dot-cache', 'hs-val-cache', 'idle', isMac ? '~/Library/Application Support/PostFlowX' : '—');
       }
@@ -726,6 +1261,47 @@ function _esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function _recentName(project, idx = 0) {
+  if (typeof project === 'string') return project.trim() || `Project ${idx + 1}`;
+  return String(project?.name || project?.projectName || `Project ${idx + 1}`);
+}
+
+function _setHeroProjectAction(project = null) {
+  _heroRecentProject = project || null;
+  const primary = document.getElementById('hs-btn-new-project');
+  const label = document.getElementById('hs-primary-action-label');
+  const newProject = document.getElementById('hs-btn-new-project-secondary');
+  if (!primary || !label) return;
+
+  if (!_heroRecentProject) {
+    primary.dataset.action = 'new';
+    primary.removeAttribute('title');
+    primary.setAttribute('aria-label', 'Start a new project');
+    label.textContent = 'Start a project';
+    if (newProject) newProject.hidden = true;
+    return;
+  }
+
+  const name = _recentName(_heroRecentProject);
+  primary.dataset.action = 'continue';
+  primary.title = `Continue ${name}`;
+  primary.setAttribute('aria-label', `Continue ${name}`);
+  label.textContent = `Continue ${name.length > 30 ? `${name.slice(0, 27)}…` : name}`;
+  if (newProject) newProject.hidden = false;
+}
+
+function _openHeroProject() {
+  if (!_heroRecentProject) {
+    _dispatchFromMain('NEW_PROJECT');
+    return;
+  }
+  if (typeof window.setMainTab === 'function') window.setMainTab('prepmark');
+  window.dispatchEvent(new CustomEvent('pfx:load-recent-project', {
+    detail: { project: _heroRecentProject, index: 0 },
+    bubbles: true,
+  }));
+}
+
 async function _refreshRecents() {
   const container = document.getElementById('hs-recents-list');
   if (!container) return;
@@ -742,15 +1318,21 @@ async function _refreshRecents() {
   }
 
   if (recents.length === 0) {
-    container.innerHTML = `<p class="hs-empty-state">Start by creating a project or opening an existing project.</p>`;
+    _setHeroProjectAction(null);
+    container.innerHTML = `<p class="hs-empty-state">No projects yet. Click <b>New Project</b> above to start — or open the <a href="#" id="hs-empty-setup-link">Setup Guide</a> for a quick walkthrough.</p>`;
+    const link = container.querySelector('#hs-empty-setup-link');
+    if (link) link.addEventListener('click', (e) => { e.preventDefault(); openSetupGuide(); });
     return;
   }
 
   const limited = recents.slice(0, MAX_RECENTS);
+  _setHeroProjectAction(limited[0]);
   const rows = limited.map((proj, idx) => {
-    const name = proj.name || proj.projectName || `Project ${idx + 1}`;
-    const date = _fmtDate(proj.lastOpened || proj.date || proj.updatedAt);
-    const path = proj.path || proj.folderPath || '';
+    const name = _recentName(proj, idx);
+    const date = typeof proj === 'object' && proj
+      ? _fmtDate(proj.lastOpened || proj.date || proj.updatedAt)
+      : '';
+    const path = typeof proj === 'object' && proj ? (proj.path || proj.folderPath || '') : '';
     const pathDisplay = path ? path.replace(/^.*\/([^/]+)$/, (_, tail) => `…/${tail}`) : '';
 
     return `
@@ -800,7 +1382,12 @@ function _attachHandlers() {
   // Quick action buttons
   const btnNew = document.getElementById('hs-btn-new-project');
   if (btnNew) {
-    btnNew.addEventListener('click', () => _dispatchFromMain('NEW_PROJECT'));
+    btnNew.addEventListener('click', () => _openHeroProject());
+  }
+
+  const btnNewSecondary = document.getElementById('hs-btn-new-project-secondary');
+  if (btnNewSecondary) {
+    btnNewSecondary.addEventListener('click', () => _dispatchFromMain('NEW_PROJECT'));
   }
 
   const btnOpen = document.getElementById('hs-btn-open-project');
@@ -832,6 +1419,21 @@ function _attachHandlers() {
     btnTlConvert.addEventListener('click', () =>
       window.dispatchEvent(new CustomEvent('pfx:open-tl-convert'))
     );
+  }
+
+  const btnSetupGuide = document.getElementById('hs-btn-setup-guide');
+  if (btnSetupGuide) {
+    btnSetupGuide.addEventListener('click', () => openSetupGuide());
+  }
+
+  const btnStatusFix = document.getElementById('hs-status-fix');
+  if (btnStatusFix) {
+    btnStatusFix.addEventListener('click', () => openSetupGuide());
+  }
+
+  const btnTour = document.getElementById('hs-btn-tour');
+  if (btnTour) {
+    btnTour.addEventListener('click', () => startTour());
   }
 
   // PostFlowX Site button
@@ -915,6 +1517,11 @@ function initHomeScreen() {
   _attachHandlers();
   _renderBuildStamp();
   onHomeScreenActivated();
+
+  // Onboarding: the interactive tour is the first-run experience; the Setup Guide
+  // is available on demand (its button + the tour's final CTA open it).
+  try { initOnboarding(); } catch (e) { console.warn('[homeScreen] onboarding init failed', e); }
+  try { initAppTour(); } catch (e) { console.warn('[homeScreen] app tour init failed', e); }
 }
 
 /**
@@ -923,6 +1530,18 @@ function initHomeScreen() {
  * Safe to call multiple times (idempotent).
  */
 function onHomeScreenActivated() {
+  // Live-update the Resolve row when status changes while Home is visible.
+  // Bind once for the lifetime of the module.
+  if (!_hsResolveSub) {
+    _hsResolveSub = true;
+    document.addEventListener('pfx:resolve-status', () => {
+      // Only refresh when Home is actually mounted/visible — avoids a perpetual
+      // wasted diagnostics IPC on every heartbeat while other tabs are active.
+      const home = document.getElementById('main-home');
+      if (!home || home.style.display === 'none' || !home.offsetParent) return;
+      try { _refreshStatus(); } catch {}
+    });
+  }
   _refreshStatus().catch(err => {
     console.warn('[homeScreen] status refresh error', err);
   });

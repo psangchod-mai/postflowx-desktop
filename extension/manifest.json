@@ -1,7 +1,7 @@
 {
   "name": "PostFlowX",
   "description": "Timeline Convert cross-format bridge with EDL, OTIO, FCPXML, FCPXMLD, FCP7 XML, AAFXML, and AAF import support.",
-  "version": "2026.6.1",
+  "version": "2026.8.1",
   "manifest_version": 3,
   "icons": {
     "16": "assets/icons/app_icon_16.png",
@@ -51,6 +51,7 @@
     "https://drive.usercontent.google.com/*",
     "https://docs.google.com/*",
     "https://api.postflowx.com/*",
+    "https://posit-connect.prod.netflix.net/*",
     "https://*/*",
     "http://127.0.0.1/*",
     "wss://www.google.com/*",
@@ -59,7 +60,7 @@
     "https://api.anthropic.com/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; frame-src 'self' https: http://127.0.0.1:*; child-src 'self' https: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src 'self' blob: http://127.0.0.1:* https://script.google.com https://script.googleusercontent.com https://tfhub.dev https://storage.googleapis.com https://*.googleapis.com https://*.supabase.co https://accounts.google.com https://api.postflowx.com https://www.google.com wss://www.google.com wss://*.google.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://unpkg.com https://raw.githubusercontent.com https://api.anthropic.com",
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; frame-src 'self' https: http://127.0.0.1:*; child-src 'self' https: http://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; connect-src 'self' blob: http://127.0.0.1:* https://script.google.com https://script.googleusercontent.com https://tfhub.dev https://storage.googleapis.com https://*.googleapis.com https://*.supabase.co https://accounts.google.com https://api.postflowx.com https://posit-connect.prod.netflix.net https://www.google.com wss://www.google.com wss://*.google.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://unpkg.com https://raw.githubusercontent.com https://api.anthropic.com",
     "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; child-src 'self'; object-src 'self'"
   },
   "short_name": "PostFlowX",

@@ -587,6 +587,38 @@ def _find_ffmpeg() -> str | None:
     return _resource_bin("ffmpeg")
 
 
+def _preview_h264_args(ffmpeg_path: str) -> list[str]:
+    """Return H.264 encoder args supported by the selected FFmpeg build.
+
+    The production bundle intentionally ships a small FFmpeg build with
+    VideoToolbox but without libx264.  Passing libx264-only options such as
+    ``-preset`` makes every ProRes preview fail before encoding starts.  Prefer
+    libx264 when it is actually present (development/Homebrew builds), otherwise
+    use the bundled macOS VideoToolbox encoder.
+    """
+    try:
+        probe = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        encoders = f"{probe.stdout}\n{probe.stderr}"
+    except Exception:
+        encoders = ""
+
+    if " libx264 " in encoders:
+        return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
+    if " h264_videotoolbox " in encoders:
+        return [
+            "-c:v", "h264_videotoolbox",
+            "-b:v", "5M",
+            "-allow_sw", "1",
+            "-realtime", "0",
+        ]
+    return ["-c:v", "h264"]
+
+
 def _find_ffprobe(ffmpeg_path: str | None = None) -> str | None:
     # A sibling next to a resolved ffmpeg wins (keeps bundled ffmpeg + ffprobe paired).
     if ffmpeg_path:
@@ -2783,14 +2815,16 @@ def build_preview_proxy(session_id: str, media_path: str, ffmpeg_path: str,
     # scale to max 1280 wide, preserve aspect, yuv420p for universal browser compat
     vf = "scale='min(1280,iw)':-2:flags=lanczos,format=yuv420p"
 
+    h264_args = _preview_h264_args(ffmpeg_path)
+    preview_pix_fmt = 'nv12' if 'h264_videotoolbox' in h264_args else 'yuv420p'
     cmd = [
         ffmpeg_path, '-y',
         '-i', str(path),
         '-map', '0:v:0',   # explicit first video stream; avoids "no output stream" on MXF
         '-an',             # no audio — preview proxy is video-only
         '-vf', vf,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-        '-pix_fmt', 'yuv420p',   # force 8-bit YUV so all browsers can decode
+        *h264_args,
+        '-pix_fmt', preview_pix_fmt,  # force browser-decodable 8-bit video
         '-movflags', '+faststart',
         '-f', 'mp4',
         str(tmp_path),

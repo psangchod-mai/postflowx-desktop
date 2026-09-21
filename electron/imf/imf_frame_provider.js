@@ -416,6 +416,50 @@ async function _requestFrameUncoalesced(args) {
       }
       log.push(`htj2k: ${r.error || r.code}`);
     }
+    // ── Metal HTJ2K native decoder (feature-flagged, default OFF) ────────────
+    // When PFX_IMF_METAL_HTJ2K is set AND the native Metal helper is available,
+    // extract the raw .j2c and decode it to interleaved samples on the GPU, then
+    // attach the samples to the UNSUPPORTED_HTJ2K response (renderer presents them
+    // directly, skipping WASM). On ANY error / unavailable / CAP-absent (Part-1,
+    // e.g. Meridian => NOT_HTJ2K) this falls through to the existing path below,
+    // so the flag-OFF (and failure) behaviour is byte-identical to before.
+    if (process.env.PFX_IMF_METAL_HTJ2K && ffAvail) {
+      try {
+        const metal = require('./imf_metal_htj2k_backend');
+        const mAvail = await metal.checkAvailability();
+        if (mAvail.any) {
+          const rawBuf = await htj2kBackend.extractRawCodestream(mxfPath, mxfFrame, probe);
+          if (rawBuf && rawBuf.length > 16) {
+            const os = require('os');
+            const tmpJ2C = require('path').join(os.tmpdir(), `pfx_metal_${Date.now()}_${mxfFrame}.j2c`);
+            fs.writeFileSync(tmpJ2C, rawBuf);
+            let dec;
+            // Map the renderer preview-scale ladder (lowres reduce-level) to the
+            // decoder's --skip level: reduced-res is the realtime lever and is
+            // bit-exact vs `ojph_expand -skip_res N` in the harness.
+            try { dec = await metal.decodeCodestream(tmpJ2C, { skip: (lowres | 0) }); }
+            finally { try { fs.unlinkSync(tmpJ2C); } catch {} }
+            if (dec && dec.ok) {
+              log.push(`metal-htj2k: decoded ${dec.width}x${dec.height} ${dec.pixelsType} on GPU`);
+              return {
+                ok: false, code: 'UNSUPPORTED_HTJ2K',        // reuse the renderer seam
+                error: 'HTJ2K decoded by native Metal helper (samples attached)',
+                samplesB64: dec.samples.toString('base64'),  // pre-decoded interleaved samples
+                metalFrameInfo: {
+                  width: dec.width, height: dec.height, componentCount: dec.componentCount,
+                  bitsPerSample: dec.bitsPerSample, isSigned: dec.isSigned,
+                  pixelsType: dec.pixelsType, sampleLayout: dec.sampleLayout,
+                },
+                frameInfo: { ...frameInfo, backend: 'metal-htj2k', codec: probe.codec_name },
+                probeInfo: probe, attemptedBackends, log,
+              };
+            }
+            log.push(`metal-htj2k: ${dec?.code || 'failed'} — falling back`);
+          }
+        }
+      } catch (e) { log.push(`metal-htj2k: error ${e.message} — falling back`); }
+    }
+
     // HTJ2K and no main-process decoder — try to extract raw codestream bytes
     // so the renderer's WASM HTJ2K decoder (OpenJPH WASM) can handle the frame.
     // ffmpeg -c:v copy works WITHOUT any HTJ2K decoder, so this is always possible

@@ -172,8 +172,11 @@ export async function nativeOpenFile(path) {
   return _sendNativeCmd('openFile', { path }, 30000);
 }
 
-export async function nativeBuildMediaProxy(assetId) {
-  return _sendNativeCmd('buildMediaProxy', { assetId }, 15000);
+export async function nativeBuildMediaProxy(assetId, options = {}) {
+  return _sendNativeCmd('buildMediaProxy', {
+    assetId,
+    ...(options?.path ? { path: options.path } : {}),
+  }, 15000);
 }
 
 export async function nativeExportQtFullTimeline(options = {}) {

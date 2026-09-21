@@ -5145,6 +5145,7 @@ const UI_DICT_ROWS = {
   "Clip order": ["클립 순서", "クリップの並び順", "片段順序", "ลำดับคลิป", "Urutan klip", "Pagkakasunod ng clip"],
   "Close clear memory dialog": ["메모리 정리 창 닫기", "メモリクリアのダイアログを閉じる", "關閉清除記憶體對話框", "ปิดหน้าต่างล้างหน่วยความจำ", "Tutup dialog bersihkan memori", "Isara ang dialog ng clear memory"],
   "Compare modes": ["비교 모드", "比較モード", "比較模式", "โหมดเปรียบเทียบ", "Mode perbandingan", "Mga mode ng paghahambing"],
+  "Conversion summary": ["변환 요약", "変換の概要", "轉換摘要", "สรุปการแปลง", "Ringkasan konversi", "Buod ng conversion"],
   "Composition playlist (CPL)": ["컴포지션 플레이리스트(CPL)", "コンポジションプレイリスト（CPL）", "合成播放清單（CPL）", "เพลย์ลิสต์คอมโพสิชัน (CPL)", "Playlist komposisi (CPL)", "Playlist ng komposisyon (CPL)"],
   "Current item": ["현재 항목", "現在の項目", "目前項目", "รายการปัจจุบัน", "Item saat ini", "Kasalukuyang item"],
   "Current job": ["현재 작업", "現在のジョブ", "目前工作", "งานปัจจุบัน", "Pekerjaan saat ini", "Kasalukuyang trabaho"],
@@ -5152,6 +5153,7 @@ const UI_DICT_ROWS = {
   "Difficulty": ["난이도", "難易度", "難度", "ระดับความยาก", "Tingkat kesulitan", "Antas ng hirap"],
   "Dismiss": ["닫기", "閉じる", "關閉", "ปิด", "Tutup", "Isara"],
   "Export preview": ["내보내기 미리보기", "書き出しプレビュー", "匯出預覽", "ดูตัวอย่างการส่งออก", "Pratinjau ekspor", "Preview ng export"],
+  "Generated export preview": ["생성된 내보내기 미리보기", "生成された書き出しプレビュー", "已產生的匯出預覽", "ตัวอย่างไฟล์ส่งออกที่สร้างแล้ว", "Pratinjau ekspor yang dibuat", "Preview ng nabuong export"],
   "Filter clips": ["클립 필터", "クリップを絞り込む", "篩選片段", "กรองคลิป", "Saring klip", "Salain ang mga clip"],
   "Filter labels by group": ["그룹으로 라벨 필터", "グループでラベルを絞り込む", "依群組篩選標籤", "กรองป้ายกำกับตามกลุ่ม", "Saring label menurut grup", "Salain ang mga label ayon sa grupo"],
   "Filter labels by status": ["상태로 라벨 필터", "ステータスでラベルを絞り込む", "依狀態篩選標籤", "กรองป้ายกำกับตามสถานะ", "Saring label menurut status", "Salain ang mga label ayon sa status"],
@@ -5163,9 +5165,11 @@ const UI_DICT_ROWS = {
   "How to Use language": ["사용법 언어", "使い方の言語", "使用說明語言", "ภาษาของวิธีใช้", "Bahasa cara pakai", "Wika ng paano gamitin"],
   "IAB label QC": ["IAB 라벨 QC", "IAB ラベル QC", "IAB 標籤 QC", "ตรวจสอบป้ายกำกับ IAB", "QC label IAB", "QC ng IAB label"],
   "Interactive player reference": ["인터랙티브 플레이어 참조", "インタラクティブなプレーヤーリファレンス", "互動式播放器參考", "คู่มืออ้างอิงเพลเยอร์แบบโต้ตอบ", "Referensi pemutar interaktif", "Interaktibong sanggunian ng player"],
+  "Import workflow": ["가져오기 워크플로", "読み込みワークフロー", "匯入工作流程", "ขั้นตอนการนำเข้า", "Alur kerja impor", "Workflow ng pag-import"],
   "Jump to end": ["끝으로 이동", "最後へ移動", "跳至結尾", "ไปที่ท้ายสุด", "Lompat ke akhir", "Tumalon sa dulo"],
   "Jump to start": ["처음으로 이동", "先頭へ移動", "跳至開頭", "ไปที่จุดเริ่มต้น", "Lompat ke awal", "Tumalon sa simula"],
   "Markers How to Use": ["마커 사용법", "マーカーの使い方", "標記使用說明", "วิธีใช้มาร์กเกอร์", "Cara pakai Markers", "Paano gamitin ang Markers"],
+  "More shot filters": ["추가 샷 필터", "その他のショットフィルター", "更多鏡頭篩選", "ตัวกรองช็อตเพิ่มเติม", "Filter shot lainnya", "Iba pang filter ng shot"],
   "Mix": ["믹스", "ミックス", "混音", "มิกซ์", "", ""],
   "Mute audio": ["음소거", "ミュート", "靜音", "ปิดเสียง", "Bisukan audio", "I-mute ang audio"],
   "Navigation pod": ["내비게이션 패널", "ナビゲーションパネル", "導覽面板", "แผงนำทาง", "Panel navigasi", "Panel ng nabigasyon"],
@@ -5177,6 +5181,8 @@ const UI_DICT_ROWS = {
   "Prev marker": ["이전 마커", "前のマーカー", "上一個標記", "มาร์กเกอร์ก่อนหน้า", "Marker sebelumnya", "Nakaraang marker"],
   "Proxy mode": ["프록시 모드", "プロキシモード", "代理模式", "โหมดพร็อกซี", "Mode proxy", "Proxy na mode"],
   "Pull Prep How to Use": ["Pull Prep 사용법", "Pull Prep の使い方", "Pull Prep 使用說明", "วิธีใช้ Pull Prep", "Cara pakai Pull Prep", "Paano gamitin ang Pull Prep"],
+  "Pull Prep smart command deck": ["Pull Prep 스마트 명령 모음", "Pull Prep スマートコマンドデッキ", "Pull Prep 智慧指令列", "แถบคำสั่งอัจฉริยะ Pull Prep", "Panel perintah pintar Pull Prep", "Smart command deck ng Pull Prep"],
+  "Pull Prep workflow": ["Pull Prep 워크플로", "Pull Prep ワークフロー", "Pull Prep 工作流程", "ขั้นตอนงาน Pull Prep", "Alur kerja Pull Prep", "Workflow ng Pull Prep"],
   "Reel name source": ["릴 이름 소스", "リール名のソース", "卷名來源", "แหล่งชื่อรีล", "Sumber nama reel", "Pinagmulan ng reel name"],
   "Render views": ["렌더 뷰", "レンダービュー", "算圖檢視", "มุมมองเรนเดอร์", "Tampilan render", "Mga render view"],
   "Resolution preset": ["해상도 프리셋", "解像度プリセット", "解析度預設", "พรีเซ็ตความละเอียด", "Preset resolusi", "Preset ng resolusyon"],
@@ -5194,6 +5200,7 @@ const UI_DICT_ROWS = {
   "Snake game": ["스네이크 게임", "スネークゲーム", "貪食蛇遊戲", "เกมงู", "Gim ular", "Larong ahas"],
   "Step back 1 frame": ["1 프레임 뒤로", "1 フレーム戻る", "後退 1 影格", "ถอยหลัง 1 เฟรม", "Mundur 1 frame", "Umatras ng 1 frame"],
   "Step forward 1 frame": ["1 프레임 앞으로", "1 フレーム進む", "前進 1 影格", "เดินหน้า 1 เฟรม", "Maju 1 frame", "Sumulong ng 1 frame"],
+  "Supported timeline formats": ["지원되는 타임라인 형식", "対応タイムライン形式", "支援的時間軸格式", "รูปแบบไทม์ไลน์ที่รองรับ", "Format timeline yang didukung", "Mga suportadong timeline format"],
   "Timeline Convert How to Use": ["Timeline Convert 사용법", "Timeline Convert の使い方", "Timeline Convert 使用說明", "วิธีใช้ Timeline Convert", "Cara pakai Timeline Convert", "Paano gamitin ang Timeline Convert"],
   "Timeline view": ["타임라인 보기", "タイムライン表示", "時間軸檢視", "มุมมองไทม์ไลน์", "Tampilan timeline", "Tanawin ng timeline"],
   "Toggle VFX Pull view": ["VFX Pull 보기 전환", "VFX Pull 表示を切り替え", "切換 VFX Pull 檢視", "สลับมุมมอง VFX Pull", "Alihkan tampilan VFX Pull", "Palitan ang VFX Pull view"],
@@ -5204,6 +5211,13 @@ const UI_DICT_ROWS = {
   "Volume": ["볼륨", "音量", "音量", "ระดับเสียง", "", "Lakas ng tunog"],
   "Wipe position": ["와이프 위치", "ワイプ位置", "擦除位置", "ตำแหน่งไวป์", "Posisi wipe", "Posisyon ng wipe"],
   "Workspace tabs": ["작업 공간 탭", "ワークスペースのタブ", "工作區分頁", "แท็บพื้นที่ทำงาน", "Tab ruang kerja", "Mga workspace tab"],
+  "Workspace view": ["작업 공간 보기", "ワークスペース表示", "工作區檢視", "มุมมองพื้นที่ทำงาน", "Tampilan ruang kerja", "Tanawin ng workspace"],
+  "Workflow progress": ["워크플로 진행률", "ワークフローの進捗", "工作流程進度", "ความคืบหน้าของขั้นตอนงาน", "Kemajuan alur kerja", "Progreso ng workflow"],
+  "Resize Shot List": ["샷 목록 크기 조절", "ショットリストのサイズを変更", "調整鏡頭清單大小", "ปรับขนาดรายการช็อต", "Ubah ukuran Daftar Shot", "Baguhin ang laki ng Shot List"],
+  "Selected VFX shot control": ["선택한 VFX 샷 제어", "選択した VFX ショットの管理", "所選 VFX 鏡頭控制", "การควบคุมช็อต VFX ที่เลือก", "Kontrol shot VFX terpilih", "Kontrol ng napiling VFX shot"],
+  "Shot list filter": ["샷 목록 필터", "ショットリストのフィルター", "鏡頭清單篩選", "ตัวกรองรายการช็อต", "Filter daftar shot", "Filter ng shot list"],
+  "Smart VFX Editor overview": ["스마트 VFX 에디터 개요", "スマート VFX エディター概要", "智慧 VFX 剪輯概覽", "ภาพรวม Smart VFX Editor", "Ringkasan Smart VFX Editor", "Pangkalahatang-ideya ng Smart VFX Editor"],
+  "VFX shot queue summary": ["VFX 샷 대기열 요약", "VFX ショットキューの概要", "VFX 鏡頭佇列摘要", "สรุปคิวช็อต VFX", "Ringkasan antrean shot VFX", "Buod ng pila ng VFX shot"],
   "mines remaining": ["남은 지뢰", "残りの地雷", "剩餘地雷", "ทุ่นระเบิดที่เหลือ", "sisa ranjau", "natitirang mina"],
   "time elapsed": ["경과 시간", "経過時間", "經過時間", "เวลาที่ผ่านไป", "waktu berlalu", "lumipas na oras"],
   // --- placeholder ---
@@ -5220,6 +5234,7 @@ const UI_DICT_ROWS = {
   "Search checks…": ["검사 항목 검색…", "チェック項目を検索…", "搜尋檢查項目…", "ค้นหารายการตรวจสอบ…", "Cari pemeriksaan…", "Maghanap ng check…"],
   "Search projects…": ["프로젝트 검색…", "プロジェクトを検索…", "搜尋專案…", "ค้นหาโปรเจกต์…", "Cari proyek…", "Maghanap ng proyekto…"],
   "Search shot name…": ["샷 이름 검색…", "ショット名を検索…", "搜尋鏡頭名稱…", "ค้นหาชื่อช็อต…", "Cari nama shot…", "Maghanap ng shot name…"],
+  "Search shots, reels, timecode…": ["샷, 릴, 타임코드 검색…", "ショット、リール、タイムコードを検索…", "搜尋鏡頭、卷名、時間碼…", "ค้นหาช็อต รีล หรือไทม์โค้ด…", "Cari shot, reel, timecode…", "Maghanap ng shot, reel, timecode…"],
   "name / vendor / team": ["이름 / 벤더 / 팀", "名前 / ベンダー / チーム", "名稱 / 廠商 / 團隊", "ชื่อ / ผู้ให้บริการ / ทีม", "nama / vendor / tim", "pangalan / vendor / koponan"],
   // --- visualQcModal progress narration (iteration 29) ---
   "Preparing…": ["준비 중…", "準備中…", "準備中…", "กำลังเตรียม…", "Menyiapkan…", "Naghahanda…"],
@@ -5359,6 +5374,10 @@ export function setLang(lang){
   const v = normLang(lang);
   localStorage.setItem(STORAGE_KEY, v);
   applyI18n(v);
+  // Dynamic workspace summaries interpolate counts before they reach the DOM,
+  // so the text walker cannot translate them after the fact. Give those
+  // components one stable signal to re-render their semantic model in place.
+  try{ window.dispatchEvent(new CustomEvent('pfx:languagechange', { detail: { lang: v } })); }catch{}
 }
 
 export function t(str, langOverride){

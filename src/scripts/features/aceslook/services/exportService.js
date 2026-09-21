@@ -217,7 +217,7 @@ export function exportSummary(state) {
     );
   }
 
-  if (state.lookStack.length > 0) {
+  if ((state.lookStack || []).length > 0) {
     lines.push('', HR, '  LOOK STACK', HR);
     state.lookStack.forEach((l, i) => {
       const status = l.enabled ? 'ACTIVE' : 'SKIP ';

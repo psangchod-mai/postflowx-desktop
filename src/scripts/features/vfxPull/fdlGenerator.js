@@ -56,10 +56,11 @@ function _computeBasicScale(sourceResStr, refResStr) {
  */
 function _csvCell(val) {
   const s = val === null || val === undefined ? '' : String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-    return '"' + s.replace(/"/g, '""') + '"';
+  const cell = /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+  if (cell.includes(',') || cell.includes('"') || cell.includes('\n') || cell.includes('\r')) {
+    return '"' + cell.replace(/"/g, '""') + '"';
   }
-  return s;
+  return cell;
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────

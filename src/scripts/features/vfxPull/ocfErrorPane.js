@@ -44,6 +44,7 @@ const _STAGE_LABELS = {
   project: 'Resolve busy',
   media_pool: 'Resolve busy',
   validation: 'No source',
+  resolve_retry: 'Retry Preview',
   helper_outdated: 'Update helper',
   exception: 'decode error',
   unknown: 'decode error',

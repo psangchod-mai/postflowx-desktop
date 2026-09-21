@@ -415,7 +415,10 @@
       params:         { fmt: pFmt, stem: pStem, module: pMod },
       lastDownloadId: null,
       status:         'pending',
-      priority:       0,
+      // Queue UI is binary (normal vs high) — the toggle/badge only handle
+      // priority 1, so clamp any caller-supplied priority (e.g. qcHub's 5) to
+      // 0/1 so it's representable and the High-Priority toggle stays consistent.
+      priority:       (Number(params.priority) || 0) > 0 ? 1 : 0,
       phase:          null,
       statusText:     null,
       currentFrame:   0,

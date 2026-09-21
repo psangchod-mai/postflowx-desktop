@@ -1477,13 +1477,17 @@ const PLUGFEST_TESTS = [
     description: 'PKL/CPL references an MXF that is not present in ASSETMAP or file listing',
     run(pkg) {
       if (!pkg?.fileMap || !pkg?.pkl) return { status: 'skip', detail: 'fileMap or PKL not available' };
-      const fileKeys = new Set(Object.keys(pkg.fileMap).map(k => k.toLowerCase()));
+      // pkg.fileMap is a Map (buildRelinkFileMap), so Object.keys() would return []
+      // and flag every MXF as missing (false-FAIL). Read the Map's real keys;
+      // stay tolerant of a plain-object fileMap just in case.
+      const _fmKeys = pkg.fileMap instanceof Map ? Array.from(pkg.fileMap.keys()) : Object.keys(pkg.fileMap || {});
+      const fileKeys = new Set(_fmKeys.map(k => String(k).toLowerCase()));
       const missing = [];
       for (const [id, asset] of Object.entries(pkg.pkl.assets || {})) {
-        if (!asset.path) continue;
-        const filename = asset.path.split('/').pop().toLowerCase();
-        if (filename.endsWith('.mxf') && !fileKeys.has(filename)) {
-          missing.push(filename);
+        const fname = String(asset.file || '').split('/').pop().toLowerCase();
+        if (!fname) continue; // OriginalFileName optional — cannot resolve by name
+        if (fname.endsWith('.mxf') && !fileKeys.has(fname)) {
+          missing.push(fname);
         }
       }
       if (missing.length === 0) return { status: 'pass', detail: 'All PKL MXF references resolved' };
@@ -1676,8 +1680,10 @@ function _labelResultsToValidation() {
   ];
   if (counts.reject > 0) {
     results.push({ sev: SEV.WARN, code: 'AUD004', msg: `${counts.reject} IAB group label(s) need renaming`, detail: 'Open the Labels tab to review REJECT rows and suggested fixes.' });
-  } else {
+  } else if (counts.pass > 0) {
     results.push({ sev: SEV.PASS, code: 'AUD004', msg: 'All actionable IAB group labels mapped to recognized groups', detail: `${counts.pass} pass · ${counts.warn} ignored technical/programme/channel labels` });
+  } else {
+    results.push({ sev: SEV.WARN, code: 'AUD004', msg: 'No Dialogue/Music/Effects/Narration group labels found in ADM', detail: `The embedded ADM exposed ${counts.total} label candidate(s) but none were actionable audioObject/audioContent group labels to verify.` });
   }
   if (counts.warn > 0) {
     results.push({ sev: SEV.INFO, code: 'AUD005', msg: `${counts.warn} technical/programme label(s) were ignored by group-label QC`, detail: 'These are usually audioProgramme, audioPackFormat, or audioTrackFormat identifiers.' });

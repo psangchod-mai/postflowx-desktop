@@ -9,8 +9,11 @@
 /** Append ?token= to a companion URL (idempotent; no-op without url/token). */
 export function tokenizeCompanionUrl(url, token) {
   if (!url || !token) return url;
-  if (/[?&]token=/.test(url)) return url;           // already tokenized
-  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+  const hashIdx = url.indexOf('#');
+  const base = hashIdx >= 0 ? url.slice(0, hashIdx) : url;
+  const frag = hashIdx >= 0 ? url.slice(hashIdx) : '';
+  if (/[?&]token=/.test(base)) return url;           // already tokenized (query only)
+  return `${base}${base.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}${frag}`;
 }
 
 /** Header object carrying the companion token, merged onto any caller headers. */

@@ -364,7 +364,7 @@ self.onmessage = async (event) => {
     // Scan the first component/plane which is Y (YUV) or R (RGB) — good
     // enough for a peak-nits estimate without full decode.
     let frameMaxNits = 0;
-    if (data.transfer && /PQ|2084/i.test(data.transfer) && pixels.length > 0) {
+    if (data.needScope !== false && data.transfer && /PQ|2084/i.test(data.transfer) && pixels.length > 0) {
       const bps  = data.bitsPerSample || 8;
       const pqFullRange = Math.max(1, (1 << bps) - 1);
       // For YUV limited-range: Y is in [16*s, 235*s] where s = 1<<(bps-8)

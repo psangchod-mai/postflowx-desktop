@@ -9,6 +9,8 @@ to stdout. All logs go to stderr (captured by native_router.js and written to
 Supported actions:
   status              — Check Resolve installation / scripting connectivity
   extractStillFrame   — Import OCF, create temp timeline, render one JPEG frame
+  renderOcfProxy      — Import OCF, render the full HdlSt→HdlEnd range to a cached
+                        H.264 .mp4 proxy (kept on disk) so the OCF pane can scrub it
 """
 
 import sys
@@ -16,6 +18,7 @@ import os
 import json
 import time
 import base64
+import hashlib
 import logging
 import traceback
 import tempfile
@@ -407,6 +410,297 @@ def _do_extract(resolve, ocf_path: str, source_tc: str, source_frame,
     }
 
 
+# ── Action: renderOcfProxy ───────────────────────────────────────────────────
+
+def _proxy_cache_key(ocf_path: str, hdl_st_tc: str, hdl_end_tc: str,
+                     width: int, fps: float) -> str:
+    """Deterministic cache filename stem for a full-range proxy render."""
+    raw = f'{ocf_path}|{hdl_st_tc}|{hdl_end_tc}|{int(width)}|{round(float(fps), 3)}'
+    return 'pfx_ocfproxy_' + hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]
+
+
+def handle_render_ocf_proxy(cmd: dict) -> dict:
+    """Render the FULL HdlSt→HdlEnd range of a camera-RAW OCF to a single cached
+    H.264 .mp4 (kept on disk, NOT deleted). The mp4 is the deliverable — the OCF
+    pane loads it into a <video> so the whole shot scrubs/plays. Always native
+    (100%) frames; editorial retime is applied at playback by the renderer."""
+    ocf_path   = str(cmd.get('ocfPath') or cmd.get('filePath') or '').strip()
+    hdl_st_tc  = str(cmd.get('hdlStTc')  or '').strip()
+    hdl_end_tc = str(cmd.get('hdlEndTc') or '').strip()
+    start_tc   = str(cmd.get('sourceStartTc') or cmd.get('clipStartTc') or '').strip()
+    output_w   = int(cmd.get('outputWidth') or 960)
+    cache_dir  = str(cmd.get('cacheDir') or tempfile.gettempdir())
+    req_fps    = float(cmd.get('fps') or 0) or 0.0
+
+    if not ocf_path:
+        return {'ok': False, 'error': 'ocfPath is required.', 'stage': 'validate'}
+    if not os.path.exists(ocf_path):
+        return {'ok': False, 'stage': 'import_media',
+                'error': f'OCF file not found: {os.path.basename(ocf_path)}',
+                'details': {'fileExists': False, 'ocfPath': ocf_path}}
+    if not (hdl_st_tc and hdl_end_tc):
+        return {'ok': False, 'error': 'hdlStTc and hdlEndTc are required.', 'stage': 'validate'}
+
+    resolve = _load_resolve()
+    if resolve is None:
+        return {'ok': False, 'stage': 'connect',
+                'error': 'Resolve is not running or scripting API is unavailable.',
+                'requiresResolve': True, 'resolveAvailable': False,
+                'decoder': 'Unsupported', 'extractor': 'resolve'}
+
+    try:
+        return _do_render_proxy(resolve, ocf_path, hdl_st_tc, hdl_end_tc, start_tc,
+                                output_w, cache_dir, req_fps)
+    except Exception as e:
+        log.error('renderOcfProxy error: %s\n%s', str(e), traceback.format_exc())
+        return {'ok': False, 'stage': 'exception', 'error': str(e)}
+
+
+def _do_render_proxy(resolve, ocf_path: str, hdl_st_tc: str, hdl_end_tc: str,
+                     start_tc: str, output_width: int, cache_dir: str,
+                     req_fps: float) -> dict:
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return {'ok': False, 'stage': 'connect', 'error': 'GetProjectManager() returned None.'}
+
+    SCRATCH = 'PostFlowX_Preview_Temp'
+    project = pm.GetCurrentProject()
+    if not project or project.GetName() != SCRATCH:
+        loaded = pm.LoadProject(SCRATCH)
+        if not loaded:
+            project = pm.CreateProject(SCRATCH)
+            if not project:
+                return {'ok': False, 'stage': 'project',
+                        'error': f'Could not create project "{SCRATCH}".'}
+        else:
+            project = pm.GetCurrentProject()
+    if not project:
+        return {'ok': False, 'stage': 'project', 'error': 'No project available.'}
+
+    try:
+        if project.IsRenderingInProgress():
+            project.StopRendering()
+        project.DeleteAllRenderJobs()
+    except Exception:
+        pass
+
+    media_pool = project.GetMediaPool()
+
+    target_clip = None
+    try:
+        for clip in (media_pool.GetRootFolder().GetClipList() or []):
+            try:
+                if clip.GetClipProperty('File Path') == ocf_path:
+                    target_clip = clip
+                    break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if not target_clip:
+        log.info('Importing %s', ocf_path)
+        imported = media_pool.ImportMedia([ocf_path])
+        if not imported:
+            return {'ok': False, 'stage': 'import_media',
+                    'error': f'Resolve could not import: {os.path.basename(ocf_path)}'}
+        target_clip = imported[0]
+
+    try:
+        fps = float(target_clip.GetClipProperty('FPS') or 24)
+    except Exception:
+        fps = 24.0
+    if req_fps > 0:
+        fps = req_fps
+
+    # Free-run OCF: make the requested HdlSt/HdlEnd TC RELATIVE to the clip's own
+    # Start TC (same logic as _do_extract), preferring a caller-supplied start TC.
+    clip_start_tc = start_tc
+    if not clip_start_tc:
+        try:
+            clip_start_tc = target_clip.GetClipProperty('Start TC') or ''
+        except Exception:
+            clip_start_tc = ''
+
+    try:
+        total_frames = max(1, int(target_clip.GetClipProperty('Frames') or 1))
+    except Exception:
+        total_frames = 1
+
+    if clip_start_tc and ':' in clip_start_tc:
+        base = _tc_to_frame(clip_start_tc, fps)
+    else:
+        base = 0
+    # ABSOLUTE source-TC frames (free-run embedded TC); these are what the renderer's
+    # _pfxPlrProxyTimeAt/_pfxPlrRecToSrc operate in, so hdlStFrame/hdlEndFrame are
+    # returned in THIS domain (no base subtraction).
+    hdl_st_abs  = _tc_to_frame(hdl_st_tc,  fps)
+    hdl_end_abs = _tc_to_frame(hdl_end_tc, fps)
+    # CLIP-RELATIVE frames — only for AppendToTimeline startFrame/endFrame, which are
+    # relative to the clip's own Start TC.
+    hdl_st_f  = max(0, min(hdl_st_abs  - base, total_frames - 1))
+    hdl_end_f = max(0, min(hdl_end_abs - base, total_frames - 1))
+    if hdl_end_f < hdl_st_f:
+        hdl_st_f, hdl_end_f = hdl_end_f, hdl_st_f
+    if hdl_end_abs < hdl_st_abs:
+        hdl_st_abs, hdl_end_abs = hdl_end_abs, hdl_st_abs
+    log.info('Proxy range: %d..%d (abs %d..%d startTC=%s fps=%.3f total=%d)',
+             hdl_st_f, hdl_end_f, hdl_st_abs, hdl_end_abs, clip_start_tc or '?', fps, total_frames)
+
+    # ── Cache: return an existing fresh proxy without re-rendering ────────────
+    os.makedirs(cache_dir, exist_ok=True)
+    key = _proxy_cache_key(ocf_path, hdl_st_tc, hdl_end_tc, output_width, fps)
+
+    def _find_cached():
+        try:
+            ocf_mtime = os.path.getmtime(ocf_path)
+        except Exception:
+            ocf_mtime = 0
+        for fname in os.listdir(cache_dir):
+            if fname.startswith(key) and fname.lower().endswith(('.mp4', '.mov')):
+                fp = os.path.join(cache_dir, fname)
+                try:
+                    if os.path.getsize(fp) > 1024 and os.path.getmtime(fp) >= ocf_mtime:
+                        return fp
+                except Exception:
+                    pass
+        return None
+
+    # Output dimensions from the clip aspect.
+    try:
+        res_str = target_clip.GetClipProperty('Resolution') or ''
+        if 'x' in res_str:
+            ow, oh = map(int, res_str.split('x'))
+            output_height = max(2, int(output_width * oh / max(1, ow)))
+        else:
+            output_height = int(output_width * 9 / 16)
+    except Exception:
+        output_height = int(output_width * 9 / 16)
+    output_height -= output_height % 2   # H.264 needs even dimensions
+
+    frame_count = hdl_end_f - hdl_st_f + 1
+
+    cached = _find_cached()
+    if cached:
+        log.info('Proxy cache hit: %s', cached)
+        return {'ok': True, 'proxyPath': cached, 'fps': fps, 'frameCount': frame_count,
+                'hdlStFrame': hdl_st_abs, 'hdlEndFrame': hdl_end_abs,
+                'hdlStClipFrame': hdl_st_f, 'hdlEndClipFrame': hdl_end_f,
+                'proxyWidth': output_width, 'proxyHeight': output_height,
+                'clipStartTc': clip_start_tc, 'cached': True,
+                'stage': 'complete', 'decoder': 'Resolve Engine', 'backend': 'davinci_resolve'}
+
+    # ── Build a timeline with the full HdlSt→HdlEnd range and render it once ──
+    tl_name = f'PFX_Proxy_{int(time.time())}'
+    timeline = media_pool.CreateEmptyTimeline(tl_name)
+    if not timeline:
+        return {'ok': False, 'stage': 'create_timeline', 'error': 'Could not create temp timeline.'}
+
+    _job_id = [None]
+    def _drop_temp():
+        try:
+            if _job_id[0]:
+                project.DeleteRenderJob(_job_id[0])
+        except Exception:
+            pass
+        try:
+            media_pool.DeleteTimelines([timeline])
+        except Exception:
+            pass
+
+    appended = media_pool.AppendToTimeline([{
+        'mediaPoolItem': target_clip,
+        'startFrame':   hdl_st_f,
+        'endFrame':     hdl_end_f,
+        'mediaType':    1,
+    }])
+    if not appended:
+        appended = media_pool.AppendToTimeline([{'mediaPoolItem': target_clip, 'mediaType': 1}])
+    if not appended:
+        _drop_temp()
+        return {'ok': False, 'stage': 'build_timeline', 'error': 'Could not append clip to timeline.'}
+
+    project.SetCurrentTimeline(timeline)
+
+    for codec_pair in [('mp4', 'H264'), ('mov', 'H264'), ('mp4', 'H265')]:
+        try:
+            if project.SetCurrentRenderFormatAndCodec(*codec_pair):
+                break
+        except Exception:
+            pass
+
+    render_ok = project.SetRenderSettings({
+        'SelectAllFrames': True,          # render the WHOLE appended range
+        'TargetDir':   cache_dir,
+        'CustomName':  key,
+        'ExportVideo': True,
+        'ExportAudio': False,
+        'FormatWidth':  output_width,
+        'FormatHeight': output_height,
+    })
+    if not render_ok:
+        _drop_temp()
+        return {'ok': False, 'stage': 'render_settings', 'error': 'SetRenderSettings returned False.'}
+
+    job_id = project.AddRenderJob()
+    _job_id[0] = job_id
+    if not job_id:
+        _drop_temp()
+        return {'ok': False, 'stage': 'render_job', 'error': 'AddRenderJob returned None.'}
+
+    start_t = time.time()
+    project.StartRendering([job_id])
+    log.info('Rendering full-range proxy job %s (%d frames) …', job_id, frame_count)
+    while project.IsRenderingInProgress():
+        if time.time() - start_t > 300:   # full-range render budget
+            project.StopRendering()
+            _drop_temp()
+            return {'ok': False, 'stage': 'render_timeout',
+                    'error': 'Proxy render did not complete within 300 s.'}
+        time.sleep(0.3)
+
+    # Locate the rendered proxy — keep it on disk (it IS the deliverable).
+    proxy_file = None
+    try:
+        cands = []
+        for fname in os.listdir(cache_dir):
+            if fname.startswith(key) and fname.lower().endswith(('.mp4', '.mov')):
+                fp = os.path.join(cache_dir, fname)
+                if os.path.getmtime(fp) >= start_t - 2 and os.path.getsize(fp) > 1024:
+                    cands.append((os.path.getmtime(fp), fp))
+        if cands:
+            cands.sort(reverse=True)
+            proxy_file = cands[0][1]
+    except Exception:
+        pass
+
+    # Drop only the render job + temp timeline; the mp4 stays.
+    try:
+        if _job_id[0]:
+            project.DeleteRenderJob(_job_id[0])
+    except Exception:
+        pass
+    try:
+        media_pool.DeleteTimelines([timeline])
+    except Exception:
+        pass
+
+    if not proxy_file:
+        return {'ok': False, 'stage': 'render_output',
+                'error': 'Proxy render completed but no video output was found.',
+                'details': {'cacheDir': cache_dir, 'jobName': key}}
+
+    log.info('Proxy ready: %s (%d frames)', proxy_file, frame_count)
+    return {
+        'ok': True, 'proxyPath': proxy_file, 'fps': fps, 'frameCount': frame_count,
+        'hdlStFrame': hdl_st_abs, 'hdlEndFrame': hdl_end_abs,
+        'hdlStClipFrame': hdl_st_f, 'hdlEndClipFrame': hdl_end_f,
+        'proxyWidth': output_width, 'proxyHeight': output_height,
+        'clipStartTc': clip_start_tc, 'cached': False,
+        'stage': 'complete', 'decoder': 'Resolve Engine',
+        'extractor': 'resolve', 'backend': 'davinci_resolve', 'resolveAvailable': True,
+    }
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -427,6 +721,8 @@ def main():
             result = handle_status()
         elif action == 'extractStillFrame':
             result = handle_extract_still_frame(cmd)
+        elif action == 'renderOcfProxy':
+            result = handle_render_ocf_proxy(cmd)
         else:
             result = {'ok': False, 'error': f'Unknown action: {action!r}', 'stage': 'dispatch'}
     except Exception as e:

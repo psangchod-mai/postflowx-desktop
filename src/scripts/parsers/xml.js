@@ -383,6 +383,18 @@ function extractFxFromClipitem(clipitem){
     return [parts[0], parts[1]];
   };
 
+  const readPairFromParam = (param, fallback = '') => {
+    try {
+      const valueNode = param.getElementsByTagName('value')[0];
+      if (valueNode) {
+        const horiz = readNum(getText(valueNode, 'horiz', ''));
+        const vert  = readNum(getText(valueNode, 'vert', ''));
+        if (horiz != null && vert != null) return [horiz, vert];
+      }
+    } catch {}
+    return readPair(fallback);
+  };
+
   const sameNum = (a, b, tol = 0.001) => Math.abs(Number(a) - Number(b)) <= tol;
   const samePair = (a, b, tol = 0.001) =>
     Array.isArray(a) && Array.isArray(b) &&
@@ -494,7 +506,7 @@ function extractFxFromClipitem(clipitem){
           if (kfs) t.rotationKeys = kfs;
         }
         if (key.includes('center') || key.includes('position')){
-          let pair = readPair(val);
+          let pair = readPairFromParam(param, val);
           pair = chooseMotionValueFromKeys(pair, kfs, readPair, samePair, isNonZeroPair);
           if (pair) t.position = pair;
           if (kfs) t.positionKeys = kfs;
@@ -519,16 +531,35 @@ function extractFxFromClipitem(clipitem){
     }
 
     if (isSpeed){
-      // Look for parameter named/ID 'speed'
+      // Premiere's Time Remap contains a boolean `variablespeed` parameter. It
+      // is a mode switch, not a 1%/100% speed value. The actual constant speed
+      // lives in `speed`, while the source-frame map lives in `graphdict`.
+      let variableSpeed = false;
+      let explicitSpeed = null;
+      let graphKeys = null;
       for (let pi=0; pi<params.length; pi++){
         const param = params[pi];
         const pid = (getText(param, 'parameterid', '') || '').trim().toLowerCase();
         const pname = (getText(param, 'name', '') || '').trim().toLowerCase();
         const key = pid || pname;
         if (!key) continue;
-        if (key.includes('speed') || key.includes('rate')){
+        if (key === 'variablespeed' || key === 'variable speed') {
+          variableSpeed = /^(?:1|true)$/i.test((getText(param, 'value', '') || '').trim());
+          continue;
+        }
+        if (key === 'graphdict' || key === 'time map' || key === 'timemap') {
+          const kfs = parseKeyframes(param);
+          if (kfs?.length) {
+            graphKeys = kfs.map(k => ({
+              when: readNum(k.when),
+              value: readNum(k.value),
+            })).filter(k => k.when != null && k.value != null);
+          }
+          continue;
+        }
+        if (key === 'speed' || key === 'rate' || key === 'speedpercent'){
           const val = (getText(param, 'value', '') || '').trim();
-          pickSpeedPercent(normalizeSpeedPercent(val));
+          explicitSpeed = normalizeSpeedPercent(val);
 
           const kfs = parseKeyframes(param);
           if (kfs && kfs.length){
@@ -550,12 +581,27 @@ function extractFxFromClipitem(clipitem){
           }
         }
       }
+      pickSpeedPercent(explicitSpeed);
+      if (graphKeys?.length > 1) {
+        const first = graphKeys[0];
+        const last = graphKeys[graphKeys.length - 1];
+        const whenSpan = last.when - first.when;
+        const valueSpan = last.value - first.value;
+        const graphRatio = whenSpan ? valueSpan / whenSpan : 1;
+        // Only claim a speed map when Premiere explicitly marks variable speed,
+        // or the graph itself is visibly non-identity. Normal Time Remap filters
+        // are commonly emitted on untouched clips and must stay normal speed.
+        if (variableSpeed || Math.abs(Math.abs(graphRatio) - 1) > 0.001) {
+          speedKeys = graphKeys;
+        }
+      }
     }
   }
 
   // Nothing found
   if (speedPercent == null && !speedKeys && !transform) return null;
 
+  const nominalSpeedPercent = speedPercent;
   if (speedKeys && speedKeys.length) {
     speedPercent = null;
   }
@@ -569,6 +615,7 @@ function extractFxFromClipitem(clipitem){
   }
   if (speedKeys){
     out.speedKeys = speedKeys;
+    if (nominalSpeedPercent != null) out.nominalSpeedPercent = nominalSpeedPercent;
     out.speedComment = out.speedComment || 'DYNAMIC';
     out.speedSummary = out.speedSummary || 'DYNAMIC';
   }
@@ -584,6 +631,17 @@ function extractFxFromClipitem(clipitem){
   }
 
   return out;
+}
+
+function editorialPreserveReason({ clipName = '', fileName = '' } = {}) {
+  const value = `${clipName} ${fileName}`.toLowerCase();
+  if (/adjustment\s*layer/.test(value)) return 'Adjustment layer';
+  if (/universal\s+counting\s+leader/.test(value)) return 'Leader';
+  if (/intro[_\s-]*insert/.test(value)) return 'Intro graphic';
+  if (/outro[_\s-]/.test(value)) return 'Outro graphic';
+  if (/(?:^|[_\s-])trl[_\s-]*tc[_\s-]/.test(value)) return 'Trailer title card';
+  if (/_em_key(?:\.|_|\s|$)/.test(value)) return 'Editorial graphic';
+  return '';
 }
 
 // --------------------------------------
@@ -898,6 +956,7 @@ export function parseXMEML(xmlText) {
 
         const fx2 = extractFxFromClipitem(clipitem2);
 
+        const preserveReason2 = editorialPreserveReason({ clipName: clipName2, fileName: fileName2 });
         events.push({
           id: events.length,
           sourceType: "xml",
@@ -923,6 +982,8 @@ export function parseXMEML(xmlText) {
           isOCF: isOCF2,
           kind: "clip",
           disabled: !isEnabled2,
+          autoPreserve: !!preserveReason2,
+          preserveReason: preserveReason2,
           _pathUrl: pathUrl2 || "",
           _fileNameOriginal: fileName2 || "",
           markers: resolveMarkers2,
@@ -1175,6 +1236,7 @@ export function parseXMEML(xmlText) {
         }
       }
 
+      const preserveReason = editorialPreserveReason({ clipName, fileName });
       events.push({
         id: events.length,
 
@@ -1206,6 +1268,8 @@ export function parseXMEML(xmlText) {
         isOCF,
         kind,               // "clip" | "nested" | "compound"
         disabled: !isEnabled,
+        autoPreserve: !!preserveReason,
+        preserveReason,
 
         _pathUrl: pathUrl || "",
         _fileNameOriginal: fileName || "",

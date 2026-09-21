@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"
+      data-pfx-target="extension"
+      data-pfx-build-time="development"
+      data-pfx-build-version="0.0.0"
+      data-pfx-auth-state="checking">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -166,15 +170,11 @@
   <script src="scripts/auth/read-only.js"></script>
   <script src="scripts/auth/project-lease.js"></script>
   <script src="scripts/auth/media-coordinator.js"></script>
+  <script src="scripts/auth/pfx-session-store.js"></script>
   <script src="scripts/auth/boot-guard.js"></script>
   <script defer src="scripts/features/user/index.js"></script>
   <script defer src="scripts/features/tl_convert/index.js"></script>
   <script type="module" src="scripts/features/aceslook/mount.js"></script>
-<script>
-window.__PFX_TARGET__        = "desktop";
-window.__PFX_BUILD_TIME__    = "2026-06-20 02:26 UTC";
-window.__PFX_BUILD_VERSION__ = "2026.6.1";
-</script>
 </head>
 <body>
 
@@ -327,7 +327,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   <!-- Workspace Toolbar (tier 2: tab strip below mac-titlebar) -->
   <div class="tabs mac-workspace-toolbar">
     <!-- Home tab: only shown in macOS Electron app (hidden via JS on Chrome extension) -->
-    <div class="tab theme-home pfx-home-tab" data-main="home" id="pfxHomeTab" style="display:none">
+    <div class="tab theme-home pfx-home-tab" data-main="home" id="pfxHomeTab" style="display:none" title="Home — dashboard, recent projects, and the Setup Guide">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 9.5L10 3l7 6.5"/>
         <path d="M5 8.5V17h4v-4h2v4h4V8.5"/>
@@ -335,7 +335,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>HOME
     </div>
 
-    <div class="tab theme-prepmark" data-main="prepmark">
+    <div class="tab-group-label" aria-hidden="true" style="display:flex;align-items:center;align-self:stretch;padding:0 6px 0 8px;font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.30);white-space:nowrap;pointer-events:none;">Prep</div>
+    <div class="tab theme-prepmark" data-main="prepmark" title="Pull Prep — build VFX pull packages from an EDL or timeline">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="2" y="4" width="9" height="12" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
         <line x1="4" y1="8"  x2="9"  y2="8"  stroke="currentColor" stroke-width="1"/>
@@ -347,7 +348,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>PULLS PREP 2.1
     </div>
 
-    <div class="tab theme-cd2x" data-main="cutdiff2">
+    <div class="tab theme-cd2x" data-main="cutdiff2" title="Cut Diff — compare two timeline versions and see what changed">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <rect x="2" y="3" width="7" height="6" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
         <rect x="11" y="3" width="7" height="6" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
@@ -359,7 +360,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>CUT DIFF 2.0
     </div>
 
-    <div class="tab theme-pl2" data-main="platelink2">
+    <div class="tab-group-label" aria-hidden="true" style="display:flex;align-items:center;align-self:stretch;padding:0 6px 0 8px;margin-left:4px;border-left:1px solid rgba(255,255,255,.10);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.30);white-space:nowrap;pointer-events:none;">Review</div>
+    <div class="tab theme-pl2" data-main="platelink2" title="Plate Link — check each VFX shot is delivered and ready">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <rect x="2" y="5" width="7" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/>
         <rect x="11" y="11" width="7" height="4" rx="1" stroke="currentColor" stroke-width="1.2"/>
@@ -372,7 +374,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>PLATE LINK 2.0
     </div>
 
-    <div class="tab theme-q2" data-main="reviews">
+    <div class="tab theme-q2" data-main="reviews" title="Visual QC — review clips, scrub, and mark issues">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <path d="M1.5 9s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
         <circle cx="9" cy="9" r="2.2" stroke="currentColor" stroke-width="1.3"/>
@@ -380,7 +382,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>VISUAL QC
     </div>
 
-    <div class="tab theme-trlconf" data-main="trlconf">
+    <div class="tab-group-label" aria-hidden="true" style="display:flex;align-items:center;align-self:stretch;padding:0 6px 0 8px;margin-left:4px;border-left:1px solid rgba(255,255,255,.10);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.30);white-space:nowrap;pointer-events:none;">Delivery</div>
+    <div class="tab theme-trlconf" data-main="trlconf" title="Trailers Conform — convert and conform timeline formats (EDL, OTIO, FCPXML, AAF)">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <!-- Film strip left -->
         <rect x="1" y="4" width="6" height="9" rx="1" stroke="currentColor" stroke-width="1.3" fill="none"/>
@@ -397,7 +400,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>TRAILERS CONFORM
     </div>
 
-    <div class="tab theme-amf" data-main="bwav">
+    <div class="tab theme-amf" data-main="bwav" title="BWAV Inspector — inspect broadcast WAV audio metadata">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <rect x="1" y="5" width="2" height="4" rx="1" fill="currentColor"/>
         <rect x="4" y="2" width="2" height="10" rx="1" fill="currentColor"/>
@@ -408,7 +411,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>BWAV INSPECTOR
     </div>
 
-    <div class="tab theme-q2" data-main="preflight">
+    <div class="tab theme-q2" data-main="preflight" title="Preflight — pre-delivery checks before you export">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/>
         <path d="M4 7l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -416,7 +419,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>PREFLIGHT
     </div>
 
-    <div class="tab theme-imf" data-main="imf">
+    <div class="tab theme-imf" data-main="imf" title="IMF Validation — validate IMF packages for compliance">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <rect x="1" y="2" width="16" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/>
         <path d="M5 7h8M5 10h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
@@ -425,7 +428,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>IMF VALIDATION
     </div>
 
-    <div class="tab theme-aceslook" data-main="aceslook">
+    <div class="tab-group-label" aria-hidden="true" style="display:flex;align-items:center;align-self:stretch;padding:0 6px 0 8px;margin-left:4px;border-left:1px solid rgba(255,255,255,.10);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.30);white-space:nowrap;pointer-events:none;">Color</div>
+    <div class="tab theme-aceslook" data-main="aceslook" title="ACES Look — set input/output color transforms and export looks">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <polygon points="9,2 16,14 2,14" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>
         <line x1="5.5" y1="10.5" x2="12.5" y2="10.5" stroke="currentColor" stroke-width="1"/>
@@ -434,7 +438,8 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="bar"></span>ACES LOOK
     </div>
 
-    <div class="tab theme-renderq" data-main="renderq">
+    <div class="tab-group-label" aria-hidden="true" style="display:flex;align-items:center;align-self:stretch;padding:0 6px 0 8px;margin-left:4px;border-left:1px solid rgba(255,255,255,.10);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.30);white-space:nowrap;pointer-events:none;">System</div>
+    <div class="tab theme-renderq" data-main="renderq" title="Render Queue — manage and monitor render jobs">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <!-- Queue stack -->
         <rect x="1" y="3" width="12" height="2.8" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
@@ -447,7 +452,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     </div>
 
 
-    <div class="tab theme-q2" data-main="about">
+    <div class="tab theme-q2" data-main="about" title="Settings & Feedback — preferences, integrations, and setup">
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <circle cx="9" cy="9" r="2.4" stroke="currentColor" stroke-width="1.3"/>
         <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M14.3 3.7l-1.4 1.4M5.1 12.9l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -2291,13 +2296,21 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       </svg>
     </button>
     <span class="pm-ctx-spacer"></span>
-    <button id="pmCtxVoiceBtn" class="pm-ctx-btn pm-ctx-btn-voice" title="Voice control (Alt+V) — Web Speech Recognition for quick marker naming"><svg class="pm-ctx-btn-ico" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="1" width="6" height="9" rx="3"/><path d="M2 8a6 6 0 0 0 12 0"/><line x1="8" y1="14" x2="8" y2="16"/><line x1="5" y1="16" x2="11" y2="16"/></svg><span id="pmCtxVoiceLabel">Voice</span><span id="pmCtxVoiceStatus" class="pm-ctx-voice-status" style="display:none"></span></button>
-    <button id="pmCtxAiBtn"    class="pm-ctx-btn pm-ctx-btn-ai"    title="AI panel — shot naming, recommendations, Claude / Gemini"><svg class="pm-ctx-btn-ico" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1l1.5 5.5L15 8l-5.5 1.5L8 15l-1.5-5.5L1 8l5.5-1.5z"/></svg><span>AI</span><span id="pmCtxAiDot" class="pm-ctx-ai-dot"></span><span id="pmCtxAiBadge" class="pm-ctx-ai-badge" style="display:none"></span></button>
-    <button id="pmAutoLinkBtn" class="pm-ctx-btn" title="Re-run auto-match of markers to events by timecode">Auto-Link &#9889;</button>
+    <details id="pmToolsMenu" class="pm-tools-wrap">
+      <summary class="pm-ctx-btn pm-tools-summary" title="Open specialist Pull Prep tools">
+        Tools <span aria-hidden="true">&#9662;</span>
+      </summary>
+      <div class="pm-tools-menu" role="menu">
+        <button id="pmCtxVoiceBtn" class="pm-tools-item pm-ctx-btn-voice" role="menuitem" title="Voice control (Alt+V) — Web Speech Recognition for quick marker naming"><svg class="pm-ctx-btn-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="1" width="6" height="9" rx="3"/><path d="M2 8a6 6 0 0 0 12 0"/><line x1="8" y1="14" x2="8" y2="16"/><line x1="5" y1="16" x2="11" y2="16"/></svg><span><b id="pmCtxVoiceLabel">Voice marker</b><small>Speak a marker name</small></span><span id="pmCtxVoiceStatus" class="pm-ctx-voice-status" style="display:none"></span></button>
+        <button id="pmCtxAiBtn" class="pm-tools-item pm-ctx-btn-ai" role="menuitem" title="AI panel — shot naming, recommendations, Claude / Gemini"><svg class="pm-ctx-btn-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1l1.5 5.5L15 8l-5.5 1.5L8 15l-1.5-5.5L1 8l5.5-1.5z"/></svg><span><b>AI assistant</b><small>Names and recommendations</small></span><span id="pmCtxAiDot" class="pm-ctx-ai-dot"></span><span id="pmCtxAiBadge" class="pm-ctx-ai-badge" style="display:none"></span></button>
+        <div class="pm-tools-divider" role="separator"></div>
+        <button id="pmAutoLinkBtn" class="pm-tools-item" role="menuitem" title="Re-run auto-match of markers to events by timecode"><span class="pm-tools-symbol">&#9889;</span><span><b>Auto-link markers</b><small>Match by record timecode</small></span></button>
     <input type="file" id="pmAleFileInput" multiple accept=".ale" style="display:none">
-    <button id="pmAleMatchBtn" class="pm-ctx-btn pm-ctx-btn-ale" title="Upload one or more .ale files — matches metadata and corrects reel names">ALE MATCH &#9650;</button>
+        <button id="pmAleMatchBtn" class="pm-tools-item pm-ctx-btn-ale" role="menuitem" title="Upload one or more .ale files — matches metadata and corrects reel names"><span class="pm-tools-symbol">ALE</span><span><b>Match ALE metadata</b><small>Correct reels and metadata</small></span></button>
     <input type="file" id="pmMarkerMatchFileInput" accept=".edl" style="display:none">
-    <button id="pmMarkerMatchBtn" class="pm-ctx-btn pm-ctx-btn-markerMatch" title="Upload a VFX marker EDL — matches each marker to the timeline clip it sits on by record TC">MARKER MATCH &#9650;</button>
+        <button id="pmMarkerMatchBtn" class="pm-tools-item pm-ctx-btn-markerMatch" role="menuitem" title="Upload a VFX marker EDL — matches each marker to the timeline clip it sits on by record TC"><span class="pm-tools-symbol">EDL</span><span><b>Import marker EDL</b><small>Place VFX markers by timecode</small></span></button>
+      </div>
+    </details>
     <input type="file" id="pmDiffBaseFileInput" accept=".edl,.fcpxml,.xml,.otio,.json" style="display:none">
     <div id="pmDiffSummary" class="pm-smartdiff" style="display:none;">
       <span id="pmDiffBaseLabel" class="pm-smartdiff-base">BASE —</span>
@@ -2311,7 +2324,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <button id="pmDiffClearBtn" class="pm-smartdiff-clear" type="button" title="Clear the loaded base cut">✕</button>
     </div>
     <div class="pm-export-wrap" style="position:relative">
-      <button id="pmExportBtn" class="pm-ctx-btn pm-ctx-btn-export">Export &#9660;</button>
+      <button id="pmExportBtn" class="pm-ctx-btn pm-ctx-btn-export" title="Deliver timelines, reports, media, or a complete package">Deliver &#9660;</button>
       <div id="pmExportMenu" class="pm-export-menu" style="display:none;">
         <div class="pm-export-section">Timeline</div>
         <button data-fmt="pulledl"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="12" height="10" rx="1.5"/><line x1="4" y1="5.5" x2="10" y2="5.5"/><line x1="4" y1="8" x2="8" y2="8"/></svg>Pull EDL<span class="pm-fmt-tag">CMX</span></button>
@@ -2337,6 +2350,10 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     </div>
   </div>
 
+  <!-- One adaptive command deck: setup, workflow progress, VFX queue and the
+       single next action share one NLE-height strip. Secondary information is
+       progressively disclosed only after a timeline is loaded. -->
+  <div id="pmSmartCommandDeck" class="pm-smart-command-deck" aria-label="Pull Prep smart command deck">
   <!-- Quick Settings row (mirrors Pull Prep) -->
   <div id="pmQsRow" class="pm-qs-row">
     <!-- Scripted / Unscripted mode toggle -->
@@ -2357,21 +2374,28 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       </button>
     </div>
     <div class="pm-qs-sep"></div>
-    <div class="pm-qs-btn theme-danger" data-key="clear" title="Reset all Quick Settings">
+    <button type="button" class="pm-qs-btn theme-danger" data-key="clear" title="Return workflow options to their safe defaults" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 3.5A5 5 0 1 0 10.5 3.5"/><line x1="8" y1="2" x2="8" y2="7"/></svg>
-      All OFF
-    </div>
-    <div class="pm-qs-btn theme-q3" data-key="conform" title="Conform Pull — sort by record TC, merge + flatten for DI / color conform">
+      Defaults
+    </button>
+    <button type="button" class="pm-qs-btn theme-q3" data-key="conform" title="Conform Pull — sort by record TC, merge + flatten for DI / color conform" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="3" rx="1"/><rect x="2" y="9" width="8" height="3" rx="1"/><line x1="12" y1="10.5" x2="15" y2="10.5"/><line x1="13.5" y1="9" x2="13.5" y2="12"/></svg>
       Conform Pull
-    </div>
-    <div class="pm-qs-btn theme-q1" data-key="vfxmarker" title="VFX Marker — split on VFX markers">
+    </button>
+    <button type="button" class="pm-qs-btn theme-q1" data-key="vfxmarker" title="VFX Marker — split on VFX markers" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2a3.5 3.5 0 0 1 3.5 3.5c0 2.5-3.5 7-3.5 7S4.5 8 4.5 5.5A3.5 3.5 0 0 1 8 2z"/><circle cx="8" cy="5.5" r="1.2" fill="currentColor" stroke="none"/></svg>
       VFX Pull
-    </div>
+    </button>
+    <!-- VFX Pull view toggle — one smart button that flips between Simple (standard
+         pull list + marker editor + timeline) and Advanced (OCF verify workspace).
+         Only shown while VFX Pull mode is active. Label shows the CURRENT view. -->
+    <button type="button" id="pfxVfxModeToggle" class="pfx-vfx-mode-btn" data-vfxmode="advanced" aria-label="Toggle VFX Pull view" title="Click to switch VFX Pull view&#10;Simple: standard pull list + marker editor + timeline&#10;Advanced: OCF verify workspace" style="display:none">
+      <svg class="pfx-vfx-mode-ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h8M8.5 2.5 11 5 8.5 7.5"/><path d="M13 11H5M7.5 8.5 5 11l2.5 2.5"/></svg>
+      <span class="pfx-vfx-mode-label">Advanced</span>
+    </button>
     <button id="pmOcfSmartLinkBtn" type="button" class="pm-ocf-smartlink-quick" title="Find your camera files and link them to every shot automatically — only the uncertain ones need a look" style="display:none">
       <span class="bar"></span> ⚡ Smart Link OCF
     </button>
@@ -2383,47 +2407,48 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     </button>
     <span id="pmOcfSummary" class="pm-ocf-summary" style="display:none">OCF: not linked</span>
 
-    <button id="pmQsOptionsToggle" class="pm-qs-options-btn" title="Show / hide options">
+    <button id="pmQsOptionsToggle" class="pm-qs-options-btn" title="Show or hide advanced workflow options">
       <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
         <line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/>
       </svg>
+      <span class="pm-qs-options-label">Advanced</span>
     </button>
 
-    <div class="pm-qs-btn theme-q3" data-key="merge" data-modes="conform" title="Merge overlapping events">
+    <button type="button" class="pm-qs-btn theme-q3" data-key="merge" data-modes="conform" title="Merge overlapping events" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v4l5 3 5-3V3"/><line x1="8" y1="10" x2="8" y2="14"/></svg>
       Merge
-    </div>
-    <div class="pm-qs-btn theme-q3" data-key="flatten" data-modes="conform vfxmarker" title="Flatten to single track">
+    </button>
+    <button type="button" class="pm-qs-btn theme-q3" data-key="flatten" data-modes="conform vfxmarker" title="Flatten to single track" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="3" width="10" height="3" rx="1"/><rect x="3" y="7" width="10" height="3" rx="1" opacity=".5"/><line x1="3" y1="12" x2="13" y2="12"/></svg>
       Flatten
-    </div>
-    <div class="pm-qs-btn theme-q3" data-key="decompose" data-modes="conform vfxmarker" title="Decompose to sub-clips">
+    </button>
+    <button type="button" class="pm-qs-btn theme-q3" data-key="decompose" data-modes="conform vfxmarker" title="Decompose to sub-clips" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="10" height="4" rx="1"/><line x1="8" y1="3" x2="8" y2="6"/><line x1="8" y1="10" x2="8" y2="13"/><line x1="5" y1="2.5" x2="11" y2="2.5"/><line x1="5" y1="13.5" x2="11" y2="13.5"/></svg>
       Decompose
-    </div>
-    <div class="pm-qs-btn theme-amf" data-key="metadata" data-modes="conform vfxmarker" title="Include metadata">
+    </button>
+    <button type="button" class="pm-qs-btn theme-amf" data-key="metadata" data-modes="conform vfxmarker" title="Include metadata" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><line x1="8" y1="7" x2="8" y2="11.5"/><circle cx="8" cy="5" r=".8" fill="currentColor" stroke="none"/></svg>
       Metadata
-    </div>
-    <div class="pm-qs-btn theme-q3" data-key="autosplit" data-modes="conform" title="Auto-split multi-camera events">
+    </button>
+    <button type="button" class="pm-qs-btn theme-q3" data-key="autosplit" data-modes="conform" title="Auto-split multi-camera events" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2"/><circle cx="5" cy="11" r="2"/><line x1="14" y1="3" x2="7.5" y2="9.5"/><line x1="11" y1="13" x2="14" y2="13"/><line x1="7.5" y1="9.5" x2="11" y2="13"/><line x1="7.5" y1="6.5" x2="14" y2="3"/></svg>
       Auto Split
-    </div>
-    <div class="pm-qs-btn theme-amf" data-key="df" data-modes="conform" title="Drop frame → Non-drop frame">
+    </button>
+    <button type="button" class="pm-qs-btn theme-amf" data-key="df" data-modes="conform" title="Drop frame → Non-drop frame" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5a5 5 0 0 0 9.5-1.5"/><path d="M13 5.5a5 5 0 0 0-9.5 1.5"/><polyline points="11,3.5 13,5.5 11,7.5"/><polyline points="5,8.5 3,10.5 5,12.5"/></svg>
       DF&#x2192;NDF
-    </div>
-    <div class="pm-qs-btn theme-q2 wide" data-key="extra" data-modes="conform vfxmarker" title="Add extra handles for fast clips">
+    </button>
+    <button type="button" class="pm-qs-btn theme-q2 wide" data-key="extra" data-modes="conform vfxmarker" title="Add extra handles for fast clips" aria-pressed="false">
       <span class="bar"></span>
       <svg class="qs-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="4" y="6" width="8" height="4" rx="1"/><line x1="1" y1="8" x2="4" y2="8"/><line x1="12" y1="8" x2="15" y2="8"/><line x1="1" y1="6" x2="1" y2="10"/><line x1="15" y1="6" x2="15" y2="10"/></svg>
       Retime Handles+
-    </div>
+    </button>
     <div class="pm-st-kpi" id="pmStorageKpi" style="margin-left:auto" title="Storage estimate (camera pull + VFX EXR renders)">
       <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="#b8ff5a" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><line x1="6" y1="8" x2="10" y2="8"/></svg>
       <span class="pm-st-lbl">Est.</span>
@@ -2432,6 +2457,43 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <span class="pm-st-pill pm-st-evts" id="pmKpiEvtsPill" title="Event count"><span class="pm-st-pill-k">EVTS</span><span id="pmKpiEvts" class="pm-st-pill-v">—</span></span>
       <span class="pm-st-pill pm-st-dur" id="pmKpiDurPill" title="Total timeline duration"><span class="pm-st-pill-k">DUR</span><span id="pmKpiDur" class="pm-st-pill-v">—</span></span>
     </div>
+  </div>
+
+  <!-- Professional workflow command bar: state, focus, and one clear next action -->
+  <section id="pmProBar" class="pm-pro-bar" aria-label="Pull Prep workflow">
+    <div class="pm-pro-steps" aria-label="Workflow progress">
+      <button class="pm-pro-step is-current" data-step="media" type="button"><span>1</span><b>Media</b><small id="pmProMediaState">Add timeline</small></button>
+      <button class="pm-pro-step" data-step="review" type="button"><span>2</span><b>Review</b><small id="pmProReviewState">Waiting</small></button>
+      <button class="pm-pro-step" data-step="mark" type="button"><span>3</span><b>Mark</b><small id="pmProMarkState">0 selected</small></button>
+      <button class="pm-pro-step" data-step="deliver" type="button"><span>4</span><b>Deliver</b><small id="pmProDeliverState">Not ready</small></button>
+    </div>
+    <div id="pmProHealth" class="pm-pro-health" data-tone="neutral">
+      <span class="pm-pro-health-dot"></span>
+      <div><b id="pmProHealthTitle">Ready to begin</b><small id="pmProHealthDetail">Import an edit timeline and reference video.</small></div>
+    </div>
+    <div class="pm-pro-view" role="group" aria-label="Workspace view">
+      <button type="button" data-pm-view="list" title="Focus the Shot List">Shot List</button>
+      <button type="button" data-pm-view="split" class="is-active" title="Show Shot List and Program Monitor">Split</button>
+      <button type="button" data-pm-view="review" title="Focus the Program Monitor">Monitor</button>
+    </div>
+    <button id="pmProNextBtn" class="pm-pro-next" type="button"><span id="pmProNextKicker">NEXT STEP</span><b id="pmProNextLabel">Import timeline</b><kbd>⌘↵</kbd></button>
+  </section>
+
+  <!-- Compact production-control layer for the VFX Editor. It summarizes only
+       tracked VFX shots and drives the same attention queue as the NLE. -->
+  <section id="pmVfxEditorRibbon" class="pm-ve-ribbon" aria-label="Smart VFX Editor overview">
+    <div class="pm-ve-identity">
+      <span class="pm-ve-mark" aria-hidden="true">VX</span>
+      <div><b>SMART VFX EDITOR</b><small>Shots · versions · QC · handoffs · final delivery</small></div>
+    </div>
+    <div class="pm-ve-metrics" role="group" aria-label="VFX shot queue summary">
+      <button type="button" data-ve-filter="marked"><span id="pmVeTracked">0</span><small>Tracked</small></button>
+      <button type="button" data-ve-filter="attention"><span id="pmVeAttention">0</span><small>Attention</small></button>
+      <button type="button" data-ve-filter="due"><span id="pmVeOverdue">0</span><small>Overdue</small></button>
+      <button type="button" data-ve-filter="approved"><span id="pmVeApproved">0</span><small>Approved</small></button>
+    </div>
+    <div class="pm-ve-priority"><small>NEXT PRIORITY</small><b id="pmVePriority">Import a timeline to begin</b></div>
+  </section>
   </div>
 
   <!-- Issue Inbox -->
@@ -2449,10 +2511,31 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     <!-- LEFT: Event table -->
     <div class="pm-left">
       <div class="pm-left-hdr">
-        <span class="pm-panel-title">PULL LIST</span>
+        <span class="pm-panel-title">SHOT LIST</span>
+        <span id="pmProListSummary" class="pm-pro-panel-summary">No timeline loaded</span>
         <input id="pmEdlFileInput" type="file" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.ale,.aaf,application/json" multiple style="display:none">
         <button id="pmRemoveAllMkBtn" class="pm-hdr-btn pm-hdr-btn--rm-mk" title="Remove all markers — two-click confirm" style="display:none">&#x2715; Markers</button>
-        <button id="pmImportEdlBtn" class="pm-hdr-btn" title="Import EDL / FCPXML / OTIO / ALE / AAF">Import &#9660;</button>
+        <button id="pmImportEdlBtn" class="pm-hdr-btn" title="Add another EDL / FCPXML / OTIO / ALE / AAF timeline">Add timeline &#9660;</button>
+      </div>
+      <div id="pmProListTools" class="pm-pro-list-tools">
+        <label class="pm-pro-search"><span>⌕</span><input id="pmProSearch" type="search" placeholder="Search shots, reels, timecode…" autocomplete="off"></label>
+        <div class="pm-pro-filters" role="group" aria-label="Shot list filter">
+          <button type="button" class="is-active" data-pm-filter="all">All <b id="pmProCountAll">0</b></button>
+          <button type="button" data-pm-filter="attention">Attention <b id="pmProCountAttention">0</b></button>
+          <button type="button" data-pm-filter="retime">Retime <b id="pmProCountRetime">0</b></button>
+          <button type="button" data-pm-filter="resize">Resize <b id="pmProCountResize">0</b></button>
+          <button type="button" data-pm-filter="marked">Pulls <b id="pmProCountMarked">0</b></button>
+          <details id="pmProMoreFilters" class="pm-pro-filter-more">
+            <summary>More <span aria-hidden="true">▾</span></summary>
+            <div role="group" aria-label="More shot filters">
+              <button type="button" data-pm-filter="qc">QC issues <b id="pmProCountQc">0</b></button>
+              <button type="button" data-pm-filter="due">Due soon <b id="pmProCountDue">0</b></button>
+              <button type="button" data-pm-filter="approved">Approved <b id="pmProCountApproved">0</b></button>
+              <button type="button" data-pm-filter="unmarked">Not marked <b id="pmProCountUnmarked">0</b></button>
+            </div>
+          </details>
+        </div>
+        <span id="pmProVisibleCount" class="pm-pro-visible-count">0 shown</span>
       </div>
       <div class="pm-event-scroll">
         <table class="pm-event-table" id="pmEventTable" role="table">
@@ -2483,17 +2566,35 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <path d="M26 22 L30 26 M26 26 L30 22" stroke-width="1.4"/>
             <circle cx="28" cy="24" r="6" stroke-width="1.2"/>
           </svg>
-          <span class="pm-drop-hint-title">Drop EDL / FCPXML / OTIO / ALE</span>
-          <span class="pm-drop-hint-sub">or use the Import button above</span>
-          <button id="pmImportEdlBtn2" class="pm-hdr-btn" style="pointer-events:all; margin-top:4px;">Import &#9660;</button>
+          <span class="pm-drop-hint-eyebrow">STEP 1 · EDIT TIMELINE</span>
+          <span class="pm-drop-hint-title">Add your timeline</span>
+          <span class="pm-drop-hint-sub">Drop EDL, FCPXML, OTIO, ALE or AAF here</span>
+          <button id="pmImportEdlBtn2" class="pm-hdr-btn pm-empty-primary" style="pointer-events:all; margin-top:8px;">Choose timeline</button>
         </div>
       </div>
     </div>
 
+    <!-- NLE-style resizable boundary. Split width is persisted by ratio so the
+         user's preferred layout survives relaunches and different displays. -->
+    <div id="pmPanelDivider" class="pm-panel-divider" role="separator"
+         aria-label="Resize Shot List" aria-orientation="vertical"
+         aria-valuemin="30" aria-valuemax="72" aria-valuenow="46" tabindex="0"
+         title="Drag to resize Shot List · Arrow keys fine-tune · Double-click resets">
+      <span class="pm-panel-divider-grip" aria-hidden="true"></span>
+      <output id="pmPanelDividerValue" class="pm-panel-divider-value">46% SHOTS</output>
+    </div>
+
     <!-- RIGHT: Video player + inspector -->
     <div class="pm-right">
+      <div class="pm-pro-monitor-head">
+        <div><span class="pm-pro-monitor-role">PROGRAM MONITOR</span><b id="pmProMonitorTitle">Reference review</b></div>
+        <div class="pm-pro-monitor-badges"><span id="pmProAvfBadge">AVFoundation</span><span id="pmProMonitorState">No video</span><button id="pmProNextAttention" type="button"><span id="pmProNextAttentionLabel">Next issue</span><small id="pmProNextAttentionReason">Nothing to review</small><b id="pmProAttentionBadge">0</b></button></div>
+      </div>
       <div class="pm-player-wrap" id="pmPlayerWrap">
-        <video id="pmVideo" preload="metadata" playsinline></video>
+        <!-- Playback is controlled by the accessible transport below. Hiding the
+             raw, control-less media element prevents Chromium from announcing
+             its misleading empty-source fallback ("Unable to play media"). -->
+        <video id="pmVideo" preload="metadata" playsinline aria-hidden="true"></video>
         <!-- QuickTime TC overlay — top-left of video frame -->
         <div id="pmVidQtTcOverlay" class="pm-vid-qt-tc" style="display:none;"></div>
         <!-- Annotation canvas overlay -->
@@ -2604,7 +2705,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <rect x="25" y="11" width="3" height="2" rx="0.5" fill="currentColor" stroke="none" opacity="0.4"/>
             <rect x="25" y="14" width="3" height="2" rx="0.5" fill="currentColor" stroke="none" opacity="0.4"/>
           </svg>
-          <span>Drop proxy video here</span>
+          <span>Add reference video</span>
           <span id="pmVideoStatusMsg" class="pm-video-status-msg" style="display:none;"></span>
           <div id="pmProxyProgress" class="pm-proxy-progress" style="display:none">
             <div class="pm-proxy-bar-wrap"><div id="pmProxyBar" class="pm-proxy-bar"></div></div>
@@ -2613,7 +2714,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
           </div>
           <div id="pmVideoHintSeq" class="pm-video-hint-seq"></div>
           <input id="pmVideoFileInput" type="file" accept="video/*" style="display:none">
-          <button id="pmVideoBrowseBtn" class="pm-hdr-btn" style="pointer-events:all; color:#6060a0; border-color:#2a2a48;">Import&hellip;</button>
+          <button id="pmVideoBrowseBtn" class="pm-hdr-btn" style="pointer-events:all; color:#8cc8ff; border-color:#315e84;">Choose video&hellip;</button>
         </div>
       </div>
       <!-- Now-playing banner — shows active clip name, status and rec TC at a glance -->
@@ -2661,6 +2762,9 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
                 title="How the player transport works — scrub bar, nav pod, play and jump"
                 aria-label="How the player transport works">? Help</button>
       </div>
+      <section id="pmVfxShotControl" class="pm-ve-shot-control" aria-label="Selected VFX shot control">
+        <div class="pm-ve-empty"><b>Select a VFX shot</b><span>Track its version, status, technical checks, owner, and delivery.</span></div>
+      </section>
       <div id="pmInspector" class="pm-inspector"></div>
     </div>
 
@@ -3425,23 +3529,23 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <span class="pfx-vfx-vf-key">Link Status</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfOcfVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Resolve</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfResolveStatusVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Import</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfImportStatusVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Preview</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfPreviewStatusVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Decoder</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfDecoderVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Backend</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfBackendVal" title="Decode-backend quality state">—</span>
           </div>
@@ -3454,12 +3558,20 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfTcVal">—</span>
           </div>
           <div class="pfx-vfx-vf-row">
+            <span class="pfx-vfx-vf-key">Framerate</span>
+            <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfFpsVal">—</span>
+          </div>
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Speed</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfSpeedVal">—</span>
           </div>
-          <div class="pfx-vfx-vf-row">
+          <div class="pfx-vfx-vf-row" data-vfx-adv>
             <span class="pfx-vfx-vf-key">Reframe</span>
             <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfReframeVal">—</span>
+          </div>
+          <div class="pfx-vfx-vf-row">
+            <span class="pfx-vfx-vf-key">Visual Match</span>
+            <span class="pfx-vfx-vf-val pfx-vfx-vf-pending" id="pfxVfxVfVisualMatchVal" title="Live burn-in-resilient regional-hash match between the QT Ref frame and the OCF frame at the current position (V1.4 picture-conform matcher). OK / REVIEW / NO-MATCH by confidence.">—</span>
           </div>
           <div class="pfx-vfx-vf-row pfx-vfx-vf-row-score">
             <span class="pfx-vfx-vf-key">Match Score</span>
@@ -5022,6 +5134,16 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       </div>
     </div>
 
+    <!-- App Tour / How to use -->
+    <div class="card" id="appTourCard" data-settings-keywords="app tour how to use walkthrough guide help onboarding">
+      <div class="card-title">App Tour</div>
+      <div class="muted" style="margin-top:6px;">Revisit the interactive walkthrough to refresh your memory on the key features of PostFlowX. New here? Start with this.</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="btnReplayTour" class="btn theme-amf" type="button"><span class="bar"></span>▶ Replay Tour</button>
+        <button id="btnOpenSetupGuideSettings" class="btn theme-q3" type="button"><span class="bar"></span>Open Setup Guide</button>
+      </div>
+    </div>
+
     <div class="about-cols">
 
       <div class="about-left">
@@ -5391,8 +5513,32 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       <!-- ── Export pane ── -->
       <div id="tlcExportPane" style="display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;">
 
+        <!-- Smart context: one glance tells the user what is loaded and what comes next. -->
+        <div class="tlc-smart-summary" aria-label="Conversion summary">
+          <div class="tlc-smart-step is-done">
+            <span class="tlc-smart-step-num">1</span>
+            <span><b>Source</b><small id="tlcSummaryProject">No timeline</small></span>
+          </div>
+          <div class="tlc-smart-arrow" aria-hidden="true">→</div>
+          <div class="tlc-smart-step">
+            <span class="tlc-smart-step-num">2</span>
+            <span><b>Convert</b><small id="tlcSummaryTarget">EDL32</small></span>
+          </div>
+          <div class="tlc-smart-arrow" aria-hidden="true">→</div>
+          <div class="tlc-smart-step">
+            <span class="tlc-smart-step-num">3</span>
+            <span><b>Deliver</b><small>Copy or download</small></span>
+          </div>
+          <div class="tlc-smart-facts">
+            <span><b id="tlcSummaryEvents">0</b> events</span>
+            <span><b id="tlcSummaryFps">24</b> fps</span>
+            <span id="tlcSummaryHealth" class="tlc-health is-idle"><i></i> Import a timeline</span>
+          </div>
+        </div>
+
         <!-- Toolbar: format + reel mode + count -->
         <div class="tlc-toolbar">
+          <span class="tlc-command-label"><i></i>Output format</span>
           <div class="tlc-fmt-seg">
             <button id="tlcTab_edl32"   class="btn active" type="button"><span class="bar"></span><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;flex-shrink:0"><rect x="1.5" y="1.5" width="9" height="9" rx=".9"/><line x1="3.5" y1="1.5" x2="3.5" y2="10.5"/><line x1="4.5" y1="4.5" x2="9.5" y2="4.5"/><line x1="4.5" y1="7" x2="8" y2="7"/></svg>EDL32</button>
             <button id="tlcTab_otio"    class="btn"        type="button"><span class="bar"></span><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" style="width:11px;height:11px;flex-shrink:0"><circle cx="6" cy="6" r="4.5"/><line x1="6" y1="3.5" x2="6" y2="6"/><line x1="6" y1="6" x2="8" y2="7.2"/></svg>OTIO</button>
@@ -5419,59 +5565,95 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 
         <!-- Options bar — single line: Structure | Reel opts | [Flat filter when flat mode active] -->
         <div class="tlc-opts-bar">
-          <span class="tlc-opt-lbl">STRUCT</span>
+          <span class="tlc-opt-lbl">Structure</span>
           <div class="tlc-struct-toggle">
-            <label><input type="radio" name="tlcStructMode" value="preserve" id="tlcStructPreserve" checked/>
+            <label title="Keep the original video and audio track layout"><input type="radio" name="tlcStructMode" value="preserve" id="tlcStructPreserve" checked/>
               <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="width:8px;height:8px;opacity:.7"><rect x="1" y="2" width="3.5" height="6" rx=".6"/><rect x="5.5" y="2" width="3.5" height="6" rx=".6"/></svg>
               Preserve
             </label>
-            <label><input type="radio" name="tlcStructMode" value="flat" id="tlcStructFlat"/>
+            <label title="Create a simplified, picture-first timeline"><input type="radio" name="tlcStructMode" value="flat" id="tlcStructFlat"/>
               <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="width:8px;height:8px;opacity:.7"><line x1="1" y1="3" x2="9" y2="3"/><line x1="1" y1="5" x2="9" y2="5"/><line x1="1" y1="7" x2="9" y2="7"/></svg>
               MPS Flat
             </label>
           </div>
           <div class="tlc-opt-sep"></div>
-          <span class="tlc-opt-lbl">REEL</span>
-          <label class="tlc-check-lbl"><input type="checkbox" id="tlcOptNoExt"/> No ext</label>
-          <label class="tlc-check-lbl"><input type="checkbox" id="tlcOptUpper"/> UPPER</label>
-          <label class="tlc-check-lbl"><input type="checkbox" id="tlcOptTrim8"/> Trim 8</label>
-          <label class="tlc-check-lbl"><input type="checkbox" id="tlcOptOrigComment"/> Orig cmmt</label>
+          <span class="tlc-opt-lbl">Reel names</span>
+          <label class="tlc-check-lbl" title="Remove file extensions from reel names"><input type="checkbox" id="tlcOptNoExt"/> Remove ext.</label>
+          <label class="tlc-check-lbl" title="Convert reel names to uppercase"><input type="checkbox" id="tlcOptUpper"/> Uppercase</label>
+          <label class="tlc-check-lbl" title="Limit reel names to eight characters for legacy EDL workflows"><input type="checkbox" id="tlcOptTrim8"/> 8 chars</label>
+          <label class="tlc-check-lbl" title="Keep the original reel name in an export comment"><input type="checkbox" id="tlcOptOrigComment"/> Original note</label>
           <input id="tlcReelRegex" class="tlc-regex-inp" placeholder="Regex e.g. ^(.{8})" style="display:none"/>
           <!-- Flat filter — inline, shown only when MPS Flat is active -->
           <div id="tlcFlatFilter">
             <div class="tlc-opt-sep"></div>
-            <span class="tlc-opt-lbl" style="color:rgba(255,158,108,.5);">FILTER</span>
+            <span class="tlc-opt-lbl">Media</span>
             <select id="tlcFlatSrc" aria-label="Filter clips" class="tlc-select">
               <option value="ocf">OCF only</option>
               <option value="real">Real media</option>
               <option value="all">All clips</option>
             </select>
-            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatExclGfx" checked/> No GFX</label>
-            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatExclTemp" checked/> No temp</label>
-            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatKeepMarker"/> Markers</label>
+            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatExclGfx" checked/> Exclude GFX</label>
+            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatExclTemp" checked/> Exclude temp</label>
+            <label class="tlc-check-lbl"><input type="checkbox" id="tlcFlatKeepMarker"/> Keep markers</label>
           </div>
         </div>
 
-        <!-- Preview / AAF Panel -->
-        <div style="flex:1;overflow:hidden;padding:10px 14px 14px;display:flex;flex-direction:column;min-height:0;">
-          <textarea id="tlcPreview" aria-label="Export preview" readonly spellcheck="false"></textarea>
-          <div id="tlcAafPanel" style="display:none;flex:1;overflow-y:auto;"></div>
+        <!-- Generated output workspace -->
+        <div class="tlc-output-wrap">
+          <div class="tlc-output-shell">
+            <div class="tlc-output-head">
+              <div>
+                <span class="tlc-output-kicker">GENERATED OUTPUT</span>
+                <strong id="tlcOutputTitle">EDL32 preview</strong>
+              </div>
+              <span id="tlcPreviewMeta" class="tlc-output-meta">Waiting for a timeline</span>
+            </div>
+            <div id="tlcEmptyExport" class="tlc-empty-export">
+              <div class="tlc-empty-icon" aria-hidden="true">⇄</div>
+              <div class="tlc-empty-title">Start with your timeline</div>
+              <div class="tlc-empty-copy">Add an edit file and PostFlowX will prepare a clean, validated output.</div>
+              <button id="tlcEmptyImportBtn" class="btn theme-q3 active" type="button">Import timeline</button>
+              <div class="tlc-empty-formats">EDL · XML · FCPXML · OTIO · AAF · ALE</div>
+            </div>
+            <textarea id="tlcPreview" aria-label="Generated export preview" readonly spellcheck="false"></textarea>
+            <div id="tlcAafPanel" style="display:none;flex:1;overflow-y:auto;"></div>
+          </div>
         </div>
       </div>
 
       <!-- ── Import pane ── -->
-      <div id="tlcImportPane" style="display:none;flex-direction:column;flex:1;justify-content:center;padding:28px 32px;gap:16px;">
-        <div class="tlc-drop" id="tlcDropZone">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-          <div class="tlc-drop-title">Drop timeline file here</div>
-          <div class="tlc-drop-sub">.edl · .fcpxml · .fcpxmld · .xml · .otio · .otioz · .aaf · .ale · .prproj</div>
-          <button id="tlcBrowseBtn" class="btn theme-q3 active" type="button" style="font-size:12px;">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M2 4h4l2 2h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
-            <span class="bar"></span>Browse Files…
-          </button>
-          <input id="tlcFileInput" type="file" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.aaf,.ale,.prproj,.json" style="display:none;" />
+      <div id="tlcImportPane" style="display:none;flex-direction:column;flex:1;overflow:auto;min-height:0;">
+        <div class="tlc-import-workspace">
+          <div class="tlc-import-heading">
+            <span class="tlc-import-eyebrow">TIMELINE CONVERT</span>
+            <h2>Convert a timeline in three simple steps</h2>
+            <p>Import once, review the detected settings, then choose the format you need.</p>
+          </div>
+          <div class="tlc-import-steps" aria-label="Import workflow">
+            <span class="active"><b>1</b> Add timeline</span><i></i>
+            <span><b>2</b> Review</span><i></i>
+            <span><b>3</b> Export</span>
+          </div>
+          <div class="tlc-drop" id="tlcDropZone">
+            <div class="tlc-drop-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+            </div>
+            <div class="tlc-drop-title">Drop your edit timeline here</div>
+            <div class="tlc-drop-sub">or choose one file from your Mac</div>
+            <button id="tlcBrowseBtn" class="btn theme-q3 active" type="button" style="font-size:12px;">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M2 4h4l2 2h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
+              <span class="bar"></span>Choose timeline
+            </button>
+            <input id="tlcFileInput" type="file" accept=".edl,.fcpxml,.fcpxmld,.xml,.otio,.otioz,.aaf,.ale,.prproj,.json" style="display:none;" />
+          </div>
+          <div class="tlc-format-groups" aria-label="Supported timeline formats">
+            <span><b>Editorial</b> EDL · FCPXML · XML</span>
+            <span><b>Open timeline</b> OTIO · OTIOZ</span>
+            <span><b>Interchange</b> AAF · ALE</span>
+          </div>
+          <div id="tlcImportStatus" class="tlc-import-status" role="status"><i></i><span>Ready for a timeline</span></div>
+          <div class="tlc-import-note">This import stays inside Timeline Convert and does not replace your Pull Prep project.</div>
         </div>
-        <div id="tlcImportStatus" style="font-size:12px;min-height:18px;text-align:center;transition:color .2s;"></div>
       </div>
 
     </div>
@@ -5745,9 +5927,11 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     .tlc-toolbar {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 14px;
-      background: var(--tlc-s1) !important;
+      gap: 9px;
+      padding: 7px 14px;
+      min-height: 46px;
+      box-sizing: border-box;
+      background: linear-gradient(180deg, #171717, #121212) !important;
       border: none !important;
       border-bottom: 1px solid var(--tlc-b1) !important;
       border-radius: 0 !important;
@@ -5755,45 +5939,63 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
       flex-shrink: 0;
       flex-wrap: wrap;
     }
+    .tlc-command-label {
+      display:inline-flex; align-items:center; gap:6px; flex-shrink:0;
+      color:var(--tlc-t2); font-size:8px; font-weight:900; letter-spacing:.12em; text-transform:uppercase;
+    }
+    .tlc-command-label i { width:6px; height:6px; border-radius:50%; background:var(--tlc-red); box-shadow:0 0 8px rgba(229,9,20,.55); }
     .tlc-fmt-seg {
       display: flex;
       align-items: center;
-      background: var(--tlc-s2);
-      border: 1px solid var(--tlc-b1);
-      border-radius: 4px;
-      padding: 2px;
-      gap: 1px;
+      background: rgba(0,0,0,.34);
+      border: 1px solid var(--tlc-b2);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 2px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 4px 14px rgba(0,0,0,.12);
     }
     .tlc-fmt-seg .btn {
-      height: 24px !important;
-      padding: 0 9px !important;
-      border-radius: 3px !important;
-      border: none !important;
+      --fmt-color: var(--tlc-t1);
+      --fmt-bg: rgba(255,255,255,.08);
+      height: 30px !important;
+      min-width: 70px;
+      padding: 0 11px !important;
+      border-radius: 6px !important;
+      border: 1px solid transparent !important;
       background: transparent !important;
-      font-size: 10px !important;
+      font-size: 9.5px !important;
       font-weight: 800 !important;
-      letter-spacing: .06em !important;
+      letter-spacing: .045em !important;
       color: var(--tlc-t3) !important;
       box-shadow: none !important;
       display: inline-flex; align-items: center; gap: 5px;
-      transition: background .1s, color .1s;
+      position:relative;
+      transition: background .14s, color .14s, border-color .14s, transform .14s, box-shadow .14s;
     }
-    .tlc-fmt-seg .btn:hover:not(.active) { background: var(--tlc-s3) !important; color: var(--tlc-t2) !important; }
+    .tlc-fmt-seg .btn svg { width:12px !important; height:12px !important; opacity:.58; transition:opacity .14s, transform .14s; }
+    .tlc-fmt-seg .btn:hover:not(.active) { background: rgba(255,255,255,.055) !important; color: var(--tlc-t1) !important; border-color:var(--tlc-b1) !important; transform:translateY(-1px); }
+    .tlc-fmt-seg .btn:hover svg, .tlc-fmt-seg .btn.active svg { opacity:1; transform:scale(1.05); }
+    .tlc-fmt-seg .btn.active {
+      background:var(--fmt-bg) !important; color:var(--fmt-color) !important;
+      border-color:color-mix(in srgb, var(--fmt-color) 28%, transparent) !important;
+      box-shadow:inset 0 -2px 0 var(--fmt-color), 0 0 12px color-mix(in srgb, var(--fmt-color) 9%, transparent) !important;
+    }
+    .tlc-fmt-seg .btn:focus-visible { outline:2px solid rgba(255,255,255,.78) !important; outline-offset:2px; }
     .tlc-fmt-seg .btn .bar { display: none !important; }
 
     /* Per-format active colours — Netflix palette */
-    #tlcTab_edl32.active            { background: rgba(229,9,20,.15) !important;   color: #FF6B6B !important; }
-    #tlcTab_otio.active             { background: rgba(70,211,105,.12) !important;  color: var(--tlc-green) !important; }
-    #tlcTab_fcpxml.active           { background: rgba(74,144,217,.13) !important;  color: var(--tlc-blue) !important; }
-    #tlcTab_fcpxmld.active          { background: rgba(74,144,217,.10) !important;  color: rgba(120,180,255,.9) !important; }
-    #tlcTab_xml.active              { background: rgba(160,120,255,.12) !important; color: rgba(190,160,255,.9) !important; }
-    #tlcTab_aaf_nle_linked.active   { background: rgba(245,197,24,.10) !important;  color: var(--tlc-amber) !important; }
-    #tlcTab_aaf_protools_audio.active { background: rgba(245,197,24,.08) !important; color: rgba(255,220,100,.9) !important; }
+    #tlcTab_edl32              { --fmt-color:#FF646C; --fmt-bg:rgba(229,9,20,.16); }
+    #tlcTab_otio               { --fmt-color:var(--tlc-green); --fmt-bg:rgba(70,211,105,.13); }
+    #tlcTab_fcpxml             { --fmt-color:#69AFFF; --fmt-bg:rgba(74,144,217,.14); }
+    #tlcTab_fcpxmld            { --fmt-color:#79C8FF; --fmt-bg:rgba(64,170,230,.13); }
+    #tlcTab_xml                { --fmt-color:#C4A2FF; --fmt-bg:rgba(160,120,255,.14); }
+    #tlcTab_aaf_nle_linked     { --fmt-color:#F5C518; --fmt-bg:rgba(245,197,24,.12); }
+    #tlcTab_aaf_protools_audio { --fmt-color:#FFDC64; --fmt-bg:rgba(245,197,24,.10); }
 
     /* Divider before AAF group */
-    #tlcTab_aaf_nle_linked { margin-left: 4px; position: relative; }
+    #tlcTab_aaf_nle_linked { margin-left: 7px; position: relative; }
     #tlcTab_aaf_nle_linked::before {
-      content: ''; position: absolute; left: -3px; top: 25%; bottom: 25%;
+      content: ''; position: absolute; left: -5px; top: 20%; bottom: 20%;
       width: 1px; background: var(--tlc-b2); pointer-events: none;
     }
 
@@ -5810,64 +6012,80 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     }
     .tlc-reel-ctrl {
       display: flex; align-items: center; gap: 5px;
-      background: var(--tlc-s2);
-      border: 1px solid var(--tlc-b1);
-      border-radius: 4px;
-      padding: 0 8px;
-      height: 26px;
+      background: rgba(0,0,0,.28);
+      border: 1px solid var(--tlc-b2);
+      border-radius: 6px;
+      padding: 0 9px;
+      height: 30px;
     }
     .tlc-reel-ctrl .tlc-opt-lbl { font-size: 8.5px; letter-spacing: .08em; }
 
     /* Options bar */
     .tlc-opts-bar {
       display: flex; flex-wrap: nowrap; align-items: center;
-      gap: 0 8px; padding: 0 14px;
-      background: var(--tlc-s1);
+      gap: 0 7px; padding: 6px 14px;
+      background: linear-gradient(180deg,#141414,#101010);
       border-bottom: 1px solid var(--tlc-b1);
-      font-size: 10px; min-height: 32px;
-      flex-shrink: 0;
+      font-size: 10px; min-height: 42px; box-sizing:border-box;
+      flex-shrink: 0; overflow-x:auto; overflow-y:hidden;
+      scrollbar-width:none;
     }
-    .tlc-opt-sep { width: 1px; height: 12px; background: var(--tlc-b1); flex-shrink: 0; margin: 0 2px; }
-    .tlc-opt-lbl { color: var(--tlc-t4); font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; white-space: nowrap; flex-shrink: 0; }
+    .tlc-opts-bar::-webkit-scrollbar { display:none; }
+    .tlc-opt-sep { width: 1px; height: 18px; background: var(--tlc-b2); flex-shrink: 0; margin: 0 3px; }
+    .tlc-opt-lbl { color: var(--tlc-t3); font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: .11em; white-space: nowrap; flex-shrink: 0; }
 
     /* Structure toggle */
     .tlc-struct-toggle {
       display: flex;
-      background: var(--tlc-s2);
-      border: 1px solid var(--tlc-b1);
-      border-radius: 3px;
+      background: rgba(0,0,0,.3);
+      border: 1px solid var(--tlc-b2);
+      border-radius: 6px;
       overflow: hidden;
       flex-shrink: 0;
     }
     .tlc-struct-toggle label {
-      display: flex; align-items: center; gap: 3px;
-      padding: 0 8px; height: 22px;
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 9px; height: 28px;
       cursor: pointer; font-size: 10px; font-weight: 700;
-      color: var(--tlc-t3); transition: all .1s;
+      color: var(--tlc-t3); transition: all .14s;
       user-select: none; letter-spacing: .04em; white-space: nowrap;
     }
+    .tlc-struct-toggle label:hover { color:var(--tlc-t1); background:rgba(255,255,255,.045); }
     .tlc-struct-toggle label + label { border-left: 1px solid var(--tlc-b1); }
     .tlc-struct-toggle input[type=radio] { display: none; }
-    .tlc-struct-toggle label:has(input:checked) { color: var(--tlc-t1); background: var(--tlc-s3); }
+    .tlc-struct-toggle label:has(input:checked) { color: #fff; background: rgba(229,9,20,.15); box-shadow:inset 0 -2px 0 var(--tlc-red); }
 
     /* Check/radio labels */
     .tlc-radio-lbl,.tlc-check-lbl {
-      display: flex; align-items: center; gap: 3px;
+      display: flex; align-items: center; gap: 5px;
       cursor: pointer; color: var(--tlc-t3); white-space: nowrap;
-      user-select: none; transition: color .1s; font-size: 10px; flex-shrink: 0;
+      user-select: none; transition: color .14s,background .14s,border-color .14s,transform .14s;
+      font-size: 9.5px; font-weight:650; flex-shrink: 0;
+      height:28px; padding:0 7px; box-sizing:border-box;
+      border:1px solid transparent; border-radius:6px;
     }
-    .tlc-radio-lbl:hover,.tlc-check-lbl:hover { color: var(--tlc-t1); }
-    .tlc-radio-lbl input,.tlc-check-lbl input { accent-color: var(--tlc-red); cursor: pointer; margin: 0; width: 11px; height: 11px; }
+    .tlc-radio-lbl:hover,.tlc-check-lbl:hover { color: var(--tlc-t1); background:rgba(255,255,255,.045); border-color:var(--tlc-b1); transform:translateY(-1px); }
+    .tlc-radio-lbl input,.tlc-check-lbl input {
+      appearance:none; -webkit-appearance:none; cursor:pointer; margin:0; width:13px; height:13px;
+      border:1px solid var(--tlc-b3); border-radius:3px; background:#0b0b0b;
+      display:grid; place-items:center; transition:background .12s,border-color .12s,box-shadow .12s;
+    }
+    .tlc-radio-lbl input::after,.tlc-check-lbl input::after { content:'✓'; color:#fff; font-size:9px; line-height:1; opacity:0; transform:scale(.6); transition:opacity .12s,transform .12s; }
+    .tlc-radio-lbl input:checked,.tlc-check-lbl input:checked { background:var(--tlc-red); border-color:#ff4f58; box-shadow:0 0 0 2px rgba(229,9,20,.12); }
+    .tlc-radio-lbl input:checked::after,.tlc-check-lbl input:checked::after { opacity:1; transform:scale(1); }
+    .tlc-check-lbl:has(input:checked) { color:var(--tlc-t1); background:rgba(229,9,20,.07); border-color:rgba(229,9,20,.14); }
 
     .tlc-select,.tlc-reel-ctrl select {
-      background: transparent;
-      border: none;
-      color: var(--tlc-t2);
-      font-size: 10px;
-      padding: 0 2px;
+      background: rgba(255,255,255,.035);
+      border: 1px solid var(--tlc-b1);
+      border-radius:4px;
+      color: var(--tlc-t1);
+      font-size: 9.5px;
+      padding: 3px 22px 3px 7px;
       outline: none;
       cursor: pointer;
     }
+    .tlc-select:hover,.tlc-reel-ctrl select:hover { border-color:var(--tlc-b3); background:rgba(255,255,255,.065); }
 
     /* Regex input */
     .tlc-regex-inp {
@@ -5876,40 +6094,98 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     }
     .tlc-regex-inp:focus { border-color: rgba(229,9,20,.4); }
 
-    #tlcFlatFilter { display: none; align-items: center; gap: 0 8px; flex-shrink: 0; }
+    #tlcFlatFilter { display: none; align-items: center; gap: 0 6px; flex-shrink: 0; }
     .tlc-struct-active { color: var(--tlc-t1) !important; }
+
+    /* Smart conversion summary */
+    .tlc-smart-summary {
+      min-height: 54px; padding: 7px 14px; box-sizing: border-box;
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+      background: linear-gradient(90deg, rgba(229,9,20,.07), rgba(255,255,255,.012) 38%, transparent);
+      border-bottom: 1px solid var(--tlc-b1);
+    }
+    .tlc-smart-step { display:flex; align-items:center; gap:7px; min-width:112px; color:var(--tlc-t3); }
+    .tlc-smart-step-num {
+      width:20px; height:20px; border-radius:50%; display:grid; place-items:center;
+      background:var(--tlc-s3); border:1px solid var(--tlc-b2); font-size:9px; font-weight:900;
+    }
+    .tlc-smart-step.is-done .tlc-smart-step-num { color:#fff; background:var(--tlc-red); border-color:var(--tlc-red); box-shadow:0 0 0 3px rgba(229,9,20,.10); }
+    .tlc-smart-step span:last-child { display:flex; flex-direction:column; line-height:1.1; min-width:0; }
+    .tlc-smart-step b { font-size:10px; color:var(--tlc-t1); letter-spacing:.03em; }
+    .tlc-smart-step small { margin-top:3px; max-width:115px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; color:var(--tlc-t3); }
+    .tlc-smart-arrow { color:var(--tlc-t4); font-size:13px; }
+    .tlc-smart-facts { margin-left:auto; display:flex; align-items:center; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+    .tlc-smart-facts > span { padding:4px 7px; border:1px solid var(--tlc-b1); border-radius:999px; background:rgba(255,255,255,.025); font-size:9px; color:var(--tlc-t3); white-space:nowrap; }
+    .tlc-smart-facts b { color:var(--tlc-t1); font-variant-numeric:tabular-nums; }
+    .tlc-health { display:inline-flex; align-items:center; gap:5px; }
+    .tlc-health i { width:6px; height:6px; border-radius:50%; background:var(--tlc-t4); }
+    .tlc-health.is-ready { color:var(--tlc-green); border-color:rgba(70,211,105,.20); background:rgba(70,211,105,.05); }
+    .tlc-health.is-ready i { background:var(--tlc-green); box-shadow:0 0 8px rgba(70,211,105,.45); }
+    .tlc-health.is-warn { color:var(--tlc-amber); border-color:rgba(245,197,24,.20); }
+    .tlc-health.is-warn i { background:var(--tlc-amber); }
+
+    /* Generated output — framed like a useful editor, not a blank textarea */
+    .tlc-output-wrap { flex:1; overflow:hidden; padding:10px 14px 14px; display:flex; flex-direction:column; min-height:0; }
+    .tlc-output-shell { flex:1; min-height:0; display:flex; flex-direction:column; border:1px solid var(--tlc-b1); border-radius:7px; overflow:hidden; background:#090909; }
+    .tlc-output-head { min-height:42px; flex-shrink:0; padding:0 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--tlc-b1); background:linear-gradient(180deg,var(--tlc-s2),var(--tlc-s1)); }
+    .tlc-output-head > div { display:flex; align-items:baseline; gap:8px; min-width:0; }
+    .tlc-output-kicker { font-size:8px; font-weight:900; letter-spacing:.13em; color:var(--tlc-red); }
+    .tlc-output-head strong { font-size:11px; color:var(--tlc-t1); white-space:nowrap; }
+    .tlc-output-meta { font-size:9px; color:var(--tlc-t3); white-space:nowrap; }
+    .tlc-empty-export { flex:1; min-height:240px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; }
+    .tlc-empty-icon { width:44px; height:44px; border-radius:12px; display:grid; place-items:center; margin-bottom:13px; background:linear-gradient(145deg,rgba(229,9,20,.18),rgba(74,144,217,.10)); border:1px solid rgba(229,9,20,.22); color:#ff5a63; font-size:22px; }
+    .tlc-empty-title { color:var(--tlc-t1); font-size:16px; font-weight:800; }
+    .tlc-empty-copy { max-width:410px; margin:6px 0 15px; color:var(--tlc-t3); font-size:11px; line-height:1.55; }
+    .tlc-empty-formats { margin-top:12px; font-size:8px; font-weight:800; letter-spacing:.12em; color:var(--tlc-t4); }
 
     /* Preview code area */
     #tlcPreview {
-      flex: 1; min-height: 300px; width: 100%; box-sizing: border-box;
+      flex: 1; min-height: 240px; width: 100%; box-sizing: border-box;
       font-family: ui-monospace, 'SF Mono', Consolas, monospace;
       font-size: 11px; line-height: 1.65; resize: none;
-      background: #080808;
+      background: #090d12;
       color: rgba(255,255,255,.75);
-      border: 1px solid var(--tlc-b1);
-      border-radius: 4px;
-      padding: 12px 14px;
+      border: none;
+      border-radius: 0;
+      padding: 14px 16px 20px;
       outline: none;
     }
-    #tlcPreview:focus { border-color: var(--tlc-b2); }
+    #tlcPreview:focus { box-shadow:inset 0 0 0 1px var(--tlc-b2); }
 
     /* Preflight */
     .tlc-preflight { display: flex; flex-direction: column; gap: 2px; padding: 5px 8px; background: rgba(255,255,255,.025); border-radius: 4px; margin: 4px 0; }
     .tlc-pf-err  { font-size: 11px; color: rgba(255,100,100,.9); line-height: 1.4; }
     .tlc-pf-warn { font-size: 11px; color: var(--tlc-amber); line-height: 1.4; }
 
+    /* Guided import workspace */
+    .tlc-import-workspace { width:min(760px,calc(100% - 48px)); margin:auto; padding:30px 0 34px; display:flex; flex-direction:column; align-items:center; }
+    .tlc-import-heading { text-align:center; margin-bottom:18px; }
+    .tlc-import-eyebrow { color:var(--tlc-red); font-size:8px; font-weight:900; letter-spacing:.17em; }
+    .tlc-import-heading h2 { margin:7px 0 5px; color:var(--tlc-t1); font-size:22px; line-height:1.15; letter-spacing:-.02em; }
+    .tlc-import-heading p { margin:0; color:var(--tlc-t3); font-size:11px; }
+    .tlc-import-steps { width:min(560px,100%); margin-bottom:14px; display:flex; align-items:center; justify-content:center; }
+    .tlc-import-steps span { display:flex; align-items:center; gap:6px; color:var(--tlc-t3); font-size:9px; font-weight:700; white-space:nowrap; }
+    .tlc-import-steps span b { width:18px; height:18px; border-radius:50%; display:grid; place-items:center; background:var(--tlc-s2); border:1px solid var(--tlc-b2); font-size:8px; }
+    .tlc-import-steps span.active { color:var(--tlc-t1); }
+    .tlc-import-steps span.active b { background:var(--tlc-red); border-color:var(--tlc-red); color:#fff; }
+    .tlc-import-steps i { width:64px; height:1px; margin:0 10px; background:var(--tlc-b2); }
+
     /* Drop zone (import) */
     .tlc-drop {
+      width:100%; min-height:210px; box-sizing:border-box;
       border: 1px dashed var(--tlc-b2);
-      border-radius: 6px;
-      padding: 48px 24px 40px;
+      border-radius: 10px;
+      padding: 28px 24px 24px;
       text-align: center; cursor: pointer;
-      transition: border-color .15s, background .15s;
+      background:linear-gradient(145deg,rgba(255,255,255,.025),rgba(229,9,20,.025));
+      transition: border-color .15s, background .15s, transform .15s;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
     }
-    .tlc-drop:hover { border-color: rgba(245,197,24,.35); background: rgba(245,197,24,.02); }
-    .tlc-drop svg { width: 32px; height: 32px; margin: 0 auto 10px; display: block; opacity: .25; }
-    .tlc-drop-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--tlc-t1); }
-    .tlc-drop-sub { font-size: 10px; color: var(--tlc-t3); margin-bottom: 16px; letter-spacing: .04em; }
+    .tlc-drop:hover { border-color: rgba(229,9,20,.45); background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(229,9,20,.045)); transform:translateY(-1px); }
+    .tlc-drop-icon { width:48px; height:48px; margin-bottom:12px; border-radius:13px; display:grid; place-items:center; color:#ff5a63; background:rgba(229,9,20,.10); border:1px solid rgba(229,9,20,.18); }
+    .tlc-drop .tlc-drop-icon svg { width:24px; height:24px; margin:0; display:block; opacity:.9; }
+    .tlc-drop-title { font-size: 15px; font-weight: 800; margin-bottom: 4px; color: var(--tlc-t1); }
+    .tlc-drop-sub { font-size: 10px; color: var(--tlc-t3); margin-bottom: 14px; }
     #tlcBrowseBtn {
       height: 28px; padding: 0 12px; font-size: 10px; font-weight: 700; letter-spacing: .04em;
       border-radius: 4px; border: 1px solid rgba(245,197,24,.30) !important;
@@ -5918,6 +6194,23 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
     }
     #tlcBrowseBtn:hover { background: rgba(245,197,24,.14) !important; }
     #tlcBrowseBtn .bar { display: none !important; }
+    .tlc-format-groups { width:100%; display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-top:10px; }
+    .tlc-format-groups span { min-width:0; padding:7px 9px; border:1px solid var(--tlc-b1); border-radius:5px; background:var(--tlc-s1); color:var(--tlc-t3); font-size:9px; text-align:center; }
+    .tlc-format-groups b { color:var(--tlc-t2); margin-right:5px; }
+    .tlc-import-status { min-height:18px; margin-top:11px; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--tlc-t3); font-size:10px; transition:color .2s; }
+    .tlc-import-status i { width:6px; height:6px; border-radius:50%; background:var(--tlc-t4); }
+    .tlc-import-status.is-ok { color:var(--tlc-green); }
+    .tlc-import-status.is-ok i { background:var(--tlc-green); }
+    .tlc-import-status.is-error { color:#ff6b6b; }
+    .tlc-import-status.is-error i { background:#ff6b6b; }
+    .tlc-import-note { margin-top:4px; color:var(--tlc-t4); font-size:9px; text-align:center; }
+    .pfx-tlc-modal button:disabled { opacity:.32 !important; cursor:not-allowed !important; filter:saturate(.35); }
+
+    @media (max-width: 980px) {
+      .tlc-smart-step:nth-of-type(2), .tlc-smart-step:nth-of-type(3), .tlc-smart-arrow { display:none; }
+      .tlc-format-groups { grid-template-columns:1fr; }
+      .tlc-import-workspace { width:calc(100% - 28px); }
+    }
 
     /* AAF panel */
     #tlcAafPanel { flex: 1; overflow-y: auto; }
@@ -6190,13 +6483,19 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
             </div>
           </div>
           <div class="fun-card-player fun-card-player-apple" title="Apple Music mini player">
+            <!-- Lazy: src is hydrated from data-src only when the Fun box opens
+                 (post-login). Loading this cross-origin embed eagerly created an
+                 out-of-process iframe whose GPU layer composited through the
+                 login overlay's backdrop-filter, showing the playlist artwork
+                 over the sign-in card. -->
             <iframe
               id="fbAppleMusicForeverFrame"
               class="fun-apple-frame"
               title="Apple Music playlist: Forever"
               allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write"
-              sandbox="allow-forms allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
-              src="https://embed.music.apple.com/ca/playlist/forever/pl.b1ba69e0025c4175bc27794d48ceb68c?app=music"
+              sandbox="allow-forms allow-popups allow-scripts allow-top-navigation-by-user-activation"
+              referrerpolicy="no-referrer"
+              data-src="https://embed.music.apple.com/ca/playlist/forever/pl.b1ba69e0025c4175bc27794d48ceb68c?app=music"
             ></iframe>
           </div>
         </div>
@@ -6468,6 +6767,7 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
   <script src="scripts/cutdiff_table_scrollbars.js"></script>
   <script src="scripts/flow_connect.js"></script>
   <script type="module" src="scripts/ui.js"></script>
+  <script src="scripts/core/tabGroupFit.js" defer></script>
   <script src="scripts/render_queue.js" defer></script>
 
   <!-- PostFlowX v3 — new core modules -->
@@ -6604,8 +6904,6 @@ window.__PFX_BUILD_VERSION__ = "2026.6.1";
 
   <!-- Project Setup System -->
   <script type="module" src="scripts/modules/project_setup.js"></script>
-  <!-- Trailer Conform -->
-  <script type="module" src="scripts/modules/trailerConform.js"></script>
   <!-- Smart VFX Pull Settings -->
   <script defer src="scripts/features/vfxPull/vfxPullSettings.js"></script>
   <!-- Unified media transport: one shared scrub+buttons component on every player -->

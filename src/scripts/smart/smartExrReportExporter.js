@@ -42,6 +42,14 @@ function _buildFileList(root, jobs, qcResults, meta) {
   ];
 }
 
+// Neutralize spreadsheet formula-injection: prefix a leading apostrophe when a
+// cell begins with a formula trigger, then apply RFC-4180 quoting.
+function csvCell(v) {
+  let s = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
 // Build CSV pull list content.
 export function buildShotsCSV(jobs = []) {
   const header = [
@@ -57,7 +65,7 @@ export function buildShotsCSV(jobs = []) {
     j.fps, j.handleFrames, j.frameStart, j.expectedFrameCount,
     j.metadata?.matchStatus || '', j.metadata?.matchConfidence || '',
     j.status || '', (j.metadata?.notes || '').replace(/,/g, ';'),
-  ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+  ].map(csvCell).join(','));
   return [header, ...rows].join('\n');
 }
 

@@ -16,6 +16,7 @@
 // Only the base is shared. Two copies of "23.976 counts on 24" is how they drifted
 // apart in the first place.
 import { nominalBase } from "./utils_time.js";
+import { isValidNetflixVfxName } from "../core/vfxNameReview.js";
 
 function pad3(n) { return String(n).padStart(3, "0"); }
 function pad2(n) { return String(n).padStart(2, "0"); }
@@ -49,41 +50,7 @@ function isGenericMarkerName(name){
 
 // Netflix VFX naming guard (Shot / Version / Plate)
 function isValidNetflixVfxMarkerName(name){
-  const s = String(name || "").trim();
-  if (!s) return false;
-  if (/[\s]/.test(s)) return false;
-  if (!/^[A-Za-z0-9._-]+$/.test(s)) return false;
-  if (!s.includes("_")) return false;
-
-  const SHOW = "[A-Za-z][A-Za-z0-9]{1,5}";
-  const EP   = "\\d{3}";
-  const SEQ  = "[A-Za-z0-9]{2,3}";
-  const SCN  = "\\d{3}";
-  const SHOT = "\\d{3,4}";
-
-  const SHOT_BASE = `(?:` +
-    `${SHOW}_${EP}_${SCN}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${EP}_${SEQ}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SCN}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SHOT}|` +
-    `${SHOW}_${SEQ}_${SCN}_${SHOT}` +
-  `)`;
-
-  const reShotBase  = new RegExp(`^${SHOT_BASE}$`);
-  const reVersion   = new RegExp(`^${SHOT_BASE}_[A-Za-z0-9]+_[A-Za-z0-9]{2,6}_v\\d{3,4}$`, "i");
-  const PLATE_ONE   = "(?:PL\\d{2}|[A-Za-z]{2,}\\d{2,3})";
-  const rePlateA    = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}(?:_v\\d{3,4})?$`, "i");
-  const rePlateB    = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}(?:_v\\d{3,4})?$`, "i");
-  const rePlateAFile = new RegExp(`^${SHOT_BASE}_${PLATE_ONE}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-  const rePlateBFile = new RegExp(`^${SHOT_BASE}_[A-Za-z]{2,}_\\d{2,3}_v\\d{3,4}(?:\\.\\d{4})?(?:\\.[A-Za-z0-9]+)?$`, "i");
-
-  return (
-    reShotBase.test(s) ||
-    reVersion.test(s) ||
-    rePlateA.test(s) || rePlateB.test(s) ||
-    rePlateAFile.test(s) || rePlateBFile.test(s)
-  );
+  return isValidNetflixVfxName(name);
 }
 
 function isShotLikeMarkerName(name){
@@ -109,7 +76,7 @@ function markerDisplayName(ev){
 }
 
 function tcToFrames(tc, fps = 24) {
-  const m = typeof tc === "string" && tc.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/);
+  const m = typeof tc === "string" && tc.match(/^(\d{2})[:;](\d{2})[:;](\d{2})[:;](\d{2})$/);
   if (!m) return 0;
   const hh = parseInt(m[1], 10);
   const mm = parseInt(m[2], 10);
@@ -139,7 +106,7 @@ function framesToTC(frames, fps = 24) {
 
 function safeTC(tc, fps = 24) {
   if (!tc) return "00:00:00:00";
-  if (typeof tc === "string" && tc.match(/^\d{2}:\d{2}:\d{2}:\d{2}$/)) return tc;
+  if (typeof tc === "string" && /^\d{2}[:;]\d{2}[:;]\d{2}[:;]\d{2}$/.test(tc)) return tc;
   const n = Number(tc);
   if (!Number.isFinite(n)) return "00:00:00:00";
   return framesToTC(n, fps);
@@ -669,10 +636,12 @@ function locatorLine(ev, mode) {
   return null;
 }
 
-function buildHeader(projectName, fps, partInfo = "") {
+function buildHeader(projectName, fps, partInfo = "", isDropFrame = false) {
   const lines = [];
   lines.push(`TITLE: ${projectName}${partInfo ? " " + partInfo : ""}`);
-  lines.push("FCM: NON-DROP FRAME");
+  // Header must match the event-line timecodes: emit DROP FRAME when the events
+  // carry drop-frame timecode (';' separator), else NON-DROP FRAME.
+  lines.push(isDropFrame ? "FCM: DROP FRAME" : "FCM: NON-DROP FRAME");
   // NOTE: User requested no "COMMENT: REEL_NAME_EXTENDED=1" in output.
   lines.push("");
   return lines.join("\n");
@@ -750,8 +719,14 @@ function buildPartEDL(eventsSlice, opts, partIndex, totalParts) {
   const partTag = totalParts > 1 ? `(Part ${partIndex + 1} of ${totalParts})` : "";
   const lines = [];
 
+  // Detect drop-frame timecode (';' separator) anywhere in this slice so the
+  // FCM header agrees with the preserved per-event drop-frame timecodes.
+  const isDF = Array.isArray(eventsSlice) && eventsSlice.some(e => e &&
+    [e.srcIn, e.srcOut, e.recIn, e.recOut, e._recInFixed, e._recOutFixed]
+      .some(t => typeof t === 'string' && t.includes(';')));
+
   // Header
-  lines.push(buildHeader(projectName, fps, partTag));
+  lines.push(buildHeader(projectName, fps, partTag, isDF));
 
   // Body
   let idx = 1;

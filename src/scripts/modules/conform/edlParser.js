@@ -17,22 +17,62 @@
  * }
  */
 
-export function tcToFrames(tc, fps) {
-  if (!tc) return 0;
-  const parts = tc.replace(';', ':').split(':');
-  if (parts.length !== 4) return 0;
-  const [h, m, s, f] = parts.map(Number);
-  return Math.round(fps) * (h * 3600 + m * 60 + s) + f;
+/** Drop-frame rates (29.97 / 59.94). Mirrors conform_lib.fps_is_drop(). */
+export function fpsIsDrop(fps) {
+  return Math.abs(fps - 29.97) < 0.01 || Math.abs(fps - 59.94) < 0.01;
 }
 
+/**
+ * SMPTE timecode → frame count. Drop-frame math (ported from conform_lib.parse_tc)
+ * is applied when the frame separator is ';' — a ';' authored by the NLE is the
+ * authoritative drop-frame marker. Non-drop otherwise.
+ */
+export function tcToFrames(tc, fps) {
+  if (!tc) return 0;
+  const m = String(tc).trim().match(/^(\d+):(\d+):(\d+)([:;])(\d+)$/);
+  if (!m) return 0;
+  const h = +m[1], mi = +m[2], s = +m[3], f = +m[5];
+  const isDrop = m[4] === ';';
+  if (isDrop) {
+    const nominal = Math.round(fps);
+    const drop = nominal === 30 ? 2 : 4;   // 30→2/min, 60→4/min
+    const totalMin = h * 60 + mi;
+    const dropped = drop * (totalMin - Math.floor(totalMin / 10));
+    return h * 3600 * nominal + mi * 60 * nominal + s * nominal + f - dropped;
+  }
+  const rate = fps > 0 ? Math.round(fps) : 24;
+  return h * 3600 * rate + mi * 60 * rate + s * rate + f;
+}
+
+/**
+ * Frame count → SMPTE timecode. Emits drop-frame (';' separator, DF math, ported
+ * from conform_lib.frames_to_tc) when fps is a drop rate; non-drop otherwise.
+ */
 export function framesToTc(frames, fps) {
-  const ifps = Math.max(1, Math.round(fps));
-  const f = frames % ifps;
-  const totalSecs = Math.floor(frames / ifps);
-  const s = totalSecs % 60;
-  const m = Math.floor(totalSecs / 60) % 60;
-  const h = Math.floor(totalSecs / 3600);
-  return [h, m, s, f].map(n => String(n).padStart(2, '0')).join(':');
+  frames = Math.max(0, Math.round(frames));
+  let sep = ':';
+  let rate = fps > 0 ? Math.round(fps) : 24;
+  if (fpsIsDrop(fps)) {
+    const nominal = Math.round(fps);
+    const drop = nominal === 30 ? 2 : 4;
+    const framesPerMin = nominal * 60 - drop;
+    const framesPer10Min = framesPerMin * 10 + drop;
+    const d = Math.floor(frames / framesPer10Min);
+    const md = frames % framesPer10Min;
+    if (md > drop) {
+      frames += (drop * 9 * d) + drop * Math.floor((md - drop) / framesPerMin);
+    } else {
+      frames += drop * 9 * d;
+    }
+    sep = ';';
+    rate = nominal;
+  }
+  const f = frames % rate;
+  const s = Math.floor(frames / rate) % 60;
+  const m = Math.floor(frames / (rate * 60)) % 60;
+  const h = Math.floor(frames / (rate * 3600));
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(h)}:${p(m)}:${p(s)}${sep}${p(f)}`;
 }
 
 // ── CMX3600 EDL ───────────────────────────────────────────────────────────────
@@ -43,26 +83,34 @@ export function parseEdl(text, fps = 24) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i].trim();
-    // Event line: "001  REEL  V  C  srcIn srcOut recIn recOut"
+    // Event line: "<num> <reel> <track> <transition>[ dur] srcIn srcOut recIn recOut".
+    // Matches ANY transition (C/D/W/…) and consumes the optional dissolve/wipe
+    // duration token, so dissolves and wipes are not silently dropped. Ported to
+    // match conform_lib._EVENT_RE.
     const m = line.match(
-      /^(\d{3,4})\s+(\S+)\s+\S+\s+C\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/
+      /^(\d+)\s+(\S+)\s+(\S+)\s+([A-Z])\s*(?:\d+)?\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/
     );
     if (m) {
-      const [, idxStr, reel, srcIn, srcOut, recIn, recOut] = m;
+      const [, idxStr, reel, track, , srcIn, srcOut, recIn, recOut] = m;
+      // Keep video events only (drop audio-only rows like A1/A2). Mirrors
+      // parse_edl(video_only=True).
+      if (!/V/i.test(track)) { i++; continue; }
       const idx = parseInt(idxStr, 10);
-      const fi = tcToFrames(srcIn, fps);
-      const fo = tcToFrames(srcOut, fps);
-      // Scan next few lines for * FROM CLIP NAME
+      // Timeline duration comes from the RECORD TCs (authoritative), not the
+      // source TCs — source points at WIP masters and is re-resolved by matching.
+      const recInF  = tcToFrames(recIn, fps);
+      const recOutF = tcToFrames(recOut, fps);
+      // Scan next few lines for * [FROM] CLIP NAME (FROM optional, flexible spacing).
       let clipName = reel;
       for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) {
-        const cm = lines[j].trim().match(/^\*\s+FROM CLIP NAME:\s+(.+)/i);
+        const cm = lines[j].trim().match(/^\*\s*(?:FROM\s+)?CLIP\s+NAME[:\s]+(.+?)\s*$/i);
         if (cm) { clipName = cm[1].trim(); break; }
       }
       events.push({
         index: idx, reel, clipName,
         srcIn, srcOut, recIn, recOut,
-        durationFrames: Math.max(0, fo - fi),
-        fps, track: 'V', comment: '',
+        durationFrames: Math.max(0, recOutF - recInF),
+        fps, track, comment: '',
       });
     }
     i++;
@@ -156,7 +204,8 @@ export function parseEditText(text, hint = '', fps = 24) {
 // ── Export helpers ────────────────────────────────────────────────────────────
 
 export function eventsToEdl(events, fps = 24) {
-  const lines = ['TITLE: PFX Conform Export', 'FCM: NON-DROP FRAME', ''];
+  const lines = ['TITLE: PFX Conform Export',
+    `FCM: ${fpsIsDrop(fps) ? 'DROP FRAME' : 'NON-DROP FRAME'}`, ''];
   for (const ev of events) {
     const reel = (ev.reel || 'BL').substring(0, 8).padEnd(8);
     lines.push(`${String(ev.index).padStart(3,'0')}  ${reel}  V  C  ${ev.srcIn} ${ev.srcOut} ${ev.recIn} ${ev.recOut}`);

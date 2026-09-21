@@ -198,5 +198,31 @@ function eq(got, want, l) { ok(got === want, `${l} (got ${JSON.stringify(got)}, 
   ok(!loopEl.classList.contains('pfx-tx-loop-on'), 'toggling loop off clears the active state');
 }
 
+// ── Part E: prefer the active AVFoundation monitor over a dormant video ─────
+{
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<video id="cmpDormant"></video><video id="programNative"></video>`;
+  document.body.appendChild(wrap);
+  let nativePaused = 0;
+  const native = {
+    fps: 24, duration: 5, currentFrame: 12, isPlaying: true,
+    pause() { nativePaused++; this.isPlaying = false; },
+    play() { this.isPlaying = true; },
+    seekFrame() {},
+  };
+  document.getElementById('programNative')._pfxNativeEngine = native;
+  const a = makeDelegatingAdapter({
+    name: 'native-preference-test',
+    video: ['cmpDormant', 'programNative'],
+    btn: { play: '#missingNativePlay' },
+  });
+  a.host = document.createElement('div');
+  eq(a.getFrame(), 12, 'adapter selects the AVFoundation-backed monitor over an earlier dormant video');
+  eq(a.isPlaying(), true, 'native monitor supplies authoritative playing state');
+  a.stop();
+  eq(nativePaused, 1, 'Stop pauses the active AVFoundation engine');
+  eq(a.isPlaying(), false, 'native monitor reports paused after Stop');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

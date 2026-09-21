@@ -7,6 +7,7 @@
 // -----------------------------------------------------------------------------
 
 import { nominalBase } from './utils_time.js';
+import { isValidNetflixVfxName } from '../core/vfxNameReview.js';
 
 /* ---------- Helpers ---------- */
 
@@ -46,53 +47,7 @@ function cloneEvents(evs) {
 //   - _PL01_v001
 //   - _comp_NFX_v001 (and similar)
 function isValidNetflixVfxMarkerName(name) {
-  const s = String(name || "").trim();
-  if (!s) return false;
-
-  // Allow only alphanumerics + underscores (Netflix best practice)
-  if (!/^[A-Za-z0-9_]+$/.test(s)) return false;
-
-  // Common editorial suffix (not a Netflix VFX name)
-  if (/_OK$/i.test(s)) return false;
-
-  // Shot prefix: SHOW_###_### or SHOW_###_###_###
-  // SHOW token starts with a letter, length 2–10 (e.g. LMP, AGM)
-  const m = s.match(/^([A-Za-z][A-Za-z0-9]{1,9}_\d{3}_\d{3}(?:_\d{3})?)(?:_(.+))?$/);
-  if (!m) return false;
-
-  const rest = m[2];
-  if (!rest) return true; // shot name alone is valid
-
-  const tokens = rest.split("_").filter(Boolean);
-  if (!tokens.length) return false;
-
-  const isV  = (t) => /^v\d{3,4}$/i.test(t);
-  const isEL = (t) => /^EL\d{2,3}$/i.test(t);
-  const isPL = (t) => /^PL\d{2,3}$/i.test(t);
-
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (!t) return false;
-
-    // ban common non-VFX marker suffix
-    if (/^OK$/i.test(t)) return false;
-
-    // Allow EL_028 / PL_01 forms
-    if (/^EL$/i.test(t) || /^PL$/i.test(t)) {
-      const nxt = tokens[i + 1];
-      if (!nxt || !/^\d{2,3}$/.test(nxt)) return false;
-      i++; // consume digits token
-      continue;
-    }
-
-    // Allow EL028 / PL01 forms
-    if (isEL(t) || isPL(t) || isV(t)) continue;
-
-    // General token (comp, NFX, vendor, task, etc.)
-    if (!/^[A-Za-z0-9]{2,16}$/.test(t)) return false;
-  }
-
-  return true;
+  return isValidNetflixVfxName(name);
 }
 
 /* ---------- Normalization ---------- */

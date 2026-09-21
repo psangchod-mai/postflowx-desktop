@@ -1,0 +1,2 @@
+jenkins:
+  label: "macos_arm64_aws && nf.app:sct_macbuilders"

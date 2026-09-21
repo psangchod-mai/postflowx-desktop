@@ -35,6 +35,12 @@
   }
 
   async function _post(path, body) {
+    if (window.__PFX_IS_ELECTRON && window.pfxPlatform?.policyRequest) {
+      try {
+        const result = await window.pfxPlatform.policyRequest({ path, method: 'POST', body });
+        return result?.ok ? result.data : null;
+      } catch { return null; }
+    }
     const url = _getUrl(path);
     if (!url) return null;
     try {
@@ -49,6 +55,12 @@
   }
 
   async function _get(path, params) {
+    if (window.__PFX_IS_ELECTRON && window.pfxPlatform?.policyRequest) {
+      try {
+        const result = await window.pfxPlatform.policyRequest({ path, method: 'GET', params });
+        return result?.ok ? result.data : null;
+      } catch { return null; }
+    }
     const url = _getUrl(path, params);
     if (!url) return null;
     try {
@@ -76,6 +88,34 @@
     if (pfxToken) params.token = pfxToken;
     if (email)    params.email = email;
     return _get('licenseCheck', params);
+  }
+
+  /**
+   * Email magic-link sign-in — request a one-time link.
+   * POSTs the email; the backend emails a link and returns a public pollId.
+   * Returns { ok, pollId } | { ok:false, error } or null on network error.
+   */
+  async function requestLink({ email } = {}) {
+    return _post('requestLink', { email: String(email || '').trim() });
+  }
+
+  /**
+   * Email magic-link sign-in — poll for confirmation with the public pollId, and
+   * (once the clicker has the code) submit the 6-digit verification code that binds
+   * the browser clicker to this app. Poll with no code to detect the confirmed
+   * transition; pass `code` on the Verify step. Returns one of:
+   *   { ok:true, waiting:true }                        — link not clicked yet
+   *   { ok:true, needsCode:true }                      — clicked; prompt for the code
+   *   { ok:true, needsCode:true, badCode:true }        — wrong code submitted
+   *   { ok:true, role, permissions:{tabs,actions}, featureFlags, expiresAt, sessionToken }
+   *   { ok:false, status:'pending'|'disabled'|'expired' }
+   * or null on network error.
+   */
+  async function checkLink({ pollId, code } = {}) {
+    return _post('checkLink', {
+      pollId: String(pollId || '').trim(),
+      code: String(code || '').trim(),
+    });
   }
 
   /**
@@ -120,13 +160,20 @@
     _post('logEvent', event).catch(() => {});
   }
 
+  async function submitAccessRequest(payload) {
+    return _post('request', payload || {});
+  }
+
   window.pfxPolicyApi = {
     registerOrPingUser,
     licenseCheck,
+    requestLink,
+    checkLink,
     versionManifest,
     featureFlags,
     annotateCatalog,
     annotateTrackProxy,
     logEvent,
+    submitAccessRequest,
   };
 })();

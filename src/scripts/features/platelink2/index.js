@@ -19,9 +19,9 @@ const _PL2_STRINGS = {
     menuXlsx:'📊 Excel (.xlsx)', menuPdf:'📎 PDF', menuCsv:'📄 CSV',
     menuJson:'🔗 Mapping JSON', menuNukePy:'▏ Nuke .py',
     searchPlaceholder:'Search shot name…',
-    slEmptyTitle:'No shots', slEmptyHint:'Scan a VFX folder to see the shot list.',
-    qtHint:'Select a shot to preview', qtNoRef:'No QuickTime reference found',
-    qtReimport:'Re-import folder to enable preview', inspEmpty:'Select a shot',
+    slEmptyTitle:'No shots yet', slEmptyHint:'Scan your VFX delivery folder to list its shots here.',
+    qtHint:'Select a shot on the left to preview its QuickTime reference.', qtNoRef:'No QuickTime reference found',
+    qtReimport:'Re-import folder to enable preview', inspEmpty:'Select a shot to see its details.',
     relinkBtn:'Re-link video previews', relinkBusy:'Linking…',
     toastNoScan:'Scan a VFX folder first.', toastNoAmf:'AMF module not loaded.',
     progressScanning:'Scanning…', toastScanFail:'Scan failed: ',
@@ -1396,6 +1396,9 @@ export function createPlateLinkFeature(deps = {}) {
     );
   }
   function _showToast(msg, type = 'info') {
+    if (msg && /err|error|warn|danger|fail/i.test(String(type || ''))) {
+      try { msg = window.pfxFriendlyText ? window.pfxFriendlyText(msg) : msg; } catch (_) {}
+    }
     const old = document.getElementById('pl2Toast');
     if (old) old.remove();
     const t = Object.assign(document.createElement('div'), {

@@ -4,6 +4,9 @@
 import { isGatedXssSink } from '../tools/scan-innerhtml.mjs';
 import { isRawXmlParse, stripPy } from '../tools/scan-rawxml.mjs';
 import { isFailOpenCatch, isFailOpenScript, catchBlocks } from '../tools/scan-failopen.mjs';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let passed = 0, failed = 0;
 function ok(c, l) { if (c) { passed++; console.log('PASS -', l); } else { failed++; console.error('FAIL -', l); } }
@@ -84,6 +87,19 @@ ok(!isFailOpenScript('node --test test/parsers/*.test.mjs'), 'plain test command
 const mixed =`catch (e) { process.exit(0); }\nfunction f(){}\ncatch (e) { process.exit(1); }`;
 ok(catchBlocks(mixed).length === 2, 'catchBlocks finds both catch bodies');
 ok(catchBlocks(mixed).filter(b => isFailOpenCatch(b.body, b)).length === 1, 'only the exit(0) catch is flagged');
+
+// ── Packaged renderer CSP: metadata stays inert and embeds stay sandboxed ──
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const indexHtml = readFileSync(join(ROOT, 'src/index.html'), 'utf8');
+const rendererBuild = readFileSync(join(ROOT, 'build-renderer.js'), 'utf8');
+const executableInlineScript = /<script(?![^>]*\bsrc=)(?![^>]*\btype=["'](?:application|importmap))[^>]*>[\s\S]*?<\/script>/i;
+
+ok(!executableInlineScript.test(indexHtml), 'renderer has no executable inline script for CSP to block');
+ok(/data-pfx-target="extension"/.test(indexHtml), 'source renderer carries inert platform metadata');
+ok(/setHtmlDataAttr\(html, 'data-pfx-build-version', VERSION\)/.test(rendererBuild),
+   'renderer build updates inert version metadata');
+ok(!/sandbox="[^"]*allow-same-origin[^"]*allow-scripts|sandbox="[^"]*allow-scripts[^"]*allow-same-origin/.test(indexHtml),
+   'no iframe combines allow-scripts with allow-same-origin');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

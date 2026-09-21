@@ -244,8 +244,12 @@ function _startNativeAVPath(videoEl, file, nativePath, info, token, { onMode, on
 
   const canvas = mountNativeCanvas(videoEl);
   const engine = new NativeAVPlayerEngine(canvas, {
+    preferBridge: true,
     onStatus:     (label) => { if (videoEl[_K.token] === token) onStatus?.(label); },
-    onTimeUpdate: () => {},
+    onTimeUpdate: (frame, fps) => {
+      if (videoEl[_K.token] !== token) return;
+      videoEl.dispatchEvent(new CustomEvent('pfx-native-timeupdate', { detail: { frame, fps } }));
+    },
     onError:      (msg) => console.error('[NativeAVPlayer]', msg),
   });
 
@@ -261,6 +265,7 @@ function _startNativeAVPath(videoEl, file, nativePath, info, token, { onMode, on
     onMode?.('native', nativePath);
     onStatus?.(PLAYABLE_STATUS.native);
     onNativeEngine?.({ engine, info, canvas });
+    videoEl.dispatchEvent(new CustomEvent('pfx-native-ready', { detail: { engine } }));
   }).catch((err) => {
     console.error('[NativeAVPlayer] open failed:', err);
     if (videoEl[_K.token] !== token) return;
@@ -455,7 +460,11 @@ function _startChromiumPath(videoEl, file, nativePath, token, {
   }
 
   // 4b. Cross-tab proxy reuse
-  const cached = getCachedProxyForFile(file);
+  // A cached H.264 preview must never intercept a native QuickTime reference.
+  // If direct AVFoundation failed, report that failure instead of silently
+  // reviving a stale proxy and leaving its old "Finalizing…" UI behind.
+  const allowCachedProxy = !(nativePath && /\.mov$/i.test(file.name || '') && window.pfxPlatform?.isMacApp);
+  const cached = allowCachedProxy ? getCachedProxyForFile(file) : null;
   if (cached?.url) {
     if (videoEl[_K.token] !== token) return;
     videoEl[_K.mode]    = 'restored-proxy';

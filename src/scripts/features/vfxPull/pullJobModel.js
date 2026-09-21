@@ -390,3 +390,16 @@ export function buildPullReport(job, qcResult = null) {
     qc:              qcResult || null,
   };
 }
+export function pullDurationMatches({ eventFrames, jobFrames, handleFrames = 0, hasSpeedChange = false, sourceFrameMap = null } = {}) {
+  const eventCount = Math.max(0, Math.round(Number(eventFrames) || 0));
+  const jobCount = Math.max(0, Math.round(Number(jobFrames) || 0));
+  const handles = Math.max(0, Math.round(Number(handleFrames) || 0));
+  if (!eventCount || !jobCount) return null;
+  if (hasSpeedChange) {
+    return Array.isArray(sourceFrameMap) && sourceFrameMap.length
+      ? Math.abs(sourceFrameMap.length - jobCount) <= 2
+      : null;
+  }
+  // Pull ranges include both end frames plus handles on each side.
+  return Math.abs((eventCount + (2 * handles) + 1) - jobCount) <= 2;
+}

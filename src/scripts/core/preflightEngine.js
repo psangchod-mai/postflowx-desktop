@@ -44,7 +44,7 @@
   /* ─── context builder ────────────────────────────────────────────────────── */
   function _buildContext() {
     return {
-      edl: window.__MPS_EDL_RAW || null,
+      edl: (window.__MPS_EDL_RAW && (Array.isArray(window.__MPS_EDL_RAW) ? window.__MPS_EDL_RAW : window.__MPS_EDL_RAW.events)) || null,
       markers: window.__MPS_SM_SNAPSHOT || null,
       cutDiff: window.__MPS_CD_SNAPSHOT || null,
       imf: (typeof PFX_exportIMFState === 'function' ? PFX_exportIMFState() : window.__PFX_IMF_STATE) || null,
@@ -241,6 +241,7 @@
   /* ─── UI panel ───────────────────────────────────────────────────────────── */
   const CAT_LABELS = { project: 'Project', timeline: 'Timeline / Media', qc: 'QC', imf: 'IMF', render: 'Render / Export' };
   const STATUS_ICON = { pass: '✓', warn: '⚠', fail: '✕', skip: '—' };
+  const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 
   function _renderPanel(results) {
     const panel = document.getElementById('pfx-preflight-engine-panel');
@@ -264,14 +265,14 @@
       const rowHtml = rows.map(r => `
         <div class="pfx-pfe-row pfx-pfe-row--${r.status}">
           <span class="pfx-pfe-icon pfx-pfe-icon--${r.status}">${STATUS_ICON[r.status] || '?'}</span>
-          <span class="pfx-pfe-label">${r.label}</span>
-          <span class="pfx-pfe-msg">${r.message}${r.detail ? ` <span class="pfx-pfe-detail">(${r.detail})</span>` : ''}</span>
+          <span class="pfx-pfe-label">${escHtml(r.label)}</span>
+          <span class="pfx-pfe-msg">${escHtml(r.message)}${r.detail ? ` <span class="pfx-pfe-detail">(${escHtml(r.detail)})</span>` : ''}</span>
           ${r.fixActionId ? `<button class="pfx-pfe-fix" data-fix="${r.fixActionId}">Fix</button>` : ''}
         </div>`).join('');
       return `
         <div class="pfx-pfe-category">
           <div class="pfx-pfe-cat-header pfx-pfe-cat-header--${catClass}">
-            <span>${CAT_LABELS[cat] || cat}</span>
+            <span>${escHtml(CAT_LABELS[cat] || cat)}</span>
             <span class="pfx-pfe-cat-count">${rows.length} check${rows.length !== 1 ? 's' : ''}</span>
           </div>
           <div class="pfx-pfe-cat-body">${rowHtml}</div>

@@ -223,7 +223,7 @@
       if (!confirm('Sign out of PostFlowX?')) return;
       if (IS_DESKTOP) {
         // Desktop: clear stored session and reload — shows login modal on next boot
-        localStorage.removeItem('pfx_desktop_session.v1');
+        window.PFX_SESSION_STORE?.clear();
         hideAccount();
         window.location.reload();
         return;
@@ -335,7 +335,7 @@
         // chrome.identity shim now returns the real email → auth.signInWithGoogle()
         // calls _signInWithBackendPolicy() which reads it and calls the PFX backend.
         const session = await auth.signInWithGoogle();
-        // Persist session to localStorage for boot-guard to read on next launch.
+        // Persist session for boot-guard to read on next launch.
         if (session?.user?.email) {
           const toStore = session?.ok !== undefined ? session : {
             ok: true, role: session.role || 'admin',
@@ -344,7 +344,7 @@
             featureFlags: session.featureFlags || {},
             session: { token: session.session?.token || 'desktop-session', expiresAt: session.session?.expiresAt || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString() },
           };
-          localStorage.setItem('pfx_desktop_session.v1', JSON.stringify(toStore));
+          window.PFX_SESSION_STORE?.save(toStore);
         }
         hideLogin();
         window.location.reload();
@@ -367,7 +367,7 @@
   function _updateBadge() {
     const _dp    = (window.__PFX_IS_ELECTRON || window.pfxPlatform?.isMacApp) ? (_readDesktopProfile() || {}) : null;
     const _osName = window.pfxPlatform?.osUser?.username || '';
-    const pfxSess   = window.PFX_AUTH?.getPfxSession?.() || window.PFX_PERMISSIONS?.getSession?.()
+    const pfxSess   = window.PFX_PERMISSIONS?.getSession?.() || window.PFX_AUTH?.getPfxSession?.()
       || (window.__PFX_IS_ELECTRON ? { role: 'admin', user: { name: _dp?.name || _osName || 'PostFlowX Desktop', email: _dp?.email || '' } } : null);
     const pfxUser   = pfxSess?.user || window.PFX_PERMISSIONS?.getUser?.() || null;
     const pfxRole   = pfxSess?.role || null;
@@ -432,7 +432,7 @@
   function _populateAccount() {
     const _dp    = (window.__PFX_IS_ELECTRON || window.pfxPlatform?.isMacApp) ? (_readDesktopProfile() || {}) : null;
     const _osName = window.pfxPlatform?.osUser?.username || '';
-    const pfxSess = window.PFX_AUTH?.getPfxSession?.() || window.PFX_PERMISSIONS?.getSession?.()
+    const pfxSess = window.PFX_PERMISSIONS?.getSession?.() || window.PFX_AUTH?.getPfxSession?.()
       || (window.__PFX_IS_ELECTRON ? {
           ok: true, role: 'admin',
           user: { email: _dp?.email || '', name: _dp?.name || _osName || 'PostFlowX Desktop' },

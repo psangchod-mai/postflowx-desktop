@@ -12,9 +12,10 @@
 
 function _tcToF(tc, fps) {
   if (!tc) return 0;
-  const parts = String(tc).split(':');
+  const parts = String(tc).split(/[:;]/);
   if (parts.length !== 4) return 0;
   const [hh, mm, ss, ff] = parts.map(Number);
+  if (![hh, mm, ss, ff].every(Number.isFinite)) return 0;
   return ((hh * 3600 + mm * 60 + ss) * Math.round(fps || 24)) + ff;
 }
 

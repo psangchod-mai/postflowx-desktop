@@ -135,10 +135,26 @@ export function buildAmf(state) {
     p(`    <aces:lookTransform applied="false">`);
     p(`      <aces:description>ASC CDL</aces:description>`);
     p(`      <aces:transformId>${_esc(cdlLmt?.transformId || '')}</aces:transformId>`);
+    if (state.cdl) {
+      const _cdlFmt = v => (Array.isArray(v) ? v.map(n => Number(n).toFixed(6)).join(' ') : Number(v).toFixed(6));
+      const { slope, offset, power, sat } = state.cdl;
+      // Wrap in <aces:ASC_CDL> to match the AMF v2 schema / canonical fixture so
+      // schema-strict external tools (e.g. DaVinci Resolve) recognize the grade.
+      p(`      <aces:ASC_CDL>`);
+      p(`        <aces:SOPNode>`);
+      p(`          <aces:Slope>${_cdlFmt(slope)}</aces:Slope>`);
+      p(`          <aces:Offset>${_cdlFmt(offset)}</aces:Offset>`);
+      p(`          <aces:Power>${_cdlFmt(power)}</aces:Power>`);
+      p(`        </aces:SOPNode>`);
+      p(`        <aces:SatNode>`);
+      p(`          <aces:Saturation>${Number(sat).toFixed(6)}</aces:Saturation>`);
+      p(`        </aces:SatNode>`);
+      p(`      </aces:ASC_CDL>`);
+    }
     p(`    </aces:lookTransform>`);
   }
 
-  for (const item of state.lookStack) {
+  for (const item of (state.lookStack || [])) {
     if (!item.enabled) continue;
     p(`    <aces:lookTransform applied="false">`);
     p(`      <aces:description>${_esc(item.label)}</aces:description>`);

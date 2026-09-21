@@ -17,6 +17,16 @@ const fs    = require('fs');
 // Set name before app.whenReady() so userData path and window title are correct
 app.setName('PostFlowX');
 
+// Local/ad-hoc builds have no stable signing identity, so macOS would ask for
+// the login-keychain password after every rebuild of PostFlowX Safe Storage.
+// Use Chromium's local basic store only for those builds. A Developer ID-signed
+// production build keeps the native Keychain automatically.
+const { configureMacPasswordStore } = require('./password_store');
+const USING_LOCAL_PASSWORD_STORE = configureMacPasswordStore(app);
+if (USING_LOCAL_PASSWORD_STORE) {
+  console.info('[Security] Local/ad-hoc build: using local password storage (macOS Keychain prompt disabled).');
+}
+
 const ipc          = require('./ipc');
 const companion    = require('./companion');
 const mediaEngine  = require('./native/media_engine');
@@ -323,7 +333,7 @@ app.on('web-contents-created', (_e, wc) => {
             "style-src 'self' 'unsafe-inline' file: blob:",
             "img-src 'self' file: blob: data: https:",
             "media-src 'self' file: blob: data: pfx-media: http://127.0.0.1:*",
-            "connect-src 'self' file: blob: pfx-media: http://127.0.0.1:* https://api.postflowx.com https://api.anthropic.com https://*.supabase.co",
+            "connect-src 'self' file: blob: pfx-media: http://127.0.0.1:* https://api.postflowx.com https://script.google.com https://script.googleusercontent.com https://posit-connect.prod.netflix.net https://api.anthropic.com https://*.supabase.co",
             "worker-src 'self' file: blob:",
             "frame-src 'self' file: blob: https:",
             "font-src 'self' file: blob: data:",

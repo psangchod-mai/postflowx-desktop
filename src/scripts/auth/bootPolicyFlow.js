@@ -61,10 +61,13 @@
         return { ok: true, policy: freshPolicy, source: 'remote' };
       }
 
-      // Non-ok remote response with a known status → deny early (don't fall back to cache)
+      // Non-ok remote response with a known status → deny early (don't fall back to cache).
+      // Expired access is an authoritative denial too; treating it like a
+      // transient outage would let an old cached allow outlive the admin's
+      // configured expiry.
       if (freshPolicy && !freshPolicy.ok && freshPolicy.status) {
         const status = freshPolicy.status;
-        if (status === 'pending' || status === 'disabled') {
+        if (status === 'pending' || status === 'disabled' || status === 'expired') {
           logEvent?.({ email, event: 'boot_denied', details: { status } });
           return { ok: false, policy: freshPolicy, source: 'denied' };
         }

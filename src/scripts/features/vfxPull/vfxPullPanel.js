@@ -18,7 +18,7 @@ import { tcToFrames as _tcToFrames, framesToTC as _framesToTC } from '../../modu
 import { shotRiskScore } from './triageScore.js';
 import { buildNukeScript } from './nukeScript.js';
 import { buildAeScript } from './aeScript.js';
-import { buildFrameMapJSON, buildFrameMapRows } from './pullJobModel.js';
+import { buildFrameMapJSON, buildFrameMapRows, pullDurationMatches } from './pullJobModel.js';
 import { buildIdtBadgeHtml } from './idtBadge.js';
 import { mountMediaSearch } from '../mediaSearch/mediaSearchBox.js';
 import { loadOcfFilesFromLibrary, libraryCount } from './dbLibrarySource.js';
@@ -27,6 +27,7 @@ import { createBridgeMonitor } from '../../modules/bridgeHealth.js';
 import { nativeHelperPing } from '../../modules/native_helper_client.js';
 import { friendlyStatus } from '../../core/friendlyError.js';
 import { friendlyAlert } from '../../core/friendlyAlert.js';
+import { readSpeedPercent } from '../../modules/pullRange.js';
 
 // ---------------------------------------------------------------------------
 // Native companion helpers (direct chrome.runtime.sendMessage wrappers)
@@ -90,6 +91,55 @@ async function _nativeOcfResolveStillBatch(ocfPath, picks, opts = {}) {
   }, 200000);
 }
 window._pmVfxResolveStillBatch = _nativeOcfResolveStillBatch;
+
+// Full-range OCF proxy (Problem 2): render the WHOLE HdlSt→HdlEnd range to a
+// cached .mp4 the OCF pane can scrub/play. Hides the async start/poll handshake:
+// media.getOcfProxy either returns 'complete' (cache hit / synchronous bridge) or
+// a { jobId } we poll via media.getOcfProxyStatus. Returns proxy metadata or {error}.
+// opts.onProgress(pct, msg) is called during the poll for a non-blocking UI line.
+window._pmGetOcfProxy = async function({ ocfPath, hdlStTc, hdlEndTc,
+    sourceStartTc = '', fps = 0, width = 960 } = {}, opts = {}) {
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  const media = window.pfxPlatform?.media;
+  if (!media?.getOcfProxy) return { error: 'Native media engine unavailable for OCF proxy.' };
+  if (!ocfPath || !hdlStTc || !hdlEndTc) return { error: 'ocfPath, hdlStTc and hdlEndTc are required.' };
+
+  const _meta = (r) => ({
+    proxyPath:  r.proxyPath,
+    fps:        Number(r.fps) || fps || 0,
+    frameCount: Number(r.frameCount) || 0,
+    hdlStFrame: Number(r.hdlStFrame) || 0,
+    hdlEndFrame: Number(r.hdlEndFrame) || 0,
+    proxyWidth: Number(r.proxyWidth) || width,
+    proxyHeight: Number(r.proxyHeight) || 0,
+  });
+
+  let start;
+  try {
+    start = await media.getOcfProxy({ ocfPath, hdlStTc, hdlEndTc, sourceStartTc, fps, outputWidth: width });
+  } catch (e) {
+    return { error: e?.message || String(e) };
+  }
+  if (start?.state === 'complete' && start.proxyPath) return _meta(start);
+  if (start?.state === 'error' || start?.ok === false) {
+    return { error: start.error || 'OCF proxy render failed.' };
+  }
+  const jobId = start?.jobId;
+  if (!jobId) return { error: start?.error || 'OCF proxy render did not return a job.' };
+
+  // Poll status until complete/error (or a generous ceiling for a long render).
+  const deadline = Date.now() + 320000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    let st;
+    try { st = await media.getOcfProxyStatus({ jobId }); }
+    catch (e) { return { error: e?.message || String(e) }; }
+    if (st?.state === 'complete' && st.proxyPath) return _meta(st);
+    if (st?.state === 'error') return { error: st.error || 'OCF proxy render failed.' };
+    if (onProgress) onProgress(Number(st?.progress) || 0);
+  }
+  return { error: 'OCF proxy render timed out.' };
+};
 
 // Direct Resolve still — bypasses the 3-tier cache and orchestration.
 // Used by the diagnostic "Test Resolve Still" button so failures report the exact stage.
@@ -546,6 +596,7 @@ export function initVfxPullCard(getEvents, getMarkers, getProjectMeta) {
   }
 
   _injectVfxWorkspace();
+  _wsRefreshWorkspace();
 }
 
 // ---------------------------------------------------------------------------
@@ -1349,12 +1400,26 @@ function _injectCSS() {
 #pmVfxWorkspace { display:none; }
 #main-prepmark.pm-mode-vfxmarker .pm-sly-body { display:none !important; }
 #main-prepmark.pm-mode-vfxmarker #pmVfxWorkspace { display:flex; flex:1 1 0; min-height:0; overflow:hidden; }
-.pm-vfx-workspace { width:100%; height:100%; display:flex; flex-direction:row; background:#05080f; overflow:hidden; font-size:11px; color:#e4ebff; }
+.pm-vfx-workspace { width:100%; height:100%; display:flex; flex-direction:column; background:#05080f; overflow:hidden; font-size:11px; color:#e4ebff; }
+.pm-vfx-ws-main { min-height:0; flex:1 1 0; display:flex; flex-direction:row; overflow:hidden; }
+.pm-vfx-ws-smartbar { min-height:44px; display:grid; grid-template-columns:minmax(280px,1fr) auto auto; align-items:center; gap:14px; padding:7px 10px; border-bottom:1px solid rgba(255,255,255,.08); background:linear-gradient(90deg,rgba(229,9,20,.12),rgba(255,255,255,.025) 30%,rgba(255,255,255,.015)); flex-shrink:0; }
+.pm-vfx-ws-smart-copy { min-width:0; display:grid; grid-template-columns:auto 1fr; align-items:baseline; column-gap:8px; row-gap:1px; }
+.pm-vfx-ws-smart-kicker { font-size:8px; font-weight:900; letter-spacing:.12em; color:#ff5360; }
+.pm-vfx-ws-smart-title { min-width:0; font-size:11px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pm-vfx-ws-smart-note { grid-column:1/-1; min-width:0; font-size:9px; color:rgba(228,235,255,.5); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pm-vfx-ws-smart-steps { display:flex; gap:4px; }
+.pm-vfx-ws-smart-step { font-size:8.5px; font-weight:750; padding:3px 7px; border-radius:10px; border:1px solid rgba(255,255,255,.1); color:rgba(228,235,255,.4); white-space:nowrap; }
+.pm-vfx-ws-smart-step.is-current { color:#fff; border-color:rgba(229,9,20,.6); background:rgba(229,9,20,.18); }
+.pm-vfx-ws-smart-step.is-done { color:#70e1a4; border-color:rgba(10,163,86,.35); background:rgba(10,163,86,.12); }
+.pm-vfx-ws-smart-action { min-width:130px; height:30px; padding:0 12px; border:1px solid #f0444f; border-radius:5px; background:#e50914; color:#fff; font-size:10px; font-weight:850; cursor:pointer; white-space:nowrap; }
+.pm-vfx-ws-smart-action:hover { background:#f40612; }
+.pm-vfx-ws-smart-action:disabled { opacity:.5; cursor:progress; }
 
 /* Left column */
 .pm-vfx-ws-left { width:272px; min-width:200px; display:flex; flex-direction:column; border-right:1px solid rgba(255,255,255,.07); overflow:hidden; flex-shrink:0; }
 .pm-vfx-ws-list-hdr { display:flex; align-items:center; justify-content:space-between; padding:7px 8px 5px; border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0; }
 .pm-vfx-ws-list-title { font-size:9px; font-weight:800; letter-spacing:.07em; color:rgba(228,235,255,.45); text-transform:uppercase; }
+.pm-vfx-ws-list-subtitle { margin-left:auto; font-size:8.5px; color:rgba(228,235,255,.34); }
 .pm-vfx-ws-btn-xs { font-size:9px; padding:2px 7px; border-radius:4px; border:1px solid rgba(255,255,255,.13); background:rgba(255,255,255,.07); color:#e4ebff; cursor:pointer; white-space:nowrap; }
 .pm-vfx-ws-btn-xs:hover { background:rgba(255,255,255,.13); }
 .pm-vfx-ws-list-scroll { flex:1 1 0; overflow-y:auto; overflow-x:hidden; }
@@ -1414,6 +1479,9 @@ function _injectCSS() {
 .pm-vfx-ws-mode { font-size:9px; padding:2px 7px; border-radius:4px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.05); color:rgba(228,235,255,.6); cursor:pointer; white-space:nowrap; }
 .pm-vfx-ws-mode:hover { background:rgba(255,255,255,.1); color:#e4ebff; }
 .pm-vfx-ws-mode.is-active { background:rgba(10,163,86,.18); color:#6ee7b7; border-color:rgba(10,163,86,.3); }
+.pm-vfx-ws-mode.is-more { display:none; }
+.pm-vfx-ws-modes.show-more-modes .pm-vfx-ws-mode.is-more { display:inline-flex; }
+.pm-vfx-ws-mode-more { color:rgba(228,235,255,.42); }
 .pm-vfx-ws-shot-name { font-size:10px; font-weight:700; color:rgba(228,235,255,.7); margin-left:auto; }
 .pm-vfx-ws-viewer { flex:1 1 0; min-height:0; position:relative; overflow:hidden; background:#02040a; }
 .pm-vfx-ws-viewer-inner { width:100%; height:100%; display:flex; position:relative; overflow:hidden; }
@@ -1496,6 +1564,18 @@ function _injectCSS() {
 .pm-vfx-ws-score-badge.ws-score--none { color:rgba(228,235,255,.4); }
 .pm-vfx-ws-verify-actions { display:flex; gap:5px; flex-wrap:wrap; }
 .pm-vfx-ws-lock-msg { font-size:9.5px; color:#ffb94a; background:rgba(255,185,74,.09); border:1px solid rgba(255,185,74,.2); border-radius:5px; padding:5px 7px; line-height:1.4; }
+.pm-vfx-ws-change-summary { display:grid; gap:5px; }
+.pm-vfx-ws-change-card { display:grid; grid-template-columns:28px 1fr auto; gap:7px; align-items:center; padding:7px; border:1px solid rgba(255,255,255,.09); border-radius:6px; background:rgba(255,255,255,.035); }
+.pm-vfx-ws-change-card.is-attention { border-color:rgba(255,185,74,.28); background:rgba(255,185,74,.07); }
+.pm-vfx-ws-change-icon { width:28px; height:28px; display:grid; place-items:center; border-radius:5px; background:rgba(255,255,255,.06); color:#f4f6ff; font-size:13px; }
+.pm-vfx-ws-change-copy { min-width:0; display:flex; flex-direction:column; gap:1px; }
+.pm-vfx-ws-change-label { font-size:8px; font-weight:800; letter-spacing:.07em; color:rgba(228,235,255,.4); text-transform:uppercase; }
+.pm-vfx-ws-change-value { font-size:10px; font-weight:700; color:#f4f6ff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pm-vfx-ws-change-state { font-size:8px; font-weight:800; color:#70e1a4; }
+.pm-vfx-ws-change-card.is-attention .pm-vfx-ws-change-state { color:#ffcb70; }
+.pm-vfx-ws-tech-details { border:1px solid rgba(255,255,255,.07); border-radius:5px; background:rgba(255,255,255,.02); }
+.pm-vfx-ws-tech-details summary { padding:5px 7px; cursor:pointer; color:rgba(228,235,255,.48); font-size:9px; font-weight:700; }
+.pm-vfx-ws-tech-details .pm-vfx-ws-verify-checks { padding:0 5px 5px; }
 
 /* Action buttons */
 .pm-vfx-ws-action-btn { font-size:10px; font-weight:700; padding:5px 10px; border-radius:5px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.07); color:#e4ebff; cursor:pointer; transition:background .15s; white-space:nowrap; }
@@ -1504,6 +1584,13 @@ function _injectCSS() {
 .pm-vfx-ws-action-btn.primary:hover { background:linear-gradient(135deg,#16a34a,#2563eb); }
 .pm-vfx-ws-action-btn.is-approved { background:rgba(10,163,86,.2); color:#0AA356; border-color:rgba(10,163,86,.35); }
 .pm-vfx-ws-action-btn.is-locked { opacity:.42; cursor:not-allowed; }
+
+@media (max-width: 1180px) {
+  .pm-vfx-ws-smartbar { grid-template-columns:1fr auto; }
+  .pm-vfx-ws-smart-steps { display:none; }
+  .pm-vfx-ws-right { width:260px; }
+  .pm-vfx-ws-left { width:235px; }
+}
 
 /* Conform + Export tabs */
 .pm-vfx-ws-conform-section { margin-bottom:6px; }
@@ -2962,24 +3049,16 @@ async function _swRenderStep() {
 
   const hasOcf = !!row.sourcePath;
 
-  // OCF preview frame: seek to the MIDDLE of the shot's source range, not srcIn.
-  // srcIn frequently lands on the clip's slate/clapper at the head (the "OCF is
-  // the wrong clip" report) — the midpoint shows the actual action that matches
-  // the editorial reference.
-  const _fps = Number(row.event?.fps || row.ocf?.fps || 24) || 24;
-  const _in  = row.srcIn || row.tcIn || row.event?.srcIn || '00:00:00:00';
-  const _out = row.srcOut || row.tcOut || row.event?.srcOut || '';
-  let tc = _in;
-  try {
-    if (_out && _out.includes(':')) {
-      const midF = Math.round((_tcToFrames(_in, _fps) + _tcToFrames(_out, _fps)) / 2);
-      if (midF > 0) tc = _framesToTC(midF, _fps);
-    }
-  } catch {}
+  // Compare the same editorial position on two clocks: QT uses record TC,
+  // OCF uses source TC adjusted for source fps and retime speed.
+  const timing = _wsTiming(row, _state.jobs?.[idx] || {});
+  const midRecordF = timing.recInF + Math.floor(Math.max(1, timing.recOutF - timing.recInF) / 2);
+  const qtTc = _wsFramesToTc(midRecordF, timing.timelineFps);
+  const ocfTc = _wsSourceTcForRecord(row, _state.jobs?.[idx] || {}, midRecordF);
 
   const ocfName = hasOcf ? (row.sourceFileName || String(row.sourcePath).split('/').pop()) : '';
-  ov.querySelector('#pmSwOcfMeta').textContent = hasOcf ? `${ocfName} · TC ${tc}` : 'No file linked yet';
-  ov.querySelector('#pmSwQtMeta').textContent = `Reel ${row.reel || '—'} · TC ${tc}`;
+  ov.querySelector('#pmSwOcfMeta').textContent = hasOcf ? `${ocfName} · OCF ${ocfTc}` : 'No file linked yet';
+  ov.querySelector('#pmSwQtMeta').textContent = `Reel ${row.reel || '—'} · QT ${qtTc}`;
 
   // Buttons depend on whether we have a candidate file.
   const actions = ov.querySelector('#pmSwActions');
@@ -2993,8 +3072,7 @@ async function _swRenderStep() {
   actions.querySelector('#pmSwNo')?.addEventListener('click', () => _swPickAnother());
   actions.querySelector('#pmSwSkip')?.addEventListener('click', () => _swAdvance());
 
-  // Lazily extract the comparison frames (don't block the buttons). `tc` (the
-  // shot midpoint) was computed above and is reused for the OCF preview seek.
+  // Lazily extract the comparison frames (don't block the buttons).
   _swSetPane('#pmSwQt', 'Loading…');
   _swSetPane('#pmSwOcf', hasOcf ? 'Loading…' : 'No camera file linked yet.');
 
@@ -3011,7 +3089,7 @@ async function _swRenderStep() {
       }
       // Last resort: the old per-event source path at the source TC.
       if (!dataUrl && row.event?.sourcePath && window.pfxPlatform?.media) {
-        const r = await window.pfxPlatform.media.getStill({ path: row.event.sourcePath, timecode: tc, outputWidth: 480 });
+        const r = await window.pfxPlatform.media.getStill({ path: row.event.sourcePath, timecode: qtTc, outputWidth: 480 });
         dataUrl = r?.dataUrl || r?.imageDataUrl || null;
       }
       if (reqId !== _sw.reqSeq) return;
@@ -3036,8 +3114,8 @@ async function _swRenderStep() {
             } catch {}
           }
           return window._pmGetOcfStillPreview({
-            ocfPath: row.sourcePath, sourceTc: tc, sourceStartTc: ocfStartTc,
-            fps: row.ocf?.fps || 0, ...frameArg,
+            ocfPath: row.sourcePath, sourceTc: ocfTc, sourceStartTc: ocfStartTc,
+            fps: timing.sourceFps || row.ocf?.fps || 0, ...frameArg,
             width: 480, height: 270,
             resolveConnected: _state.resolveConnected || !!window._pmVfxPullResolveConnected?.(),
           });
@@ -4614,9 +4692,10 @@ async function _captureQtRefFrame() {
   try {
     const qtPath = row?.event?.sourcePath || '';
     if (window.pfxPlatform?.media && qtPath) {
-      // Electron: extract still from QT Ref file via AVFoundation at the source-in timecode.
+      // Electron: QT reference is editorial/timeline media, so seek by record TC.
       _setStatus('Extracting QT Ref frame…');
-      const tc = job?.sourceIn || row?.tcIn || '00:00:00:00';
+      const timing = _wsTiming(row, job);
+      const tc = timing.recInTc || row?.recIn || '00:00:00:00';
       const r = await window.pfxPlatform.media.getStill({ path: qtPath, timecode: tc, outputWidth: 480 });
       const dataUrl = r?.dataUrl || r?.imageDataUrl || null;
       if (!dataUrl) throw new Error('No frame returned from AVFoundation');
@@ -4646,10 +4725,11 @@ async function _extractVerifyOcfFrame() {
   _extractOcfBusy = true;
   const { idx, job, row } = _currentVerifyRow();
   const filePath = row?.sourcePath || job?.sourcePath || '';
-  const tc = job?.sourceIn || row?.tcIn || row?.srcIn || '00:00:00:00';
+  const timing = _wsTiming(row, job);
+  const tc = _wsSourceTcForRecord(row, job, timing.recInF);
   // OCF free-run start TC so the still seeks to the matched frame, not the slate.
-  const ocfStartTc = row?.ocf?.tcIn || '';
-  const ocfFps = row?.ocf?.fps || 0;
+  const ocfStartTc = (row?.ocf?.tcKnown && row?.ocf?.tcIn) ? row.ocf.tcIn : (row?.ocf?.tcIn || '');
+  const ocfFps = timing.sourceFps || row?.ocf?.fps || 0;
   if (!filePath) { _setStatus('No OCF path for selected shot'); _extractOcfBusy = false; return; }
   _setStatus('Extracting OCF still frame…');
   try {
@@ -4674,9 +4754,9 @@ async function _extractVerifyOcfFrame() {
 async function _runSevenFrameCheck() {
   const { idx, job, row } = _currentVerifyRow();
   const filePath = row?.sourcePath || job?.sourcePath || '';
-  const tcIn  = job?.sourceIn  || row?.tcIn  || row?.srcIn  || '00:00:00:00';
-  const tcOut = job?.sourceOut || row?.tcOut || row?.srcOut || '00:00:00:00';
-  const fps   = job?.fps || 24;
+  const timing = _wsTiming(row, job);
+  const fps   = timing.sourceFps || job?.fps || 24;
+  const ocfStartTc = (row?.ocf?.tcKnown && row?.ocf?.tcIn) ? row.ocf.tcIn : (row?.ocf?.tcIn || '');
 
   if (!filePath) { _setStatus('No OCF path for this shot'); return; }
 
@@ -4688,18 +4768,8 @@ async function _runSevenFrameCheck() {
 
   _setStatus('Extracting 7-frame contact sheet…');
 
-  const tcToFrames = (tc) => {
-    const [h, m, s, f] = String(tc).split(/[:;]/).map(Number);
-    return Math.round(((h * 3600 + m * 60 + s) * fps) + f);
-  };
-  const framesToTc = (n) => {
-    const f = n % fps, s = Math.floor(n / fps);
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sc = s % 60;
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}:${String(f).padStart(2,'0')}`;
-  };
-
-  const fIn   = tcToFrames(tcIn);
-  const fOut  = tcToFrames(tcOut);
+  const fIn   = timing.recInF;
+  const fOut  = timing.recOutF;
   const fSpan = Math.max(fOut - fIn, 1);
   const sampleFrames = [
     fIn  - 8,
@@ -4712,13 +4782,13 @@ async function _runSevenFrameCheck() {
   ];
 
   const results = await Promise.allSettled(
-    sampleFrames.map(async (f) => {
-      const tc = framesToTc(Math.max(0, f));
+    sampleFrames.map(async (recordFrame) => {
+      const tc = _wsSourceTcForRecord(row, job, Math.max(0, recordFrame));
       if (window.pfxPlatform?.media) {
-        const r = await window.pfxPlatform.media.getOcfStill({ ocfPath: filePath, sourceTc: tc, outputWidth: 200 });
+        const r = await window.pfxPlatform.media.getOcfStill({ ocfPath: filePath, sourceTc: tc, sourceStartTc: ocfStartTc, fps, outputWidth: 200 });
         return r?.dataUrl || r?.imageDataUrl || null;
       }
-      const res = await nativeOcfExtractFrame(filePath, tc, { width: 200, height: 112, format: 'jpg' });
+      const res = await nativeOcfExtractFrame(filePath, tc, { width: 200, height: 112, format: 'jpg', sourceStartTc: ocfStartTc, fps });
       return res?.data?.dataUrl || null;
     })
   );
@@ -5938,7 +6008,7 @@ function _buildVfxFrameMapCSV(job, manifest) {
       m.srcFrame,
       m.speed,
       retimeNote,
-    ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+    ].map(v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; }).join(','));
   });
   return rows.join('\n');
 }
@@ -6056,7 +6126,7 @@ function _buildVfxPackageFiles(opts, exrResults = []) {
       shotName, plateName, manifest.frameStart, manifest.frameEnd,
       manifest.frameCount, manifest.ocfMatchStatus, manifest.matchConfidence,
       manifest.qcStatus, manifest.ocfPath,
-    ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+    ].map(v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; }).join(','));
     summary.shots.push(manifest);
   });
 
@@ -6483,22 +6553,59 @@ function _downloadText(filename, content, mimeType = 'text/plain') {
 const _WS_POSITIONS  = ['Handle Start', 'Cut In', '25%', '50%', '75%', 'Cut Out', 'Handle End'];
 const _WS_FRAME_KEYS = ['handleStart', 'cutIn', 'q25', 'q50', 'q75', 'cutOut', 'handleEnd'];
 
-function _wsFrameForPos(posKey, job) {
-  const tcIn    = job?.tcIn  || '';
-  const tcOut   = job?.tcOut || '';
-  const handles = _settings.handles || 8;
-  const fps     = job?.fps || 24;
+function _wsTcBase(fps) {
+  return Math.max(1, Math.round(Number(fps) || 24));
+}
 
-  const tcToFrames = tc => {
-    if (!tc) return 0;
-    const parts = String(tc).split(/[:;]/);
-    if (parts.length < 4) return 0;
-    const [h, m, s, f] = parts.map(Number);
-    return ((h * 3600 + m * 60 + s) * fps) + f;
+function _wsTcToFrames(tc, fps = 24) {
+  if (!tc) return 0;
+  const parts = String(tc).split(/[:;]/);
+  if (parts.length < 4) return 0;
+  const [h, m, s, f] = parts.map(Number);
+  if ([h, m, s, f].some(v => !Number.isFinite(v))) return 0;
+  const base = _wsTcBase(fps);
+  return ((h * 3600 + m * 60 + s) * base) + f;
+}
+
+function _wsSourceSpeedPercent(row = {}, job = {}) {
+  const jobPct = Number(job?.retime?.speedPercent);
+  if (Number.isFinite(jobPct) && jobPct > 0) return jobPct;
+  return readSpeedPercent(row?.event || {}) || 100;
+}
+
+function _wsTiming(row = {}, job = {}) {
+  const event = row?.event || {};
+  const timelineFps = Number(job?.fps || event.fps || 24) || 24;
+  const sourceFps = Number(row?.ocf?.fps || event.fps || job?.fps || timelineFps) || timelineFps;
+  const recInTc = row.recIn || event.recIn || job?.metadata?.recIn || row.tcIn || job?.sourceIn || '00:00:00:00';
+  const recOutTc = row.recOut || event.recOut || job?.metadata?.recOut || '';
+  const srcInTc = row.tcIn || job?.sourceIn || event.srcIn || '00:00:00:00';
+  const srcOutTc = row.tcOut || job?.sourceOut || event.srcOut || '';
+  const recInF = _wsTcToFrames(recInTc, timelineFps);
+  const recOutF = recOutTc ? _wsTcToFrames(recOutTc, timelineFps) : 0;
+  const sourceInF = _wsTcToFrames(srcInTc, sourceFps);
+  const sourceOutF = srcOutTc ? _wsTcToFrames(srcOutTc, sourceFps) : 0;
+  const durationF = Math.max(1, (recOutF > recInF ? recOutF - recInF : Number(job?.expectedRenderedFrameCount || job?.frameCount || timelineFps)));
+  return {
+    timelineFps,
+    sourceFps,
+    speedPercent: _wsSourceSpeedPercent(row, job),
+    recInTc,
+    recOutTc: recOutTc || _wsFramesToTc(recInF + durationF, timelineFps),
+    srcInTc,
+    srcOutTc: srcOutTc || _wsFramesToTc(sourceOutF || sourceInF + durationF, sourceFps),
+    recInF,
+    recOutF: recOutF || recInF + durationF,
+    sourceInF,
+    sourceOutF: sourceOutF || sourceInF + durationF,
   };
+}
 
-  const inFrame  = tcToFrames(tcIn);
-  const outFrame = tcToFrames(tcOut) || (inFrame + (job?.frameCount || fps));
+function _wsRecordFrameForPos(posKey, row, job) {
+  const t = _wsTiming(row, job);
+  const handles = _settings.handles || 8;
+  const inFrame = t.recInF;
+  const outFrame = t.recOutF;
   const dur      = Math.max(1, outFrame - inFrame);
 
   switch (posKey) {
@@ -6513,11 +6620,46 @@ function _wsFrameForPos(posKey, job) {
   }
 }
 
+function _wsFrameForPos(posKey, row = {}, job = {}) {
+  return _wsRecordFrameForPos(posKey, row, job);
+}
+
+function _wsSourceFrameForRecord(row, job, recordFrame) {
+  const t = _wsTiming(row, job);
+  const handles = _settings.handles || 8;
+  const recF = Math.round(Number(recordFrame) || 0);
+  if (recF < t.recInF) return Math.max(0, t.sourceInF - Math.round(t.recInF - recF));
+  if (recF > t.recOutF) return Math.max(0, t.sourceOutF + Math.round(recF - t.recOutF));
+
+  // Dynamic ramps have an explicit output-frame -> camera-frame contract.
+  // The planner anchors that map at the handled timeline in-point, so offset
+  // the cut-relative record frame by the same handle count before reading it.
+  const frameMap = job?.retime?.sourceFrameMap;
+  if (Array.isArray(frameMap) && frameMap.length) {
+    const mapIndex = Math.max(0, Math.min(frameMap.length - 1, recF - t.recInF + handles));
+    const mapped = Number(frameMap[mapIndex]?.sourceFrame);
+    if (Number.isFinite(mapped)) return Math.max(0, Math.round(mapped));
+  }
+
+  if (job?.retime?.freeze) {
+    const held = Number(job.retime.freezeSourceFrame ?? job.retime.freeze?.frame);
+    if (Number.isFinite(held)) return Math.max(0, Math.round(held));
+  }
+  return Math.max(0, t.sourceInF + Math.round((recF - t.recInF) * (t.speedPercent / 100)));
+}
+
+function _wsSourceTcForRecord(row, job, recordFrame) {
+  const t = _wsTiming(row, job);
+  return _wsFramesToTc(_wsSourceFrameForRecord(row, job, recordFrame), t.sourceFps);
+}
+
 function _wsFramesToTc(frames, fps = 24) {
-  const f = Math.floor(frames % fps);
-  const s = Math.floor(frames / fps) % 60;
-  const m = Math.floor(frames / fps / 60) % 60;
-  const h = Math.floor(frames / fps / 3600);
+  const base = _wsTcBase(fps);
+  const safeFrames = Math.max(0, Math.floor(Number(frames) || 0));
+  const f = Math.floor(safeFrames % base);
+  const s = Math.floor(safeFrames / base) % 60;
+  const m = Math.floor(safeFrames / base / 60) % 60;
+  const h = Math.floor(safeFrames / base / 3600);
   return [h, m, s, f].map(n => String(n).padStart(2, '0')).join(':');
 }
 
@@ -6576,16 +6718,22 @@ function _computeShotRisk(i) {
 // ---------------------------------------------------------------------------
 
 function _injectVfxWorkspace() {
-  if (document.getElementById('pmVfxWorkspace')) return;
   const layout = document.getElementById('pmSimpleLayout');
   if (!layout) return;
 
-  const ws = document.createElement('div');
-  ws.id = 'pmVfxWorkspace';
+  // Older builds ship a hard-coded workspace with this id. Upgrade that node
+  // in place instead of silently returning and leaving two competing UIs.
+  let ws = document.getElementById('pmVfxWorkspace');
+  if (ws?.dataset.smartWorkspace === '1') return;
+  if (!ws) {
+    ws = document.createElement('div');
+    ws.id = 'pmVfxWorkspace';
+    layout.appendChild(ws);
+  }
   ws.className = 'pm-vfx-workspace';
   ws.tabIndex = 0;  // needed to receive JKL keydown events
+  ws.dataset.smartWorkspace = '1';
   ws.innerHTML = _buildWorkspaceHTML();
-  layout.appendChild(ws);
 
   _wireWorkspaceListeners();
 }
@@ -6598,10 +6746,24 @@ function _buildWorkspaceHTML() {
   ).join('');
 
   return `
+<div class="pm-vfx-ws-smartbar" id="pmWsSmartBar">
+  <div class="pm-vfx-ws-smart-copy">
+    <span class="pm-vfx-ws-smart-kicker" id="pmWsSmartKicker">VFX PULL</span>
+    <strong class="pm-vfx-ws-smart-title" id="pmWsSmartTitle">Prepare the shot list</strong>
+    <span class="pm-vfx-ws-smart-note" id="pmWsSmartNote">PostFlowX will guide you through camera-file linking, change checks, and approval.</span>
+  </div>
+  <div class="pm-vfx-ws-smart-steps" aria-label="VFX Pull progress">
+    <span class="pm-vfx-ws-smart-step" id="pmWsStepLink">1 Link OCF</span>
+    <span class="pm-vfx-ws-smart-step" id="pmWsStepCheck">2 Check changes</span>
+    <span class="pm-vfx-ws-smart-step" id="pmWsStepApprove">3 Approve</span>
+  </div>
+  <button class="pm-vfx-ws-smart-action" id="pmWsNextAction" type="button">Analyze timeline</button>
+</div>
+<div class="pm-vfx-ws-main">
 <div class="pm-vfx-ws-left">
   <div class="pm-vfx-ws-list-hdr">
-    <span class="pm-vfx-ws-list-title">PULL LIST</span>
-    <button class="pm-vfx-ws-btn-xs" id="pmWsAutoVerifyAll" type="button">Auto Verify All</button>
+    <span class="pm-vfx-ws-list-title">VFX SHOTS</span>
+    <span class="pm-vfx-ws-list-subtitle" id="pmWsListSubtitle">0 shots</span>
   </div>
   <div class="pm-vfx-ws-triage-bar">
     <span class="pm-vfx-ws-triage-count" id="pmWsTriageCount" title="Shots flagged for review">—</span>
@@ -6626,13 +6788,14 @@ function _buildWorkspaceHTML() {
 <div class="pm-vfx-ws-center">
   <div class="pm-vfx-ws-viewer-hdr">
     <div class="pm-vfx-ws-modes" id="pmWsViewerModes">
-      <button class="pm-vfx-ws-mode" data-ws-mode="qt_ref"  type="button">QT Ref</button>
-      <button class="pm-vfx-ws-mode" data-ws-mode="ocf"     type="button">OCF</button>
       <button class="pm-vfx-ws-mode is-active" data-ws-mode="side" type="button">Side by Side</button>
       <button class="pm-vfx-ws-mode" data-ws-mode="wipe"    type="button">Wipe</button>
       <button class="pm-vfx-ws-mode" data-ws-mode="diff"    type="button">Difference</button>
-      <button class="pm-vfx-ws-mode" data-ws-mode="blink"   type="button">Blink</button>
-      <button class="pm-vfx-ws-mode" data-ws-mode="overlay" type="button">Overlay</button>
+      <button class="pm-vfx-ws-mode is-more" data-ws-mode="qt_ref"  type="button">Reference only</button>
+      <button class="pm-vfx-ws-mode is-more" data-ws-mode="ocf"     type="button">OCF only</button>
+      <button class="pm-vfx-ws-mode is-more" data-ws-mode="blink"   type="button">Blink</button>
+      <button class="pm-vfx-ws-mode is-more" data-ws-mode="overlay" type="button">Overlay</button>
+    <button class="pm-vfx-ws-mode pm-vfx-ws-mode-more" id="pmWsMoreModes" type="button">Views ▾</button>
     </div>
     <span class="pm-vfx-ws-shot-name" id="pmWsShotName">—</span>
   </div>
@@ -6671,9 +6834,9 @@ function _buildWorkspaceHTML() {
 
 <div class="pm-vfx-ws-right">
   <div class="pm-vfx-ws-tabs-hdr" id="pmWsTabsHdr">
-    <button class="pm-vfx-ws-tab is-active" data-ws-tab="verify"  type="button">Verify</button>
+    <button class="pm-vfx-ws-tab is-active" data-ws-tab="verify"  type="button">Check</button>
     <button class="pm-vfx-ws-tab"           data-ws-tab="conform" type="button">Conform</button>
-    <button class="pm-vfx-ws-tab"           data-ws-tab="export"  type="button">Export</button>
+    <button class="pm-vfx-ws-tab"           data-ws-tab="export"  type="button">Output</button>
     <button class="pm-vfx-ws-tab"           data-ws-tab="notes"   type="button">Notes</button>
   </div>
   <div class="pm-vfx-ws-tab-body" id="pmWsTabBody">
@@ -6682,6 +6845,7 @@ function _buildWorkspaceHTML() {
     <div class="pm-vfx-ws-tab-pane"           data-ws-tab-pane="export"  id="pmWsTabExport"><div class="pm-vfx-ws-tab-empty">Select a shot to configure export</div></div>
     <div class="pm-vfx-ws-tab-pane"           data-ws-tab-pane="notes"   id="pmWsTabNotes"><div class="pm-vfx-ws-tab-empty">Select a shot to add notes</div></div>
   </div>
+</div>
 </div>
 `;
 }
@@ -6709,16 +6873,10 @@ function _wsSelectShot(idx) {
   if (nameEl) nameEl.textContent = name;
 
   // Initialise scrub slider for this shot
-  const fps      = job.fps || 24;
   const handles  = _settings.handles || 8;
-  const tcToFrames = tc => {
-    if (!tc) return 0;
-    const p = String(tc).split(/[:;]/);
-    if (p.length < 4) return 0;
-    return ((+p[0] * 3600 + +p[1] * 60 + +p[2]) * fps) + +p[3];
-  };
-  const inFrame  = tcToFrames(row.tcIn || job.tcIn || '');
-  const outFrame = tcToFrames(row.tcOut || job.tcOut || '') || (inFrame + (job.frameCount || fps));
+  const timing   = _wsTiming(row, job);
+  const inFrame  = timing.recInF;
+  const outFrame = timing.recOutF;
   if (!_wsScrubFrame[idx]) _wsScrubFrame[idx] = inFrame;
 
   const slider = document.getElementById('pmWsScrubSlider');
@@ -6736,15 +6894,15 @@ function _wsSelectShot(idx) {
 function _wsUpdateScrubTc(idx) {
   const job   = _state.jobs[idx] || {};
   const row   = (_state.normalisedRows || [])[idx] || {};
-  const fps   = job.fps || 24;
   const frame = _wsScrubFrame[idx] || 0;
+  const timing = _wsTiming(row, job);
 
   const srcEl   = document.getElementById('pmWsTcSrc');
   const recEl   = document.getElementById('pmWsTcRec');
   const frameEl = document.getElementById('pmWsTcFrame');
-  if (srcEl)   srcEl.textContent   = _wsFramesToTc(frame, fps);
-  if (recEl)   recEl.textContent   = row.recIn || '—';
-  if (frameEl) frameEl.textContent = String(frame);
+  if (srcEl)   srcEl.textContent   = _wsSourceTcForRecord(row, job, frame);
+  if (recEl)   recEl.textContent   = _wsFramesToTc(frame, timing.timelineFps);
+  if (frameEl) frameEl.textContent = String(_wsSourceFrameForRecord(row, job, frame));
 }
 
 async function _wsOpenQtPlayer(idx) {
@@ -6793,8 +6951,11 @@ async function _wsLoadViewerFrame(idx) {
   const row   = (_state.normalisedRows || [])[idx] || {};
   const job   = _state.jobs[idx] || {};
   const path  = row.sourcePath || '';
-  const fps   = job.fps || 24;
-  const tc    = _wsFramesToTc(_wsScrubFrame[idx] || 0, fps);
+  const timing = _wsTiming(row, job);
+  const recordFrame = _wsScrubFrame[idx] || timing.recInF;
+  const qtTc  = _wsFramesToTc(recordFrame, timing.timelineFps);
+  const ocfTc = _wsSourceTcForRecord(row, job, recordFrame);
+  const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
   const inner = document.getElementById('pmWsViewerInner');
   if (!inner) return;
 
@@ -6810,7 +6971,7 @@ async function _wsLoadViewerFrame(idx) {
 
   // OCF pane
   if (showOcf && path) {
-    const ckey = `${path}|${tc}|ocf`;
+    const ckey = `${path}|${ocfTc}|ocf`;
     if (_wsFrameCache.has(ckey)) {
       const cached = _wsFrameCache.get(ckey);
       _wsLastGood.set(path, cached);
@@ -6823,12 +6984,25 @@ async function _wsLoadViewerFrame(idx) {
         const steps = [];
         if (window.pfxPlatform?.media) {
           steps.push(async () => {
-            const r = await window.pfxPlatform.media.getOcfStill({ ocfPath: path, sourceTc: tc, outputWidth: 640 });
+            const r = await window.pfxPlatform.media.getOcfStill({
+              ocfPath: path,
+              sourceTc: ocfTc,
+              sourceStartTc: ocfStartTc,
+              fps: timing.sourceFps,
+              outputWidth: 640,
+            });
             return r?.dataUrl || r?.imageDataUrl || null;
           });
         }
         steps.push(async () => {
-          const res = await nativeOcfExtractFrame(path, tc, { width: 640, height: 360, format: 'jpg', forceFfmpeg: true });
+          const res = await nativeOcfExtractFrame(path, ocfTc, {
+            width: 640,
+            height: 360,
+            format: 'jpg',
+            forceFfmpeg: true,
+            sourceStartTc: ocfStartTc,
+            fps: timing.sourceFps,
+          });
           return res?.data?.dataUrl || null;
         });
         const { value: dataUrl } = await runDecodeChain(steps, { timeoutMs: 8000, label: 'OCF still' });
@@ -6898,13 +7072,13 @@ async function _wsLoadViewerFrame(idx) {
           }
         } else if (session?.requiresTranscode && _wsSelectedIdx === idx) {
           // ProRes — still path for now, live playback via HTTP stream not yet wired
-          const qtCkey = `${qtPath}|${tc}|qt`;
+          const qtCkey = `${qtPath}|${qtTc}|qt`;
           if (_wsFrameCache.has(qtCkey)) {
             qtPane.innerHTML = `<span class="pm-vfx-ws-vpane-label">QT REF</span><img src="${_wsFrameCache.get(qtCkey)}" class="pm-vfx-ws-vpane-img" alt="QT Ref">`;
           } else {
             qtPane.innerHTML = `<span class="pm-vfx-ws-vpane-label">QT REF</span><div class="pm-vfx-ws-vpane-loading">Loading…</div>`;
             try {
-              const r = await window.pfxPlatform.media.getStill({ path: qtPath, timecode: tc, outputWidth: 640 });
+              const r = await window.pfxPlatform.media.getStill({ path: qtPath, timecode: qtTc, outputWidth: 640 });
               const du = r?.dataUrl || r?.imageDataUrl || null;
               if (du) {
                 _wsCachePut(qtCkey, du);
@@ -6921,7 +7095,7 @@ async function _wsLoadViewerFrame(idx) {
         }
       } else {
         // Still mode (split / ocf views) — fetch via AVFoundation getStill
-        const qtCkey = `${qtPath}|${tc}|qt`;
+        const qtCkey = `${qtPath}|${qtTc}|qt`;
         if (_wsFrameCache.has(qtCkey)) {
           const cached = _wsFrameCache.get(qtCkey);
           _wsLastGood.set(qtPath, cached);
@@ -6931,11 +7105,11 @@ async function _wsLoadViewerFrame(idx) {
           try {
             const { value: du } = await runDecodeChain([
               async () => {
-                const r = await window.pfxPlatform.media.getStill({ path: qtPath, timecode: tc, outputWidth: 640 });
+                const r = await window.pfxPlatform.media.getStill({ path: qtPath, timecode: qtTc, outputWidth: 640 });
                 return r?.dataUrl || r?.imageDataUrl || null;
               },
               async () => {
-                const res = await nativeOcfExtractFrame(qtPath, tc, { width: 640, height: 360, format: 'jpg', forceFfmpeg: true });
+                const res = await nativeOcfExtractFrame(qtPath, qtTc, { width: 640, height: 360, format: 'jpg', forceFfmpeg: true });
                 return res?.data?.dataUrl || null;
               },
             ], { timeoutMs: 8000, label: 'QT still' });
@@ -6985,7 +7159,7 @@ async function _wsRunNeighborPrefetch(idx, token) {
   if (!live()) return;
   const row     = (_state.normalisedRows || [])[idx] || {};
   const job     = _state.jobs[idx] || {};
-  const fps     = job.fps || 24;
+  const timing  = _wsTiming(row, job);
   const cur     = _wsScrubFrame[idx] || 0;
   const ocfPath = row.sourcePath || '';
   const qtPath  = row?.event?.sourcePath || '';
@@ -6994,26 +7168,35 @@ async function _wsRunNeighborPrefetch(idx, token) {
   for (const off of [1, -1, 2, -2, 3, -3]) {
     const f = cur + off;
     if (f < 0) continue;
-    const tc = _wsFramesToTc(f, fps);
-    if (wantOcf) { if (!live()) return; await _wsWarmStill('ocf', ocfPath, tc); }
-    if (wantQt)  { if (!live()) return; await _wsWarmStill('qt',  qtPath,  tc); }
+    const qtTc = _wsFramesToTc(f, timing.timelineFps);
+    const ocfTc = _wsSourceTcForRecord(row, job, f);
+    if (wantOcf) { if (!live()) return; await _wsWarmStill('ocf', ocfPath, ocfTc, { row, job }); }
+    if (wantQt)  { if (!live()) return; await _wsWarmStill('qt',  qtPath,  qtTc, { row, job }); }
   }
 }
 
 // Best-effort: decode one still into the cache if not already present.
-async function _wsWarmStill(kind, mediaPath, tc) {
+async function _wsWarmStill(kind, mediaPath, tc, ctx = {}) {
   if (!mediaPath || !tc) return;
   const ckey = `${mediaPath}|${tc}|${kind}`;
   if (_wsFrameCache.has(ckey)) return;
   try {
     let du = null;
     if (window.pfxPlatform?.media) {
+      const row = ctx.row || {};
+      const job = ctx.job || {};
+      const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
+      const timing = _wsTiming(row, job);
       const r = kind === 'ocf'
-        ? await window.pfxPlatform.media.getOcfStill({ ocfPath: mediaPath, sourceTc: tc, outputWidth: 640 })
+        ? await window.pfxPlatform.media.getOcfStill({ ocfPath: mediaPath, sourceTc: tc, sourceStartTc: ocfStartTc, fps: timing.sourceFps, outputWidth: 640 })
         : await window.pfxPlatform.media.getStill({ path: mediaPath, timecode: tc, outputWidth: 640 });
       du = r?.dataUrl || r?.imageDataUrl || null;
     } else if (kind === 'ocf') {
-      const res = await nativeOcfExtractFrame(mediaPath, tc, { width: 640, height: 360, format: 'jpg' });
+      const row = ctx.row || {};
+      const job = ctx.job || {};
+      const timing = _wsTiming(row, job);
+      const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
+      const res = await nativeOcfExtractFrame(mediaPath, tc, { width: 640, height: 360, format: 'jpg', sourceStartTc: ocfStartTc, fps: timing.sourceFps });
       du = res?.data?.dataUrl || null;
     }
     if (du) _wsCachePut(ckey, du);
@@ -7070,6 +7253,63 @@ function _updateTriageHeader() {
   if (fBtn) fBtn.classList.toggle('is-active', _wsTriageReview);
   const sBtn = document.getElementById('pmWsTriageSort');
   if (sBtn) sBtn.classList.toggle('is-active', _wsTriageSort);
+  const subtitle = document.getElementById('pmWsListSubtitle');
+  if (subtitle) subtitle.textContent = `${_state.jobs.length} shot${_state.jobs.length === 1 ? '' : 's'}`;
+}
+
+function _wsWorkflowState() {
+  const total = _state.jobs.length;
+  const linked = (_state.normalisedRows || []).filter(r => !!r?.sourcePath).length;
+  const statuses = _state.jobs.map((_, i) => _wsVerifyStatus[i] || 'not_checked');
+  const checked = statuses.filter(s => s !== 'not_checked').length;
+  const approved = statuses.filter(s => s === 'approved').length;
+  if (!total) return { key: 'analyze', title: 'Prepare the shot list', note: 'Analyze the timeline to identify every VFX shot.', action: 'Analyze timeline', linked, checked, approved, total };
+  if (linked < total) return { key: 'link', title: `${total - linked} shot${total - linked === 1 ? '' : 's'} need camera files`, note: 'Smart Link searches the media library first, then asks for one OCF folder only if needed.', action: 'Smart Link OCF', linked, checked, approved, total };
+  if (checked < total) return { key: 'check', title: 'Check editorial changes', note: 'PostFlowX will verify frames and show speed/retime and resize changes in plain language.', action: `Check remaining (${total - checked})`, linked, checked, approved, total };
+  if (approved < total) return { key: 'approve', title: `${total - approved} shot${total - approved === 1 ? '' : 's'} need a decision`, note: 'Review only the shots that need attention; safe links stay out of your way.', action: 'Review next shot', linked, checked, approved, total };
+  return { key: 'ready', title: 'VFX pull is ready', note: 'All OCF links are checked and approved. Review delivery settings before export.', action: 'Review export', linked, checked, approved, total };
+}
+
+function _renderWsSmartBar() {
+  const state = _wsWorkflowState();
+  const title = document.getElementById('pmWsSmartTitle');
+  const note = document.getElementById('pmWsSmartNote');
+  const action = document.getElementById('pmWsNextAction');
+  if (title) title.textContent = state.title;
+  if (note) note.textContent = state.note;
+  if (action) {
+    action.textContent = state.action;
+    action.dataset.action = state.key;
+    action.disabled = !!_running;
+  }
+  const mark = (id, done, current) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('is-done', done);
+    el.classList.toggle('is-current', current);
+  };
+  mark('pmWsStepLink', state.total > 0 && state.linked === state.total, state.key === 'link' || state.key === 'analyze');
+  mark('pmWsStepCheck', state.total > 0 && state.checked === state.total, state.key === 'check');
+  mark('pmWsStepApprove', state.total > 0 && state.approved === state.total, state.key === 'approve' || state.key === 'ready');
+}
+
+async function _wsRunNextAction(action) {
+  const btn = document.getElementById('pmWsNextAction');
+  if (btn) btn.disabled = true;
+  try {
+    if (action === 'analyze') await _runAnalysis();
+    else if (action === 'link') await _smartLinkOcf();
+    else if (action === 'check') await _wsAutoVerifyAll();
+    else if (action === 'approve') {
+      const next = _state.jobs.findIndex((_, i) => (_wsVerifyStatus[i] || 'not_checked') !== 'approved');
+      if (next >= 0) _wsSelectShot(next);
+    } else if (action === 'ready') {
+      _wsDetailTab = 'export';
+      _renderWorkspaceDetail(_wsSelectedIdx);
+    }
+  } finally {
+    _renderWsSmartBar();
+  }
 }
 
 // Build the inner cells for one pull-list row (shared by full render and the
@@ -7139,6 +7379,7 @@ function _updatePullReadiness() {
 
   const countEl = document.getElementById('pmWsApprovedCount');
   if (countEl) countEl.textContent = `${approved}/${total} shots approved`;
+  _renderWsSmartBar();
 }
 
 // ---------------------------------------------------------------------------
@@ -7184,31 +7425,68 @@ function _renderWsTabVerify(idx) {
   };
 
   const ocfFile  = row.sourcePath ? row.sourcePath.split('/').pop() : '';
+  const retime = job.retime || {};
+  const speedPercent = Math.round(Number(retime.speedPercent ?? _wsTiming(row, job).speedPercent ?? 100));
+  const speedValue = retime.freeze ? 'Freeze frame'
+    : retime.isDynamic ? 'Variable speed ramp'
+    : retime.reversed ? `Reverse${Math.abs(speedPercent) !== 100 ? ` · ${Math.abs(speedPercent)}%` : ''}`
+    : retime.hasSpeedChange ? `${speedPercent}% speed`
+    : 'Normal speed';
+  const hasResize = !!(job.geometry?.hasGeometry || job.renderPlan?.bakeReframe || row.event?.transform);
+  const targetSize = job.renderPlan?.targetResolution || job.metadata?.targetResolution || _settings.targetResolution || '';
+  const sizeValue = hasResize
+    ? `Resize / reframe${targetSize ? ` → ${targetSize}` : ''}`
+    : `Original framing${targetSize ? ` · ${targetSize}` : ''}`;
+  const changeCard = (icon, label, value, needsCheck, stateText) => `<div class="pm-vfx-ws-change-card${needsCheck ? ' is-attention' : ''}">
+  <span class="pm-vfx-ws-change-icon">${icon}</span>
+  <span class="pm-vfx-ws-change-copy"><span class="pm-vfx-ws-change-label">${label}</span><span class="pm-vfx-ws-change-value" title="${_esc(value)}">${_esc(value)}</span></span>
+  <span class="pm-vfx-ws-change-state">${stateText}</span>
+</div>`;
   const scoreBadge = score != null
     ? `<span class="pm-vfx-ws-score-badge ${_wsScoreClass(score)}">${score}% — ${_wsPullReadinessLabel(score)}</span>`
     : '<span class="pm-vfx-ws-score-badge ws-score--none">Not scored yet</span>';
 
   pane.innerHTML = `
-<div class="pm-vfx-ws-verify-checks">
+<div class="pm-vfx-ws-change-summary">
+  ${changeCard('◉', 'Camera file', ocfFile || 'Not linked', !row.sourcePath, row.sourcePath ? 'LINKED' : 'ACTION')}
+  ${changeCard('↯', 'Speed / retime', speedValue, !!retime.hasSpeedChange, retime.hasSpeedChange ? 'CHECK' : 'NORMAL')}
+  ${changeCard('↗', 'Size / framing', sizeValue, hasResize, hasResize ? 'CHECK' : 'NORMAL')}
+</div>
+<details class="pm-vfx-ws-tech-details">
+  <summary>Technical checks</summary>
+  <div class="pm-vfx-ws-verify-checks">
   ${checkRow('OCF Linked',      ocfFile || 'No OCF path',                               !!row.sourcePath)}
-  ${checkRow('Decode Status',   vr.decodeOk === true ? 'OK' : vr.decodeOk === false ? 'Failed' : 'Not tested', vr.decodeOk)}
+  ${checkRow('Decode Status',   vr.decodeOk === true ? 'OK' : vr.decodeOk === false
+    ? (vr.decodeRequiresResolve && vr.resolveAvailable === false
+      ? 'Needs DaVinci Resolve or Sony camera SDK'
+      : _esc(String(vr.decodeError || 'Decoder unavailable').slice(0, 96)))
+    : 'Not tested', vr.decodeOk)}
   ${checkRow('Duration Match',  vr.durationMatch === true ? 'OK' : vr.durationMatch === false ? 'Mismatch' : '—', vr.durationMatch)}
   ${checkRow('Frame Count',     job.frameCount != null ? `${job.frameCount} fr` : '—',  vr.frameCountMatch)}
   ${checkRow('Timecode',        vr.tcMatch === true ? 'OK' : vr.tcMatch === false ? 'Does not match editorial' : '—', vr.tcMatch)}
   ${checkRow('Visual Match',    score != null ? `${score}%` : '—',                      score != null ? score >= 70 : undefined)}
   ${checkRow('Framing',         vr.framingMatch === true ? 'OK' : vr.framingMatch === false ? 'Mismatch detected' : '—', vr.framingMatch)}
-  ${checkRow('Speed',           vr.speedMatch === true ? 'OK' : vr.speedMatch === false ? 'Speed mismatch detected' : '—', vr.speedMatch)}
-</div>
+  ${checkRow('Retime Plan',     retime.hasSpeedChange ? speedValue : 'Normal speed', vr.speedMatch)}
+  </div>
+</details>
 <div class="pm-vfx-ws-score-row">${scoreBadge}</div>
 <div class="pm-vfx-ws-verify-actions">
-  <button class="pm-vfx-ws-action-btn" id="pmWsAutoVerifyBtn" type="button">⚡ Auto Verify</button>
-  <button class="pm-vfx-ws-action-btn${approved ? ' is-approved' : ' primary'}" id="pmWsApproveLinkBtn" type="button">${approved ? '✓ Approved' : 'Approve Link'}</button>
+  <button class="pm-vfx-ws-action-btn primary${approved ? ' is-approved' : ''}" id="pmWsShotActionBtn" type="button" data-action="${!row.sourcePath ? 'link' : status === 'not_checked' ? 'check' : approved ? 'next' : 'approve'}">${!row.sourcePath ? 'Smart Link OCF' : status === 'not_checked' ? 'Check this shot' : approved ? '✓ Approved · Next shot' : 'Approve after review'}</button>
 </div>
 ${!approved ? '<div class="pm-vfx-ws-lock-msg">Approve this OCF before exporting EXR.</div>' : ''}
 `;
 
-  document.getElementById('pmWsAutoVerifyBtn')?.addEventListener('click',  () => _wsAutoVerify(idx));
-  document.getElementById('pmWsApproveLinkBtn')?.addEventListener('click', () => _wsApproveLink(idx));
+  document.getElementById('pmWsShotActionBtn')?.addEventListener('click', async e => {
+    const action = e.currentTarget?.dataset?.action;
+    if (action === 'link') await _smartLinkOcf();
+    else if (action === 'check') await _wsAutoVerify(idx);
+    else if (action === 'approve') _wsApproveLink(idx);
+    else if (action === 'next') {
+      const next = _state.jobs.findIndex((_, i) => i > idx && (_wsVerifyStatus[i] || 'not_checked') !== 'approved');
+      if (next >= 0) _wsSelectShot(next);
+      else { _wsDetailTab = 'export'; _renderWorkspaceDetail(idx); }
+    }
+  });
 }
 
 function _renderWsTabConform(idx) {
@@ -7218,12 +7496,15 @@ function _renderWsTabConform(idx) {
   const job = _state.jobs[idx] || {};
   const row = (_state.normalisedRows || [])[idx] || {};
   const fdl = _state.fdls[idx] || {};
+  const timing = _wsTiming(row, job);
 
-  const tcIn   = row.tcIn   || job.tcIn   || fdl.sourceTcIn  || '—';
-  const tcOut  = row.tcOut  || job.tcOut  || fdl.sourceTcOut || '—';
-  const recIn  = row.recIn  || '—';
-  const recOut = row.recOut || '—';
-  const speed  = row.event?.speedPercent ? `${Math.round(row.event.speedPercent)}%` : '100%';
+  const tcIn   = job.exportIn || row.tcIn || job.sourceIn || fdl.sourceTcIn || timing.srcInTc || '—';
+  const tcOut  = job.exportOut || row.tcOut || job.sourceOut || fdl.sourceTcOut || timing.srcOutTc || '—';
+  const cutTcIn  = row.tcIn || job.sourceIn || timing.srcInTc || '—';
+  const cutTcOut = row.tcOut || job.sourceOut || timing.srcOutTc || '—';
+  const recIn  = timing.recInTc || row.recIn || '—';
+  const recOut = timing.recOutTc || row.recOut || '—';
+  const speed  = `${Math.round(timing.speedPercent)}%`;
   const scale  = job.reframe?.scale  ? job.reframe.scale.toFixed(3) : '—';
   const posX   = job.reframe?.cropBox?.[0] != null ? String(job.reframe.cropBox[0]) : '—';
   const posY   = job.reframe?.cropBox?.[1] != null ? String(job.reframe.cropBox[1]) : '—';
@@ -7241,10 +7522,13 @@ function _renderWsTabConform(idx) {
 </div>
 <div class="pm-vfx-ws-conform-section">
   <div class="pm-vfx-ws-section-lbl">TIMECODE</div>
-  ${kv('Src In',  tcIn)}
-  ${kv('Src Out', tcOut)}
+  ${kv('OCF In',  tcIn)}
+  ${kv('OCF Out', tcOut)}
+  ${kv('Cut Src In',  cutTcIn)}
+  ${kv('Cut Src Out', cutTcOut)}
   ${kv('Rec In',  recIn)}
   ${kv('Rec Out', recOut)}
+  ${kv('TC Base', `${_wsTcBase(timing.sourceFps)} TC / ${Number(timing.sourceFps).toFixed(3).replace(/\.000$/, '')} fps`)}
   ${kv('Frames',  job.frameCount != null ? `${job.frameCount} fr (incl. ${_settings.handles || 8}f handles/side)` : '—')}
 </div>
 <div class="pm-vfx-ws-conform-section">
@@ -7300,7 +7584,7 @@ function _renderWsTabExport(idx) {
 ${locked ? '<div class="pm-vfx-ws-lock-msg">EXR export is locked until verification passes.<br>Approve OCF link before exporting EXR.</div>' : ''}
 <div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">
   <button class="pm-vfx-ws-action-btn${locked ? ' is-locked' : ' primary'}" id="pmWsExportExrBtn" type="button" ${locked ? 'disabled' : ''}>⬇ Export EXR (ACES2065-1)</button>
-  <button class="pm-vfx-ws-action-btn" id="pmWsExportReportBtn" type="button">Save Verify Report</button>
+  <button class="pm-vfx-ws-action-btn" id="pmWsExportReportBtn" type="button">Save Check Report</button>
 </div>
 `;
 
@@ -7345,7 +7629,7 @@ async function _wsAutoVerify(idx) {
     return;
   }
 
-  const results = { decodeOk: null, tcMatch: null, durationMatch: null, frameCountMatch: null, framingMatch: null, speedMatch: null };
+  const results = { decodeOk: null, decodeError: '', decodeRequiresResolve: false, resolveAvailable: true, tcMatch: null, durationMatch: null, frameCountMatch: null, framingMatch: null, speedMatch: null };
 
   // Timecode match from existing matcher results
   const rawMr = _state.matchResults[idx] || {};
@@ -7353,29 +7637,54 @@ async function _wsAutoVerify(idx) {
 
   // Duration / frame count
   const ev  = rawMr.event || {};
-  const fps = ev.fps || job.fps || 24;
-  const tcToF = tc => {
-    const p = String(tc || '').split(/[:;]/);
-    if (p.length < 4) return 0;
-    return ((+p[0] * 3600 + +p[1] * 60 + +p[2]) * fps) + +p[3];
-  };
-  const eventDur = (ev.srcIn && ev.srcOut) ? tcToF(ev.srcOut) - tcToF(ev.srcIn) : 0;
-  const jobDur   = job.frameCount || 0;
-  results.durationMatch   = (jobDur > 0 && eventDur > 0) ? Math.abs(eventDur - jobDur) <= 2 : null;
+  const timing = _wsTiming(row, job);
+  const eventDur = Math.max(0, timing.recOutF - timing.recInF);
+  const jobDur   = job.expectedRenderedFrameCount || job.frameCount || 0;
+  results.durationMatch = pullDurationMatches({
+    eventFrames: eventDur,
+    jobFrames: jobDur,
+    handleFrames: job.handleFrames ?? _settings.handles ?? 0,
+    hasSpeedChange: !!job?.retime?.hasSpeedChange,
+    sourceFrameMap: job?.retime?.sourceFrameMap,
+  });
   results.frameCountMatch = results.durationMatch;
 
-  // Speed match
-  const sf = ev.speedFactor;
-  results.speedMatch = sf != null ? Math.abs(sf - 1.0) < 0.01 : null;
+  // Retime-plan readiness (not a claim that two moving images are identical).
+  // Dynamic ramps require the explicit planner frame map; freezes require a
+  // concrete held source frame; constant/reverse jobs carry a finite factor.
+  const retime = job?.retime || {};
+  results.speedMatch = !retime.hasSpeedChange ? true
+    : retime.isDynamic ? !!(Array.isArray(retime.sourceFrameMap) && retime.sourceFrameMap.length)
+    : retime.freeze ? Number.isFinite(Number(retime.freezeSourceFrame ?? retime.freeze?.frame))
+    : Number.isFinite(Number(retime.speedPercent));
 
   // OCF decode
-  const tcIn = row.tcIn || '';
+  const tcIn = _wsSourceTcForRecord(row, job, timing.recInF);
+  const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
   try {
-    const res = await nativeOcfExtractFrame(path, tcIn, { width: 640, height: 360, format: 'jpg' });
-    if (res?.data?.dataUrl) {
+    const preview = typeof window._pmGetOcfStillPreview === 'function'
+      ? await window._pmGetOcfStillPreview({
+          ocfPath: path,
+          sourceTc: tcIn,
+          sourceStartTc: ocfStartTc,
+          fps: timing.sourceFps,
+          width: 640,
+          height: 360,
+          timeout: 30000,
+          resolveConnected: !!window._pmVfxPullResolveConnected?.(),
+        })
+      : await nativeOcfExtractFrame(path, tcIn, {
+          width: 640,
+          height: 360,
+          format: 'jpg',
+          sourceStartTc: ocfStartTc,
+          fps: timing.sourceFps,
+        });
+    const dataUrl = preview?.dataUrl || preview?.data?.dataUrl || '';
+    if (dataUrl) {
       results.decodeOk = true;
       const ckey = `${path}|${tcIn}|ocf`;
-      _wsCachePut(ckey, res.data.dataUrl);
+      _wsCachePut(ckey, dataUrl);
       _wsVerifyStatus[idx] = 'decode_ok';
       if (_wsSelectedIdx === idx) _wsLoadViewerFrame(idx);
 
@@ -7385,7 +7694,7 @@ async function _wsAutoVerify(idx) {
         try {
           const [qtImg, ocfImg] = await Promise.all([
             _dataUrlToImageData(vd.qtRef, 640, 360),
-            _dataUrlToImageData(res.data.dataUrl, 640, 360),
+            _dataUrlToImageData(dataUrl, 640, 360),
           ]);
           if (qtImg && ocfImg) {
             const lumaScore = _wsCompareLuma(qtImg.data, ocfImg.data, qtImg.width, qtImg.height);
@@ -7400,10 +7709,14 @@ async function _wsAutoVerify(idx) {
       }
     } else {
       results.decodeOk = false;
+      results.decodeError = String(preview?.error || preview?.data?.error || 'No installed decoder can read this camera file.');
+      results.decodeRequiresResolve = !!preview?.requiresResolve;
+      results.resolveAvailable = preview?.resolveAvailable !== false;
       _wsVerifyStatus[idx] = 'failed';
     }
   } catch (e) {
     results.decodeOk = false;
+    results.decodeError = e?.message || String(e);
     _wsVerifyStatus[idx] = 'failed';
     console.warn('[WsVerify] OCF decode error:', e);
   }
@@ -7487,13 +7800,16 @@ function _wsExportOcfReport(idx) {
   const vr     = _wsVerifyResults[idx] || {};
   const status = _wsVerifyStatus[idx] || 'not_checked';
   const score  = _wsMatchScore[idx];
+  const timing = _wsTiming(row, job);
 
   const report = {
     shotName:     job.shotName || row.shotName || `Shot ${idx + 1}`,
     qtRefPath:    row.event?.sourcePath || '',
     ocfPath:      row.sourcePath || '',
-    sourceTc:     row.tcIn || '',
-    recordTc:     row.recIn || '',
+    sourceTc:     job.exportIn || row.tcIn || '',
+    recordTc:     timing.recInTc || row.recIn || '',
+    speedPercent: timing.speedPercent,
+    sourceFps:    timing.sourceFps,
     frameRange:   { start: _settings.frameStart || 1001, count: job.frameCount || 0, handles: _settings.handles || 8 },
     decodeStatus: vr.decodeOk === true ? 'OK' : vr.decodeOk === false ? 'FAILED' : 'NOT_TESTED',
     matchScore:   score ?? null,
@@ -7520,19 +7836,28 @@ async function _wsBuildContactSheet(idx) {
   const row    = (_state.normalisedRows || [])[idx] || {};
   const path   = row.sourcePath || '';
   const qtPath = row.event?.sourcePath || '';
-  const fps    = job.fps || 24;
-  const merged = { ...row, ...job };
+  const timing = _wsTiming(row, job);
+  const ocfStartTc = (row.ocf?.tcKnown && row.ocf?.tcIn) ? row.ocf.tcIn : (row.ocf?.tcIn || '');
 
-  // Build frame-spec array once — shared by both rows.
+  // Build position specs once, but keep QT on record timecode and OCF on source
+  // timecode. These clocks often differ (timeline burn-in vs camera free-run).
   const specs = _WS_FRAME_KEYS.map((posKey, p) => {
-    const frame = _wsFrameForPos(posKey, merged);
-    const tc    = _wsFramesToTc(frame, fps);
-    return { pos: posKey, label: _WS_POSITIONS[p], frame, tc, dataUrl: null };
+    const recordFrame = _wsRecordFrameForPos(posKey, row, job);
+    const sourceFrame = _wsSourceFrameForRecord(row, job, recordFrame);
+    return {
+      pos: posKey,
+      label: _WS_POSITIONS[p],
+      recordFrame,
+      sourceFrame,
+      qtTc: _wsFramesToTc(recordFrame, timing.timelineFps),
+      ocfTc: _wsFramesToTc(sourceFrame, timing.sourceFps),
+      dataUrl: null,
+    };
   });
 
   const sheet = {
-    qt:  specs.map(s => ({ ...s })),
-    ocf: specs.map(s => ({ ...s })),
+    qt:  specs.map(s => ({ pos: s.pos, label: s.label, frame: s.recordFrame, tc: s.qtTc, dataUrl: null })),
+    ocf: specs.map(s => ({ pos: s.pos, label: s.label, frame: s.sourceFrame, tc: s.ocfTc, dataUrl: null })),
   };
   _wsContactSheet[idx] = sheet;
   _wsRenderContactSheet(idx); // render placeholders immediately
@@ -7547,7 +7872,13 @@ async function _wsBuildContactSheet(idx) {
         const ckey = `${path}|${entry.tc}|ocf`;
         if (_wsFrameCache.has(ckey)) { entry.dataUrl = _wsFrameCache.get(ckey); return; }
         try {
-          const r = await window.pfxPlatform.media.getOcfStill({ ocfPath: path, sourceTc: entry.tc, outputWidth: 320 });
+          const r = await window.pfxPlatform.media.getOcfStill({
+            ocfPath: path,
+            sourceTc: entry.tc,
+            sourceStartTc: ocfStartTc,
+            fps: timing.sourceFps,
+            outputWidth: 320,
+          });
           const du = r?.dataUrl || r?.imageDataUrl || null;
           if (du) { _wsCachePut(ckey, du); entry.dataUrl = du; }
         } catch {}
@@ -7558,7 +7889,13 @@ async function _wsBuildContactSheet(idx) {
         const ckey = `${path}|${entry.tc}|ocf`;
         if (_wsFrameCache.has(ckey)) { entry.dataUrl = _wsFrameCache.get(ckey); continue; }
         try {
-          const res = await nativeOcfExtractFrame(path, entry.tc, { width: 320, height: 180, format: 'jpg' });
+          const res = await nativeOcfExtractFrame(path, entry.tc, {
+            width: 320,
+            height: 180,
+            format: 'jpg',
+            sourceStartTc: ocfStartTc,
+            fps: timing.sourceFps,
+          });
           if (res?.data?.dataUrl) { _wsCachePut(ckey, res.data.dataUrl); entry.dataUrl = res.data.dataUrl; }
         } catch {}
       }
@@ -7571,7 +7908,7 @@ async function _wsBuildContactSheet(idx) {
     try {
       const r = await window.pfxPlatform.media.getHeroFrames({
         path:        qtPath,
-        frames:      specs.map(s => ({ frame: s.frame, timecode: s.tc, label: s.label })),
+        frames:      specs.map(s => ({ frame: s.recordFrame, timecode: s.qtTc, label: s.label })),
         outputWidth: 320,
       });
       if (r?.frames) {
@@ -7579,7 +7916,7 @@ async function _wsBuildContactSheet(idx) {
           if (f?.ok && (f.dataUrl || f.imageDataUrl)) {
             const du = f.dataUrl || f.imageDataUrl;
             sheet.qt[i].dataUrl = du;
-            _wsCachePut(`${qtPath}|${specs[i].tc}|qt`, du);
+            _wsCachePut(`${qtPath}|${specs[i].qtTc}|qt`, du);
           }
         });
       }
@@ -7663,6 +8000,16 @@ function _wireWorkspaceListeners() {
       return;
     }
 
+    if (e.target.id === 'pmWsMoreModes' || e.target.closest('#pmWsMoreModes')) {
+      document.getElementById('pmWsViewerModes')?.classList.toggle('show-more-modes');
+      return;
+    }
+
+    if (e.target.id === 'pmWsNextAction' || e.target.closest('#pmWsNextAction')) {
+      _wsRunNextAction(document.getElementById('pmWsNextAction')?.dataset?.action || 'analyze');
+      return;
+    }
+
     // Right panel tabs
     const tabBtn = e.target.closest('[data-ws-tab]');
     if (tabBtn && tabBtn.closest('#pmWsTabsHdr')) {
@@ -7678,7 +8025,7 @@ function _wireWorkspaceListeners() {
       const idx    = _wsSelectedIdx;
       const job    = _state.jobs[idx] || {};
       const row    = (_state.normalisedRows || [])[idx] || {};
-      const frame  = _wsFrameForPos(posKey, { ...row, ...job });
+      const frame  = _wsFrameForPos(posKey, row, job);
       _wsScrubFrame[idx] = frame;
       const slider = document.getElementById('pmWsScrubSlider');
       if (slider) slider.value = String(frame);
@@ -7693,7 +8040,7 @@ function _wireWorkspaceListeners() {
       const idx    = _wsSelectedIdx;
       const job    = _state.jobs[idx] || {};
       const row    = (_state.normalisedRows || [])[idx] || {};
-      const frame  = _wsFrameForPos(jumpBtn.dataset.jump, { ...row, ...job });
+      const frame  = _wsFrameForPos(jumpBtn.dataset.jump, row, job);
       _wsScrubFrame[idx] = frame;
       const slider = document.getElementById('pmWsScrubSlider');
       if (slider) slider.value = String(frame);

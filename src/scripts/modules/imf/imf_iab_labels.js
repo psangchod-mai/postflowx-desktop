@@ -175,6 +175,9 @@ function _fixForReject(rawLabel, source, normLists) {
   if (cat === 'trackformat' || cat === 'trackuid') {
     return 'Channel identifier (not group). Fix: exclude audioTrackFormat/UID from group label QC.';
   }
+  if (cat === 'object') {
+    return 'Bed/object name — not a group label. Fix: exclude audioObject names from group label QC (validate audioContent group labels only).';
+  }
   const sug = _bestGroupSuggestion(norm, normLists);
   if (sug) return `Rename to a recognized ${sug.group} label (closest: "${sug.label}").`;
   return 'Rename to a recognized group label (Dialogue/Music/Effects/Narration).';
@@ -346,7 +349,7 @@ export async function inspectIabAdm(file) {
     let status = mapped ? 'PASS' : 'REJECT';
     if (status === 'REJECT') {
       const cat = _sourceCategory(c.source);
-      if (cat === 'programme' || cat === 'pack' || cat === 'trackformat' || cat === 'trackuid') {
+      if (cat === 'programme' || cat === 'pack' || cat === 'trackformat' || cat === 'trackuid' || cat === 'object') {
         status = 'WARN';
       }
     }
@@ -456,7 +459,7 @@ export async function inspectIabAdmFromNames({
     let status = mapped ? 'PASS' : 'REJECT';
     if (status === 'REJECT') {
       const cat = _sourceCategory(c.source);
-      if (cat === 'programme' || cat === 'pack' || cat === 'trackformat' || cat === 'trackuid') {
+      if (cat === 'programme' || cat === 'pack' || cat === 'trackformat' || cat === 'trackuid' || cat === 'object') {
         status = 'WARN';
       }
     }

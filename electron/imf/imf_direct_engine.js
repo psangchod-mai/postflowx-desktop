@@ -733,6 +733,28 @@ function _normUuid(u) {
   return String(u || '').replace(/^urn:uuid:/i, '').toLowerCase();
 }
 
+function _assetMapList(idx, extra = []) {
+  const out = [];
+  const add = (p) => {
+    const s = String(p || '').trim();
+    if (!s || out.includes(s)) return;
+    out.push(s);
+  };
+  if (Array.isArray(extra)) for (const p of extra) add(p);
+  add(idx && idx.assetMapPath);
+  return out;
+}
+
+function _assetMapArg(idx, extra = []) {
+  return _assetMapList(idx, extra).join(',');
+}
+
+function _streamVideoFilter(session) {
+  const outW = session.outputWidth || 1920;
+  const scale = `scale=${outW}:-2:flags=lanczos`;
+  return session.lowres > 0 ? `${scale},unsharp=5:5:0.45:3:3:0.20` : scale;
+}
+
 async function _ffprobeIMF(assetMapPath, cplPath, token) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -853,17 +875,23 @@ async function startPlayback(packageId, cplId, opts = {}) {
   // array — indexing [0]/[1] yielded NaN and broke seek/fps for non-24p packages.
   const fps        = (typeof cpl.editRate === 'number' && cpl.editRate > 0) ? cpl.editRate : 24;
   const seekFrame  = opts.startFrame || 0;
+  const assetMapPaths = _assetMapList(idx, opts.assetMaps);
+  const assetMapArg = assetMapPaths.join(',');
 
   const session = {
     sessionId,
     packageId,
     cplId:       cpl.id,
     cplPath:     cpl.cplPath,
-    assetMapPath:idx.assetMapPath,
+    assetMapPath:assetMapArg,
+    assetMapPaths,
     fps,
     totalFrames: cpl.totalFrames,
     currentFrame: seekFrame,
-    state:       'stopped',
+    // startPlayback() means the renderer is about to attach to streamUrl.
+    // Mark the session playing now so _attachMJPEGStream starts the one
+    // long-lived ffmpeg stream as soon as the HTTP client connects.
+    state:       'playing',
     ffmpegProc:  null,
     sinks:       [],
     lastFrameBuf:null,
@@ -1182,8 +1210,9 @@ async function warmUpDecode(packageId, cplId, opts = {}, job = null) {
   const fps    = (typeof cpl.editRate === 'number' && cpl.editRate > 0) ? cpl.editRate : 24;
   const outW   = opts.outputWidth || 1280;
   const lowres = _qualityToLowres(opts.quality || 'auto', cpl.resolution);
+  const assetmaps = _assetMapArg(idx, opts.assetMaps);
 
-  const args = ['-v', 'warning', '-f', 'imf', '-assetmaps', idx.assetMapPath];
+  const args = ['-v', 'warning', '-f', 'imf', '-assetmaps', assetmaps];
   if (lowres > 0) args.push('-lowres', String(lowres));
   args.push('-i', cpl.cplPath, '-frames:v', String(frames), '-an',
             '-vf', `scale=${outW}:-2`, '-c:v', 'mjpeg', '-q:v', '5', '-f', 'mpjpeg', 'pipe:1');
@@ -1262,10 +1291,13 @@ function _startFFmpegStream(session, startFrame) {
 
   const fps    = session.fps || 24;
   const seekTs = startFrame > 0 ? (startFrame / fps).toFixed(6) : null;
-  const outW   = session.outputWidth || 1920;
 
   const args = [
     '-v', 'warning',
+    // Pace the persistent MJPEG stream to the CPL rate. Without this, ffmpeg can
+    // emit decoded frames as fast as the CPU allows, so the picture outruns the
+    // player's realtime wall clock.
+    '-re',
     '-f', 'imf',
     '-assetmaps', session.assetMapPath,
   ];
@@ -1277,7 +1309,7 @@ function _startFFmpegStream(session, startFrame) {
   args.push('-i', session.cplPath);
   args.push(
     '-an',
-    '-vf', `scale=${outW}:-2`,
+    '-vf', _streamVideoFilter(session),
     '-c:v', 'mjpeg',
     '-q:v', '3',
     '-r', String(fps),

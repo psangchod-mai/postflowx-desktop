@@ -48,6 +48,34 @@ eq(e1.recIn, '01:00:04:00', 'e1 recIn continues from e0 recOut (track cursor)');
 // Accept both string JSON and object
 ok(parseOTIO(JSON.stringify(otio)).events.length === 2, 'accepts JSON string input');
 
+// Resolve OTIO: preserve an extreme retime and animated resize exactly once.
+{
+  const resolveOtio = JSON.parse(JSON.stringify(otio));
+  const c = resolveOtio.tracks.children[0].children[0];
+  c.effects = [
+    { OTIO_SCHEMA: 'LinearTimeWarp.1', time_scalar: 16.08 },
+    {
+      OTIO_SCHEMA: 'Effect.1',
+      metadata: { Resolve_OTIO: {
+        Enabled: true, 'Effect Name': 'Transform', Parameters: [
+          { 'Parameter ID': 'transformationZoomX', 'Parameter Value': 1, 'Key Frames': {
+            0: { Value: 1 }, 96: { Value: 2.56 },
+          } },
+          { 'Parameter ID': 'transformationZoomY', 'Parameter Value': 1, 'Key Frames': {
+            0: { Value: 1 }, 96: { Value: 2.56 },
+          } },
+        ],
+      } },
+    },
+  ];
+  const [event] = parseOTIO(resolveOtio).events;
+  eq(Math.round(event.speedFactor), 1608, 'Resolve LinearTimeWarp 16.08x is stored as 1608%');
+  eq(event.transform.scaleX, 2.56, 'Resolve animated scale X is preserved');
+  eq(event.transform.scaleY, 2.56, 'Resolve animated scale Y is preserved');
+  ok(event.transform.animated === true, 'Resolve animated transform is flagged');
+  ok(/Scale 100–256%/.test(event.transformSummary), 'Resolve resize summary is human readable');
+}
+
 // ── Rate normalization: 30000/1001 → nominal 30 ──
 {
   const o2 = JSON.parse(JSON.stringify(otio));

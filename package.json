@@ -1,6 +1,6 @@
 {
   "name": "postflowx",
-  "version": "2026.6.1",
+  "version": "2026.8.1",
   "description": "PostFlowX \u2014 VFX Post Production Desktop App",
   "main": "electron/main.js",
   "author": "PostFlowX",
@@ -15,6 +15,8 @@
     "test:js": "fail=0; for f in tests-js/*.test.mjs; do echo \"\u2022 $f\"; node \"$f\" || fail=1; done; exit $fail",
     "test:py": "node tools/run-pytest.mjs",
     "build-verify": "npm run test:node && npm run test:js && npm run test:py && node tools/scan-innerhtml.mjs --gate && node tools/scan-rawxml.mjs --gate && node tools/scan-failopen.mjs --gate",
+    "verify:packaged-app": "node tools/verify-packaged-app.mjs",
+    "package:guard:mac": "node tools/assert-packaged-app-not-running.mjs",
     "scan:xss": "node tools/scan-innerhtml.mjs",
     "test": "npm run test:node && npm run test:js && npm run test:py && (cd postflowx-adobe && npm test)",
     "_dev": "\u2500\u2500 DEV \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
@@ -36,11 +38,11 @@
     "build:native-engine:arm64": "bash -c 'set -e; cd electron/native/PFXNativeMediaEngine && swift build -c release --arch arm64 && cp \"$(swift build -c release --arch arm64 --show-bin-path)/PFXNativeMediaEngine\" ../pfx_native_media_engine && chmod +x ../pfx_native_media_engine && echo \"[PFXNativeMediaEngine] arm64 binary built\"'",
     "build:r3d": "bash electron/native/r3d_helper/build.sh",
     "build:metal-htj2k": "bash electron/imf/metal-htj2k/build_native.sh",
-    "build:mac": "npm run build:avf && npm run build:native-engine && npm run build:metal-htj2k && npm run build:renderer && electron-builder --mac",
-    "build:mac-dir": "npm run build:avf && npm run build:native-engine && npm run build:metal-htj2k && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null -c.mac.notarize=false",
-    "dist:mac": "npm run build:avf && npm run build:native-engine && npm run build:renderer && electron-builder --mac --universal",
-    "dist:mac:unsigned": "npm run build:avf && npm run build:native-engine && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal -c.mac.identity=null -c.mac.notarize=false",
-    "pack": "npm run build:renderer && electron-builder --dir"
+    "build:mac": "npm run package:guard:mac && npm run build:avf && npm run build:native-engine && npm run build:metal-htj2k && npm run build:renderer && electron-builder --mac",
+    "build:mac-dir": "npm run package:guard:mac && npm run build:avf && npm run build:native-engine && npm run build:metal-htj2k && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null -c.mac.notarize=false",
+    "dist:mac": "npm run package:guard:mac && npm run build:avf && npm run build:native-engine && npm run build:renderer && electron-builder --mac --universal",
+    "dist:mac:unsigned": "npm run package:guard:mac && npm run build:avf && npm run build:native-engine && npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal -c.mac.identity=null -c.mac.notarize=false",
+    "pack": "npm run package:guard:mac && npm run build:renderer && electron-builder --dir"
   },
   "build": {
     "appId": "com.postflowx.app",
@@ -123,6 +125,7 @@
         "filter": [
           "**/*",
           "!**/__pycache__/**",
+          "!**/.venv/**",
           "!**/.DS_Store"
         ]
       },

@@ -471,6 +471,34 @@ async function getOcfStill({
   return { ok: false, error: 'All decoders failed for OCF still extraction', stage: 'all_failed' };
 }
 
+/**
+ * Start a FULL-RANGE OCF proxy render (Problem 2): render the whole HdlSt→HdlEnd
+ * range of a camera-RAW OCF to a single cached H.264 .mp4 that the OCF pane loads
+ * into a <video> for scrubbing/playback. Delegates to the companion's Resolve
+ * proxy render (async job) via resolve.renderOcfProxy. Returns either a job handle
+ * ({ jobId, state:'rendering' }) or a complete result ({ state:'complete', proxyPath, ... }).
+ */
+async function getOcfProxy({
+  ocfPath,
+  hdlStTc,
+  hdlEndTc,
+  sourceStartTc = '',
+  fps = 0,
+  outputWidth = 960,
+} = {}) {
+  if (!ocfPath) throw new Error('ocfPath required');
+  const r = await _viaCompanion('resolve.renderOcfProxy', {
+    ocfPath, hdlStTc, hdlEndTc, sourceStartTc, fps, outputWidth,
+  }, 300000);
+  return { ok: true, ...r };
+}
+
+/** Poll an async OCF proxy render job started by getOcfProxy. */
+async function getOcfProxyStatus({ jobId } = {}) {
+  const r = await _viaCompanion('resolve.renderOcfProxyStatus', { jobId }, 15000);
+  return { ok: true, ...r };
+}
+
 // Playback state commands — update session state.
 // Actual <video> control stays in the renderer; these keep server-side state in sync.
 
@@ -631,6 +659,7 @@ const HANDLED = new Set([
   'media.play', 'media.pause', 'media.seek', 'media.stepFrame',
   'media.getInfo', 'media.getStill', 'media.getHeroFrames',
   'media.getOcfStill', 'media.diagnostics', 'media.ffprobeInfo',
+  'media.getOcfProxy', 'media.getOcfProxyStatus',
 ]);
 
 function handles(type) { return HANDLED.has(type); }
@@ -647,6 +676,8 @@ async function route({ type, payload = {} }) {
     case 'media.getStill':     return getStill(payload);
     case 'media.getHeroFrames':return getHeroFrames(payload);
     case 'media.getOcfStill':  return getOcfStill(payload);
+    case 'media.getOcfProxy':       return getOcfProxy(payload);
+    case 'media.getOcfProxyStatus': return getOcfProxyStatus(payload);
     case 'media.diagnostics':  return getDiagnostics();
     case 'media.ffprobeInfo':  return ffprobeInfo(payload);
     default:                   throw new Error(`Unknown media action: ${type}`);
@@ -662,5 +693,6 @@ module.exports = {
   // Direct exports for use without IPC dispatch
   open, close, play, pause, seek, stepFrame,
   getInfo, getStill, getHeroFrames, getOcfStill,
+  getOcfProxy, getOcfProxyStatus,
   getDiagnostics, ffprobeInfo, extractAudio,
 };

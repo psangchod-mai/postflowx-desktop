@@ -47,6 +47,10 @@ canvas.getContext = () => ({ drawImage() {} });
 // linkedom's Image never fires onload/onerror on its own; resolve draws
 // synchronously as "success" so _drawDataUrl() settles without the 4s watchdog.
 class FakeImage {
+  constructor() {
+    this.naturalWidth = 1920;
+    this.naturalHeight = 1080;
+  }
   set src(v) { if (this.onload) this.onload(); }
 }
 globalThis.Image = FakeImage;
@@ -100,6 +104,40 @@ await promiseC;
 
 ok(timeUpdates.length === 1, 'the settled seekFrame(10) fired exactly one onTimeUpdate once it resolved');
 ok(timeUpdates[0]?.frame === 10, 'the reported onTimeUpdate frame is 10, not the stale 5');
+
+// Opening ProRes can overlap the first ResizeObserver repaint. The observer must
+// stay out of the way until the backend session exists, so open() owns one clean
+// first-frame render instead of seeing `_busy` and falling through to a proxy.
+const firstFrame = deferred();
+let openRaceEngine;
+let legacyCalls = 0;
+window.pfxPlatform = {
+  nativeEngine: {
+    async open() {
+      queueMicrotask(() => openRaceEngine.repaint());
+      return { sessionId: 'sess-open', fps: 24, frameCount: 120, duration: 5 };
+    },
+    async frameExtract(sessionId, frame) {
+      await firstFrame.promise;
+      return { imageDataUrl: `data:image/png;base64,OPEN${frame}` };
+    },
+  },
+  media: {
+    async getInfo() { legacyCalls++; return { ok: true, fps: 24, duration: 5 }; },
+    async getStill() { legacyCalls++; return { ok: false, error: 'legacy path should not run' }; },
+  },
+};
+
+openRaceEngine = new NativeAVPlayerEngine(canvas);
+const openPromise = openRaceEngine.open('/path/prores.mov');
+await flush();
+ok(openRaceEngine._busy === true, 'open owns the first-frame render while the resize repaint is suppressed');
+firstFrame.resolve();
+const openResult = await openPromise;
+ok(openResult.ok === true, 'open accepts its native first-frame paint');
+ok(openRaceEngine.decoder === 'PFXNativeEngine', 'open keeps direct AVFoundation playback active');
+ok(openRaceEngine._lastRenderedFrame === 0, 'the verified first frame is recorded as frame 0');
+ok(legacyCalls === 0, 'successful native first-frame repaint does not fall through to another backend');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

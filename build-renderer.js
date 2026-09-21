@@ -114,27 +114,32 @@ if (target === 'extension') {
   }
 }
 
-// ── Patch index.html — inject platform token ──────────────────────────────────
+// ── Patch index.html — inject inert build metadata ────────────────────────────
 
 let html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8');
 
-const inject = [
-  '<script>',
-  `window.__PFX_TARGET__        = "${target}";`,
-  `window.__PFX_BUILD_TIME__    = "${NOW}";`,
-  `window.__PFX_BUILD_VERSION__ = "${VERSION}";`,
-  '</script>',
-].join('\n');
-
-if (!html.includes('__PFX_TARGET__')) {
-  html = html.replace('</head>', `${inject}\n</head>`);
-} else {
-  // Re-inject with current values (previous build was already patched)
-  html = html.replace(
-    /<script>\s*window\.__PFX_TARGET__[\s\S]*?<\/script>/,
-    inject,
-  );
+function escapeHtmlAttr(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
+
+function setHtmlDataAttr(source, name, value) {
+  const pattern = new RegExp(`(${name}=")[^"]*(")`);
+  if (!pattern.test(source)) {
+    throw new Error(`[build-renderer] src/index.html is missing required ${name}`);
+  }
+  return source.replace(pattern, `$1${escapeHtmlAttr(value)}$2`);
+}
+
+// An earlier build injected an executable inline <script> here. Electron's CSP
+// correctly blocked it on every packaged launch, so metadata now travels in
+// inert attributes and src/scripts/pfxPlatform.js reads it synchronously.
+html = setHtmlDataAttr(html, 'data-pfx-target', target);
+html = setHtmlDataAttr(html, 'data-pfx-build-time', NOW);
+html = setHtmlDataAttr(html, 'data-pfx-build-version', VERSION);
 
 // Fix asset paths for the bundled layout. In dev the page is src/index.html (repo
 // root is one level up, so '../assets/…' is correct); in the build it's
@@ -187,7 +192,7 @@ if (target === 'desktop') {
   const localDevConfig = tryReadJson(path.join(ROOT, 'electron', 'authConfig.local.json'));
 
   const clientIdResolved = resolveInherited([
-    { source: 'env:GOOGLE_DESKTOP_CLIENT_ID',           value: process.env.GOOGLE_DESKTOP_CLIENT_ID },
+    { source: 'env:GOOGLE_DESKTOP_CLIENT_ID',          value: process.env.GOOGLE_DESKTOP_CLIENT_ID },
     { source: 'env:POSTFLOWX_GOOGLE_DESKTOP_CLIENT_ID', value: process.env.POSTFLOWX_GOOGLE_DESKTOP_CLIENT_ID },
     { source: 'authConfig.json',                        value: priorResources?.googleDesktopClientId },
     { source: 'electron/authConfig.local.json',         value: localDevConfig?.googleDesktopClientId },
@@ -201,11 +206,51 @@ if (target === 'desktop') {
   ]);
   const apiUrl = apiUrlResolved.value;
 
+  const meechumClientId = (
+    process.env.POSTFLOWX_MEECHUM_CLIENT_ID ||
+    'postflowx-desktop-test'
+  ).trim();
+  const meechumIssuer = (
+    process.env.POSTFLOWX_MEECHUM_ISSUER ||
+    'https://meechum.prod.netflix.net/'
+  ).trim();
+  const meechumRedirectUri = (
+    process.env.POSTFLOWX_MEECHUM_REDIRECT_URI ||
+    'https://postflowx.netflix.net/oauth2/callback'
+  ).trim();
+  const meechumScopes = (
+    process.env.POSTFLOWX_MEECHUM_SCOPES ||
+    'openid profile default'
+  ).trim();
+  // Meechum/Edward auth strategy. Controls which login experiences the client
+  // offers. Set to 'NetflixPartnerLogin' (prod) or 'NetflixPartnerTestLogin'
+  // (test) to admit partner (Pandora-managed, non-workforce) accounts alongside
+  // workforce. Empty = workforce-only default. The AUTHORITATIVE control lives in
+  // the Edward client config (go/edward); this value is a request-level hint that
+  // must match it. See docs/PARTNER_AUTH.md.
+  const meechumAuthStrategy = (
+    process.env.POSTFLOWX_MEECHUM_AUTH_STRATEGY ||
+    // This Edward client already enables the Partner Login policy in production.
+    // Keep the build request explicit so Netflix Partner Directory users follow
+    // the same successful Meechum flow as workforce users.
+    'NetflixPartnerLogin'
+  ).trim();
+  // The existing Edward client has 127.0.0.1:51900 registered, so automatic
+  // native return is the production default. Set the env var to "false" only
+  // for a build whose Edward client intentionally lacks loopback callbacks.
+  const meechumLoopbackRedirects = process.env.POSTFLOWX_MEECHUM_LOOPBACK_REDIRECTS !== 'false';
+
   const configured = clientId.endsWith('.apps.googleusercontent.com');
 
   // Write baked-in config (inside asar, for fallback reads in main process).
   const bundledCfg = {
     googleDesktopClientId: clientId,
+    meechumClientId,
+    meechumIssuer,
+    meechumRedirectUri,
+    meechumScopes,
+    meechumAuthStrategy,
+    meechumLoopbackRedirects,
     postflowxAuthApiUrl:   apiUrl,
     generatedAt:           NOW,
     buildVersion:          VERSION,
@@ -219,10 +264,21 @@ if (target === 'desktop') {
   // <app>/Contents/Resources/authConfig.json (readable as process.resourcesPath/authConfig.json).
   // This file is outside the asar so it can be replaced post-build without repacking.
   // In production CI: set GOOGLE_DESKTOP_CLIENT_ID before running build:mac.
+  //
+  // devAuthBypass is opt-in via the POSTFLOWX_DEV_AUTH_BYPASS env var (mirrors the
+  // check in electron/main.js + electron/ipc.js). Production CI never sets it, so
+  // packaged release builds always bake in `false` and stay locked to real auth.
+  const devAuthBypass = process.env.POSTFLOWX_DEV_AUTH_BYPASS === 'true';
   const resourcesCfg = {
     googleDesktopClientId: clientId,
+    meechumClientId,
+    meechumIssuer,
+    meechumRedirectUri,
+    meechumScopes,
+    meechumAuthStrategy,
+    meechumLoopbackRedirects,
     postflowxAuthApiUrl:   apiUrl,
-    devAuthBypass:         false,
+    devAuthBypass:         devAuthBypass,
     generatedAt:           NOW,
     buildVersion:          VERSION,
   };
@@ -231,6 +287,9 @@ if (target === 'desktop') {
     JSON.stringify(resourcesCfg, null, 2) + '\n',
   );
 
+  if (devAuthBypass) {
+    console.warn('[build-renderer] ⚠  DEV AUTH BYPASS baked in (POSTFLOWX_DEV_AUTH_BYPASS=true) — this build auto-signs in as Local Dev. Do NOT ship.');
+  }
   if (configured) {
     const preview = clientId.slice(0, 8) + '...' + clientId.slice(-28);
     console.log(`[build-renderer] ✓ auth config: GOOGLE_DESKTOP_CLIENT_ID set (${preview})`);
@@ -239,7 +298,6 @@ if (target === 'desktop') {
     console.warn('[build-renderer]    Set env var before building:');
     console.warn('[build-renderer]      GOOGLE_DESKTOP_CLIENT_ID="xxxx.apps.googleusercontent.com" node build-renderer.js --target desktop');
   }
-
   // Say out loud where the access-policy URL came from. When it is empty the
   // packaged app cannot check anyone's access at all, and the only symptom is a
   // red line on the login card — so the build must not report that as success.
@@ -249,6 +307,11 @@ if (target === 'desktop') {
     console.warn('[build-renderer] ⚠  access policy service: NOT configured — every sign-in in this build will fail with');
     console.warn('[build-renderer]      "PostFlowX access policy service is not configured for this build."');
     console.warn('[build-renderer]    Set POSTFLOWX_AUTH_API_URL, or put postflowxAuthApiUrl in electron/authConfig.local.json.');
+  }
+  console.log(`[build-renderer] ✓ Meechum auth config: ${meechumClientId} → ${meechumRedirectUri}`);
+  console.log(`[build-renderer]   scopes: "${meechumScopes}" · strategy: ${meechumAuthStrategy || 'workforce-only (default)'}`);
+  if (/partner/i.test(meechumAuthStrategy)) {
+    console.log('[build-renderer]   ↳ partner login enabled — Edward client must set the same auth_strategy (go/edward)');
   }
 }
 

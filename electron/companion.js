@@ -54,7 +54,16 @@ class CompanionBridge extends EventEmitter {
       return;
     }
 
-    const env = { ...process.env, PYTHONPATH: companionSrc, PYTHONUNBUFFERED: '1' };
+    // A signed macOS app bundle must remain immutable after launch. Python's
+    // default import cache writes __pycache__/*.pyc beside bundled sources,
+    // which changes sealed resources and invalidates the app signature. Keep
+    // imports read-only inside the bundle; runtime caches belong in user data.
+    const env = {
+      ...process.env,
+      PYTHONPATH: companionSrc,
+      PYTHONUNBUFFERED: '1',
+      PYTHONDONTWRITEBYTECODE: '1',
+    };
 
     this._proc = spawn(python, ['-m', 'postflowx_companion.app', '--mode', 'native-host'], {
       env,

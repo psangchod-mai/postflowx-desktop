@@ -56,7 +56,10 @@ function escapeHTML(s){ return String(s ?? "").replaceAll("&","&amp;").replaceAl
 function buildAssociatedShotName(fields) {
   const { show = '', ep = '', scene = '', shot = '' } = fields;
   const parts = [];
-  if (show)  parts.push(String(show).toUpperCase().replace(/[^A-Za-z0-9]/g, ''));
+  if (show)  {
+    const showId = String(show).toUpperCase().replace(/[^A-Za-z0-9]/g, '');
+    parts.push(showId === 'MMBLR' ? 'BLR' : showId);
+  }
   if (ep)    parts.push(String(ep).padStart(3, '0'));
   if (scene) parts.push(String(scene).padStart(3, '0'));
   if (shot)  parts.push(String(shot).padStart(4, '0'));
@@ -89,6 +92,16 @@ const _NT = {
   plateNum:  'pfx_sm_plate_num_val',
   plateOn:   'pfx_sm_plate_on',
 };
+
+// BLR is the approved show ID. Migrate previous placeholder/legacy values once
+// so existing projects stop producing PFX_* or MMBLR_* names.
+try {
+  if (localStorage.getItem('pfx_sm_show_default_blr_v1') !== '1') {
+    const current = (localStorage.getItem(_NT.show) || '').trim().toUpperCase();
+    if (!current || ['LMP', 'PFX', 'MMBLR'].includes(current)) localStorage.setItem(_NT.show, 'BLR');
+    localStorage.setItem('pfx_sm_show_default_blr_v1', '1');
+  }
+} catch (_) {}
 
 // ── Name token helpers ────────────────────────────────────────────────────────
 function __smSanitizeNameToken(s){
@@ -135,7 +148,7 @@ function __smBuildPlateStyleName(base, code, num, taskOrVer='', vendor='', ver='
   const legacyVerOnly = !vendor && !ver && /^v\d{3,4}$/i.test(String(taskOrVer || '').trim());
   const cleanTask = legacyVerOnly ? '' : __smSanitizeNameToken(String(taskOrVer || '').trim());
   const cleanVendor = __smSanitizeNameToken(String(vendor || '').trim());
-  const cleanVer = String((legacyVerOnly ? taskOrVer : ver) ?? '').trim();
+  const cleanVer = String((legacyVerOnly ? taskOrVer : ver) ?? '').trim() || 'v001';
   const codeUC = cleanCode.toUpperCase();
   const baseName = codeUC === 'CP'
     ? __smSanitizeNameToken(`${cleanBase}_CP${cleanNum}`)
@@ -195,13 +208,14 @@ function __smResolveNextCpNum(base, excludeId=''){
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function __smReadNamingTemplateSettings(){
-  const show     = String(localStorage.getItem(_NT.show)   || "LMP").trim() || "SHOW";
+  const rawShow  = String(localStorage.getItem(_NT.show)   || "BLR").trim() || "BLR";
+  const show     = rawShow.toUpperCase() === 'MMBLR' ? 'BLR' : rawShow;
   const sq       = String(localStorage.getItem(_NT.sq)     || "101").trim() || "101";
   const seq      = String(localStorage.getItem(_NT.seq)    || "").trim();
   const scene    = String(localStorage.getItem(_NT.scene)  || "").trim();
   const task     = String(localStorage.getItem(_NT.task)   || "").trim();
   const vendor   = String(localStorage.getItem(_NT.vendor) || "").trim();
-  const ver      = String(localStorage.getItem(_NT.ver)    || "").trim();
+  const ver      = String(localStorage.getItem(_NT.ver)    || "v001").trim() || "v001";
   const startNum = parseInt(localStorage.getItem(_NT.start) || "10", 10);
   const stepNum  = parseInt(localStorage.getItem(_NT.step)  || "10", 10);
   const padNum   = parseInt(localStorage.getItem(_NT.pad)   || "3",  10);
@@ -217,13 +231,14 @@ function __smReadNamingTemplateSettings(){
 
 function __smWriteNamingTemplateSettings(cfg, opts={}){
   const prev = __smReadNamingTemplateSettings();
-  const nextShow   = String(cfg?.show   != null ? cfg.show   : prev.show  ).trim() || "SHOW";
+  const enteredShow = String(cfg?.show != null ? cfg.show : prev.show).trim() || "BLR";
+  const nextShow   = enteredShow.toUpperCase() === 'MMBLR' ? 'BLR' : enteredShow;
   const nextSq     = String(cfg?.sq     != null ? cfg.sq     : prev.sq    ).trim() || "101";
   const nextSeq    = String(cfg?.seq    != null ? cfg.seq    : prev.seq   ).trim();
   const nextScene  = String(cfg?.scene  != null ? cfg.scene  : prev.scene ).trim();
   const nextTask   = String(cfg?.task   != null ? cfg.task   : prev.task  ).trim();
   const nextVendor = String(cfg?.vendor != null ? cfg.vendor : prev.vendor).trim();
-  const nextVer    = String(cfg?.ver    != null ? cfg.ver    : prev.ver   ).trim();
+  const nextVer    = String(cfg?.ver    != null ? cfg.ver    : prev.ver   ).trim() || 'v001';
   const startNum   = parseInt(cfg?.start != null ? cfg.start : prev.start, 10);
   const stepNum    = parseInt(cfg?.step  != null ? cfg.step  : prev.step,  10);
   const padNum     = parseInt(cfg?.pad   != null ? cfg.pad   : prev.pad,   10);
@@ -258,7 +273,7 @@ function _ntBuildParts(cfg, shotNumStr){
   const plateOn = localStorage.getItem(_NT.plateOn) === '1';
 
   const parts = [];
-  if (showOn)  { const v = String(cfg.show||'SHOW').trim(); if(v) parts.push(v); }
+  if (showOn)  { const v = String(cfg.show||'BLR').trim(); if(v) parts.push(v.toUpperCase() === 'MMBLR' ? 'BLR' : v); }
   if (epOn)    { parts.push(_ntPad(parseInt(cfg.sq||'101',10)||0, 3)); }
   if (seqOn)   { const v = String(cfg.seq||'').trim(); if(v) parts.push(/^\d+$/.test(v) ? _ntPad(parseInt(v,10), 3) : __smSanitizeNameToken(v)); }
   if (sceneOn) { const v = String(cfg.scene||'').trim(); if(v) parts.push(_ntPad(parseInt(v,10)||0, 3)); }
@@ -737,7 +752,7 @@ function _ntCloseInlineBar(){
 // Token order follows Netflix VFX Shot Naming: showID_ep_[seq]_[scene]_shotID#_[task]_[vendor]_ver#
 // Ref: Netflix VFX Shot and Version Naming Recommendations
 const _NT_TOKENS = [
-  { key:'show',   label:'Show',   lsOn:_NT.showOn,   lsVal:_NT.show,   defOn:true,  ph:'LMP'  },
+  { key:'show',   label:'Show',   lsOn:_NT.showOn,   lsVal:_NT.show,   defOn:true,  ph:'BLR'  },
   { key:'ep',     label:'EP',     lsOn:_NT.epOn,     lsVal:_NT.sq,     defOn:true,  ph:'101'  },
   { key:'seq',    label:'Seq',    lsOn:_NT.seqOn,    lsVal:_NT.seq,    defOn:false, ph:'TCC'  },
   { key:'scene',  label:'Scene',  lsOn:_NT.sceneOn,  lsVal:_NT.scene,  defOn:false, ph:'067'  },
@@ -920,8 +935,10 @@ function _ntPlatePanel(anchorChip, onDone){
 }
 
 function _ntPlateLabel(code){
-  const MAP = {FG:'Foreground',BG:'Background',EL:'Element',RF:'Reference',
-               BS:'Bluescreen',GS:'Greenscreen',CC:'Color Chart',LG:'Lens Grid',CP:'Clean Plate'};
+  const canon = (typeof window !== 'undefined' && window.__pfxPlateLabels) || null;
+  if (canon && canon[code]) return canon[code];
+  const MAP = {PL:'Pull Plate',CP:'Clean Plate',FG:'Foreground',BG:'Background',EL:'Element',RF:'Reference',
+               BS:'Bluescreen',GS:'Greenscreen',CC:'Color Chart',LG:'Lens Grid',CH:'Chromeball'};
   return MAP[code] || code;
 }
 
@@ -1585,13 +1602,20 @@ function openNamingTemplateStatic(id, containerEl){
         span.replaceWith(inp);
         inp.focus(); inp.select();
         const commit = () => {
+          const val = inp.value.trim();
           if(pmMk) {
             if(!pmMk.template) pmMk.template = {};
-            pmMk.template[tok.key] = inp.value.trim();
+            pmMk.template[tok.key] = val;
+            // SHOW / VENDOR are project-level: promote to the global default so the
+            // NEXT marked shot inherits the value instead of reverting to its
+            // placeholder (e.g. keeps SHOW "test" instead of falling back to "LMP").
+            // Mirrors what _ntChipPopup does for EP/SEQ/SCENE/VER#. Blank never
+            // overwrites a remembered default.
+            if(tok.lsVal && val) localStorage.setItem(tok.lsVal, val);
             try{ window.__pmPushShotNameNow?.(mid); }catch{}
             try{ window.__pmSaveAfterOcrUpdate?.(mid); }catch{}
           } else {
-            if(tok.lsVal) localStorage.setItem(tok.lsVal, inp.value.trim());
+            if(tok.lsVal) localStorage.setItem(tok.lsVal, val);
           }
           renderBar();
           _ntApplyShotNameToMarker(mid, _ntComputeShotName(mid));

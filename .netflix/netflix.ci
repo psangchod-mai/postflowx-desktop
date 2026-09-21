@@ -1,0 +1,157 @@
+#!/bin/bash
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+team_id="EZ4M4LKSQP"
+signing_identity="Developer ID Application: Netflix, Inc. (EZ4M4LKSQP)"
+
+cd "$project_dir"
+
+if [[ "${ROCKET_EVENT_TYPE:-}" == "PR" || -n "${ROCKET_PR_NUMBER:-}" ]]; then
+  npm run build-verify
+  printf 'Pull request checks passed; signing and notarization are main-only.\n'
+  exit 0
+fi
+if [[ "${ROCKET_BRANCH:-}" != "main" ]]; then
+  npm run build-verify
+  printf 'Branch checks passed; signing and notarization are main-only.\n'
+  exit 0
+fi
+
+if [[ -z "${NOTARIZE_APPLE_ID:-}" ]]; then
+  printf 'Jenkins credential NOTARIZE_APPLE_ID is required.\n' >&2
+  exit 1
+fi
+if [[ -z "${NOTARIZE_APP_PASSWORD:-}" ]]; then
+  printf 'Jenkins credential NOTARIZE_APP_PASSWORD is required.\n' >&2
+  exit 1
+fi
+
+if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+  printf 'Production release requires an Apple-silicon macOS builder.\n' >&2
+  exit 1
+fi
+if ! command -v update-keychain >/dev/null 2>&1; then
+  printf 'Netflix shared-builder command update-keychain is unavailable.\n' >&2
+  exit 1
+fi
+update-keychain
+
+identity_list="$(security find-identity -v -p codesigning)"
+if ! printf '%s\n' "$identity_list" | grep -F -q -- "\"$signing_identity\""; then
+  printf 'Required Netflix Developer ID Application identity is unavailable after update-keychain.\n' >&2
+  exit 1
+fi
+
+umask 077
+release_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/postflowx-release.XXXXXX")"
+notary_keychain="$release_temp_dir/notary.keychain-db"
+notary_keychain_password="$(uuidgen | tr -d '-')"
+profile_token="${BUILD_NUMBER:-$$}"
+notary_profile="postflowx-rocket-${profile_token//[^A-Za-z0-9._-]/-}"
+mount_dir="$release_temp_dir/mount"
+mounted=0
+
+cleanup_release_state() {
+  local exit_status="$1"
+  trap - EXIT
+  if [[ "$mounted" -eq 1 ]]; then
+    /usr/bin/hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${notary_keychain:-}" && -e "$notary_keychain" ]]; then
+    security delete-keychain "$notary_keychain" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${release_temp_dir:-}" && -d "$release_temp_dir" ]]; then
+    find "$release_temp_dir" -depth -delete >/dev/null 2>&1 || true
+  fi
+  exit "$exit_status"
+}
+trap 'cleanup_release_state "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+security create-keychain -p "$notary_keychain_password" "$notary_keychain"
+security set-keychain-settings -lut 21600 "$notary_keychain"
+security unlock-keychain -p "$notary_keychain_password" "$notary_keychain"
+xcrun notarytool store-credentials "$notary_profile" \
+  --apple-id "$NOTARIZE_APPLE_ID" \
+  --password "$NOTARIZE_APP_PASSWORD" \
+  --team-id "$team_id" \
+  --keychain "$notary_keychain" \
+  --validate
+
+npm run build-verify
+marker="$release_temp_dir/build-started"
+touch "$marker"
+APPLE_ID="$NOTARIZE_APPLE_ID" \
+APPLE_APP_SPECIFIC_PASSWORD="$NOTARIZE_APP_PASSWORD" \
+APPLE_TEAM_ID="$team_id" \
+CSC_NAME="$signing_identity" \
+CSC_IDENTITY_AUTO_DISCOVERY=true \
+npm run build:mac
+unset NOTARIZE_APPLE_ID NOTARIZE_APP_PASSWORD notary_keychain_password
+
+dmg_path=""
+dmg_count=0
+while IFS= read -r -d '' candidate; do
+  dmg_path="$candidate"
+  dmg_count=$((dmg_count + 1))
+done < <(find "$project_dir/dist" -maxdepth 1 -type f -name '*.dmg' -newer "$marker" -print0)
+if [[ "$dmg_count" -ne 1 || -z "$dmg_path" ]]; then
+  printf 'Expected exactly one newly built PostFlowX DMG, found %s.\n' "$dmg_count" >&2
+  exit 1
+fi
+
+built_app=""
+app_count=0
+while IFS= read -r -d '' candidate; do
+  built_app="$candidate"
+  app_count=$((app_count + 1))
+done < <(find "$project_dir/dist" -maxdepth 2 -type d -name 'PostFlowX.app' -newer "$marker" -print0)
+if [[ "$app_count" -ne 1 || -z "$built_app" ]]; then
+  printf 'Expected exactly one newly built PostFlowX app, found %s.\n' "$app_count" >&2
+  exit 1
+fi
+
+codesign --verify --deep --strict --verbose=2 "$built_app"
+xcrun stapler validate "$built_app"
+spctl --assess --type execute --verbose=4 "$built_app"
+
+codesign --force --sign "$signing_identity" --timestamp "$dmg_path"
+codesign --verify --verbose=2 "$dmg_path"
+receipt="$release_temp_dir/dmg-receipt.json"
+xcrun notarytool submit "$dmg_path" \
+  --keychain-profile "$notary_profile" \
+  --keychain "$notary_keychain" \
+  --wait \
+  --output-format json >"$receipt"
+status="$(/usr/bin/plutil -extract status raw "$receipt" 2>/dev/null || true)"
+if [[ "$status" != "Accepted" ]]; then
+  printf 'Apple notarization did not accept the PostFlowX DMG (status=%s).\n' "${status:-missing}" >&2
+  exit 1
+fi
+xcrun stapler staple "$dmg_path"
+xcrun stapler validate "$dmg_path"
+/usr/bin/hdiutil verify "$dmg_path" >/dev/null
+spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
+
+mkdir -p "$mount_dir"
+/usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg_path" >/dev/null
+mounted=1
+mounted_app="$mount_dir/PostFlowX.app"
+if [[ ! -d "$mounted_app" || ! -L "$mount_dir/Applications" ]]; then
+  printf 'Mounted DMG is missing PostFlowX.app or the Applications shortcut.\n' >&2
+  exit 1
+fi
+codesign --verify --deep --strict --verbose=2 "$mounted_app"
+xcrun stapler validate "$mounted_app"
+spctl --assess --type execute --verbose=4 "$mounted_app"
+cmp "$built_app/Contents/Resources/app.asar" "$mounted_app/Contents/Resources/app.asar"
+architectures="$(lipo -archs "$mounted_app/Contents/MacOS/PostFlowX")"
+if [[ " $architectures " != *" arm64 "* || " $architectures " != *" x86_64 "* ]]; then
+  printf 'PostFlowX release is not universal: %s\n' "$architectures" >&2
+  exit 1
+fi
+
+printf 'Developer ID signed and notarized PostFlowX DMG is ready: %s\n' "$dmg_path"

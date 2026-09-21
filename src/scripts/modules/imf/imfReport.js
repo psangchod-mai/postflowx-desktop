@@ -32,10 +32,44 @@ const CODE_FAMILY = {
   OPL:         { doc: 'OutputProfileList',  smpte: 'SMPTE ST 2067-100' },
   TT:          { doc: 'Timed Text (TTML/IMSC)', smpte: 'W3C TTML1 / SMPTE ST 2052-1 (IMSC)' },
   TL:          { doc: 'Timeline continuity', smpte: 'SMPTE ST 2067-3 §6 (Segment/Sequence)' },
+  UG:          { doc: 'IMF User Group Best Practice', smpte: 'IMF-UG TSP / SMPTE ST 2067-2' },
+  PHOTON:      { doc: 'Photon conformance (Netflix/SMPTE)', smpte: 'SMPTE ST 2067 / Netflix IMF' },
+  HASH:        { doc: 'PackingList Asset Hash', smpte: 'SMPTE ST 429-8 (SHA-1 / SHA-256)' },
   'SCHEMA-AM': { doc: 'ASSETMAP schema',    smpte: 'SMPTE ST 429-9' },
   'SCHEMA-PKL':{ doc: 'PackingList schema', smpte: 'SMPTE ST 429-8 / ST 2067-2' },
   'SCHEMA-CPL':{ doc: 'CPL schema',         smpte: 'SMPTE ST 2067-3' },
   'SCHEMA-OPL':{ doc: 'OPL schema',         smpte: 'SMPTE ST 2067-100' },
+};
+
+// ── Code → plain-English remediation fallback ────────────────────────────────
+// Fills the Remediation column when a validator row carries no explicit remediation
+// text. Exact-code entries win; a family-prefix entry is the last-resort fallback so
+// no FAIL/WARN reaches the report with an empty Remediation column.
+const DEFAULT_REMEDIATION = {
+  // Exact finding codes.
+  AM001:  'Add a <PackingList> asset entry to ASSETMAP.xml so players can locate the PKL.',
+  PKL001: 'List the CPL as an <Asset> in the PackingList (PKL) with its UUID, hash, and size.',
+  PKL002: 'Ensure every file referenced by the PKL exists on disk at its ASSETMAP path.',
+  CPL001: 'Set a valid <EditRate> (e.g. "24 1") in the CompositionPlaylist.',
+  CPL002: 'The CPL must include at least one MainImageSequence picture track — add the picture resources.',
+  CPL006: 'Fix EntryPoint/SourceDuration/IntrinsicDuration so each resource stays within its track file bounds.',
+  // Family-prefix fallbacks.
+  AM:  'Correct the ASSETMAP so all package assets are mapped to on-disk paths.',
+  PKL: 'Correct the PackingList so every asset is listed with a valid hash and size.',
+  CPL: 'Fix the CompositionPlaylist to match the SMPTE ST 2067-3 requirement noted in the message.',
+  PIC: 'Correct the picture EssenceDescriptor so resolution, scan type, colour and bit depth match the deliverable requirement in the message.',
+  AUD: 'Correct the audio EssenceDescriptor (sample rate, bit depth, channel count) to match the requirement in the message.',
+  APP: 'Adjust the package so it conforms to the IMF Application profile (App #2 / #2E / #5) named in the message.',
+  HDR: 'Fix the HDR / mastering-display metadata (ST 2086 / ST 2094) as described in the message.',
+  REEL: 'Align the inter-reel edit rate and resource boundaries so all reels are continuous per the message.',
+  TC: 'Correct the timecode (rate, start address, drop-frame flag) to match the requirement in the message.',
+  TL: 'Fix the timeline so every virtual track fully covers the composition duration described in the message.',
+  TT: 'Correct the Timed Text (IMSC / TTML) essence — namespace, profile or xml:lang — as noted in the message.',
+  OPL: 'Fix the OutputProfileList so it validates against SMPTE ST 2067-100 as described in the message.',
+  UG: 'Apply the IMF User Group best-practice noted in the message (advisory, not a hard failure).',
+  PHOTON: 'Address the Photon / Netflix conformance issue described in the message.',
+  HASH: 'Recompute the asset hash and correct the PackingList so it matches the on-disk file.',
+  SCHEMA: 'Fix the XML so it validates against the SMPTE schema — check namespace, element order and required elements named in the message.',
 };
 
 // Resolve a code to its family record. SCHEMA-* codes match their 2-segment prefix
@@ -64,7 +98,13 @@ function normalizeRow(row) {
     document: fam.doc,
     smpte: fam.smpte,
   };
-  if (row.remediation) out.remediation = row.remediation;
+  const prefix = (String(row.code || '').match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+  // Only apply the code-keyed remediation FALLBACK to actionable rows (fail/warn).
+  // An explicit remediation from the validator is always kept; but filling passing
+  // rows from the fallback would put contradictory "fix it" text on green checks.
+  const actionable = out.severity === 'fail' || out.severity === 'warn';
+  const rem = row.remediation || (actionable ? (DEFAULT_REMEDIATION[row.code] || DEFAULT_REMEDIATION[prefix]) : '');
+  if (rem) out.remediation = rem;
   if (row.resourceRef) out.resourceRef = row.resourceRef;
   else if (row.ref) out.resourceRef = { kind: 'resource', ...row.ref };
   return out;
@@ -129,7 +169,10 @@ export function toJSON(rows, meta = {}, opts = {}) {
 // CSV field escaping per RFC 4180: wrap in quotes if the value contains a comma,
 // quote, CR or LF; double any embedded quotes.
 function csvField(v) {
-  const s = v == null ? '' : String(v);
+  let s = v == null ? '' : String(v);
+  // Neutralize spreadsheet formula injection: prefix a single quote when the
+  // cell begins with =, +, -, @, tab or CR (matches reviews/store.js guard).
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

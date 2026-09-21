@@ -16,10 +16,8 @@
 (function () {
   'use strict';
 
-  // ⚙️  Replace with your Apps Script exec URL or real backend URL.
-  //     Change in auth.js (PFX_BACKEND_URL) too.
-  //     Example: 'https://script.google.com/macros/s/AKfycby.../exec'
-  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxUaExYv2zcGN55XBbToXx6bFmBjWx4VSxYmW4K3T-sFg08qm_pOzAArsZva7-rOncF/exec';
+  // Direct PostFlowX policy service. Google Sheets is not part of this path.
+  const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxhdc-5B2q-YYs_og7BU7fpJHz3VAcGKzDVu422XViMvZndXhy1ytGjTgJmNwKLSXgS/exec';
   window.__PFX_BACKEND_URL = BACKEND_URL;
 
   const BACKEND_CONFIGURED = !BACKEND_URL.includes('api.postflowx.com');
@@ -114,33 +112,96 @@
       if (result?.ok && result.policy) {
         const fresh = _normalizePolicySession(result.policy, stored, profile);
         await _save(fresh);
-      } else if (result?.policy?.status === 'disabled' || result?.policy?.status === 'pending') {
-        // Account status changed — clear so next refresh shows correct state.
+      } else if (result?.policy?.status === 'expired') {
         await _clear();
+      } else if (result?.policy?.status === 'disabled' || result?.policy?.status === 'pending') {
+        // Retain the verified identity so the denied screen can re-check after
+        // approval, but remove every permission while access is blocked.
+        await _save({
+          ...stored,
+          ok: false,
+          status: result.policy.status,
+          permissions: { tabs: [], actions: [] },
+        });
       }
     } catch {}
   }
 
-  // ── Main guard logic ─────────────────────────────────────────────────────
-  async function _guard() {
-    // ── Electron desktop app: bypass remote auth entirely ────────────────
-    // No awaits here — any IPC call (_load/_save) can hang if the storage
-    // handler isn't ready yet, which freezes the entire boot sequence.
-    // __PFX_IS_ELECTRON is set by preload.js via contextBridge.
-    // __PFX_TARGET__ === 'desktop' is injected directly into index.html by
-    // build-renderer.js and serves as a belt-and-suspenders fallback if
-    // the contextBridge call is late or fails.
-    if (window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop') {
-      // Check for a stored authenticated session (saved to localStorage after Google sign-in)
-      let stored = null;
-      try { stored = JSON.parse(localStorage.getItem('pfx_desktop_session.v1') || 'null'); } catch {}
-      if (stored?.user?.email && stored?.session?.expiresAt && new Date(stored.session.expiresAt) > new Date()) {
-        return { status: 'ok', session: stored };
+  // ── Desktop background re-validation (non-blocking) ────────────────────────
+  // Mirrors _validateInBackground for the Electron path. The desktop guard boots
+  // immediately from the stored localStorage session (responsive / offline-tolerant),
+  // then re-hits the backend here. Only an EXPLICIT negative response (disabled /
+  // pending) revokes the local session and surfaces the denied UI — transient
+  // network failures fail OPEN so the user is never locked out.
+  async function _revalidateDesktopInBackground(stored) {
+    try {
+      if (!BACKEND_CONFIGURED) return;
+      const email = String(stored?.user?.email || '').trim().toLowerCase();
+      if (!email) return;
+      // Synthetic / dev / awaiting-sign-in sessions never re-validate remotely.
+      const token = stored?.session?.token || '';
+      if (token === 'dev-bypass' || token === 'awaiting-google-signin' ||
+          token === 'supabase-plan-only') return;
+      const policyFlow = window.pfxBootPolicyFlow;
+      if (!policyFlow?.run) return;
+
+      const result = await policyFlow.run({
+        email,
+        name: stored?.user?.name || email.split('@')[0],
+        pfxToken: token,
+        version: _extensionVersion(),
+      });
+
+      // Expiry is final for this session: remove it and require a fresh sign-in.
+      // Unlike pending/disabled, there is no reusable identity state to retain.
+      if (result && !result.ok && result.policy?.status === 'expired') {
+        window.PFX_SESSION_STORE?.clear();
+        if (window.PFX_PERMISSIONS?.setSession) window.PFX_PERMISSIONS.setSession(null);
+        window.PFX_LOGIN_UI?.showExpired?.();
+        return;
       }
 
-      // Dev bypass: auto-create a synthetic session so the login screen is never shown.
-      // window.pfxPlatform.devBypass is set synchronously by preload.js (ipcRenderer.sendSync)
-      // so it's available here without any async call.
+      // Explicit negative from the backend → block every permission and show
+      // denied UI. Keep the verified identity/token so approval can be detected
+      // without another OAuth flow or accidental account switch.
+      if (result && !result.ok &&
+          (result.policy?.status === 'disabled' || result.policy?.status === 'pending')) {
+        const status = result.policy.status;
+        const blocked = {
+          ...stored,
+          ok: false,
+          status,
+          permissions: { tabs: [], actions: [] },
+        };
+        window.PFX_SESSION_STORE?.save(blocked);
+        if (window.PFX_PERMISSIONS?.setSession) window.PFX_PERMISSIONS.setSession(blocked);
+        window.PFX_LOGIN_UI?.showDenied?.({
+          email,
+          message: status === 'pending'
+            ? 'Your account is registered, but access is still pending approval.'
+            : 'Your PostFlowX access is currently disabled.',
+        });
+        return;
+      }
+
+      // Fresh valid policy → refresh the stored desktop session so a new
+      // (possibly shorter) expiry / updated flags take effect on next launch.
+      if (result?.ok && result.policy) {
+        const fresh = _normalizePolicySession(result.policy, stored, { email, name: stored?.user?.name });
+        window.PFX_SESSION_STORE?.save(fresh);
+        if (window.PFX_PERMISSIONS?.setSession) window.PFX_PERMISSIONS.setSession(fresh);
+      }
+      // Any other case (network failure → policy null / cache source) → fail open.
+    } catch { /* transient error — fail open, never lock the user out */ }
+  }
+
+  // ── Main guard logic ─────────────────────────────────────────────────────
+  async function _guard() {
+    // ── Electron desktop app: true boot gate ──────────────────────────────
+    // The renderer never boots with a synthetic admin identity. A valid,
+    // unexpired enterprise session must also pass the direct policy service.
+    if (window.__PFX_IS_ELECTRON || window.__PFX_TARGET__ === 'desktop') {
+      const stored = window.PFX_SESSION_STORE?.load() || null;
       if (window.pfxPlatform?.devBypass) {
         const devSession = {
           ok: true, role: 'admin',
@@ -152,24 +213,59 @@
             expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
           },
         };
-        try { localStorage.setItem('pfx_desktop_session.v1', JSON.stringify(devSession)); } catch {}
+        window.PFX_SESSION_STORE?.save(devSession);
         return { status: 'ok', session: devSession };
       }
 
-      // No real Google session yet — boot with a temporary synthetic session so the app
-      // renders (bootModules runs, no black screen), then show the sign-in overlay on top.
-      // The _needsSignIn flag tells ui.js NOT to hide the overlay after boot.
-      return {
-        status: 'ok',
-        _needsSignIn: true,
-        session: {
-          ok: true, role: 'admin',
-          user: { email: '', name: 'PostFlowX Desktop' },
-          permissions: { tabs: ['*'], actions: ['*'] },
-          featureFlags: {},
-          session: { token: 'awaiting-google-signin', expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString() },
-        },
-      };
+      // A development build may have persisted its synthetic admin session in
+      // the same macOS user-data folder later used by a packaged build. Never
+      // send that fake identity to the production access-control service: it
+      // will (correctly) reject the non-enterprise domain and strand the user
+      // on a deny screen with no way to choose their real Netflix account.
+      const storedToken = String(stored?.session?.token || '');
+      const storedEmail = String(stored?.user?.email || '').trim().toLowerCase();
+      if (storedToken === 'dev-bypass' || storedEmail === 'local-dev@postflowx.local') {
+        window.PFX_SESSION_STORE?.clear();
+        await _clear();
+        return { status: 'login', reason: 'development_session_removed' };
+      }
+
+      const email = String(stored?.user?.email || '').trim().toLowerCase();
+      const expiry = new Date(stored?.session?.expiresAt || 0).getTime();
+      if (!email || !expiry || expiry <= Date.now()) {
+        window.PFX_SESSION_STORE?.clear();
+        return { status: 'login', reason: 'no_session' };
+      }
+      const policyFlow = window.pfxBootPolicyFlow;
+      if (!policyFlow?.run) return { status: 'login', reason: 'policy_flow_unavailable' };
+      const result = await policyFlow.run({
+        email,
+        name: stored?.user?.name || email.split('@')[0],
+        pfxToken: stored?.session?.token || '',
+        version: _extensionVersion(),
+      });
+      if (!result?.ok || !result.policy || result.source !== 'remote') {
+        if (result?.policy?.status === 'disabled' || result?.policy?.status === 'pending') {
+          const blocked = {
+            ...stored,
+            ok: false,
+            status: result.policy.status,
+            permissions: { tabs: [], actions: [] },
+          };
+          window.PFX_SESSION_STORE?.save(blocked);
+          await window.PFX_AUTH?.applyPolicySession?.(blocked);
+          return { status: 'denied', reason: result.policy.status, email };
+        }
+        if (result?.policy?.status === 'expired') {
+          window.PFX_SESSION_STORE?.clear();
+          return { status: 'login', reason: 'session_expired' };
+        }
+        return { status: 'login', reason: 'policy_unavailable' };
+      }
+      const fresh = _normalizePolicySession(result.policy, stored, { email, name: stored?.user?.name });
+      window.PFX_SESSION_STORE?.save(fresh);
+      await window.PFX_AUTH?.applyPolicySession?.(fresh);
+      return { status: 'ok', session: fresh };
     }
 
     // ── No backend configured ─────────────────────────────────────────────
@@ -184,12 +280,31 @@
       return { status: 'login', reason: 'no_session' };
     }
 
-    // ── Cache-first: valid stored session → boot instantly ────────────────
-    // Remote validation happens in the background so the UI isn't blocked.
+    // A cached extension identity must still pass the live direct policy.
     const stored = await _load();
     if (stored?.session?.token) {
-      _validateInBackground(stored); // fire-and-forget
-      return { status: 'ok', session: stored };
+      const email = String(stored?.user?.email || '').trim().toLowerCase();
+      const result = await window.pfxBootPolicyFlow?.run?.({ email, name: stored?.user?.name, pfxToken: stored.session.token, version: _extensionVersion() });
+      if (result?.ok && result.policy) {
+        const fresh = _normalizePolicySession(result.policy, stored, stored.user || {});
+        await _save(fresh);
+        return { status: 'ok', session: fresh };
+      }
+      if (result?.policy?.status === 'disabled' || result?.policy?.status === 'pending') {
+        await _save({
+          ...stored,
+          ok: false,
+          status: result.policy.status,
+          permissions: { tabs: [], actions: [] },
+        });
+        return { status: 'denied', reason: result.policy.status, email };
+      }
+      if (result?.policy?.status === 'expired') {
+        await _clear();
+        return { status: 'login', reason: 'session_expired' };
+      }
+      await _clear();
+      return { status: 'login', reason: 'policy_unavailable' };
     }
 
     // ── Cold start: no cache — must fetch from remote ─────────────────────
@@ -215,7 +330,17 @@
 
     if (!result?.ok) {
       if (result?.policy?.status === 'pending' || result?.policy?.status === 'disabled') {
-        return { status: 'denied', reason: result.policy.status };
+        const blocked = {
+          ..._normalizePolicySession(result.policy, {}, profile),
+          ok: false,
+          status: result.policy.status,
+          permissions: { tabs: [], actions: [] },
+        };
+        await _save(blocked);
+        return { status: 'denied', reason: result.policy.status, email };
+      }
+      if (result?.policy?.status === 'expired') {
+        return { status: 'login', reason: 'session_expired' };
       }
       return { status: 'login', reason: 'policy_unavailable' };
     }
@@ -249,7 +374,7 @@
         : result.reason === 'disabled'
           ? 'Your PostFlowX access is currently disabled.'
           : 'We could not verify your PostFlowX access. Please try again or contact your administrator.';
-      window.PFX_LOGIN_UI?.showDenied?.({ message });
+      window.PFX_LOGIN_UI?.showDenied?.({ message, email: result.email || '' });
     } else {
       const extraMsg = result.reason === 'no_chrome_account'
         ? 'Sign into Chrome with the Google account that should access PostFlowX.'
@@ -258,6 +383,18 @@
         : null;
       window.PFX_LOGIN_UI?.showLogin?.({ message: extraMsg });
     }
+  }
+
+  // The remote enterprise policy can take several seconds on a cold start.
+  // Render a protected loading card as soon as <body> exists so the app never
+  // presents an unexplained blank window while the guard remains fail-closed.
+  function _showCheckingUI() {
+    window.PFX_LOGIN_UI?.showChecking?.();
+  }
+  if (document.body) {
+    _showCheckingUI();
+  } else {
+    document.addEventListener('DOMContentLoaded', _showCheckingUI, { once: true });
   }
 
   guardPromise.then(result => {

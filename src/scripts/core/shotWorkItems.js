@@ -61,6 +61,28 @@
     try { return String(window.__MPS_PROJECT_ID || '').trim() || 'default'; } catch { return 'default'; }
   }
 
+  function _normalizeMarkerNames(marker) {
+    const naming = window.PFX_VFX_NAMING;
+    const raw = String(marker?.shotName || '').trim();
+    if (naming?.buildNetflixPlateName && naming?.associatedVfxShotName) {
+      const plateName = naming.buildNetflixPlateName(
+        raw,
+        `${marker?._pmPlateCode || 'PL'}${marker?._pmPlateNum || '01'}`,
+        marker?._pmPlateVer || 'v001',
+      );
+      return { shotName: naming.associatedVfxShotName(plateName), plateName };
+    }
+
+    // Safe fallback for startup ordering: remove one plate/version suffix and
+    // rebuild it once. The module helper takes over as soon as it is loaded.
+    const normalized = raw.replace(/^MMBLR_/i, 'BLR_').replace(/\.[^.]+$/, '');
+    const match = normalized.match(/^(.*)_([A-Za-z][A-Za-z0-9]*\d{1,3})(?:_(v\d{1,4}))?$/i);
+    const shotName = match?.[1] || normalized || 'BLR_101_010';
+    const plateId = match?.[2] || `${marker?._pmPlateCode || 'PL'}${marker?._pmPlateNum || '01'}`;
+    const digits = String(marker?._pmPlateVer || match?.[3] || 'v001').match(/\d+/)?.[0] || '1';
+    return { shotName, plateName: `${shotName}_${plateId}_v${digits.padStart(3, '0')}` };
+  }
+
   // ── Factory ───────────────────────────────────────────────────────────────
   function createFromMarker(marker, ev, evIdx) {
     const fps = (typeof window._pmFps === 'number' && window._pmFps > 0)
@@ -89,6 +111,7 @@
     else if (/sony|venice|burano|fx[0-9]/i.test(clipName)) camera = 'SONY';
     else if (['.mxf', 'mxf'].includes(ext)) camera = 'ARRI'; // conservative guess for bare .mxf; upgraded by index
 
+    const names = _normalizeMarkerNames(marker);
     const swi = {
       shotWorkId: _uid(),
       markerId:   marker.id,
@@ -96,8 +119,8 @@
       enabled:    true,
       projectId:  _projectId(),
 
-      shotName:          marker.shotName  || '',
-      plateName:         marker.shotName  || '',
+      shotName:          names.shotName,
+      plateName:         names.plateName,
       timelineClipId:    String(evIdx >= 0 ? evIdx : (marker._eventIdx ?? '')),
       editorialClipName: clipName,
       sourceClipName:    clipName,

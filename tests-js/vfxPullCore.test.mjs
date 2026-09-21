@@ -52,6 +52,10 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const r = detectSpeedChange({ speed: 200 });
   ok(r.hasSpeedChange && r.speedPercent === 200 && r.speed === 2, 'event.speed > 5 interpreted as percent');
 }
+{
+  const r = detectSpeedChange({ speedFactor: 1608 });
+  ok(r.hasSpeedChange && r.speedPercent === 1608 && r.speed === 16.08, 'OTIO 16.08x speedFactor is not multiplied twice');
+}
 
 // ── buildFDL: referenceInfo writes the UHD reformat block ──────────────────────
 {

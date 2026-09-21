@@ -15,12 +15,18 @@
 // colorPlanEngine.js, which imports it, is committed. Twenty-one imports in ten
 // committed files point at fifteen modules nobody committed.
 //
-// The reason this is a gate and not a note is the arithmetic behind it. The
-// runner is a shell loop; ERR_MODULE_NOT_FOUND kills the process; the loop
-// stops. tests-js/ holds 102 test files, 72 of them tracked, and the crash is
-// at the third tracked one. So a clone runs 2 gates out of 72 and this machine
-// runs 102. Not one of the seventy-nine XSS, DOM-contract, accessibility or
-// tutorial-coverage checks in between ever executes anywhere but here.
+// The reason this is a gate and not a note is the arithmetic behind it.
+// tests-js/ holds 103 test files, 73 of them tracked, and the crash lands on
+// the third tracked one alphabetically. Until this iteration the runner was a
+// shell loop that did `|| exit 1`, so a dead process ended the run: a clone
+// executed 2 gates out of 73 while this machine executed 103. Not one of the
+// seventy-one XSS, DOM-contract, accessibility or tutorial-coverage checks in
+// between ever ran anywhere but here.
+//
+// package.json now collects failures instead of exiting on the first one, so a
+// crash costs one gate rather than all of them. That is a much better failure
+// mode and it is not a fix — the modules are still missing, the seventy-one
+// gates still have nothing to check, and only the arithmetic below changed.
 //
 // That is the failure mode worth naming: the suite does not report itself as
 // crippled. It prints two passing files and an exit code, and the exit code is

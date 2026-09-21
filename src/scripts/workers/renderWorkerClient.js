@@ -1,6 +1,8 @@
 // Render Worker Client — Phase 1.
 // HTTP client to local render worker (default port 47125).
-// Falls back to mock stub when worker is offline.
+// Production behavior is fail-closed: an offline worker is reported as blocked.
+// The deterministic mock is available only when a test harness explicitly sets
+// window.__PFX_ALLOW_RENDER_MOCKS__ = true before this script loads.
 (function () {
   'use strict';
 
@@ -15,6 +17,21 @@
   let _consecutiveFails = 0;
 
   function _base() { return `http://127.0.0.1:${_port}`; }
+
+  function _mockAllowed() {
+    return window.__PFX_ALLOW_RENDER_MOCKS__ === true;
+  }
+
+  function _workerUnavailable(operation, extra = {}) {
+    return {
+      ok: false,
+      status: 'blocked',
+      code: 'render_worker_offline',
+      operation,
+      message: 'Render worker is offline. Open Settings to start or repair the local media service.',
+      ...extra,
+    };
+  }
 
   // ── HTTP helpers ──────────────────────────────────────────────────────────
   async function _get(path, timeoutMs) {
@@ -86,7 +103,7 @@
 
   // ── Real worker calls ─────────────────────────────────────────────────────
   async function health() {
-    if (_mockMode) return _mockHealth();
+    if (_mockMode && _mockAllowed()) return _mockHealth();
     try {
       const result = await _get('/health', 3000);
       _online = true;
@@ -100,7 +117,8 @@
   }
 
   async function probe(req) {
-    if (_mockMode || !_online) return _mockProbe(req);
+    if (_mockMode && _mockAllowed()) return _mockProbe(req);
+    if (!_online) return _workerUnavailable('probe', { path: req?.path || '' });
     try {
       return await _post('/probe', req);
     } catch (e) {
@@ -109,10 +127,8 @@
   }
 
   async function buildProxy(job) {
-    if (_mockMode || !_online) {
-      console.warn('[RW] Worker offline — using mock stub for job', job.jobId);
-      return _mockBuildProxy(job);
-    }
+    if (_mockMode && _mockAllowed()) return _mockBuildProxy(job);
+    if (!_online) return _workerUnavailable('build-proxy', { jobId: job?.jobId || '' });
     try {
       return await _post('/build-proxy', job, 10000);
     } catch (e) {
@@ -122,7 +138,8 @@
   }
 
   async function getJobStatus(jobId) {
-    if (_mockMode || !_online) return _mockGetJobStatus(jobId);
+    if (_mockMode && _mockAllowed()) return _mockGetJobStatus(jobId);
+    if (!_online) return _workerUnavailable('job-status', { jobId });
     try {
       return await _get(`/jobs/${encodeURIComponent(jobId)}`);
     } catch (e) {
@@ -131,7 +148,8 @@
   }
 
   async function cancelJob(jobId) {
-    if (_mockMode || !_online) return _mockCancelJob(jobId);
+    if (_mockMode && _mockAllowed()) return _mockCancelJob(jobId);
+    if (!_online) return _workerUnavailable('cancel-job', { jobId });
     try {
       return await _post(`/jobs/${encodeURIComponent(jobId)}/cancel`, {});
     } catch (e) {
@@ -140,8 +158,16 @@
   }
 
   function isOnline() { return _online; }
-  function isMockMode() { return _mockMode; }
-  function setMockMode(enabled) { _mockMode = !!enabled; }
+  function isMockMode() { return _mockMode && _mockAllowed(); }
+  function setMockMode(enabled) {
+    if (enabled && !_mockAllowed()) {
+      _mockMode = false;
+      console.warn('[RW] Mock render mode is disabled in production builds.');
+      return false;
+    }
+    _mockMode = !!enabled;
+    return _mockMode;
+  }
   function setPort(p) { _port = Number(p) || DEFAULT_PORT; }
 
   // ── Periodic health check ─────────────────────────────────────────────────

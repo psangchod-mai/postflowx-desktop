@@ -4,6 +4,16 @@
 // - Spot-On style Note Type (Add/Remove/Change) + Scope of Work
 
 export function openAnnotateModal(opts = {}){
+  // Annotate is a singleton review workspace. Repeated keyboard shortcuts or
+  // rapid clicks must focus the current review instead of stacking modals.
+  const activeAnnotate = window.__PFX_ACTIVE_ANNOTATE__;
+  if (activeAnnotate?.isOpen?.()) {
+    activeAnnotate.focus?.();
+    return activeAnnotate;
+  }
+  if (activeAnnotate && !activeAnnotate?.isOpen?.()) {
+    try { delete window.__PFX_ACTIVE_ANNOTATE__; } catch {}
+  }
   if (window.PFX_PERMISSIONS && !window.PFX_PERMISSIONS.canDoAction('annotate')) {
     window.PFX_GUARD?.deny?.('annotate');
     return null;
@@ -22,6 +32,7 @@ export function openAnnotateModal(opts = {}){
     title = '',
     initialTool = 'pen',
     nativeResolution = false,
+    mediaPlaceholder = false,
     // taxonomy
     noteTypeGroup = '',
     noteType = '',
@@ -90,14 +101,10 @@ export function openAnnotateModal(opts = {}){
 
   const modal = document.createElement('div');
   modal.className = 'mps-modal sm-anno-modal';
-  modal.style.setProperty('background',
-    'linear-gradient(rgba(6,8,18,0.97),rgba(6,8,18,0.97)) padding-box,' +
-    'linear-gradient(90deg,rgba(84,213,255,0.50),rgba(176,108,255,0.42),rgba(84,213,255,0.50)) border-box',
-    'important');
-  modal.style.setProperty('background-size', '100% 100%, 200% 100%', 'important');
-  modal.style.setProperty('border', '1px solid transparent', 'important');
-  modal.style.setProperty('backdrop-filter', 'blur(24px) saturate(180%)', 'important');
-  modal.style.setProperty('-webkit-backdrop-filter', 'blur(24px) saturate(180%)', 'important');
+  modal.style.setProperty('background', '#101318', 'important');
+  modal.style.setProperty('border', '1px solid rgba(125,145,170,0.38)', 'important');
+  modal.style.setProperty('backdrop-filter', 'none', 'important');
+  modal.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
   backdrop.appendChild(modal);
 
   const head = document.createElement('div');
@@ -171,34 +178,38 @@ export function openAnnotateModal(opts = {}){
         <button class="sm-anno-iconbtn sm-anno-close" data-act="close" title="${escapeHtml(TT('Close'))} (Esc)" aria-label="${escapeHtml(TT('Close'))}">
           ${iconSvg('close')}
         </button>
-        <div class="sm-anno-label"><span class="sm-anno-label-spark" aria-hidden="true">◈</span> ${escapeHtml(TT('Annotate'))} <span class="muted">${titleText}</span></div>
+        <div class="sm-anno-label">
+          <span class="sm-anno-label-spark" aria-hidden="true">◈</span>
+          <span class="sm-anno-label-copy"><strong>${escapeHtml(TT('Annotate'))}</strong><span class="muted" title="${titleText}">${titleText || escapeHtml(TT('Current frame'))}</span></span>
+        </div>
+        <div class="sm-anno-frame-state" data-state="${mediaPlaceholder ? 'missing' : 'checking'}"><span class="sm-anno-state-dot"></span><span class="sm-anno-state-copy">${escapeHtml(TT(mediaPlaceholder ? 'Preview unavailable' : 'Checking frame'))}</span></div>
       </div>
 
       <div class="sm-anno-toolbar-center">
         <div class="sm-anno-group" role="group" aria-label="${escapeHtml(TT('Tools'))}">
           <button class="sm-anno-iconbtn" data-tool="move" title="${escapeHtml(TT('Select / Move'))} (V)"><span class="bar"></span>
-            ${iconSvg('move')}
+            ${iconSvg('move')}<span class="sm-anno-tool-label">Select</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="pen" title="${escapeHtml(TT('Pen'))} (P)"><span class="bar"></span>
-            ${iconSvg('pen')}
+            ${iconSvg('pen')}<span class="sm-anno-tool-label">Draw</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="highlighter" title="${escapeHtml(TT('Highlighter'))} (H)"><span class="bar"></span>
-            ${iconSvg('highlighter')}
+            ${iconSvg('highlighter')}<span class="sm-anno-tool-label">Highlight</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="arrow" title="${escapeHtml(TT('Arrow'))} (A)"><span class="bar"></span>
-            ${iconSvg('arrow')}
+            ${iconSvg('arrow')}<span class="sm-anno-tool-label">Arrow</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="rect" title="${escapeHtml(TT('Rectangle'))} (R)"><span class="bar"></span>
-            ${iconSvg('rect')}
+            ${iconSvg('rect')}<span class="sm-anno-tool-label">Box</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="circle" title="${escapeHtml(TT('Circle'))} (O)"><span class="bar"></span>
-            ${iconSvg('circle')}
+            ${iconSvg('circle')}<span class="sm-anno-tool-label">Circle</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="text" title="${escapeHtml(TT('Text'))} (T)"><span class="bar"></span>
-            ${iconSvg('text')}
+            ${iconSvg('text')}<span class="sm-anno-tool-label">Text</span>
           </button>
           <button class="sm-anno-iconbtn" data-tool="eraser" title="${escapeHtml(TT('Eraser'))} (E)"><span class="bar"></span>
-            ${iconSvg('eraser')}
+            ${iconSvg('eraser')}<span class="sm-anno-tool-label">Erase</span>
           </button>
         </div>
 
@@ -262,10 +273,10 @@ export function openAnnotateModal(opts = {}){
       </div>
 
       <div class="sm-anno-toolbar-right">
-        <div class="sm-anno-shape-count" title="${escapeHtml(TT('Annotations on this frame'))}"><span class="sm-anno-shape-num">0</span><span class="sm-anno-shape-k"> ann</span></div>
+        <div class="sm-anno-shape-count" title="${escapeHtml(TT('Annotations on this frame'))}"><span class="sm-anno-shape-num">0</span><span class="sm-anno-shape-k"> marks</span></div>
         <div class="sm-anno-ai-status" data-state="ready" aria-live="polite">READY</div>
         <button class="btn mini sm-anno-cancel" data-act="cancel" title="${escapeHtml(TT('Cancel'))} (Esc)">${escapeHtml(TT('Cancel'))}</button>
-        <button class="btn mini theme-q2 sm-anno-done" data-act="done" title="${escapeHtml(TT('Save'))} + ${escapeHtml(TT('Close'))}">${escapeHtml(TT('Done'))}</button>
+        <button class="btn mini theme-q2 sm-anno-done" data-act="done" title="${escapeHtml(TT('Save'))} + ${escapeHtml(TT('Close'))}">${escapeHtml(TT('Save annotation'))}</button>
       </div>
     </div>
 
@@ -324,6 +335,16 @@ export function openAnnotateModal(opts = {}){
         </label>
       </div>
       <div class="sm-anno-trackSourceHint">${escapeHtml(TT('Auto can search local tracking, remote APIs, and GitHub/API provider manifests. Remote endpoints must allow CORS.'))}</div>
+    </div>
+    <div class="sm-anno-smartbar" aria-live="polite">
+      <div class="sm-anno-smart-steps" aria-label="Annotation workflow">
+        <span class="sm-anno-smart-step is-active" data-step="mark"><b>1</b>${escapeHtml(TT('Mark issue'))}</span>
+        <span class="sm-anno-smart-step" data-step="describe"><b>2</b>${escapeHtml(TT('Describe'))}</span>
+        <span class="sm-anno-smart-step" data-step="track"><b>3</b>${escapeHtml(TT('Track if needed'))}</span>
+        <span class="sm-anno-smart-step" data-step="save"><b>4</b>${escapeHtml(TT('Save'))}</span>
+      </div>
+      <div class="sm-anno-next-action"><span>${escapeHtml(TT('Next'))}</span><strong class="sm-anno-next-copy">${escapeHtml(TT('Mark the area that needs attention'))}</strong></div>
+      <button class="sm-anno-analysis-toggle" type="button" data-act="toggleAiPanel" aria-expanded="false"><span aria-hidden="true">✦</span>${escapeHtml(TT('Analyze frame'))}</button>
     </div>
     </div>
   `;
@@ -394,8 +415,8 @@ export function openAnnotateModal(opts = {}){
         ${mediaHtml}
         <canvas class="sm-anno-canvas"></canvas>
       </div>
-      <div class="sm-anno-ai-sidebar" role="group" aria-label="${escapeHtml(TT('AI Detect'))}">
-        <div class="sm-anno-ai-sidebar-label">✦ AI</div>
+      <div class="sm-anno-ai-sidebar" role="group" aria-label="${escapeHtml(TT('Frame analysis'))}">
+        <div class="sm-anno-ai-sidebar-label"><span>✦ ${escapeHtml(TT('Frame analysis'))}</span><button class="sm-anno-ai-collapse" type="button" data-act="collapseAiPanel" title="${escapeHtml(TT('Close analysis tools'))}">×</button></div>
         <button class="sm-anno-iconbtn sm-anno-ai-btn sm-anno-ai-side-btn sm-anno-ai-scan-all" data-act="aiScanAll"
                 title="Scan All (\`) — detect faces, text, screens, keys, mattes in one pass">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" opacity=".6"/></svg>
@@ -488,6 +509,7 @@ export function openAnnotateModal(opts = {}){
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="5" y="5" width="14" height="14" rx="1" stroke-dasharray="3 2"/><path d="M9 9l6 6M15 9l-6 6"/><path d="M5 12h3M16 12h3M12 5v3M12 16v3" opacity=".5"/></svg>
           <span class="sm-anno-ai-label">Snap</span>
         </button>
+        <button class="sm-anno-ai-more" type="button" data-act="toggleAiAdvanced" aria-expanded="false"><span class="sm-anno-ai-more-copy">More analysis tools</span><span class="sm-anno-ai-more-chevron">⌄</span></button>
       </div>
       ${transportHtml}
       ${hasVideoSource ? `<canvas class="sm-anno-tl-canvas" aria-label="Shape timeline"></canvas>` : ''}
@@ -516,8 +538,16 @@ export function openAnnotateModal(opts = {}){
       </div>` : ''}
     </div>
     <div class="sm-anno-noteRow">
-      <div class="sm-anno-noteK">${escapeHtml(TT('Note'))}</div>
-      <textarea class="sm-anno-note" rows="2" placeholder="${escapeHtml(TT('Note…'))}"></textarea>
+      <div class="sm-anno-note-head">
+        <div><div class="sm-anno-noteK">${escapeHtml(TT('Review note'))}</div><div class="sm-anno-note-hint">${escapeHtml(TT('Explain what should change. Keep it clear for the artist.'))}</div></div>
+        <div class="sm-anno-note-presets" aria-label="${escapeHtml(TT('Quick note starters'))}">
+          <button type="button" data-note-group="remove" data-note-preset="Remove this element.">${escapeHtml(TT('Remove'))}</button>
+          <button type="button" data-note-group="change" data-note-preset="Replace this element.">${escapeHtml(TT('Replace'))}</button>
+          <button type="button" data-note-group="change" data-note-preset="Track this change across the shot.">${escapeHtml(TT('Track shot'))}</button>
+          <button type="button" data-note-group="change" data-note-preset="Check the edge and final composite.">${escapeHtml(TT('Check edge'))}</button>
+        </div>
+      </div>
+      <textarea class="sm-anno-note" rows="2" placeholder="${escapeHtml(TT('Example: Remove the wire and match the clean background across the full shot.'))}"></textarea>
     </div>
   `;
   modal.appendChild(body);
@@ -550,6 +580,51 @@ export function openAnnotateModal(opts = {}){
   const video = body.querySelector('video.sm-anno-video');
   const baseMedia = video || img;
   const frameLockEl = body.querySelector('.sm-anno-frame-lock');
+  const frameStateEl = head.querySelector('.sm-anno-frame-state');
+  const frameStateCopyEl = frameStateEl?.querySelector('.sm-anno-state-copy');
+  const smartBar = head.querySelector('.sm-anno-smartbar');
+  const smartNextCopy = smartBar?.querySelector('.sm-anno-next-copy');
+  const smartSteps = Array.from(smartBar?.querySelectorAll('.sm-anno-smart-step') || []);
+  const btnToggleAiPanel = head.querySelector('[data-act="toggleAiPanel"]');
+  const aiSidebar = body.querySelector('.sm-anno-ai-sidebar');
+  const btnCollapseAiPanel = body.querySelector('[data-act="collapseAiPanel"]');
+  const btnToggleAiAdvanced = body.querySelector('[data-act="toggleAiAdvanced"]');
+  const notePresetBtns = Array.from(body.querySelectorAll('[data-note-preset]'));
+  let _frameAvailability = mediaPlaceholder ? 'missing' : 'checking';
+  const _setFrameAvailability = (state, copy = '') => {
+    const requested = state === 'ready' ? 'ready' : (state === 'missing' ? 'missing' : 'checking');
+    _frameAvailability = mediaPlaceholder && requested === 'ready' ? 'missing' : requested;
+    frameStateEl?.setAttribute('data-state', _frameAvailability);
+    modal.classList.toggle('is-frame-missing', _frameAvailability === 'missing');
+    modal.classList.toggle('is-frame-ready', _frameAvailability === 'ready');
+    if (frameStateCopyEl) {
+      frameStateCopyEl.textContent = copy || (_frameAvailability === 'ready'
+        ? (hasVideoSource ? TT('Video frame ready') : TT('Still frame ready'))
+        : (_frameAvailability === 'missing' ? TT('Preview unavailable') : TT('Checking frame')));
+    }
+  };
+  const _setAiPanelOpen = (open) => {
+    const next = !!open;
+    modal.classList.toggle('is-ai-panel-open', next);
+    btnToggleAiPanel?.setAttribute('aria-expanded', next ? 'true' : 'false');
+    if (btnToggleAiPanel) btnToggleAiPanel.classList.toggle('is-active', next);
+  };
+  const _primaryAiActions = new Set(['aiScanAll','aiDetectFaces','aiDetectScreens','aiDetectText','aiDetectML','aiSmartSuggest']);
+  aiSidebar?.querySelectorAll('.sm-anno-ai-side-btn').forEach((btn) => {
+    if (!_primaryAiActions.has(String(btn.dataset.act || ''))) btn.classList.add('sm-anno-ai-advanced');
+  });
+  btnToggleAiPanel?.addEventListener('click', () => _setAiPanelOpen(!modal.classList.contains('is-ai-panel-open')));
+  btnCollapseAiPanel?.addEventListener('click', () => _setAiPanelOpen(false));
+  btnToggleAiAdvanced?.addEventListener('click', () => {
+    const expanded = !aiSidebar?.classList.contains('is-advanced');
+    aiSidebar?.classList.toggle('is-advanced', expanded);
+    btnToggleAiAdvanced.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    const copy = btnToggleAiAdvanced.querySelector('.sm-anno-ai-more-copy');
+    if (copy) copy.textContent = expanded ? TT('Show fewer tools') : TT('More analysis tools');
+  });
+  aiSidebar?.addEventListener('click', (event) => {
+    if (event.target.closest('.sm-anno-ai-side-btn')) _setAiPanelOpen(true);
+  });
   // Reveal frame-lock once it loads — CSS starts it at opacity:0 to prevent black flash.
   // Reveal immediately for image-only mode (img is the frame source, not a lock overlay).
   if (frameLockEl) {
@@ -562,7 +637,10 @@ export function openAnnotateModal(opts = {}){
         let l = 0;
         for (let i = 0; i < px.length; i += 4) l += 0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
         // Only show if image has real content (avg luma > 8)
-        if (l / (px.length/4) > 8) frameLockEl.style.setProperty('opacity', '1', 'important');
+        if (l / (px.length/4) > 8) {
+          frameLockEl.style.setProperty('opacity', '1', 'important');
+          _setFrameAvailability('ready');
+        }
         // If black/empty, leave at opacity:0 — _showNoVideoState will handle it
       } catch { frameLockEl.style.setProperty('opacity', '1', 'important'); }
     };
@@ -864,8 +942,32 @@ export function openAnnotateModal(opts = {}){
   const sowInp = head.querySelector('.sm-anno-sow');
   const shapeCountEl = head.querySelector('.sm-anno-shape-count');
   const shapeNumEl   = head.querySelector('.sm-anno-shape-num');
+  const aiStatusEl   = head.querySelector('.sm-anno-ai-status');
   const noteInp = body.querySelector('.sm-anno-note');
   if (noteInp) noteInp.value = noteText || '';
+  notePresetBtns.forEach((btn) => btn.addEventListener('click', () => {
+    if (!noteInp) return;
+    const preset = String(btn.dataset.notePreset || '').trim();
+    if (!preset) return;
+    const current = String(noteInp.value || '').trim();
+    noteInp.value = current ? `${current}${/[.!?]$/.test(current) ? '' : '.'} ${preset}` : preset;
+    noteInp.dispatchEvent(new Event('input', { bubbles: true }));
+    // A quick intent also selects the matching note family. The user can still
+    // refine the exact note type, but no longer has to repeat the same decision.
+    const group = String(btn.dataset.noteGroup || '').trim().toLowerCase();
+    if (group && ntSel) {
+      const match = Array.from(ntSel.options || []).find((option) =>
+        String(option.value || '').trim().toLowerCase().startsWith(`${group}|`)
+      );
+      if (match) {
+        ntSel.value = match.value;
+        ntSel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    notePresetBtns.forEach((presetBtn) => presetBtn.classList.toggle('is-active', presetBtn === btn));
+    noteInp.focus();
+    try { noteInp.setSelectionRange(noteInp.value.length, noteInp.value.length); } catch {}
+  }));
   const btnNtEdit = head.querySelector('[data-act="ntEdit"]');
   const colorPick = head.querySelector('.sm-anno-colorpick');
   const swatches = Array.from(head.querySelectorAll('.sm-anno-swatch'));
@@ -907,6 +1009,10 @@ export function openAnnotateModal(opts = {}){
 
   // ===== State =====
   let tool = String(initialTool || 'pen');
+  // Assigned once the short empty-state cue is mounted. Keeping this callable
+  // from setTool lets real user actions dismiss the cue without affecting the
+  // initial programmatic tool selection at modal startup.
+  let _dismissEmptyHint = () => {};
   // Seed from caller so fit() can rescale pre-loaded shapes to the current stage size.
   let logicalW = initialLogicalW > 0 ? initialLogicalW : 0;
   let logicalH = initialLogicalH > 0 ? initialLogicalH : 0;
@@ -1001,10 +1107,17 @@ export function openAnnotateModal(opts = {}){
   });
   const _saveDraft = async () => {
     try {
+      const draftNote = String(noteInp?.value || '').trim();
+      if (!objects.length && !draftNote) { await _clearDraft(); return; }
       const db = await _idbOpen();
       if (!db) return;
       const tx = db.transaction(_DRAFT_STORE, 'readwrite');
-      tx.objectStore(_DRAFT_STORE).put({ objects: deepClone(objects), ts: Date.now() }, _draftKey);
+      tx.objectStore(_DRAFT_STORE).put({
+        objects: deepClone(objects),
+        note: String(noteInp?.value || ''),
+        noteType: String(ntSel?.value || ''),
+        ts: Date.now(),
+      }, _draftKey);
     } catch {}
   };
   const _loadDraft = async () => {
@@ -1014,7 +1127,22 @@ export function openAnnotateModal(opts = {}){
       return await new Promise(resolve => {
         const tx  = db.transaction(_DRAFT_STORE, 'readonly');
         const req = tx.objectStore(_DRAFT_STORE).get(_draftKey);
-        req.onsuccess = () => resolve(req.result?.objects || null);
+        req.onsuccess = () => {
+          const saved = req.result;
+          if (!saved) { resolve(null); return; }
+          // Expire abandoned reviews after seven days instead of repeatedly
+          // presenting stale recovery UI forever.
+          if (Number(saved.ts || 0) && Date.now() - Number(saved.ts) > 7 * 24 * 60 * 60 * 1000) {
+            resolve({ expired: true });
+            return;
+          }
+          resolve({
+            objects: Array.isArray(saved.objects) ? saved.objects : (Array.isArray(saved) ? saved : []),
+            note: String(saved.note || ''),
+            noteType: String(saved.noteType || ''),
+            ts: Number(saved.ts || 0),
+          });
+        };
         req.onerror   = () => resolve(null);
       });
     } catch { return null; }
@@ -1813,13 +1941,13 @@ export function openAnnotateModal(opts = {}){
       if (match){ ntSel.value = match.value; emitMetaChange(); __applyNtColor(); }
     }catch{}
   };
-  if (ntSel) ntSel.addEventListener('change', ()=>{ emitMetaChange(); __applyNtColor(); });
+  if (ntSel) ntSel.addEventListener('change', ()=>{ emitMetaChange(); __applyNtColor(); try { _updateSmartWorkflow?.(); } catch {} });
   if (sowInp) sowInp.addEventListener('input', emitMetaChange);
-  if (noteInp) noteInp.addEventListener('input', emitMetaChange);
+  if (noteInp) noteInp.addEventListener('input', ()=>{ emitMetaChange(); try { _updateSmartWorkflow?.(); } catch {} });
   if (btnNtEdit) btnNtEdit.addEventListener('click', ()=>{ try{ if (typeof window.PFX_openNoteTypesModal === 'function') window.PFX_openNoteTypesModal(); }catch{} });
 
   const setActiveTool = ()=>{ toolBtns.forEach(b => { const on = (b.dataset.tool === tool); b.classList.toggle('active', on); b.classList.toggle('is-active-tool', on); }); };
-  const setTool = (t)=>{ tool = t; setActiveTool(); _updateSmartCursor(); if (tool!=='move') selectedId = null; render(true); updateTrackBtnState(); };
+  const setTool = (t, userInitiated = false)=>{ if (userInitiated) _dismissEmptyHint(); tool = t; setActiveTool(); _updateSmartCursor(); if (tool!=='move') selectedId = null; render(true); updateTrackBtnState(); try { _updateSmartWorkflow?.(); } catch {} };
 
   const applyStroke = (ctx, style, isHighlight)=>{
     ctx.lineCap = 'round';
@@ -2156,6 +2284,7 @@ export function openAnnotateModal(opts = {}){
       } catch {}
       try { _updateShapeInspector?.(); } catch {}
       try { _updateCtxStrip?.(); } catch {}
+      try { _updateSmartWorkflow?.(); } catch {}
     } catch {
       // Ensure context state stack is clean even if something threw mid-draw
       try { ctx.restore(); } catch {}
@@ -6930,6 +7059,9 @@ export function openAnnotateModal(opts = {}){
     try{ if (_stageRo) { _stageRo.disconnect(); _stageRo = null; } }catch{}
     try{ _tlThumbCache.forEach(b => { try { b.close(); } catch {} }); _tlThumbCache.clear(); }catch{}
     try{ backdrop.remove(); }catch{}
+    try {
+      if (window.__PFX_ACTIVE_ANNOTATE__?.backdrop === backdrop) delete window.__PFX_ACTIVE_ANNOTATE__;
+    } catch {}
     // Only fire onCancel when the user cancels/closes, not after a successful commit.
     try{ if (reason !== 'done' && typeof onCancel === 'function') onCancel(); }catch{}
   };
@@ -7071,11 +7203,35 @@ export function openAnnotateModal(opts = {}){
     close('done');
   };
 
+  const handlePrimaryAction = () => {
+    const mode = String(btnDone?.dataset.mode || 'save');
+    if (mode === 'missing') return;
+    if (mode === 'mark') {
+      setTool('rect', true);
+      try { canvas.focus(); } catch {}
+      try { _showAiToast?.('Draw a box around the issue'); } catch {}
+      return;
+    }
+    if (mode === 'type') {
+      try { ntSel?.focus(); } catch {}
+      modal.classList.add('is-guiding-type');
+      setTimeout(() => modal.classList.remove('is-guiding-type'), 900);
+      return;
+    }
+    if (mode === 'note') {
+      try { noteInp?.focus(); } catch {}
+      modal.classList.add('is-guiding-note');
+      setTimeout(() => modal.classList.remove('is-guiding-note'), 900);
+      return;
+    }
+    commit();
+  };
+
   // UI bindings
   if (btnClose) btnClose.addEventListener('click', ()=>close('cancel'));
   if (btnResetZoom) btnResetZoom.addEventListener('click', ()=>{ zoomScale=1.0; applyZoom(); });
   if (btnCancel) btnCancel.addEventListener('click', ()=>close('cancel'));
-  if (btnDone) btnDone.addEventListener('click', commit);
+  if (btnDone) btnDone.addEventListener('click', handlePrimaryAction);
   if (videoPlayBtn) videoPlayBtn.addEventListener('click', ()=>{ toggleVideoPlayback(); });
   if (videoPrevBtn) videoPrevBtn.addEventListener('click', ()=>{ _setShuttleSpeed(0); stepVideoFrame(-1); });
   if (videoNextBtn) videoNextBtn.addEventListener('click', ()=>{ _setShuttleSpeed(0); stepVideoFrame(1); });
@@ -7111,7 +7267,7 @@ export function openAnnotateModal(opts = {}){
       updateVideoTransport();
     });
   }
-  toolBtns.forEach(b => b.addEventListener('click', ()=> setTool(b.dataset.tool)));
+  toolBtns.forEach(b => b.addEventListener('click', ()=> setTool(b.dataset.tool, true)));
   if (btnTrack) btnTrack.addEventListener('click', () => {
     if (_isTracking) { _trackingAborted = true; return; }
     const sel = objects.find(o => o.id === selectedId);
@@ -7342,8 +7498,8 @@ export function openAnnotateModal(opts = {}){
     if (!meta && !isTyping && video && k===' '){ e.preventDefault(); toggleVideoPlayback(); return; }
     if (!meta && !isTyping && video && k==='k'){ e.preventDefault(); _setShuttleSpeed(0); return; }
     // Commit on Enter only when not typing in a field; when typing, use Cmd/Ctrl+Enter.
-    if (k==='enter' && !e.shiftKey && !isTyping){ e.preventDefault(); commit(); return; }
-    if (k==='enter' && !e.shiftKey && isTyping && meta){ e.preventDefault(); commit(); return; }
+    if (k==='enter' && !e.shiftKey && !isTyping){ e.preventDefault(); handlePrimaryAction(); return; }
+    if (k==='enter' && !e.shiftKey && isTyping && meta){ e.preventDefault(); handlePrimaryAction(); return; }
     if (e.code === 'Space' && e.type === 'keydown' && !isTyping){ e.preventDefault(); spaceDown = true; return; }
     if (e.code === 'Space' && e.type === 'keyup'){ spaceDown = false; panning = false; return; }
     if (!meta && !isTyping){
@@ -7368,7 +7524,7 @@ export function openAnnotateModal(opts = {}){
       if (k==='o'){ e.preventDefault();
         const _sel = objects.find(o=>o.id===selectedId);
         if (_sel && video){ _sel.frameOut = currentFrameRef(); pushState(); render(true); renderTimeline(); return; }
-        setTool('circle'); return; }
+        setTool('circle', true); return; }
       // Loop toggle
       if (k===','){ e.preventDefault();
         _loopPlayback = !_loopPlayback;
@@ -7379,14 +7535,14 @@ export function openAnnotateModal(opts = {}){
         const _p = body.querySelector('.sm-anno-shortcuts-panel');
         if (_p) _p.classList.toggle('is-visible');
         return; }
-      if (k==='v'){ e.preventDefault(); setTool('move'); return; }
-      if (k==='p'){ e.preventDefault(); setTool('pen'); return; }
-      if (k==='h'){ e.preventDefault(); setTool('highlighter'); return; }
-      if (k==='a'){ e.preventDefault(); setTool('arrow'); return; }
-      if (k==='r'){ e.preventDefault(); setTool('rect'); return; }
-      if (k==='c'){ e.preventDefault(); setTool('circle'); return; }
-      if (k==='t'){ e.preventDefault(); setTool('text'); return; }
-      if (k==='e'){ e.preventDefault(); setTool('eraser'); return; }
+      if (k==='v'){ e.preventDefault(); setTool('move', true); return; }
+      if (k==='p'){ e.preventDefault(); setTool('pen', true); return; }
+      if (k==='h'){ e.preventDefault(); setTool('highlighter', true); return; }
+      if (k==='a'){ e.preventDefault(); setTool('arrow', true); return; }
+      if (k==='r'){ e.preventDefault(); setTool('rect', true); return; }
+      if (k==='c'){ e.preventDefault(); setTool('circle', true); return; }
+      if (k==='t'){ e.preventDefault(); setTool('text', true); return; }
+      if (k==='e'){ e.preventDefault(); setTool('eraser', true); return; }
     }
     if (meta && k==='z' && !e.shiftKey){ e.preventDefault(); doUndo(); return; }
     if (meta && k==='z' && e.shiftKey){ e.preventDefault(); doRedo(); return; }
@@ -7488,8 +7644,101 @@ export function openAnnotateModal(opts = {}){
   const emptyHint = document.createElement('div');
   emptyHint.className = 'sm-anno-empty-hint';
   emptyHint.setAttribute('aria-hidden', 'true');
-  emptyHint.innerHTML = '<span class="sm-anno-eh-icon">✦</span><span class="sm-anno-eh-text">Select a tool and draw to annotate</span>';
+  emptyHint.innerHTML = '<span class="sm-anno-eh-icon">✦</span><span class="sm-anno-eh-copy"><strong>Mark what needs attention</strong><span>Choose Box, Arrow, Draw, or Text above</span></span>';
   stage?.appendChild(emptyHint);
+  let _emptyHintDismissed = false;
+  let _emptyHintTimer = 0;
+  const _setEmptyHintVisible = (visible) => {
+    emptyHint.classList.toggle('is-visible', !!visible);
+    emptyHint.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  };
+  _dismissEmptyHint = () => {
+    _emptyHintDismissed = true;
+    if (_emptyHintTimer) clearTimeout(_emptyHintTimer);
+    _emptyHintTimer = 0;
+    _setEmptyHintVisible(false);
+  };
+  // Never cover a valid review frame. The inline smart workflow already tells
+  // the user what to do next; the picture overlay is reserved for a genuinely
+  // unavailable preview.
+  requestAnimationFrame(() => _setEmptyHintVisible(_frameAvailability === 'missing'));
+
+  // ── Guided workflow state ─────────────────────────────────────────────────
+  // Keep professional power available while giving non-technical users one
+  // unambiguous next action. This is deliberately driven by real editor state.
+  const TOOL_COPY = {
+    move: 'Select or adjust a mark',
+    pen: 'Draw over the area that needs attention',
+    highlighter: 'Highlight the area that needs attention',
+    arrow: 'Point to the exact issue',
+    rect: 'Draw a box around the issue',
+    circle: 'Circle the issue',
+    text: 'Click the picture and add a label',
+    eraser: 'Erase part of a drawing',
+  };
+  const _updateSmartWorkflow = () => {
+    const hasMarks = objects.length > 0 || !!draft;
+    const hasNote = !!String(noteInp?.value || '').trim();
+    const hasType = !!String(ntSel?.value || '').trim();
+    const canTrackSelection = !!(hasVideoSource && selectedId && objects.some(o => o.id === selectedId && ['rect','ellipse','stroke'].includes(o.kind)));
+    let activeStep = 'mark';
+    let nextCopy = TOOL_COPY[tool] || 'Mark the area that needs attention';
+
+    if (_frameAvailability === 'missing') {
+      nextCopy = 'Preview unavailable — return to the viewer and capture the current frame';
+    } else if (!hasMarks) {
+      activeStep = 'mark';
+    } else if (!hasNote || !hasType) {
+      activeStep = 'describe';
+      nextCopy = !hasType ? 'Choose a note type, then describe the requested change' : 'Add a clear instruction for the artist';
+    } else if (canTrackSelection && !(objects.find(o => o.id === selectedId)?.keyframes?.length > 1)) {
+      activeStep = 'track';
+      nextCopy = 'Optional: track the selected mark across the shot, or save now';
+    } else {
+      activeStep = 'save';
+      nextCopy = 'Ready to save this annotation';
+    }
+
+    smartSteps.forEach((step) => {
+      const order = ['mark','describe','track','save'];
+      const currentIndex = order.indexOf(activeStep);
+      const stepIndex = order.indexOf(String(step.dataset.step || ''));
+      step.classList.toggle('is-active', stepIndex === currentIndex);
+      step.classList.toggle('is-complete', stepIndex >= 0 && stepIndex < currentIndex);
+    });
+    if (smartNextCopy) smartNextCopy.textContent = nextCopy;
+    if (emptyHint) {
+      const strong = emptyHint.querySelector('strong');
+      const detail = emptyHint.querySelector('.sm-anno-eh-copy span');
+      if (strong) strong.textContent = _frameAvailability === 'missing' ? 'No picture is available to review' : 'Mark what needs attention';
+      if (detail) detail.textContent = _frameAvailability === 'missing'
+        ? 'Close Annotate, capture the current frame, then open Annotate again'
+        : 'Choose Box, Arrow, Draw, or Text above';
+    }
+    if (shapeCountEl) {
+      const key = shapeCountEl.querySelector('.sm-anno-shape-k');
+      if (key) key.textContent = objects.length === 1 ? ' mark' : ' marks';
+    }
+    if (aiStatusEl) {
+      aiStatusEl.textContent = activeStep === 'save' ? 'READY TO SAVE' : (hasMarks || hasNote ? 'UNSAVED' : 'READY');
+      aiStatusEl.dataset.state = activeStep === 'save' ? 'complete' : (hasMarks || hasNote ? 'working' : 'ready');
+    }
+    btnDone?.classList.toggle('is-ready', activeStep === 'save');
+    modal.classList.toggle('has-trackable-selection', canTrackSelection);
+    _setEmptyHintVisible(_frameAvailability === 'missing');
+    if (btnDone) {
+      let mode = 'save';
+      let label = TT('Save annotation');
+      if (_frameAvailability === 'missing') { mode = 'missing'; label = TT('Preview unavailable'); }
+      else if (!hasMarks) { mode = 'mark'; label = TT('Add a mark'); }
+      else if (!hasType) { mode = 'type'; label = TT('Choose type'); }
+      else if (!hasNote) { mode = 'note'; label = TT('Add review note'); }
+      btnDone.dataset.mode = mode;
+      btnDone.textContent = label;
+      btnDone.disabled = mode === 'missing';
+      btnDone.setAttribute('aria-label', label);
+    }
+  };
 
   // ── Smart context strip refs ───────────────────────────────────────────────
   const ctxStrip    = stage?.querySelector('.sm-anno-ctx-strip');
@@ -7557,7 +7806,8 @@ export function openAnnotateModal(opts = {}){
   const _updateShapeInspector = () => {
     const sel = selectedId ? objects.find(o => o.id === selectedId) : null;
     const hasShapes = objects.length > 0;
-    if (emptyHint) emptyHint.style.opacity = (!hasShapes && !draft) ? '1' : '0';
+    if (hasShapes || draft) _dismissEmptyHint();
+    else if (emptyHint) _setEmptyHintVisible(!_emptyHintDismissed);
     _updateCtxStrip();
     if (!sel) { shapeInspector.style.opacity = '0'; shapeInspector.style.pointerEvents = 'none'; return; }
     const c     = sel.style?.color || '#fff';
@@ -7719,16 +7969,22 @@ export function openAnnotateModal(opts = {}){
   if (!initialShapes || !initialShapes.length) {
     _loadDraft().then(draft => {
       try {
-        if (!Array.isArray(draft) || !draft.length) return;
+        if (draft?.expired) { _clearDraft(); return; }
+        if (!Array.isArray(draft?.objects) || !draft.objects.length) return;
         const stack = head.querySelector('.sm-anno-headstack') || head;
         const banner = document.createElement('div');
         banner.className = 'sm-anno-draft-banner';
-        banner.innerHTML = `<span class="sm-anno-draft-msg">Unsaved draft recovered</span>
+        banner.innerHTML = `<span class="sm-anno-draft-msg">Draft available · ${draft.objects.length} ${draft.objects.length === 1 ? 'mark' : 'marks'}</span>
           <button class="sm-anno-draft-restore btn mini">Restore</button>
           <button class="sm-anno-draft-discard btn mini">Discard</button>`;
         stack.prepend(banner);
         banner.querySelector('.sm-anno-draft-restore').addEventListener('click', () => {
-          try { objects = deepClone(draft); pushState(); render(true); } catch {}
+          try {
+            objects = deepClone(draft.objects);
+            if (noteInp && draft.note) noteInp.value = draft.note;
+            if (ntSel && draft.noteType && Array.from(ntSel.options || []).some(o => o.value === draft.noteType)) ntSel.value = draft.noteType;
+            pushState(); render(true); _updateSmartWorkflow();
+          } catch {}
           banner.remove();
         });
         banner.querySelector('.sm-anno-draft-discard').addEventListener('click', () => {
@@ -7740,8 +7996,14 @@ export function openAnnotateModal(opts = {}){
   }
 
   if (img) {
-    img.onload = ()=>{ fit(); render(true); };
-    if (img.complete) { try{ fit(); render(true); }catch{} }
+    img.onload = ()=>{ _setFrameAvailability('ready'); fit(); render(true); };
+    img.onerror = ()=>{ _setFrameAvailability('missing'); try { _updateSmartWorkflow?.(); } catch {} };
+    if (img.complete) {
+      try{
+        _setFrameAvailability(img.naturalWidth > 1 ? 'ready' : 'missing');
+        fit(); render(true);
+      }catch{}
+    }
   }
   if (video) {
     // targetFrame must be computed inside syncVideoFrame — computing it eagerly (before
@@ -7809,22 +8071,27 @@ export function openAnnotateModal(opts = {}){
           if (lum / (px.length/4) > 8) {
             // Frame-lock has a real image — show it
             frameLockEl.style.setProperty('opacity', '1', 'important');
+            _setFrameAvailability('ready', TT('Captured frame ready'));
+            try { _updateSmartWorkflow?.(); } catch {}
             return;
           }
         } catch {}
       }
       // No usable frame-lock — draw a placeholder on the wrap background
+      _setFrameAvailability('missing');
+      try { _updateSmartWorkflow?.(); } catch {}
       wrap?.style.setProperty('background',
         'linear-gradient(135deg,#0b0f1e 0%,#0d1428 100%)', 'important');
       const ph = document.createElement('div');
+      ph.className = 'sm-anno-media-placeholder';
       ph.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;pointer-events:none;z-index:1;';
       ph.innerHTML = `
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(84,213,255,0.45)" stroke-width="1.2" stroke-linecap="round">
           <rect x="2" y="6" width="20" height="12" rx="2"/><path d="M8 6V4h8v2M8 18v2h8v-2"/><path d="M9 11l2 2 4-4" stroke="rgba(84,213,255,0.45)"/>
         </svg>
-        <span style="font-size:11px;color:rgba(84,213,255,0.55);font-family:system-ui;text-align:center;line-height:1.4;">
-          Video source unavailable<br>
-          <span style="font-size:9px;opacity:0.6;">Annotations work on the captured frame</span>
+        <span class="sm-anno-media-placeholder-copy">
+          Preview unavailable<br>
+          <span>Return to the viewer and capture the current frame</span>
         </span>`;
       wrap?.appendChild(ph);
       // Force fit so canvas is sized even without video dimensions
@@ -7856,7 +8123,7 @@ export function openAnnotateModal(opts = {}){
     // fit() on loadeddata: first time we know the intrinsic video dimensions.
     // render(true) after fit() ensures the frame-lock overlay and canvas are
     // drawn even if video.currentTime hasn't changed (no seeked event fires).
-    video.addEventListener('loadeddata', () => { fit(); render(true); updateVideoTransport(); });
+    video.addEventListener('loadeddata', () => { _setFrameAvailability('ready'); fit(); render(true); updateVideoTransport(); });
     // seeked: only render — no fit(). fit() is expensive (getBoundingClientRect +
     // getComputedStyle on every frame step) and the canvas size doesn't change between
     // seeks. If the stage was never sized yet, fit() will have run from loadeddata above.
@@ -7907,5 +8174,16 @@ export function openAnnotateModal(opts = {}){
     updateVideoTransport();
   }
 
-  return { close, commit };
+  const focus = () => {
+    try {
+      modal.classList.remove('sm-anno-refocus');
+      void modal.offsetWidth;
+      modal.classList.add('sm-anno-refocus');
+      setTimeout(() => modal.classList.remove('sm-anno-refocus'), 520);
+      modal.focus?.();
+    } catch {}
+  };
+  const controller = { close, commit, focus, isOpen: () => backdrop.isConnected, backdrop };
+  window.__PFX_ACTIVE_ANNOTATE__ = controller;
+  return controller;
 }
