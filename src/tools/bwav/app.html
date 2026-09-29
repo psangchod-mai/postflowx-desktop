@@ -36,7 +36,10 @@
 
       <!-- Actions -->
       <div class="topbar-actions">
-        <div class="status-inline" id="statusLine" data-i18n="status.ready">Ready.</div>
+        <div class="status-inline" id="statusLine" role="status" aria-live="polite" data-i18n="status.ready">Ready.</div>
+        <button class="btn ghost" id="btnRecheck" type="button" disabled data-i18n="btn.recheck">Re-check</button>
+        <button class="btn ghost" id="btnReplace" type="button" data-i18n="btn.replace">Replace file</button>
+        <button class="btn ghost" id="btnLexicon" type="button" aria-controls="lexiconPanel" aria-expanded="false" data-i18n="btn.lexicon">View Entire Label Lexicon</button>
         <button class="btn ghost" id="btnClear" data-i18n="btn.clear">Clear</button>
         <button class="btn" id="btnPdf" data-i18n="btn.exportPdf">
           <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v2h10v-2"/><path d="M7 2v7M4.5 6.5L7 9l2.5-2.5"/></svg>
@@ -48,21 +51,23 @@
     <!-- Top: file load + KPI summary -->
     <section class="panel compact-panel">
 
-      <div class="filebar" id="dropzone" tabindex="0" role="button" aria-label="Choose BWAV, .atmosIR or .mxf file">
-        <input id="fileInput" type="file" accept=".wav,.bwav,.bw64,.rf64,.atmosIR,.atmosir,.mxf,.MXF" hidden />
+      <div class="filebar" id="dropzone" tabindex="0" role="button" aria-label="Choose a supported Atmos asset">
+        <input id="fileInput" type="file" accept=".mxf,.wav,.wave,.rf64,.bw64,.pio,.atmosir" hidden />
         <div class="filebar-left">
           <div class="file-ic" aria-hidden="true">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="9" height="12" rx="1.5"/><path d="M11 1l3 3v10a1 1 0 01-1 1H6"/><path d="M11 1v3h3"/><path d="M5 7h4M5 9.5h3"/></svg>
           </div>
           <div class="file-text">
-            <div class="file-title" data-i18n="file.dropTitle">Drop BWAV / BW64 / MXF / AtmosIR here</div>
-            <div class="file-sub" data-i18n="file.dropHint">or click to browse — .wav .bwav .bw64 .rf64 .mxf .atmosIR</div>
+            <div class="file-title" data-i18n="file.dropTitle">Drop a supported Atmos asset here</div>
+            <div class="file-sub" data-i18n="file.dropHint">or click to browse — .mxf .wav .wave .rf64 .bw64 .pio .atmosir</div>
           </div>
         </div>
         <div class="filebar-meta" id="fileMeta" hidden></div>
       </div>
 
-      <div class="callout bad" id="loadError" hidden></div>
+      <div class="callout bad" id="loadError" role="alert" hidden></div>
+
+      <div class="callout" id="labelScope" data-i18n="labels.scope">ADM content-label check only. It does not perform loudness, channel, silence, or delivery QC.</div>
 
       <div class="progress-wrap" id="progressWrap" hidden>
         <div class="progress"><div class="bar" id="progressBar" style="width:0%"></div></div>
@@ -94,6 +99,22 @@
           <div class="pill" id="pPass">—</div>
         </button>
       </div>
+    </section>
+
+    <section class="panel" id="lexiconPanel" hidden aria-labelledby="lexiconTitle">
+      <div class="labels-panel">
+        <div class="labels-head"><div><div class="section-title" id="lexiconTitle" data-i18n="lexicon.title">Installed label lexicon</div><div class="section-sub" data-i18n="lexicon.sub">Exact labels from the bundled installed registry.</div></div></div>
+        <div id="lexiconState" role="status" aria-live="polite"></div>
+        <ul id="lexiconList" data-i18n-aria-label="lexicon.ariaLabel" aria-label="Installed label lexicon"></ul>
+      </div>
+    </section>
+
+    <section class="panel" id="sourceXmlPanel" hidden>
+      <details>
+        <summary data-i18n="sourceXml.title">Inspect source XML (local only)</summary>
+        <p class="section-sub" data-i18n="sourceXml.hint">Review the extracted AXML before correcting and re-exporting. Only a preview is shown.</p>
+        <pre id="sourceXmlPreview" tabindex="0"></pre>
+      </details>
     </section>
 
     <!-- Labels -->

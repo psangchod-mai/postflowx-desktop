@@ -40,9 +40,28 @@ function extractFunction(name) {
   const start = m.index;
   let depth = 0;
   let i = SRC.indexOf('{', start);
+  let quote = '';
   for (; i < SRC.length; i++) {
-    if (SRC[i] === '{') depth++;
-    else if (SRC[i] === '}') { depth--; if (depth === 0) break; }
+    const char = SRC[i];
+    if (quote) {
+      if (char === '\\') { i++; continue; }
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '/' && SRC[i + 1] === '/') {
+      i = SRC.indexOf('\n', i);
+      if (i < 0) break;
+      continue;
+    }
+    if (char === '/' && SRC[i + 1] === '*') {
+      i = SRC.indexOf('*/', i + 2);
+      if (i < 0) break;
+      i++;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') { quote = char; continue; }
+    if (char === '{') depth++;
+    else if (char === '}') { depth--; if (depth === 0) break; }
   }
   assert.ok(depth === 0 && i < SRC.length, `could not find matching close brace for ${name}`);
   return SRC.slice(start, i + 1);
@@ -56,6 +75,15 @@ function loadRunAudioScanQuick() {
   // eslint-disable-next-line no-new-func
   return new Function(`${dbfsFromAmpSrc}\n${channelLayoutGroupsSrc}\n${scanQuickSrc}\nreturn runAudioScanQuick;`)();
 }
+
+// ── ADM content-label regression coverage ───────────────────────────────────
+const supportedExtensions = SRC.match(/const SUPPORTED_ASSET_EXTENSIONS =[^;]+;/)?.[0];
+assert.ok(supportedExtensions, 'supported-extension contract is present');
+const { isSupportedAssetFile, classifyContentGroupLabels, extractStructuredTextContentGroups, registryLexiconEntries, buildSynonymSets } = new Function(
+  `${extractFunction('normalizeLabel')}\n${supportedExtensions}\n${extractFunction('fileExtension')}\n${extractFunction('isSupportedAssetFile')}\n${extractFunction('extractContentGroupCandidates')}\n${extractFunction('extractJsonContentGroupCandidates')}\n${extractFunction('_yamlScalar')}\n${extractFunction('parseAtmosIrYaml')}\n${extractFunction('extractStructuredTextContentGroups')}\n${extractFunction('registryLexiconEntries')}\n${extractFunction('buildSynonymSets')}\n${extractFunction('classifyContentGroupLabels')}\nreturn { isSupportedAssetFile, classifyContentGroupLabels, extractStructuredTextContentGroups, registryLexiconEntries, buildSynonymSets };`
+)();
+
+const contentLabelSets = buildSynonymSets({ Dialogue: ['Dialogue'], Music: [], Effects: [], Narration: [] });
 
 const CH = 2, SR = 48000, BD = 16, BPS = 2, FRAME_SIZE = CH * BPS;
 const MAX_BYTES = 40 * 1024 * 1024;
@@ -162,4 +190,94 @@ test('a clip run open at the tail of the "start" window does not merge across th
   assert.equal(segs.length, 2, 'the two disjoint 3-frame bursts must be reported as two separate segments, not merged into one');
   assert.equal(segs[0].frames, 3);
   assert.equal(segs[1].frames, 3);
+});
+
+test('supported asset extensions include the documented Atmos contract and reject others', () => {
+  for (const extension of ['mxf', 'wav', 'wave', 'rf64', 'bw64', 'pio', 'atmosir']) {
+    assert.equal(isSupportedAssetFile({ name: `asset.${extension.toUpperCase()}` }), true, extension);
+  }
+  assert.equal(isSupportedAssetFile({ name: 'asset.mp3' }), false);
+});
+
+test('content-label outcomes require exact registry values and preserve known labels beside every unknown', () => {
+  const rows = classifyContentGroupLabels([
+    { rawLabel: 'Dialogue', source: 'ADM content group' },
+    { rawLabel: 'Dialogue', source: 'ADM content group' },
+    { rawLabel: 'DIALOGUE', source: 'ADM content group' },
+    { rawLabel: 'Dia_logue', source: 'ADM content group' },
+    { rawLabel: 'Dia logue', source: 'ADM content group' },
+    { rawLabel: 'Dialogue ', source: 'ADM content group' },
+    { rawLabel: 'Not in registry', source: 'ADM content group' },
+    { rawLabel: 'Another unknown label', source: 'ADM content group' },
+    { rawLabel: '', source: 'ADM content group' },
+    { rawLabel: 'Atmos_Master_Content', source: 'ADM content group' }
+  ], contentLabelSets);
+
+  assert.deepEqual(rows.map(({ status, outcome, rawLabel }) => ({ status, outcome, rawLabel })), [
+    { status: 'PASS', outcome: 'DUPLICATE', rawLabel: 'Dialogue' },
+    { status: 'PASS', outcome: 'DUPLICATE', rawLabel: 'Dialogue' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'DIALOGUE' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'Dia_logue' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'Dia logue' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'Dialogue ' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'Not in registry' },
+    { status: 'REJECT', outcome: 'UNKNOWN', rawLabel: 'Another unknown label' },
+    { status: 'REJECT', outcome: 'EMPTY', rawLabel: '' },
+    { status: 'REJECT', outcome: 'UNLABELLED', rawLabel: 'Atmos_Master_Content' }
+  ]);
+});
+
+test('structured PIO and AtmosIR text routes only explicit ADM audioContent structures into validation', () => {
+  const json = extractStructuredTextContentGroups('{"audioContent":[{"audioContentName":"Dialogue"}]}');
+  assert.deepEqual(json, { candidates: [{ rawLabel: 'Dialogue', source: 'ADM content group (JSON)' }], kind: 'json' });
+
+  const yaml = extractStructuredTextContentGroups('audioContent:\n  - audioContentName: Dialogue\n');
+  assert.equal(yaml.kind, 'yaml');
+  assert.deepEqual(yaml.candidates, [{ rawLabel: 'Dialogue', source: 'ADM content group (JSON)' }]);
+
+  assert.equal(extractStructuredTextContentGroups('{not json').kind, 'malformed-json');
+  assert.equal(extractStructuredTextContentGroups('unsupported binary-looking text').kind, 'unrecognized');
+});
+
+test('structured XML retains the exact audioContent label text', () => {
+  const priorDomParser = globalThis.DOMParser;
+  globalThis.DOMParser = class {
+    parseFromString() {
+      const group = { getAttribute: () => 'Dialogue ', getElementsByTagNameNS: () => [], getElementsByTagName: () => [] };
+      return { querySelector: () => null, getElementsByTagNameNS: (_namespace, name) => name === 'audioContent' ? [group] : [], getElementsByTagName: () => [] };
+    }
+  };
+  try {
+    const xml = extractStructuredTextContentGroups('<audioFormatExtended/>');
+    assert.equal(xml.kind, 'xml');
+    assert.deepEqual(xml.candidates, [{ rawLabel: 'Dialogue ', source: 'ADM content group' }]);
+  } finally {
+    globalThis.DOMParser = priorDomParser;
+  }
+});
+
+test('installed lexicon preserves registry strings exactly', () => {
+  assert.deepEqual(registryLexiconEntries({ validAudioContentGroups: [{ groupName: 'Dialogue', labels: ['Dialogue', 'Dialogue '], validContentLabelSubGroups: [] }] }), [
+    { group: 'Dialogue', subgroup: '', label: 'Dialogue' },
+    { group: 'Dialogue', subgroup: '', label: 'Dialogue ' }
+  ]);
+});
+
+test('untrusted labels are escaped before table rendering', () => {
+  assert.match(SRC, /\$\{escapeHtml\(r\.rawLabel \|\| ""\)\}/);
+});
+
+test('zero-byte telemetry is generic and excludes the selected filename', () => {
+  const zeroByteBranch = SRC.match(/if \(typeof file\.size === 'number' && file\.size === 0\) \{[\s\S]{0,500}/)?.[0];
+  assert.ok(zeroByteBranch, 'zero-byte rejection branch exists');
+  assert.match(zeroByteBranch, /bgLog\('Rejected zero-byte file', \{ reason: '0_bytes' \}\)/);
+  assert.doesNotMatch(zeroByteBranch, /name\s*:/);
+  assert.doesNotMatch(zeroByteBranch, /file\?\.name/);
+});
+
+test('the lexicon aria label uses the locale attribute pattern in every locale', () => {
+  const html = readFileSync(join(ROOT, 'src/tools/bwav/app.html'), 'utf8');
+  assert.match(html, /data-i18n-aria-label="lexicon\.ariaLabel"/);
+  assert.match(SRC, /querySelectorAll\("\[data-i18n-aria-label\]"\)/);
+  assert.equal((SRC.match(/"lexicon\.ariaLabel"/g) || []).length, 6);
 });

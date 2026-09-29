@@ -48,12 +48,30 @@ const I18N = {
     "mode.dubbing": "Dubbing/AD",
     "mode.dme": "DME Extraction",
     "status.ready": "Ready.",
+    "status.allContentLabelsValid": "All content labels are valid.",
+    "status.labelsNeedCorrection": "Content labels need correction. Review every unknown label, then replace or re-check the asset.",
+    "btn.recheck": "Re-check",
+    "btn.replace": "Replace file",
     "btn.clear": "Clear",
     "btn.copyJson": "Copy JSON",
     "btn.exportPdf": "Export PDF",
     "btn.exportJson": "Export JSON",
-    "file.dropTitle": "Drop BWAV/BW64 or MXF here",
-    "file.dropHint": "or click to browse",
+    "file.dropTitle": "Drop a supported Atmos asset here",
+    "file.dropHint": "or click to browse — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "Unsupported file type. Choose .mxf, .wav, .wave, .rf64, .bw64, .pio, or .atmosir.",
+    "labels.scope": "ADM content-label check only. It does not perform loudness, channel, silence, or delivery QC.",
+    "sourceXml.title": "Inspect source XML (local only)",
+    "sourceXml.hint": "Review the extracted AXML before correcting and re-exporting. Only a preview is shown.",
+    "sourceXml.truncated": "Preview truncated locally",
+    "registry.unavailable": "The bundled label registry is unavailable, so content labels were not validated. Reinstall or replace the local registry, then re-check.",
+    "parse.unavailable": "The asset could not be parsed locally for ADM AXML. Inspect the source XML or re-export the asset, then re-check.",
+    "btn.lexicon": "View Entire Label Lexicon",
+    "lexicon.title": "Installed label lexicon",
+    "lexicon.sub": "Exact labels from the bundled installed registry.",
+    "lexicon.ariaLabel": "Installed label lexicon",
+    "lexicon.loading": "Loading label lexicon…",
+    "lexicon.empty": "No labels are available in the installed registry.",
+    "lexicon.unavailable": "The label lexicon is unavailable. Check the local registry, then re-check.",
     "ui.reportDetails": "Report details",
     "btn.runScan": "Run scan",
     "scan.quickFast": "Quick (fast)",
@@ -153,8 +171,9 @@ const I18N = {
     "btn.copyJson": "JSONをコピー",
     "btn.exportPdf": "PDFを書き出し",
     "btn.exportJson": "JSONを書き出し",
-    "file.dropTitle": "ここに BWAV/BW64 をドロップ",
-    "file.dropHint": "またはクリックして選択",
+    "file.dropTitle": "対応する Atmos アセットをここにドロップ",
+    "file.dropHint": "またはクリックして選択 — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "未対応のファイル形式です。.mxf、.wav、.wave、.rf64、.bw64、.pio、.atmosir を選択してください。",
     "ui.reportDetails": "レポート詳細",
     "btn.runScan": "スキャン実行",
     "scan.quickFast": "クイック（高速）",
@@ -254,8 +273,9 @@ const I18N = {
     "btn.copyJson": "JSON 복사",
     "btn.exportPdf": "PDF 내보내기",
     "btn.exportJson": "JSON 내보내기",
-    "file.dropTitle": "여기에 BWAV/BW64 드롭",
-    "file.dropHint": "또는 클릭하여 선택",
+    "file.dropTitle": "지원되는 Atmos 에셋을 여기에 놓으세요",
+    "file.dropHint": "또는 클릭하여 선택 — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "지원되지 않는 파일 형식입니다. .mxf, .wav, .wave, .rf64, .bw64, .pio 또는 .atmosir을 선택하세요.",
     "ui.reportDetails": "보고서 상세",
     "btn.runScan": "스캔 실행",
     "scan.quickFast": "퀵(빠름)",
@@ -355,8 +375,9 @@ const I18N = {
     "btn.copyJson": "複製 JSON",
     "btn.exportPdf": "匯出 PDF",
     "btn.exportJson": "匯出 JSON",
-    "file.dropTitle": "將 BWAV/BW64 拖放到這裡",
-    "file.dropHint": "或點擊以選取",
+    "file.dropTitle": "將支援的 Atmos 資產拖放到這裡",
+    "file.dropHint": "或點擊以選取 — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "不支援的檔案格式。請選擇 .mxf、.wav、.wave、.rf64、.bw64、.pio 或 .atmosir。",
     "ui.reportDetails": "報告詳細",
     "btn.runScan": "執行掃描",
     "scan.quickFast": "快速（快）",
@@ -456,8 +477,9 @@ const I18N = {
     "btn.copyJson": "Salin JSON",
     "btn.exportPdf": "Ekspor PDF",
     "btn.exportJson": "Ekspor JSON",
-    "file.dropTitle": "Taruh BWAV/BW64 di sini",
-    "file.dropHint": "atau klik untuk memilih",
+    "file.dropTitle": "Letakkan aset Atmos yang didukung di sini",
+    "file.dropHint": "atau klik untuk memilih — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "Jenis file tidak didukung. Pilih .mxf, .wav, .wave, .rf64, .bw64, .pio, atau .atmosir.",
     "ui.reportDetails": "Rincian laporan",
     "btn.runScan": "Jalankan pemindaian",
     "scan.quickFast": "Cepat",
@@ -557,8 +579,9 @@ const I18N = {
     "btn.copyJson": "คัดลอก JSON",
     "btn.exportPdf": "ส่งออก PDF",
     "btn.exportJson": "ส่งออก JSON",
-    "file.dropTitle": "วาง BWAV/BW64 ที่นี่",
-    "file.dropHint": "หรือคลิกเพื่อเลือกไฟล์",
+    "file.dropTitle": "วางไฟล์ Atmos ที่รองรับที่นี่",
+    "file.dropHint": "หรือคลิกเพื่อเลือก — .mxf .wav .wave .rf64 .bw64 .pio .atmosir",
+    "file.unsupported": "ไม่รองรับชนิดไฟล์นี้ โปรดเลือก .mxf, .wav, .wave, .rf64, .bw64, .pio หรือ .atmosir",
     "ui.reportDetails": "รายละเอียดรายงาน",
     "btn.runScan": "เริ่มสแกน",
     "scan.quickFast": "ด่วน (เร็ว)",
@@ -649,6 +672,14 @@ const I18N = {
 };
 
 const SUPPORTED_LOCALES = ["en","ja","ko","zh-TW","id","th"];
+const BWAV_ADM_LABEL_I18N = {
+  ja: { "status.allContentLabelsValid":"すべてのコンテンツラベルが有効です。", "status.labelsNeedCorrection":"コンテンツラベルの修正が必要です。すべての未知ラベルを確認してから、ファイルを置換または再確認してください。", "btn.recheck":"再確認", "btn.replace":"ファイルを置換", "labels.scope":"ADM コンテンツラベルのみを確認します。loudness、チャンネル、無音、納品 QC は実行しません。", "sourceXml.title":"ソース XML を確認（ローカルのみ）", "sourceXml.hint":"修正・再書き出しの前に抽出済み AXML を確認します。プレビューのみ表示します。", "sourceXml.truncated":"プレビューはローカルで省略されました", "registry.unavailable":"バンドル済みラベルレジストリを利用できないため、コンテンツラベルを検証していません。ローカルのレジストリを再インストールまたは置換してから再確認してください。", "parse.unavailable":"このアセットから ADM AXML をローカル解析できません。ソース XML を確認するか、アセットを再書き出ししてから再確認してください。", "btn.lexicon":"ラベル辞書全体を表示", "lexicon.title":"インストール済みラベル辞書", "lexicon.sub":"バンドル済みローカルレジストリの完全一致ラベルです。", "lexicon.ariaLabel":"インストール済みラベル辞書", "lexicon.loading":"ラベル辞書を読み込み中…", "lexicon.empty":"インストール済みレジストリにラベルがありません。", "lexicon.unavailable":"ラベル辞書を利用できません。ローカルのレジストリを確認してから再確認してください。" },
+  ko: { "status.allContentLabelsValid":"모든 콘텐츠 라벨이 유효합니다.", "status.labelsNeedCorrection":"콘텐츠 라벨을 수정해야 합니다. 모든 알 수 없는 라벨을 확인한 후 자산을 교체하거나 다시 확인하세요.", "btn.recheck":"다시 확인", "btn.replace":"파일 교체", "labels.scope":"ADM 콘텐츠 라벨만 검사합니다. 라우드니스, 채널, 무음 또는 납품 QC는 수행하지 않습니다.", "sourceXml.title":"소스 XML 검사(로컬 전용)", "sourceXml.hint":"수정 및 재내보내기 전에 추출된 AXML을 검토합니다. 미리보기만 표시됩니다.", "sourceXml.truncated":"미리보기가 로컬에서 잘렸습니다", "registry.unavailable":"번들 라벨 레지스트리를 사용할 수 없어 콘텐츠 라벨을 검증하지 못했습니다. 로컬 레지스트리를 다시 설치하거나 교체한 뒤 다시 확인하세요.", "parse.unavailable":"이 에셋에서 ADM AXML을 로컬로 파싱할 수 없습니다. 소스 XML을 검사하거나 에셋을 다시 내보낸 뒤 다시 확인하세요.", "btn.lexicon":"전체 라벨 사전 보기", "lexicon.title":"설치된 라벨 사전", "lexicon.sub":"번들 로컬 레지스트리의 정확한 라벨입니다.", "lexicon.ariaLabel":"설치된 라벨 사전", "lexicon.loading":"라벨 사전 로드 중…", "lexicon.empty":"설치된 레지스트리에 라벨이 없습니다.", "lexicon.unavailable":"라벨 사전을 사용할 수 없습니다. 로컬 레지스트리를 확인한 뒤 다시 확인하세요." },
+  "zh-TW": { "status.allContentLabelsValid":"所有內容標籤均有效。", "status.labelsNeedCorrection":"內容標籤需要修正。請檢視所有未知標籤，再取代或重新檢查資產。", "btn.recheck":"重新檢查", "btn.replace":"取代檔案", "labels.scope":"僅檢查 ADM 內容標籤；不執行響度、聲道、靜音或交付 QC。", "sourceXml.title":"檢視來源 XML（僅限本機）", "sourceXml.hint":"修正並重新輸出前請檢視擷取的 AXML。僅顯示預覽。", "sourceXml.truncated":"本機預覽已截斷", "registry.unavailable":"無法使用內建標籤登錄檔，因此未驗證內容標籤。請重新安裝或取代本機登錄檔後再檢查。", "parse.unavailable":"此資產無法在本機解析 ADM AXML。請檢視來源 XML 或重新輸出資產後再檢查。", "btn.lexicon":"檢視完整標籤詞彙", "lexicon.title":"已安裝的標籤詞彙", "lexicon.sub":"內建本機登錄檔中的完全相符標籤。", "lexicon.ariaLabel":"已安裝的標籤詞彙", "lexicon.loading":"正在載入標籤詞彙…", "lexicon.empty":"已安裝的登錄檔沒有標籤。", "lexicon.unavailable":"無法使用標籤詞彙。請檢查本機登錄檔後再檢查。" },
+  id: { "status.allContentLabelsValid":"Semua label konten valid.", "status.labelsNeedCorrection":"Label konten perlu diperbaiki. Tinjau semua label yang tidak dikenal, lalu ganti atau periksa ulang aset.", "btn.recheck":"Periksa ulang", "btn.replace":"Ganti file", "labels.scope":"Hanya memeriksa label konten ADM; tidak menjalankan QC loudness, kanal, hening, atau delivery.", "sourceXml.title":"Periksa XML sumber (hanya lokal)", "sourceXml.hint":"Tinjau AXML yang diekstrak sebelum memperbaiki dan mengekspor ulang. Hanya pratinjau yang ditampilkan.", "sourceXml.truncated":"Pratinjau dipotong secara lokal", "registry.unavailable":"Registri label bawaan tidak tersedia, sehingga label konten tidak divalidasi. Instal ulang atau ganti registri lokal lalu periksa ulang.", "parse.unavailable":"ADM AXML tidak dapat diurai secara lokal dari aset ini. Periksa XML sumber atau ekspor ulang aset lalu periksa ulang.", "btn.lexicon":"Lihat Seluruh Leksikon Label", "lexicon.title":"Leksikon label terpasang", "lexicon.sub":"Label yang sama persis dari registri lokal bawaan.", "lexicon.ariaLabel":"Leksikon label terpasang", "lexicon.loading":"Memuat leksikon label…", "lexicon.empty":"Tidak ada label dalam registri terpasang.", "lexicon.unavailable":"Leksikon label tidak tersedia. Periksa registri lokal lalu periksa ulang." },
+  th: { "status.allContentLabelsValid":"Content label ทั้งหมดถูกต้อง", "status.labelsNeedCorrection":"ต้องแก้ไข content label โปรดตรวจ unknown label ทุกตัว แล้วแทนที่หรือตรวจไฟล์อีกครั้ง", "btn.recheck":"ตรวจอีกครั้ง", "btn.replace":"แทนที่ไฟล์", "labels.scope":"ตรวจเฉพาะ ADM content label ไม่ได้ทำ QC เรื่อง loudness, channel, silence หรือ delivery", "sourceXml.title":"ตรวจ source XML (เฉพาะในเครื่อง)", "sourceXml.hint":"ตรวจ AXML ที่อ่านได้ก่อนแก้และ export ใหม่ จะแสดงเฉพาะ preview", "sourceXml.truncated":"ตัด preview ในเครื่องแล้ว", "registry.unavailable":"ใช้ bundled label registry ไม่ได้ จึงยังไม่ได้ตรวจ content label โปรดติดตั้งหรือแทนที่ local registry แล้วตรวจอีกครั้ง", "parse.unavailable":"อ่าน ADM AXML จากไฟล์นี้ในเครื่องไม่ได้ โปรดตรวจ source XML หรือ export ไฟล์ใหม่ แล้วตรวจอีกครั้ง", "btn.lexicon":"ดู Label Lexicon ทั้งหมด", "lexicon.title":"Label lexicon ที่ติดตั้ง", "lexicon.sub":"Label แบบตรงตัวจาก bundled local registry", "lexicon.ariaLabel":"Label lexicon ที่ติดตั้ง", "lexicon.loading":"กำลังโหลด label lexicon…", "lexicon.empty":"ไม่มี label ใน registry ที่ติดตั้ง", "lexicon.unavailable":"ใช้ label lexicon ไม่ได้ โปรดตรวจ local registry แล้วตรวจอีกครั้ง" }
+};
+for (const [locale, strings] of Object.entries(BWAV_ADM_LABEL_I18N)) Object.assign(I18N[locale], strings);
 let currentLocale = "en";
 
 function normalizeLocale(raw){
@@ -717,6 +748,11 @@ function applyLocale(locale){
     el.setAttribute("placeholder", t(k));
   });
 
+  document.querySelectorAll("[data-i18n-aria-label]").forEach(el => {
+    const k = el.getAttribute("data-i18n-aria-label");
+    el.setAttribute("aria-label", t(k));
+  });
+
   // Re-render dynamic UI that isn't covered by data-i18n
   try {
     if (lastResult) {
@@ -781,13 +817,22 @@ function initLocaleUI(){
 
 
 async function loadRules() {
-  // Label-only build: load only label mapping rules.
-  const [atmResp, labelsResp] = await Promise.all([
-    fetch(assetUrl("data/atmosLabelConfiguration.json")),
-    fetch(assetUrl("data/netflix_recognized_group_labels.json")),
-  ]);
-  const atm = await atmResp.json();
-  let labelsFallback = await labelsResp.json();
+  // Label-only build: load only the installed label registry. No asset audio is uploaded.
+  let atm;
+  let labelsFallback;
+  try {
+    const [atmResp, labelsResp] = await Promise.all([
+      fetch(assetUrl("data/atmosLabelConfiguration.json")),
+      fetch(assetUrl("data/netflix_recognized_group_labels.json")),
+    ]);
+    if (!atmResp.ok || !labelsResp.ok) throw new Error("Registry response unavailable");
+    [atm, labelsFallback] = await Promise.all([atmResp.json(), labelsResp.json()]);
+  } catch (cause) {
+    const error = new Error("Label registry unavailable");
+    error.code = "REGISTRY_UNAVAILABLE";
+    error.cause = cause;
+    throw error;
+  }
   // Optional override synced from Sheet
   try {
     const st = await chrome.storage.local.get({ groupLabelsOverride: null });
@@ -796,7 +841,58 @@ async function loadRules() {
     }
   } catch {}
   const labels = (atm && Array.isArray(atm.validAudioContentGroups)) ? atm : labelsFallback;
-  return { labels };
+  return { labels, registrySource: "Bundled local label registry" };
+}
+
+function registryLexiconEntries(labels) {
+  const entries = [];
+  const add = (group, subgroup, values) => {
+    for (const label of values || []) {
+      if (typeof label === "string") entries.push({ label, group, subgroup: subgroup || "" });
+    }
+  };
+  if (Array.isArray(labels?.validAudioContentGroups)) {
+    for (const groupDef of labels.validAudioContentGroups) {
+      const group = String(groupDef.groupName || "");
+      add(group, "", groupDef.labels);
+      for (const subgroupDef of groupDef.validContentLabelSubGroups || []) add(group, String(subgroupDef.subGroupName || ""), subgroupDef.labels);
+    }
+  } else {
+    for (const group of ["Dialogue", "Music", "Effects", "Narration"]) add(group, "", labels?.[group]);
+  }
+  return entries;
+}
+
+async function showLexicon() {
+  const panel = document.getElementById("lexiconPanel");
+  const state = document.getElementById("lexiconState");
+  const list = document.getElementById("lexiconList");
+  const button = document.getElementById("btnLexicon");
+  if (!panel || !state || !list) return;
+  const opening = panel.hidden;
+  panel.hidden = !opening;
+  button?.setAttribute("aria-expanded", opening ? "true" : "false");
+  if (!opening) return;
+  list.replaceChildren();
+  state.textContent = t("lexicon.loading");
+  try {
+    rulesCache = rulesCache || await loadRules();
+    const entries = registryLexiconEntries(rulesCache.labels);
+    if (!entries.length) {
+      state.textContent = t("lexicon.empty");
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const entry of entries) {
+      const item = document.createElement("li");
+      item.textContent = entry.subgroup ? `${entry.group} / ${entry.subgroup}: ${entry.label}` : `${entry.group}: ${entry.label}`;
+      fragment.appendChild(item);
+    }
+    list.appendChild(fragment);
+    state.textContent = "";
+  } catch {
+    state.textContent = t("lexicon.unavailable");
+  }
 }
 
 
@@ -1353,6 +1449,44 @@ function normalizeLabel(s) {
     .replace(/\s+/g, " ");
 }
 
+const SUPPORTED_ASSET_EXTENSIONS = new Set(["mxf", "wav", "wave", "rf64", "bw64", "pio", "atmosir"]);
+
+function fileExtension(name) {
+  const match = /\.([^.]+)$/.exec(String(name || "").trim());
+  return match ? match[1].toLowerCase() : "";
+}
+
+function isSupportedAssetFile(file) {
+  return SUPPORTED_ASSET_EXTENSIONS.has(fileExtension(file?.name));
+}
+
+function classifyContentGroupLabels(candidates, sets) {
+  const entries = Array.isArray(candidates) ? candidates : [];
+  const occurrences = new Map();
+  for (const candidate of entries) {
+    const rawLabel = String(candidate?.rawLabel || "");
+    if (rawLabel) occurrences.set(rawLabel, (occurrences.get(rawLabel) || 0) + 1);
+  }
+
+  return entries.map((candidate) => {
+    const rawLabel = String(candidate?.rawLabel ?? "");
+    const normalized = normalizeLabel(rawLabel);
+    const base = { rawLabel, normalized, source: candidate?.source || "audioContent", mapped: "", subgroup: "" };
+    if (!rawLabel) return { ...base, status: "REJECT", outcome: "EMPTY", fix: "Add an ADM content-group label, then re-export." };
+    if (rawLabel === "Atmos_Master_Content") return { ...base, status: "REJECT", outcome: "UNLABELLED", fix: "Atmos_Master_Content is an unlabelled group. Add a content label, then re-export." };
+    const mapped = sets?.__exactLookup?.get(rawLabel) || null;
+    if (!mapped) return { ...base, status: "REJECT", outcome: "UNKNOWN", fix: "Rename to a label in the installed registry, then re-export." };
+    return {
+      ...base,
+      status: "PASS",
+      outcome: occurrences.get(rawLabel) > 1 ? "DUPLICATE" : "KNOWN",
+      mapped: mapped.group || "",
+      subgroup: mapped.subgroup || "",
+      fix: occurrences.get(rawLabel) > 1 ? "Duplicate content-group label; verify the intended groups before re-exporting." : ""
+    };
+  });
+}
+
 function setPill(el, text, tone) {
   el.textContent = text;
   el.style.borderColor = "rgba(255,255,255,0.10)";
@@ -1374,6 +1508,15 @@ function showLoadError(message){
     el.hidden = true;
     el.textContent = "";
   }
+}
+
+function renderSourceXml(res) {
+  const panel = document.getElementById("sourceXmlPanel");
+  const preview = document.getElementById("sourceXmlPreview");
+  if (!panel || !preview) return;
+  const xml = String(res?.xmlPreview || "");
+  panel.hidden = !xml;
+  preview.textContent = xml ? `${xml}${res?.xmlPreviewTruncated ? `\n\n[${t("sourceXml.truncated")}]` : ""}` : "";
 }
 
 
@@ -1491,6 +1634,10 @@ function resetUI() {
   report = {};
   lastFile = null;
   lastResult = null;
+  const sourcePanel = document.getElementById("sourceXmlPanel");
+  if (sourcePanel) sourcePanel.hidden = true;
+  const recheck = document.getElementById("btnRecheck");
+  if (recheck) recheck.disabled = true;
   try { const pre = document.getElementById("reportJson"); if (pre) pre.textContent = JSON.stringify(report, null, 2); } catch {}
   try { setProgress(null); } catch {}
   setStatus("Ready.");
@@ -2380,6 +2527,27 @@ function buildSynonymSets(labels) {
     labelExistenceEnforced: !!labels?.labelExistenceEnforced,
   };
 
+  // Acceptance is deliberately exact. Normalized buckets above exist only for
+  // diagnostics/suggestions retained from the prior UI, never for a pass.
+  sets.__exactLookup = new Map();
+  const addExact = (group, subgroup, values) => {
+    for (const value of values || []) {
+      if (typeof value !== "string" || sets.__exactLookup.has(value)) continue;
+      sets.__exactLookup.set(value, { group, subgroup: subgroup || "" });
+    }
+  };
+  if (labels && Array.isArray(labels.validAudioContentGroups)) {
+    for (const groupDef of labels.validAudioContentGroups) {
+      const group = mapGroup(groupDef.groupName);
+      addExact(group, "", groupDef.labels);
+      for (const subgroupDef of groupDef.validContentLabelSubGroups || []) {
+        addExact(group, String(subgroupDef.subGroupName || "").trim(), subgroupDef.labels);
+      }
+    }
+  } else {
+    for (const group of ["Dialogue", "Music", "Effects", "Narration"]) addExact(group, "", labels?.[group]);
+  }
+
   return sets;
 }
 function mapLabel(norm, sets) {
@@ -2455,6 +2623,92 @@ function extractCandidates(xmlDoc) {
     if (!seen.has(k)) { seen.add(k); dedup.push(r); }
   }
   return dedup;
+}
+
+function extractContentGroupCandidates(xmlDoc) {
+  const groups = [];
+  try { groups.push(...Array.from(xmlDoc.getElementsByTagNameNS("*", "audioContent"))); } catch {}
+  try { groups.push(...Array.from(xmlDoc.getElementsByTagName("audioContent"))); } catch {}
+  const seen = new Set();
+  const candidates = [];
+  for (const group of groups) {
+    if (!group || seen.has(group)) continue;
+    seen.add(group);
+    let rawLabel = group.getAttribute?.("audioContentName");
+    if (rawLabel == null) {
+      const names = [];
+      try { names.push(...Array.from(group.getElementsByTagNameNS("*", "audioContentName"))); } catch {}
+      try { names.push(...Array.from(group.getElementsByTagName("audioContentName"))); } catch {}
+      rawLabel = names.find(Boolean)?.textContent || "";
+    }
+    candidates.push({ rawLabel: String(rawLabel || ""), source: "ADM content group" });
+  }
+  return candidates;
+}
+
+function extractJsonContentGroupCandidates(value) {
+  const roots = [value, value?.adm, value?.audioFormatExtended].filter(Boolean);
+  const candidates = [];
+  for (const root of roots) {
+    for (const key of ["audioContent", "audioContents"]) {
+      const groups = Array.isArray(root?.[key]) ? root[key] : (root?.[key] && typeof root[key] === "object" ? [root[key]] : []);
+      for (const group of groups) {
+        const rawLabel = typeof group === "string" ? group : group?.audioContentName;
+        candidates.push({ rawLabel: typeof rawLabel === "string" ? rawLabel : "", source: "ADM content group (JSON)" });
+      }
+    }
+  }
+  return candidates;
+}
+
+function extractStructuredTextContentGroups(text) {
+  const raw = String(text || "");
+  const trimmed = raw.trimStart();
+  if (!trimmed) return { candidates: [], kind: "empty" };
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try { return { candidates: extractJsonContentGroupCandidates(JSON.parse(trimmed)), kind: "json" }; }
+    catch { return { candidates: [], kind: "malformed-json" }; }
+  }
+  if (trimmed.startsWith("<")) {
+    const doc = new DOMParser().parseFromString(raw, "application/xml");
+    if (doc.querySelector("parsererror")) return { candidates: [], kind: "malformed-xml" };
+    return { candidates: extractContentGroupCandidates(doc), kind: "xml", xmlText: raw };
+  }
+  const yaml = parseAtmosIrYaml(raw);
+  const candidates = extractJsonContentGroupCandidates(yaml);
+  return { candidates, kind: candidates.length ? "yaml" : "unrecognized" };
+}
+
+async function readStructuredTextPrefix(file, maxBytes = 4 * 1024 * 1024) {
+  const bytes = Math.min(Number(file?.size) || 0, maxBytes);
+  const buf = await file.slice(0, bytes).arrayBuffer();
+  return { text: new TextDecoder("utf-8", { fatal: false }).decode(buf), truncated: (Number(file?.size) || 0) > bytes };
+}
+
+async function validateStructuredTextAsset(file, sets, registrySource) {
+  const { text, truncated } = await readStructuredTextPrefix(file);
+  const extracted = extractStructuredTextContentGroups(text);
+  const res = {
+    app: "BWAV Inspector", version: "0.1.7", kind: fileExtension(file.name).toUpperCase(), mode: currentMode,
+    file: { name: file.name, sizeBytes: file.size }, axmlFound: extracted.kind === "xml", axmlWhere: extracted.kind,
+    registrySource, labelChecks: [], totals: { pass: 0, reject: 0 }
+  };
+  if (!extracted.candidates.length) {
+    res.errorCode = "LOCAL_PARSE_UNAVAILABLE";
+    res.error = `No extractable ADM audioContent labels in ${extracted.kind}${truncated ? " within the local preview limit" : ""}.`;
+    res.totals.reject = 1;
+    return res;
+  }
+  res.labelChecks = classifyContentGroupLabels(extracted.candidates, sets).map((entry) => ({ ...entry, source: `${entry.source} • ${entry.outcome.toLowerCase()}` }));
+  for (const entry of res.labelChecks) {
+    if (entry.status === "PASS") res.totals.pass += 1;
+    else if (entry.status === "REJECT") res.totals.reject += 1;
+  }
+  if (extracted.xmlText) {
+    res.xmlPreview = extracted.xmlText.slice(0, 65536);
+    res.xmlPreviewTruncated = extracted.xmlText.length > res.xmlPreview.length || truncated;
+  }
+  return res;
 }
 
 // ---- .atmosIR support (Dolby Atmos Renderer input/binaural/re-render config) ----
@@ -2561,7 +2815,7 @@ function parseAtmosIrYaml(text){
   return root;
 }
 
-function validateAtmosIrParsed(y){
+function legacyAtmosIrInspection(y){
   const issues = [];
   const addIssue = (sev, titleKey, detailKey, detailVars, fixKey, fixVars) => {
     issues.push({ sev, titleKey, detailKey, detailVars, fixKey, fixVars });
@@ -2659,100 +2913,7 @@ function validateAtmosIrParsed(y){
 }
 
 async function validateAtmosIr(file, sets){
-  const text = await file.text();
-  const y = parseAtmosIrYaml(text);
-  const inputs = Array.isArray(y?.input_configuration) ? y.input_configuration : [];
-  const groups = Array.isArray(y?.group_list) ? y.group_list : [];
-  const rerenders = Array.isArray(y?.rerender_configuration) ? y.rerender_configuration : [];
-
-  const bedEntries = inputs.filter(it => String(it?.format ?? "").toLowerCase() !== "none" && String(it?.format ?? "").trim());
-  const objEntries = inputs.filter(it => String(it?.format ?? "").toLowerCase() === "none");
-
-  // Most common bed format
-  const fmtCounts = new Map();
-  for (const b of bedEntries) {
-    const f = String(b?.format ?? "").trim();
-    if (!f) continue;
-    fmtCounts.set(f, (fmtCounts.get(f) || 0) + 1);
-  }
-  let bedFmt = "";
-  let best = 0;
-  for (const [f, c] of fmtCounts.entries()) {
-    if (c > best) { best = c; bedFmt = f; }
-  }
-
-  const res = {
-    app: "BWAV Inspector",
-    version: "0.1.7",
-    kind: "ATMOSIR",
-    mode: currentMode,
-    file: { name: file.name, sizeBytes: file.size },
-    fmtInfo: null,
-    mediaFormat: null,
-    audioScan: null,
-    chnaFound: false,
-    bxmlFound: false,
-    sxmlFound: false,
-    chunkHeaders: [],
-    ds64: null,
-    axmlFound: false,
-    axmlWhere: "—",
-    labelChecks: [],
-    totals: { pass: 0, reject: 0 },
-    soundfield: { kind: "AtmosIR", objects: objEntries.length > 0, bedLabel: bedFmt || "" },
-    atmosIr: {
-      version: y?.version ?? "",
-      inputsCount: inputs.length,
-      bedCount: bedEntries.length,
-      objectCount: objEntries.length,
-      groupsTotal: groups.length,
-      groupsCustom: groups.filter(g => g && g.custom === true).map(g => String(g.name || "")).filter(Boolean),
-      rerendersCount: rerenders.length
-    },
-    atmosIrIssues: validateAtmosIrParsed(y)
-  };
-
-  // Build label checks from custom groups + custom_group in input config
-  const rawSet = new Set();
-  for (const it of inputs) {
-    if (it && it.custom_group) rawSet.add(String(it.custom_group));
-  }
-  for (const g of groups) {
-    if (g && g.custom === true && g.name) rawSet.add(String(g.name));
-  }
-
-  const rawList = Array.from(rawSet).sort((a,b)=>a.localeCompare(b));
-  for (const raw of rawList) {
-    const norm = normalizeLabel(raw);
-    const mapped = mapLabel(norm, sets);
-    let status = mapped ? "PASS" : "REJECT";
-    let fix = "";
-    let fixInfo = null;
-    if (status === "REJECT") {
-      fixInfo = fixForRejectInfo(raw, "atmosIR@group", sets.__normLists || {});
-      fix = fixTextFromInfo(fixInfo, currentLocale || "en");
-      res.totals.reject += 1;
-    } else {
-      res.totals.pass += 1;
-    }
-    res.labelChecks.push({
-      status,
-      rawLabel: raw,
-      normalized: norm,
-      mapped: mapped ? (mapped.group || "") : "",
-      subgroup: mapped ? (mapped.subgroup || "") : "",
-      source: "atmosIR",
-      fix,
-      fixInfo
-    });
-  }
-
-  // Helper warning if file seems empty/unparseable
-  if (!inputs.length && !groups.length && !rerenders.length) {
-    res.warning = "No input_configuration / group_list / rerender_configuration sections found. This .atmosIR may be in an unsupported format.";
-  }
-
-  return res;
+  return validateStructuredTextAsset(file, sets, "Bundled local label registry");
 }
 
 // ── MXF support ──────────────────────────────────────────────────────────────
@@ -2913,9 +3074,10 @@ async function validate(file) {
   const sets = buildSynonymSets(rulesCache.labels);
   const normLists = sets.__normLists || {};
 
-  // Route .atmosIR files through a separate validator.
-  if (isAtmosIrFile(file)) {
-    return validateAtmosIr(file, sets);
+  // .pio and .atmosir are text-based only when they expose an ADM audioContent
+  // structure we can recognize locally. Never pass either through RIFF parsing.
+  if (["pio", "atmosir"].includes(fileExtension(file.name))) {
+    return validateStructuredTextAsset(file, sets, rulesCache.registrySource);
   }
 
   // Route .mxf files through the MXF AXML extractor.
@@ -2947,11 +3109,13 @@ async function validate(file) {
     ds64: extracted.ds64,
     axmlFound: !!extracted.axmlText,
     axmlWhere: extracted.found,
+    registrySource: rulesCache.registrySource,
     labelChecks: [],
     totals: { pass: 0, reject: 0 }
   };
 
   if (!extracted.axmlText) {
+    res.errorCode = "LOCAL_PARSE_UNAVAILABLE";
     if (extracted.riff === "MXF") {
       res.error = "No ADM XML (audioFormatExtended / ituADM) found in this MXF file. The MXF may not contain an IAB/ADM audio track, or the ADM metadata may be in a format not yet supported (e.g., binary-encoded KLV, not inline XML).";
     } else if (extracted.bxmlFound) {
@@ -2965,6 +3129,7 @@ async function validate(file) {
 
   const doc = new DOMParser().parseFromString(extracted.axmlText, "application/xml");
   if (doc.querySelector("parsererror")) {
+    res.errorCode = "LOCAL_PARSE_UNAVAILABLE";
     res.error = "Invalid XML in AXML chunk.";
     res.totals.reject = 1;
     return res;
@@ -2994,29 +3159,20 @@ async function validate(file) {
   const soundfield = detectSoundfield(doc, fmtInfo);
   res.soundfield = soundfield;
 
-  const candidates = extractCandidates(doc);
+  const candidates = extractContentGroupCandidates(doc);
   if (!candidates.length) {
-    res.warning = "No label candidates were found in AXML (checked both attribute-based and element-based name fields). Validation is inconclusive.";
+    candidates.push({ rawLabel: "", source: "ADM content group" });
   }
-  for (const c of candidates) {
-    const norm = normalizeLabel(c.rawLabel);
-    const mapped = mapLabel(norm, sets);
-    let status = mapped ? "PASS" : "REJECT";
-    let fix = "";
-    let fixInfo = null;
-    if (status === "REJECT") {
-      const cat = sourceCategory(c.source);
-      // Non-group sources become WARN (informational) by default
-      if (cat === "programme" || cat === "pack" || cat === "trackformat" || cat === "trackuid") {
-        status = "WARN";
-      }
-      fixInfo = fixForRejectInfo(c.rawLabel, c.source, sets.__normLists || {});
-      fix = fixTextFromInfo(fixInfo, currentLocale || "en");
-    }
-    res.labelChecks.push({ status, rawLabel: c.rawLabel, normalized: norm, mapped: mapped ? (mapped.group || "") : "", subgroup: mapped ? (mapped.subgroup || "") : "", source: c.source, fix, fixInfo });
-    if (status === "PASS") res.totals.pass += 1;
-    else if (status === "REJECT") res.totals.reject += 1;
+  res.labelChecks = classifyContentGroupLabels(candidates, sets).map((entry) => ({
+    ...entry,
+    source: `${entry.source} • ${entry.outcome.toLowerCase()}`
+  }));
+  for (const entry of res.labelChecks) {
+    if (entry.status === "PASS") res.totals.pass += 1;
+    else if (entry.status === "REJECT") res.totals.reject += 1;
   }
+  res.xmlPreview = extracted.axmlText.slice(0, 65536);
+  res.xmlPreviewTruncated = extracted.axmlText.length > res.xmlPreview.length;
 
   return res;
 }
@@ -3031,8 +3187,10 @@ function makeLabelOnlyReport(res){
     file: res?.file || {},
     axmlFound: !!res?.axmlFound,
     axmlWhere: res?.axmlWhere || "—",
+    registrySource: res?.registrySource || "",
     warning: res?.warning,
     error: res?.error,
+    errorCode: res?.errorCode || "",
     labelChecks: Array.isArray(res?.labelChecks) ? res.labelChecks : [],
     totals: res?.totals || { pass: 0, reject: 0 }
   };
@@ -3058,6 +3216,11 @@ if (_btnSettings) _btnSettings.addEventListener("click", () => {
     window.open(assetUrl("options.html"), "_blank");
   } catch (_) {}
 });
+document.getElementById("btnReplace")?.addEventListener("click", openFilePicker);
+document.getElementById("btnRecheck")?.addEventListener("click", () => {
+  if (lastFile) handleFile(lastFile);
+});
+document.getElementById("btnLexicon")?.addEventListener("click", showLexicon);
 
 const dropzone = $("#dropzone");
 function openFilePicker(){
@@ -3125,10 +3288,15 @@ $("#fileInput")?.addEventListener("change", (e) => {
 async function handleFile(file) {
   showLoadError(null);
   if (!file) return;
+  if (!isSupportedAssetFile(file)) {
+    showLoadError(t("file.unsupported"));
+    setStatus(t("file.unsupported"));
+    return;
+  }
   if (typeof file.size === 'number' && file.size === 0) {
     showLoadError('File size is 0 bytes. This often happens when dragging from email/Slack/Drive placeholders. Please download the file locally and click the drop area to browse.');
     setStatus('Ready.');
-    try { bgLog('Load File Failed', { reason: '0_bytes', name: file?.name||'' }); } catch {}
+    try { bgLog('Rejected zero-byte file', { reason: '0_bytes' }); } catch {}
     return;
   }
   $("#fileMeta").hidden = false;
@@ -3136,6 +3304,9 @@ async function handleFile(file) {
   // fmt info will be appended after validation
   lastFile = file;
   lastResult = null;
+  renderSourceXml(null);
+  const recheck = document.getElementById("btnRecheck");
+  if (recheck) recheck.disabled = false;
 
   try {
     setProgress(0, "0%");
@@ -3144,7 +3315,8 @@ async function handleFile(file) {
     const res = makeLabelOnlyReport(fullRes);
     const isIr = !!(res && res.kind === "ATMOSIR");
 
-    if (res.error) showLoadError(res.error);
+    const displayError = res.errorCode === "LOCAL_PARSE_UNAVAILABLE" ? t("parse.unavailable") : res.error;
+    if (displayError) showLoadError(displayError);
     else showLoadError(null);
     if (fullRes.fmtInfo?.numChannels) {
       const fi = fullRes.fmtInfo;
@@ -3155,6 +3327,7 @@ async function handleFile(file) {
 
     report = res;
     lastResult = res;
+    renderSourceXml(fullRes);
 
     _allLabelRows = res.labelChecks || [];
     applyLabelFilters();
@@ -3170,17 +3343,21 @@ Pass: ${res.totals.pass}
 Reject: ${res.totals.reject}`; })();
     $("#reportJson").textContent = JSON.stringify(report, null, 2);
     setProgress(100, "Done.");
-    setStatus(res.error ? "Completed with warnings." : "Done.");
+    if (res.error) setStatus(displayError || t("parse.unavailable"));
+    else if (res.totals.reject) setStatus(t("status.labelsNeedCorrection"));
+    else setStatus(t("status.allContentLabelsValid"));
     setTimeout(() => setProgress(null), 700);
 
   } catch (e) {
     try { setProgress(null); } catch {}
-    const msg = (e && (e.message || e.toString())) || "Unknown error";
+    const msg = e?.code === "REGISTRY_UNAVAILABLE"
+      ? t("registry.unavailable")
+      : ((e && (e.message || e.toString())) || "Unknown error");
     showLoadError(msg);
     setStatus(`Failed: ${msg}`);
     (() => { const _st = document.getElementById("structureText"); if (_st) _st.textContent = String(e?.message || e); })();
     try {
-      report = { error: msg, labelChecks: [], totals: { pass: 0, reject: 0 } };
+      report = { error: msg, errorCode: e?.code || "", labelChecks: [], totals: { pass: 0, reject: 0 } };
       lastResult = report;
       _allLabelRows = [];
       applyLabelFilters();
@@ -3358,4 +3535,3 @@ initLocaleUI();
 initMainTabs();
 
 resetUI();
-
